@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>OpenCV Test</title>
+</head>
+<body>
+  <h1>OpenCV Test</h1>
+  <div id="status">Loading...</div>
+  <script>
+    let openCVLoadingPromise = null;
+
+    const loadOpenCV = async () => {
+      if (window.cv && typeof window.cv.getBuildInformation === 'function') {
+        return window.cv;
+      }
+      
+      if (openCVLoadingPromise) return openCVLoadingPromise;
+
+      openCVLoadingPromise = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.id = "opencv-script";
+        script.src = "https://cdn.jsdelivr.net/npm/opencv.js@1.2.1/opencv.min.js";
+        script.async = true;
+        
+        script.onload = () => {
+          let attempts = 0;
+          const check = setInterval(() => {
+            const cv = window.cv;
+            console.log("Checking cv:", typeof cv, cv ? cv.getBuildInformation : null);
+            if (cv && typeof cv.getBuildInformation === 'function') {
+              clearInterval(check);
+              resolve(cv);
+            }
+            if (attempts++ > 10) {
+              clearInterval(check);
+              reject(new Error("Timeout waiting for cv.getBuildInformation"));
+            }
+          }, 500);
+        };
+        
+        script.onerror = () => reject(new Error("Script load error"));
+        document.head.appendChild(script);
+      });
+
+      return openCVLoadingPromise;
+    };
+
+    loadOpenCV()
+      .then(cv => {
+        document.getElementById("status").innerText = "Success: " + !!cv.Mat;
+        console.log("OpenCV initialized!", cv);
+      })
+      .catch(err => {
+        document.getElementById("status").innerText = "Error: " + err.message;
+        console.error(err);
+      });
+  </script>
+</body>
+</html>
