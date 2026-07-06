@@ -172,7 +172,7 @@ export const applyTranslationOverlay = async (
          worker.postMessage({ srcData, maskData, sw, sh, rois });
       });
 
-      const outImageData = new ImageData(inpaintedBuffer, sw, sh);
+      const outImageData = new ImageData(inpaintedBuffer as any, sw, sh);
       const tempCanvas = document.createElement('canvas');
       tempCanvas.width = sw;
       tempCanvas.height = sh;
