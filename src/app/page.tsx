@@ -310,21 +310,21 @@ export default function WorkspacePage() {
           <span className="text-muted text-sm hidden sm:inline-block pl-3 border-l border-surface-hover">Manga Translator</span>
         </div>
         
-        <div className="flex items-center gap-3">
-          <div className="relative">
+        <div className="flex items-center gap-1.5 sm:gap-3 overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] pr-1">
+          <div className="relative flex-shrink-0">
             <button
               onClick={() => {
                 const modal = document.getElementById("settings-modal");
                 if (modal) modal.style.display = modal.style.display === "block" ? "none" : "block";
               }}
-              className="px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150 text-muted hover:text-foreground hover:bg-surface"
+              className="px-2 sm:px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150 text-muted hover:text-foreground hover:bg-surface"
               title="Settings"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
             </button>
 
             {/* Simple Settings Modal */}
-            <div id="settings-modal" style={{ display: "none" }} className="absolute right-0 top-12 mt-2 w-80 bg-surface/95 backdrop-blur-xl border border-surface-hover rounded-xl shadow-2xl p-4 z-[100]">
+            <div id="settings-modal" style={{ display: "none" }} className="fixed inset-x-4 top-16 sm:absolute sm:inset-auto sm:right-0 sm:top-12 sm:mt-2 w-auto sm:w-80 max-w-sm bg-surface/95 backdrop-blur-xl border border-surface-hover rounded-xl shadow-2xl p-4 z-[100] max-h-[80vh] overflow-y-auto mx-auto">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="font-medium text-foreground">Settings</h3>
                 <button onClick={(e) => {
@@ -441,7 +441,7 @@ export default function WorkspacePage() {
 
           <button
             onClick={() => setNsfwBypassMode(!nsfwBypassMode)}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150 ${nsfwBypassMode ? 'text-primary bg-primary/10' : 'text-muted hover:text-foreground hover:bg-surface'}`}
+            className={`flex-shrink-0 px-2 sm:px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 sm:gap-2 transition-colors duration-150 ${nsfwBypassMode ? 'text-primary bg-primary/10' : 'text-muted hover:text-foreground hover:bg-surface'}`}
             title="Slice image to bypass AI censorship"
           >
             <Flame className="w-4 h-4" />
@@ -451,15 +451,15 @@ export default function WorkspacePage() {
           <button
             onClick={() => setShowOriginal(!showOriginal)}
             disabled={activeBubbles.length === 0}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150 border border-transparent ${showOriginal ? 'text-primary bg-primary/10 border-primary/20' : 'text-muted hover:text-foreground hover:bg-surface'}`}
+            className={`flex-shrink-0 px-2 sm:px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 sm:gap-2 transition-colors duration-150 border border-transparent ${showOriginal ? 'text-primary bg-primary/10 border-primary/20' : 'text-muted hover:text-foreground hover:bg-surface'}`}
             title="Toggle original image"
           >
             {showOriginal ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            <span className="hidden sm:inline">{showOriginal ? 'Show Translation' : 'View Original'}</span>
+            <span className="hidden lg:inline">{showOriginal ? 'Show Translation' : 'View Original'}</span>
           </button>
 
           {/* Undo/Redo Buttons */}
-          <div className="flex items-center gap-1 border-l border-surface-hover pl-3 ml-1">
+          <div className="flex-shrink-0 flex items-center gap-1 border-l border-surface-hover pl-1.5 sm:pl-3 ml-0 sm:ml-1">
             <button
               onClick={() => {
                 const label = undoManager.undo();
@@ -487,37 +487,37 @@ export default function WorkspacePage() {
           <button 
             onClick={() => handleTranslate()}
             disabled={isTranslating || pages.length === 0}
-            className="bg-primary text-primary-content hover:bg-primary-hover disabled:opacity-50 disabled:hover:bg-primary px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150"
+            className="flex-shrink-0 bg-primary text-primary-content hover:bg-primary-hover disabled:opacity-50 disabled:hover:bg-primary px-3 sm:px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 sm:gap-2 transition-colors duration-150"
           >
             {isTranslating ? (
-              <span className="flex items-center gap-2">
+              <span className="flex items-center gap-1.5 sm:gap-2">
                 <span className="animate-spin h-3 w-3 border-2 border-primary-content border-t-transparent rounded-full"></span>
-                Translating
+                <span className="hidden md:inline">Translating</span>
               </span>
             ) : (
-              <span className="flex items-center gap-2">
+              <span className="flex items-center gap-1.5 sm:gap-2">
                 <Wand2 className="w-4 h-4" />
-                Translate
+                <span className="hidden md:inline">Translate</span>
               </span>
             )}
           </button>
 
           {isTranslatingAll ? (
-            <div className="flex items-center gap-3">
+            <div className="flex-shrink-0 flex items-center gap-2 sm:gap-3">
               <div className="flex items-center gap-2 text-sm text-primary font-medium">
                 <span className="animate-spin h-3 w-3 border-2 border-primary border-t-transparent rounded-full"></span>
-                <span>{translateAllProgress?.message || 'กำลังเตรียม...'}</span>
+                <span className="hidden sm:inline">{translateAllProgress?.message || 'กำลังเตรียม...'}</span>
                 {translateAllProgress && translateAllProgress.current > 1 && (() => {
                   const elapsed = (Date.now() - translateAllProgress.startTime) / 1000;
                   const avgPerPage = elapsed / translateAllProgress.current;
                   const remaining = avgPerPage * (translateAllProgress.total - translateAllProgress.current);
-                  if (remaining < 60) return <span className="text-muted">· ~{Math.ceil(remaining)} วิ</span>;
-                  return <span className="text-muted">· ~{Math.ceil(remaining / 60)} นาที</span>;
+                  if (remaining < 60) return <span className="text-muted hidden md:inline">· ~{Math.ceil(remaining)} วิ</span>;
+                  return <span className="text-muted hidden md:inline">· ~{Math.ceil(remaining / 60)} นาที</span>;
                 })()}
               </div>
               <button 
                 onClick={cancelTranslateAll} 
-                className="bg-red-500/20 text-red-500 hover:bg-red-500/30 px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-all"
+                className="bg-red-500/20 text-red-500 hover:bg-red-500/30 px-3 sm:px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-all"
               >
                 Stop
               </button>
@@ -526,14 +526,14 @@ export default function WorkspacePage() {
             <button 
               onClick={() => handleTranslateAll()}
               disabled={isTranslating || pages.length === 0}
-              className="bg-primary/20 text-primary hover:bg-primary/30 disabled:opacity-50 px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150"
+              className="flex-shrink-0 bg-primary/20 text-primary hover:bg-primary/30 disabled:opacity-50 px-3 sm:px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 sm:gap-2 transition-colors duration-150"
             >
               <Wand2 className="w-4 h-4" />
-              Translate All
+              <span className="hidden md:inline">Translate All</span>
             </button>
           )}
 
-          <div className="flex bg-surface hover:bg-surface-hover rounded-md border border-surface-hover transition-colors duration-150">
+          <div className="flex-shrink-0 flex bg-surface hover:bg-surface-hover rounded-md border border-surface-hover transition-colors duration-150">
             <button
               onClick={() => {
                 const originalName = pages[currentPage].name;
@@ -543,7 +543,7 @@ export default function WorkspacePage() {
                 downloadTranslatedImage("single", currentPage, filename);
               }}
               disabled={activeBubbles.length === 0 || showOriginal}
-              className="text-foreground disabled:opacity-50 px-3 py-1.5 text-sm font-medium flex items-center gap-2 border-r border-surface-hover"
+              className="flex-shrink-0 text-foreground disabled:opacity-50 px-2 sm:px-3 py-1.5 text-sm font-medium flex items-center gap-2 border-r border-surface-hover"
               title="Download current page"
             >
               <Download className="w-4 h-4" />
@@ -551,37 +551,37 @@ export default function WorkspacePage() {
             <button
               onClick={() => handleDownloadAll("zip")}
               disabled={isZipping || pages.length === 0}
-              className="text-foreground disabled:opacity-50 px-3 py-1.5 text-sm font-medium flex items-center gap-2 border-r border-surface-hover"
+              className="flex-shrink-0 text-foreground disabled:opacity-50 px-2 sm:px-3 py-1.5 text-sm font-medium flex items-center gap-2 border-r border-surface-hover"
               title="Download all as ZIP"
             >
               {isZipping ? (
                 <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span>
               ) : (
-                <span className="text-xs font-bold">ZIP</span>
+                <span className="text-[10px] sm:text-xs font-bold">ZIP</span>
               )}
             </button>
             <button
               onClick={() => handleDownloadAll("cbz")}
               disabled={isZipping || pages.length === 0}
-              className="text-foreground disabled:opacity-50 px-3 py-1.5 text-sm font-medium flex items-center gap-2 border-r border-surface-hover"
+              className="flex-shrink-0 text-foreground disabled:opacity-50 px-2 sm:px-3 py-1.5 text-sm font-medium flex items-center gap-2 border-r border-surface-hover"
               title="Download all as CBZ (Comic format)"
             >
               {isZipping ? (
                 <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span>
               ) : (
-                <span className="text-xs font-bold">CBZ</span>
+                <span className="text-[10px] sm:text-xs font-bold">CBZ</span>
               )}
             </button>
             <button
               onClick={() => handleDownloadAll("pdf")}
               disabled={isZipping || pages.length === 0}
-              className="text-foreground disabled:opacity-50 px-3 py-1.5 text-sm font-medium flex items-center gap-2"
+              className="flex-shrink-0 text-foreground disabled:opacity-50 px-2 sm:px-3 py-1.5 text-sm font-medium flex items-center gap-2"
               title="Download all as PDF"
             >
               {isZipping ? (
                 <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span>
               ) : (
-                <span className="text-xs font-bold">PDF</span>
+                <span className="text-[10px] sm:text-xs font-bold">PDF</span>
               )}
             </button>
           </div>
@@ -589,7 +589,7 @@ export default function WorkspacePage() {
       </header>
 
       {/* Main Workspace */}
-      <main className={`flex-1 w-full mt-16 flex flex-col items-center transition-opacity duration-300 ${isDragging ? 'opacity-50' : 'opacity-100'} ${pages.length > 0 ? 'mb-28' : ''}`}>
+      <main className={`flex-1 w-full mt-16 flex flex-col items-center transition-opacity duration-300 ${isDragging ? 'opacity-50' : 'opacity-100'} ${pages.length > 0 ? 'mb-24 sm:mb-28' : ''}`}>
         {translationResult && (
           <div className="fixed top-20 z-40 bg-surface/80 backdrop-blur-sm border border-surface-hover text-foreground px-4 py-1.5 rounded-full text-sm shadow-sm animate-in fade-in slide-in-from-top-2 duration-300">
             {translationResult}
@@ -639,7 +639,7 @@ export default function WorkspacePage() {
         <div className="fixed bottom-0 left-0 right-0 z-40 bg-background/90 backdrop-blur-md border-t border-surface-hover">
           <div 
             ref={thumbnailContainerRef}
-            className="flex items-center h-24 px-3 gap-2 overflow-x-auto scrollbar-thin"
+            className="flex items-center h-20 sm:h-24 px-3 gap-2 overflow-x-auto scrollbar-thin"
           >
             {pages.map((page, i) => (
               <button
@@ -705,7 +705,7 @@ export default function WorkspacePage() {
                 <img
                   src={page.url}
                   alt={page.name}
-                  className="h-16 w-auto object-cover pointer-events-none"
+                  className="h-12 sm:h-16 w-auto object-cover pointer-events-none"
                 />
                 <span className={`absolute bottom-0 inset-x-0 text-center text-[10px] font-medium py-0.5 ${
                   i === currentPage
