@@ -33,6 +33,9 @@ export default function WorkspacePage() {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [dragPosition, setDragPosition] = useState<'left' | 'right' | null>(null);
+  
+  // Settings Modal State
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -313,10 +316,7 @@ export default function WorkspacePage() {
         <div className="flex items-center gap-1.5 sm:gap-3 overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] pr-1">
           <div className="relative flex-shrink-0">
             <button
-              onClick={() => {
-                const modal = document.getElementById("settings-modal");
-                if (modal) modal.style.display = modal.style.display === "block" ? "none" : "block";
-              }}
+              onClick={() => setIsSettingsOpen(!isSettingsOpen)}
               className="px-2 sm:px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150 text-muted hover:text-foreground hover:bg-surface"
               title="Settings"
             >
@@ -324,16 +324,14 @@ export default function WorkspacePage() {
             </button>
 
             {/* Simple Settings Modal */}
-            <div id="settings-modal" style={{ display: "none" }} className="fixed inset-x-4 top-16 sm:absolute sm:inset-auto sm:right-0 sm:top-12 sm:mt-2 w-auto sm:w-80 max-w-sm bg-surface/95 backdrop-blur-xl border border-surface-hover rounded-xl shadow-2xl p-4 z-[100] max-h-[80vh] overflow-y-auto mx-auto">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="font-medium text-foreground">Settings</h3>
-                <button onClick={(e) => {
-                  const modal = document.getElementById("settings-modal");
-                  if (modal) modal.style.display = "none";
-                }} className="text-muted hover:text-foreground">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                </button>
-              </div>
+            {isSettingsOpen && (
+              <div id="settings-modal" className="fixed inset-x-4 top-16 sm:absolute sm:inset-auto sm:right-0 sm:top-12 sm:mt-2 w-auto sm:w-80 max-w-sm bg-surface/95 backdrop-blur-xl border border-surface-hover rounded-xl shadow-2xl p-4 z-[100] max-h-[80vh] overflow-y-auto mx-auto">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="font-medium text-foreground">Settings</h3>
+                  <button onClick={() => setIsSettingsOpen(false)} className="text-muted hover:text-foreground">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                  </button>
+                </div>
               
               <div className="space-y-4">
                 <div>
@@ -437,6 +435,7 @@ export default function WorkspacePage() {
                 </div>
               </div>
             </div>
+            )}
           </div>
 
           <button

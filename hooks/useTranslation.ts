@@ -328,7 +328,7 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
     if (nsfwBypassMode) {
       setTranslationResult("กำลังหั่นภาพเป็น 6 ส่วน เพื่อส่งให้ AI แปลพร้อมกัน...");
     } else {
-      setTranslationResult("กำลังประมวลผลด้วย AI...");
+      setTranslationResult("กำลังประมวลผลด้วย AI (อาจใช้เวลา 15-40 วินาที)...");
     }
 
     try {
