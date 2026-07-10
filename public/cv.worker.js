@@ -47,18 +47,18 @@ self.addEventListener('message', async (e) => {
        
        const textMask = new cv.Mat();
        if (isLightBackground) {
-           cv.adaptiveThreshold(gray, textMask, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 21, 5);
+           // Text is dark, background is light.
+           // Anything darker than 140 becomes mask (white)
+           cv.threshold(gray, textMask, 140, 255, cv.THRESH_BINARY_INV);
        } else {
-           const inverted = new cv.Mat();
-           cv.bitwise_not(gray, inverted);
-           cv.adaptiveThreshold(inverted, textMask, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 21, 5);
-           inverted.delete();
+           // Text is light, background is dark.
+           // Anything lighter than 115 becomes mask (white)
+           cv.threshold(gray, textMask, 115, 255, cv.THRESH_BINARY);
        }
        
-       // Cleanup and expand mask slightly using a small elliptical kernel for tight curved edges
+       // Expand mask slightly using a small elliptical kernel to cover antialiased edges
        const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
-       // 1 iteration of 3x3 ellipse expands just 1px in all directions — minimal bleed
-       cv.dilate(textMask, textMask, kernel, new cv.Point(-1, -1), 1, cv.BORDER_CONSTANT, cv.morphologyDefaultBorderValue());
+       cv.dilate(textMask, textMask, kernel, new cv.Point(-1, -1), 2, cv.BORDER_CONSTANT, cv.morphologyDefaultBorderValue());
        kernel.delete();
        gray.delete();
        
@@ -74,8 +74,8 @@ self.addEventListener('message', async (e) => {
        bboxMask.delete();
        
        const roiDst = new cv.Mat();
-       // Use radius 3 for tight inpainting without bleeding the background too far
-       cv.inpaint(roiSrc, textMask, roiDst, 2, cv.INPAINT_TELEA);
+       // Use radius 3 for smoother inpainting
+       cv.inpaint(roiSrc, textMask, roiDst, 3, cv.INPAINT_TELEA);
        roiDst.copyTo(roiSrc);
        
        roiSrc.delete();
