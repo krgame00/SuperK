@@ -313,7 +313,7 @@ export default function WorkspacePage() {
           <span className="text-muted text-sm hidden sm:inline-block pl-3 border-l border-surface-hover">Manga Translator</span>
         </div>
         
-        <div className="flex items-center gap-1.5 sm:gap-3 overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] pr-1">
+        <div className="flex items-center gap-1.5 sm:gap-3">
           <div className="relative flex-shrink-0">
             <button
               onClick={() => setIsSettingsOpen(!isSettingsOpen)}
@@ -433,6 +433,7 @@ export default function WorkspacePage() {
                     To avoid "Quota exceeded" errors (especially in 18+ mode), enter your own free Gemini API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-primary hover:underline">Google AI Studio</a>.
                   </p>
                 </div>
+
               </div>
             </div>
             )}
