@@ -5,7 +5,7 @@ import { useTranslation } from "@/hooks/useTranslation";
 import { jsPDF } from "jspdf";
 import { Toaster } from "react-hot-toast";
 import { downloadTranslatedImage } from "@/lib/translationOverlay";
-import { Upload, ChevronLeft, ChevronRight, Wand2, Download, Archive, Flame, Eye, EyeOff, Undo2, Redo2 } from "lucide-react";
+import { Upload, ChevronLeft, ChevronRight, Wand2, Download, Archive, Flame, Eye, EyeOff, Undo2, Redo2, Trash2 } from "lucide-react";
 import { undoManager } from "@/lib/undoManager";
 import JSZip from "jszip";
 
@@ -642,79 +642,96 @@ export default function WorkspacePage() {
             className="flex items-center h-20 sm:h-24 px-3 gap-2 overflow-x-auto scrollbar-thin"
           >
             {pages.map((page, i) => (
-              <button
-                key={i}
-                draggable
-                onDragStart={(e) => {
-                  setDragIndex(i);
-                  e.dataTransfer.effectAllowed = 'move';
-                  e.stopPropagation();
-                }}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setDragOverIndex(i);
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  setDragPosition(e.clientX - rect.left > rect.width / 2 ? 'right' : 'left');
-                }}
-                onDragLeave={() => {
-                  setDragOverIndex(null);
-                  setDragPosition(null);
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  if (dragIndex !== null) {
-                    const targetIndex = dragPosition === 'right' ? i + 1 : i;
-                    
-                    if (dragIndex !== targetIndex && dragIndex !== targetIndex - 1) {
-                      setPages(prev => {
-                        const updated = [...prev];
-                        const [moved] = updated.splice(dragIndex, 1);
-                        
-                        const finalIndex = dragIndex < targetIndex ? targetIndex - 1 : targetIndex;
-                        updated.splice(finalIndex, 0, moved);
-                        
-                        if (currentPage === dragIndex) setCurrentPage(finalIndex);
-                        else if (dragIndex < currentPage && finalIndex >= currentPage) setCurrentPage(currentPage - 1);
-                        else if (dragIndex > currentPage && finalIndex <= currentPage) setCurrentPage(currentPage + 1);
-                        
-                        return updated;
-                      });
+              <div key={i} className="relative group flex-shrink-0">
+                <button
+                  draggable
+                  onDragStart={(e) => {
+                    setDragIndex(i);
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.stopPropagation();
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setDragOverIndex(i);
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setDragPosition(e.clientX - rect.left > rect.width / 2 ? 'right' : 'left');
+                  }}
+                  onDragLeave={() => {
+                    setDragOverIndex(null);
+                    setDragPosition(null);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (dragIndex !== null) {
+                      const targetIndex = dragPosition === 'right' ? i + 1 : i;
+                      
+                      if (dragIndex !== targetIndex && dragIndex !== targetIndex - 1) {
+                        setPages(prev => {
+                          const updated = [...prev];
+                          const [moved] = updated.splice(dragIndex, 1);
+                          
+                          const finalIndex = dragIndex < targetIndex ? targetIndex - 1 : targetIndex;
+                          updated.splice(finalIndex, 0, moved);
+                          
+                          if (currentPage === dragIndex) setCurrentPage(finalIndex);
+                          else if (dragIndex < currentPage && finalIndex >= currentPage) setCurrentPage(currentPage - 1);
+                          else if (dragIndex > currentPage && finalIndex <= currentPage) setCurrentPage(currentPage + 1);
+                          
+                          return updated;
+                        });
+                      }
                     }
-                  }
-                  setDragIndex(null);
-                  setDragOverIndex(null);
-                  setDragPosition(null);
-                }}
-                onDragEnd={() => { setDragIndex(null); setDragOverIndex(null); setDragPosition(null); }}
-                onClick={() => { setCurrentPage(i); }}
-                className={`relative flex-shrink-0 rounded-md overflow-hidden transition-all duration-150 group cursor-grab active:cursor-grabbing border-x-4 border-transparent ${
-                  i === currentPage
-                    ? 'ring-2 ring-primary ring-offset-2 ring-offset-background'
-                    : 'opacity-60 hover:opacity-100'
-                } ${
-                  dragIndex === i ? 'opacity-30 scale-90' : ''
-                } ${
-                  dragOverIndex === i && dragIndex !== i 
-                    ? dragPosition === 'left' ? '!border-l-primary' : '!border-r-primary' 
-                    : ''
-                }`}
-                title={`${page.name} — drag to reorder`}
-              >
-                <img
-                  src={page.url}
-                  alt={page.name}
-                  className="h-12 sm:h-16 w-auto object-cover pointer-events-none"
-                />
-                <span className={`absolute bottom-0 inset-x-0 text-center text-[10px] font-medium py-0.5 ${
-                  i === currentPage
-                    ? 'bg-primary text-primary-content'
-                    : 'bg-background/70 text-muted group-hover:text-foreground'
-                }`}>
-                  {i + 1}
-                </span>
-              </button>
+                    setDragIndex(null);
+                    setDragOverIndex(null);
+                    setDragPosition(null);
+                  }}
+                  onDragEnd={() => { setDragIndex(null); setDragOverIndex(null); setDragPosition(null); }}
+                  onClick={() => { setCurrentPage(i); }}
+                  className={`relative flex-shrink-0 rounded-md overflow-hidden transition-all duration-150 cursor-grab active:cursor-grabbing border-x-4 border-transparent ${
+                    i === currentPage
+                      ? 'ring-2 ring-primary ring-offset-2 ring-offset-background'
+                      : 'opacity-60 hover:opacity-100'
+                  } ${
+                    dragIndex === i ? 'opacity-30 scale-90' : ''
+                  } ${
+                    dragOverIndex === i && dragIndex !== i 
+                      ? dragPosition === 'left' ? '!border-l-primary' : '!border-r-primary' 
+                      : ''
+                  }`}
+                  title={`${page.name} — drag to reorder`}
+                >
+                  <img
+                    src={page.url}
+                    alt={page.name}
+                    className="h-12 sm:h-16 w-auto object-cover pointer-events-none"
+                  />
+                  <span className={`absolute bottom-0 inset-x-0 text-center text-[10px] font-medium py-0.5 ${
+                    i === currentPage
+                      ? 'bg-primary text-primary-content'
+                      : 'bg-background/70 text-muted group-hover:text-foreground'
+                  }`}>
+                    {i + 1}
+                  </span>
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPages(prev => {
+                      const newPages = prev.filter((_, idx) => idx !== i);
+                      if (newPages.length === 0) setCurrentPage(0);
+                      else if (currentPage >= newPages.length) setCurrentPage(newPages.length - 1);
+                      else if (currentPage > i) setCurrentPage(currentPage - 1);
+                      return newPages;
+                    });
+                  }}
+                  className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-200 z-10 hover:scale-110 shadow-sm border-2 border-background"
+                  title="Remove image"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+              </div>
             ))}
             
             {/* Add more pages button */}
@@ -723,6 +740,24 @@ export default function WorkspacePage() {
               <span className="text-[10px]">Add</span>
               <input type="file" multiple accept="image/*" className="hidden" onChange={handleImageUpload} />
             </label>
+
+            {/* Clear All button */}
+            {pages.length > 1 && (
+              <button 
+                onClick={() => {
+                  if (confirm("ลบรูปภาพทั้งหมดใช่ไหม?")) {
+                    setPages([]);
+                    setCurrentPage(0);
+                    translatedImageCacheRef.current.clear();
+                  }
+                }}
+                className="flex-shrink-0 flex flex-col items-center justify-center w-14 h-16 rounded-md border border-dashed border-surface-hover hover:border-red-500/50 text-muted hover:text-red-500 cursor-pointer transition-colors duration-150" 
+                title="ลบรูปทั้งหมด"
+              >
+                <Trash2 className="w-4 h-4 mb-0.5" />
+                <span className="text-[10px]">Clear All</span>
+              </button>
+            )}
           </div>
         </div>
       )}

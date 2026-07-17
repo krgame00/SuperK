@@ -106,23 +106,41 @@ export const applyTranslationOverlay = async (
       
       const rois: {x: number, y: number, w: number, h: number}[] = [];
       
+      let fallbackY = 10;
+      
       real.forEach(b => {
         let rawX = 50, rawY = 50, rawW = 22, rawH = 10;
+        let isInvalidBox = b.isInvalidBox === true;
+
         if (Array.isArray(b.box) && b.box.length === 4) {
           const [ymin, xmin, ymax, xmax] = b.box;
           rawX = (xmin + xmax) / 2 / 10;
           rawY = (ymin + ymax) / 2 / 10;
           rawW = Math.abs(xmax - xmin) / 10;
           rawH = Math.abs(ymax - ymin) / 10;
+          
+          // Detect hallucinated full-screen boxes or zero-size boxes
+          if ((rawW >= 95 && rawH >= 95) || (rawW === 0 && rawH === 0)) {
+            isInvalidBox = true;
+          }
         } else {
-          rawX = typeof b.x === "number" ? b.x : 50;
-          rawY = typeof b.y === "number" ? b.y : 50;
-          rawW = typeof b.w === "number" ? b.w : 22;
-          rawH = typeof b.h === "number" ? b.h : 10;
+          isInvalidBox = true;
+        }
+
+        if (isInvalidBox) {
+          rawX = 50;
+          rawY = fallbackY;
+          rawW = 30;
+          rawH = 15;
+          fallbackY = (fallbackY + 15 > 90) ? 10 : fallbackY + 15;
+          b.isInvalidBox = true; // Flag for renderBubble to draw a background
+        } else {
+          // Normalize legacy fields if needed
           if (rawX > 100 || rawY > 100 || rawW > 100 || rawH > 100) {
             rawX = rawX / 10; rawY = rawY / 10; rawW = rawW / 10; rawH = rawH / 10;
           }
         }
+
         const cx = (Math.max(0, Math.min(rawX, 100)) / 100) * iw;
         const cy = (Math.max(0, Math.min(rawY, 100)) / 100) * ih;
         let bw = (Math.max(12, Math.min(rawW, 60)) / 100) * iw;
@@ -134,8 +152,10 @@ export const applyTranslationOverlay = async (
         const rw = (bw + pad*2) * scale;
         const rh = (bh + pad*2) * scale;
         
-        mctx.fillRect(rx, ry, rw, rh);
-        rois.push({x: rx, y: ry, w: rw, h: rh});
+        if (!isInvalidBox) {
+          mctx.fillRect(rx, ry, rw, rh);
+          rois.push({x: rx, y: ry, w: rw, h: rh});
+        }
       });
 
       const srcCanvas = document.createElement('canvas');
@@ -341,11 +361,11 @@ export const applyTranslationOverlay = async (
         const fgColor = ts.textColor;
         const outlineColor = ts.textOutline;
         
-        if (inpaintingFailed) {
+        if (inpaintingFailed || b.isInvalidBox) {
            ctx.save();
            ctx.beginPath();
            ctx.roundRect(-pad, -pad, currentBw + pad * 2, currentBh + pad * 2, r);
-           ctx.fillStyle = "white";
+           ctx.fillStyle = b.isInvalidBox ? "rgba(255, 255, 255, 0.9)" : "white";
            ctx.fill();
            ctx.strokeStyle = "rgba(0,0,0,0.15)";
            ctx.lineWidth = 2;

@@ -1,6 +1,26 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { applyTranslationOverlay } from "@/lib/translationOverlay";
 
+const parseLLMJSON = (text: string) => {
+  if (!text) return null;
+  try {
+    const clean = text.replace(/```json/gi, "").replace(/```/g, "").trim();
+    return JSON.parse(clean);
+  } catch (e) {
+    try {
+       let clean = text.replace(/```json/gi, "").replace(/```/g, "").trim();
+       if (!clean.endsWith("}")) {
+          const lastBrace = clean.lastIndexOf("}");
+          if (lastBrace !== -1) {
+             clean = clean.substring(0, lastBrace + 1) + "]}";
+             return JSON.parse(clean);
+          }
+       }
+    } catch (e2) {}
+    throw e;
+  }
+};
+
 interface UseTranslationProps {
   currentPage: number;
   pages: string[];
@@ -199,13 +219,19 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
             const data = await res.json();
             if (!res.ok) throw new Error(data.error);
             
-            const parsed = JSON.parse(data.text);
+            const parsed = parseLLMJSON(data.text);
             if (parsed.bubbles) {
               successCount++;
               const { sx, sy, sWidth, sHeight } = slice;
               
               for (const b of parsed.bubbles) {
-                if (!b.box || b.box.length !== 4) continue;
+                if (!b.box || b.box.length !== 4) {
+                  b.box = [0, 0, 1000, 1000];
+                  b.isInvalidBox = true;
+                } else if ((b.box[3] - b.box[1] >= 950 && b.box[2] - b.box[0] >= 950) || (b.box[3] === b.box[1] && b.box[2] === b.box[0])) {
+                  b.isInvalidBox = true;
+                }
+
                 const ymin_px = (b.box[0] / 1000) * sHeight;
                 const xmin_px = (b.box[1] / 1000) * sWidth;
                 const ymax_px = (b.box[2] / 1000) * sHeight;
@@ -222,21 +248,24 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
                 b.box[3] = Math.round((global_xmax_px / imgEl.naturalWidth) * 1000);
                 
                 let isDuplicate = false;
-                for (const existing of allBubbles) {
-                  const xA = Math.max(b.box[1], existing.box[1]);
-                  const yA = Math.max(b.box[0], existing.box[0]);
-                  const xB = Math.min(b.box[3], existing.box[3]);
-                  const yB = Math.min(b.box[2], existing.box[2]);
-                  const interWidth = Math.max(0, xB - xA);
-                  const interHeight = Math.max(0, yB - yA);
-                  const interArea = interWidth * interHeight;
-                  const boxAArea = (b.box[3] - b.box[1]) * (b.box[2] - b.box[0]);
-                  const boxBArea = (existing.box[3] - existing.box[1]) * (existing.box[2] - existing.box[0]);
-                  const iou = interArea / (boxAArea + boxBArea - interArea);
-                  
-                  if (iou > 0.4) {
-                    isDuplicate = true;
-                    break;
+                if (!b.isInvalidBox) {
+                  for (const existing of allBubbles) {
+                    if (existing.isInvalidBox) continue;
+                    const xA = Math.max(b.box[1], existing.box[1]);
+                    const yA = Math.max(b.box[0], existing.box[0]);
+                    const xB = Math.min(b.box[3], existing.box[3]);
+                    const yB = Math.min(b.box[2], existing.box[2]);
+                    const interWidth = Math.max(0, xB - xA);
+                    const interHeight = Math.max(0, yB - yA);
+                    const interArea = interWidth * interHeight;
+                    const boxAArea = (b.box[3] - b.box[1]) * (b.box[2] - b.box[0]);
+                    const boxBArea = (existing.box[3] - existing.box[1]) * (existing.box[2] - existing.box[0]);
+                    const iou = interArea / (boxAArea + boxBArea - interArea);
+                    
+                    if (iou > 0.4) {
+                      isDuplicate = true;
+                      break;
+                    }
                   }
                 }
                 
@@ -288,7 +317,7 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
       
       let parsed;
       try {
-        parsed = data.text ? JSON.parse(data.text) : data;
+        parsed = data.text ? parseLLMJSON(data.text) : data;
       } catch (e) {
         console.error("JSON Parse Error:", e, data);
       }
