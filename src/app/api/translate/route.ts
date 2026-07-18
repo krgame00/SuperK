@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+let globalKeyIndex = 0;
+
 export async function POST(req: Request) {
   try {
     const { imageBase64, mimeType, targetLang, sourceLang, modelPreference, apiKey: customApiKey } = await req.json();
@@ -8,10 +10,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing image data" }, { status: 400 });
     }
 
-    const apiKey = customApiKey || process.env.GEMINI_API_KEY;
-    if (!apiKey) {
+    const apiKeyRaw = customApiKey || process.env.GEMINI_API_KEY;
+    if (!apiKeyRaw) {
       return NextResponse.json({ error: "Server missing API Key. Please add GEMINI_API_KEY to .env or enter your own in Settings" }, { status: 500 });
     }
+
+    // Support multiple API keys separated by commas
+    const apiKeys = apiKeyRaw.split(',').map((k: string) => k.trim()).filter((k: string) => k.length > 0);
 
     const sourceHint = sourceLang && sourceLang !== 'auto' ? `The source language is ${sourceLang}. ` : '';
 
@@ -22,6 +27,8 @@ export async function POST(req: Request) {
       `- Do NOT use line breaks (\\n) in the translated text. Keep the text of each bubble on a single continuous line (ห้ามเว้นบรรทัดมั่ว ให้ต่อเป็นบรรทัดเดียวกัน).\n`+
       `- For Thai: Adapt pronouns (แก, ฉัน, นาย, ข้า, เอ็ง) and endings (ครับ, ค่ะ, วะ, เว้ย, สิ, นะ) based on character relationships and mood.\n`+
       `- Translate Sound Effects (SFX) and wrap them in asterisks, e.g., *BOOM* or *ตู้ม*.\n`+
+      `- DO NOT hallucinate text on textures, leaves, clothing, shading, or backgrounds. If an area does not clearly contain readable text, ignore it completely.\n`+
+      `- Do not over-translate or repeatedly translate the same sound effect in the same area. Group repetitive sound effects into a single bubble.\n`+
       `- Read order is usually Right-to-Left, Top-to-Bottom.\n`+
       `Output ONLY valid JSON, no markdown, no explanation.\n`+
       `Format: {"bubbles":[{"original_text": "text found in image", "t":"translated text in Thai","box":[ymin, xmin, ymax, xmax]}]}\n`+
@@ -84,51 +91,67 @@ export async function POST(req: Request) {
 
     for (const model of MODELS) {
       let retryCount = 0;
-      const maxRetries = 2; // 3 attempts total per model
+      const maxRetries = 2; // 3 attempts total per model/key combo
+      
+      let keyAttempt = 0;
+      let modelSuccess = false;
 
-      while (retryCount <= maxRetries) {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        data = await res.json();
-        resOk = res.ok;
-        resStatus = res.status;
+      while (keyAttempt < apiKeys.length) {
+        const currentKey = apiKeys[(globalKeyIndex + keyAttempt) % apiKeys.length];
+        
+        while (retryCount <= maxRetries) {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${currentKey}`;
+          const res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          data = await res.json();
+          resOk = res.ok;
+          resStatus = res.status;
 
-        if (resOk) break; // Success, exit retry loop
-        
-        const errorMsg = data?.error?.message || "Unknown error";
-        console.warn(`Model ${model} attempt ${retryCount + 1} failed with status ${res.status}: ${errorMsg}`);
-        
-        if (!firstError) firstError = errorMsg;
-        
-        // If 503 (Overloaded) or 500, retry with exponential backoff
-        if (res.status === 503 || res.status === 500) {
-          retryCount++;
-          if (retryCount <= maxRetries) {
-            const delay = retryCount * 2000; // 2s, then 4s
-            console.log(`[High Demand] Retrying ${model} in ${delay}ms...`);
-            await sleep(delay);
-            continue; // Retry same model
+          if (resOk) {
+            modelSuccess = true;
+            globalKeyIndex = (globalKeyIndex + keyAttempt) % apiKeys.length; // Stick to the working key
+            break;
           }
+          
+          const errorMsg = data?.error?.message || "Unknown error";
+          console.warn(`Model ${model} (Key ...${currentKey.slice(-4)}) failed with status ${res.status}: ${errorMsg}`);
+          
+          if (!firstError) firstError = errorMsg;
+          
+          // If 503 (Overloaded) or 500, retry with exponential backoff
+          if (resStatus === 503 || resStatus === 500) {
+            retryCount++;
+            if (retryCount <= maxRetries) {
+              const delay = retryCount * 2000; // 2s, then 4s
+              console.log(`[High Demand] Retrying ${model} in ${delay}ms...`);
+              await sleep(delay);
+              continue; // Retry same model and key
+            }
+          }
+          
+          break; // Break retry loop for other errors (e.g. 429, 400, 403)
+        }
+
+        if (modelSuccess) break; // exit key loop
+        
+        // If 429 (Quota) or 403/400 (Invalid Key), try the next key!
+        if (resStatus === 429 || resStatus === 403 || resStatus === 400) {
+          console.warn(`Key ...${currentKey.slice(-4)} hit error ${resStatus} on ${model}. Trying next key...`);
+          keyAttempt++;
+          retryCount = 0; // reset retries for the new key
+          continue;
         }
         
-        // Break retry loop for other errors or if max retries exceeded
-        break;
+        break; // if it wasn't a quota or auth error, just stop trying keys and fallback to the next model
       }
 
-      if (resOk) break; // Success, exit model loop
+      if (modelSuccess) break; // Success, exit model loop
       
       // If user specifically requested this model, don't fallback to anything else
       if (modelPreference && modelPreference !== "auto") break;
-      
-      // Stop immediately on 400 Bad Request or 403 Forbidden (Auth)
-      // For 429 (Quota Exceeded), we should continue to the next model!
-      if (resStatus === 400 || resStatus === 403) {
-        break; 
-      }
     }
 
     if (!resOk) {

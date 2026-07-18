@@ -9,6 +9,9 @@ const parseLLMJSON = (text: string) => {
   } catch (e) {
     try {
        let clean = text.replace(/```json/gi, "").replace(/```/g, "").trim();
+       // Fix trailing commas
+       clean = clean.replace(/,\s*([\]}])/g, '$1');
+       
        if (!clean.endsWith("}")) {
           const lastBrace = clean.lastIndexOf("}");
           if (lastBrace !== -1) {
@@ -16,8 +19,10 @@ const parseLLMJSON = (text: string) => {
              return JSON.parse(clean);
           }
        }
-    } catch (e2) {}
-    throw e;
+       return JSON.parse(clean);
+    } catch (e2) {
+       return null;
+    }
   }
 };
 
@@ -160,7 +165,7 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
     }
   };
 
-  const performTranslation = async (pageUrl: string, pageIndex: number): Promise<boolean> => {
+  const performTranslation = async (pageUrl: string, pageIndex: number, forceNsfwBypass: boolean = false): Promise<boolean> => {
     try {
       const resImg = await fetch(pageUrl);
       if (!resImg.ok) throw new Error(`ไม่สามารถโหลดรูปภาพได้ (HTTP ${resImg.status})`);
@@ -172,7 +177,7 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
         reader.readAsDataURL(blob);
       });
 
-      if (nsfwBypassMode) {
+      if (nsfwBypassMode || forceNsfwBypass) {
         const imgEl = new Image();
         imgEl.src = pageUrl;
         await new Promise(r => { imgEl.onload = r; });
@@ -290,6 +295,19 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
           throw new Error(`แปลไม่สำเร็จ หรือโควต้าเต็ม (ผ่านการตรวจสอบ: ${successCount}/6 ชิ้น)`);
         }
 
+        // Filter out hallucinated repetitive SFX
+        const textCount: Record<string, number> = {};
+        const filteredBubbles = [];
+        for (const b of allBubbles) {
+          const text = (b.t || "").trim();
+          textCount[text] = (textCount[text] || 0) + 1;
+          // Allow max 3 identical phrases per page to prevent SFX spam
+          if (textCount[text] <= 3) {
+            filteredBubbles.push(b);
+          }
+        }
+        allBubbles = filteredBubbles;
+
         const manualBubbles = activeBubbles.filter(b => b.isManual);
         const finalBubbles = [...allBubbles, ...manualBubbles];
 
@@ -315,19 +333,25 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to translate");
       
-      let parsed;
-      try {
-        parsed = data.text ? parseLLMJSON(data.text) : data;
-      } catch (e) {
-        console.error("JSON Parse Error:", e, data);
-      }
+      let parsed = data.text ? parseLLMJSON(data.text) : data;
       
       if (!parsed || !Array.isArray(parsed.bubbles)) { 
         throw new Error("ไม่พบข้อความในหน้านี้"); 
       }
 
+      // Filter out hallucinated repetitive SFX
+      const textCount: Record<string, number> = {};
+      const filteredParsed = [];
+      for (const b of parsed.bubbles) {
+        const text = (b.t || "").trim();
+        textCount[text] = (textCount[text] || 0) + 1;
+        if (textCount[text] <= 3) {
+          filteredParsed.push(b);
+        }
+      }
+
       const manualBubbles = activeBubbles.filter(b => b.isManual);
-      const finalBubbles = [...parsed.bubbles, ...manualBubbles];
+      const finalBubbles = [...filteredParsed, ...manualBubbles];
 
       bubbleCacheRef.current.set(pageUrl, finalBubbles);
       
@@ -393,27 +417,43 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
       
       let success = false;
       let retries = 0;
+      let forceNsfw = false;
+      
       while (!success && retries < 3 && !cancelTranslateAllRef.current) {
         try {
           // Temporarily set translationResult so user sees progress
-          if (nsfwBypassMode) setTranslationResult(`กำลังหั่นภาพเป็น 6 ส่วน (หน้า ${i + 1})`);
-          else setTranslationResult(`กำลังประมวลผลด้วย AI (หน้า ${i + 1})`);
+          if (nsfwBypassMode || forceNsfw) setTranslationResult(`กำลังหั่นภาพเป็น 6 ส่วน (หน้า ${i + 1}) - รอบ ${retries + 1}/3`);
+          else setTranslationResult(`กำลังประมวลผลด้วย AI (หน้า ${i + 1}) - รอบ ${retries + 1}/3`);
           
-          success = await performTranslation(pages[i], i);
+          success = await performTranslation(pages[i], i, forceNsfw);
           
           if (!success) throw new Error("Translation failed");
         } catch (err: any) {
           const errMsg = err.message || "";
+          console.warn(`Error on page ${i + 1}, retry ${retries + 1}/3:`, errMsg);
+          
           if (errMsg.includes("429") || errMsg.includes("โควต้าเต็ม") || errMsg.includes("Failed")) {
             setTranslateAllProgress({ current: i + 1, total: pages.length, status: "waiting", message: `รอโควต้า API (30 วิ)... หน้า ${i + 1}/${pages.length}`, startTime: batchStartTime });
-            setTranslationResult("API Limit Reached! Waiting 30s...");
+            setTranslationResult(`API Limit Reached! รอ 30 วิ... (รอบ ${retries + 1}/3)`);
             await interruptibleDelay(30000);
-            retries++;
           } else {
-            console.warn("Skipping page due to error:", errMsg);
-            break; // Unknown error, skip page
+            // Other error (Censorship, parse error, no text)
+            // Smart Retry: auto fallback to 18+ mode if not already using it
+            if (!nsfwBypassMode && !forceNsfw) {
+              forceNsfw = true;
+              setTranslationResult(`แปลไม่ผ่าน ลองเปิดโหมด 18+ อัตโนมัติ...`);
+              await interruptibleDelay(2000);
+            } else {
+              setTranslationResult(`แปลไม่ผ่าน รอ 5 วิเพื่อลองใหม่... (รอบ ${retries + 1}/3)`);
+              await interruptibleDelay(5000);
+            }
           }
+          retries++;
         }
+      }
+      
+      if (!success) {
+        console.warn(`Skipping page ${i + 1} after 3 failed attempts.`);
       }
       
       if (success && i < pages.length - 1 && !cancelTranslateAllRef.current) {
@@ -455,6 +495,8 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
     translateCrop,
     activeBubbles, setActiveBubbles,
     translatedImageCacheRef,
+    bubbleCacheRef,
+    textStyleRef,
     userApiKey, 
     setUserApiKey: (key: string) => {
       setUserApiKey(key);

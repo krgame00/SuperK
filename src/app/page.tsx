@@ -4,7 +4,7 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { useTranslation } from "@/hooks/useTranslation";
 import { jsPDF } from "jspdf";
 import { Toaster } from "react-hot-toast";
-import { downloadTranslatedImage } from "@/lib/translationOverlay";
+import { downloadTranslatedImage, applyTranslationOverlay } from "@/lib/translationOverlay";
 import { Upload, ChevronLeft, ChevronRight, Wand2, Download, Archive, Flame, Eye, EyeOff, Undo2, Redo2, Trash2 } from "lucide-react";
 import { undoManager } from "@/lib/undoManager";
 import JSZip from "jszip";
@@ -47,6 +47,7 @@ export default function WorkspacePage() {
     setTargetLang,
     isTranslating,
     translationResult,
+    setTranslationResult,
     handleTranslate,
     isTranslatingAll,
     translateAllProgress,
@@ -58,6 +59,8 @@ export default function WorkspacePage() {
     nsfwBypassMode,
     setNsfwBypassMode,
     translatedImageCacheRef,
+    bubbleCacheRef,
+    textStyleRef,
     userApiKey,
     setUserApiKey,
     modelPreference,
@@ -146,20 +149,56 @@ export default function WorkspacePage() {
   const handleDownloadAll = async (format: "zip" | "cbz" | "pdf" = "zip") => {
     if (pages.length === 0) return;
     setIsZipping(true);
+
+    const getExportDataUrl = async (pageUrl: string, index: number): Promise<string> => {
+      if (index === currentPage && !showOriginal && activeBubbles.length > 0) {
+        const currentDataUrl = downloadTranslatedImage("single", index, "", true);
+        if (currentDataUrl) return currentDataUrl;
+      } 
+      
+      if (translatedImageCacheRef.current.has(pageUrl)) {
+        return translatedImageCacheRef.current.get(pageUrl) as string;
+      }
+      
+      const bubbles = bubbleCacheRef.current.get(pageUrl);
+      if (bubbles && bubbles.length > 0) {
+        setTranslationResult(`⏳ กำลังเตรียมรูปภาพหน้า ${index + 1}/${pages.length}...`);
+        return new Promise<string>((resolve) => {
+          const offscreenContainer = document.getElementById("offscreen-container");
+          const offscreenImg = document.getElementById("offscreen-image") as HTMLImageElement;
+          
+          if (!offscreenContainer || !offscreenImg) {
+            resolve(pageUrl);
+            return;
+          }
+          
+          offscreenContainer.querySelectorAll(".tl-overlay,.tl-canvas").forEach((el) => el.remove());
+          
+          offscreenImg.onload = () => {
+            applyTranslationOverlay(
+              bubbles,
+              "offscreen",
+              -1,
+              () => {},
+              (renderedUrl) => {
+                translatedImageCacheRef.current.set(pageUrl, renderedUrl);
+                resolve(renderedUrl);
+              },
+              textStyleRef
+            );
+          };
+          offscreenImg.onerror = () => resolve(pageUrl);
+          offscreenImg.src = pageUrl;
+        });
+      }
+      return pageUrl;
+    };
     
     if (format === "pdf") {
       try {
         const pdf = new jsPDF({ orientation: "portrait", unit: "px" });
         for (let i = 0; i < pages.length; i++) {
-          let dataUrl = pages[i].url; // Default to original
-          
-          if (i === currentPage && !showOriginal && activeBubbles.length > 0) {
-            const currentDataUrl = downloadTranslatedImage("single", i, "", true);
-            if (currentDataUrl) dataUrl = currentDataUrl;
-          } 
-          else if (translatedImageCacheRef.current.has(pages[i].url)) {
-            dataUrl = translatedImageCacheRef.current.get(pages[i].url) as string;
-          }
+          const dataUrl = await getExportDataUrl(pages[i].url, i);
           
           const img = new Image();
           img.src = dataUrl;
@@ -176,9 +215,14 @@ export default function WorkspacePage() {
           
           pdf.addImage(dataUrl, "JPEG", 0, 0, img.naturalWidth, img.naturalHeight);
         }
+        setTranslationResult(`⏳ กำลังบันทึก PDF...`);
         pdf.save("SuperK_Translations.pdf");
+        setTranslationResult(`✅ ดาวน์โหลด PDF สำเร็จ!`);
+        setTimeout(() => setTranslationResult(null), 3000);
       } catch (e) {
         console.error("Failed to generate PDF", e);
+        setTranslationResult(`❌ เกิดข้อผิดพลาดในการสร้าง PDF`);
+        setTimeout(() => setTranslationResult(null), 3000);
       } finally {
         setIsZipping(false);
       }
@@ -188,37 +232,29 @@ export default function WorkspacePage() {
     const zip = new JSZip();
     
     for (let i = 0; i < pages.length; i++) {
-      let dataUrl = pages[i].url; // Default to original
-      
-      // If the current page is being viewed, grab its latest canvas output
-      if (i === currentPage && !showOriginal && activeBubbles.length > 0) {
-        const currentDataUrl = downloadTranslatedImage("single", i, "", true);
-        if (currentDataUrl) dataUrl = currentDataUrl;
-      } 
-      // Otherwise, use cached translated image if available
-      else if (translatedImageCacheRef.current.has(pages[i].url)) {
-        dataUrl = translatedImageCacheRef.current.get(pages[i].url) as string;
-      }
-      
-      // Remove data:image/png;base64, prefix
+      const dataUrl = await getExportDataUrl(pages[i].url, i);
       const base64Data = dataUrl.split(",")[1];
       
       const originalName = pages[i].name;
       const extension = originalName.includes('.') ? originalName.split('.').pop() : 'png';
       const baseName = originalName.includes('.') ? originalName.substring(0, originalName.lastIndexOf('.')) : originalName;
-      // zero pad the index for better sorting in OS file explorer
       const filename = `SuperK_Page_${String(i + 1).padStart(3, '0')}_${baseName}.${extension}`;
       zip.file(filename, base64Data, { base64: true });
     }
     
     try {
+      setTranslationResult(`⏳ กำลังสร้างไฟล์ ${format.toUpperCase()}...`);
       const content = await zip.generateAsync({ type: "blob" });
       const link = document.createElement("a");
       link.href = URL.createObjectURL(content);
       link.download = format === "cbz" ? "SuperK_Translations.cbz" : "SuperK_Translations.zip";
       link.click();
+      setTranslationResult(`✅ ดาวน์โหลด ${format.toUpperCase()} สำเร็จ!`);
+      setTimeout(() => setTranslationResult(null), 3000);
     } catch (e) {
       console.error(`Failed to generate ${format}`, e);
+      setTranslationResult(`❌ เกิดข้อผิดพลาดในการสร้าง ${format.toUpperCase()}`);
+      setTimeout(() => setTranslationResult(null), 3000);
     } finally {
       setIsZipping(false);
     }
@@ -232,13 +268,58 @@ export default function WorkspacePage() {
 
     const newPages: {url: string, name: string}[] = [];
     for (const file of sorted) {
-      if (!file.type.startsWith("image/")) continue;
-      const base64 = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onload = (event) => resolve(event.target?.result as string);
-        reader.readAsDataURL(file);
-      });
-      newPages.push({ url: base64, name: file.name });
+      if (file.type === "application/zip" || file.type === "application/x-zip-compressed" || file.name.toLowerCase().endsWith('.zip') || file.name.toLowerCase().endsWith('.cbz')) {
+        try {
+          const zip = new JSZip();
+          const loadedZip = await zip.loadAsync(file);
+          
+          const zipFiles = Object.values(loadedZip.files).filter(f => !f.dir && f.name.match(/\.(jpg|jpeg|png|webp|gif)$/i));
+          
+          zipFiles.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+          
+          for (const zipFile of zipFiles) {
+            const base64 = await zipFile.async("base64");
+            const ext = zipFile.name.split('.').pop()?.toLowerCase();
+            const mimeType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : ext === 'gif' ? 'image/gif' : 'image/jpeg';
+            newPages.push({ url: `data:${mimeType};base64,${base64}`, name: zipFile.name });
+          }
+        } catch (e) {
+          console.error("Failed to extract zip/cbz", e);
+        }
+      } else if (file.type === "application/pdf" || file.name.toLowerCase().endsWith('.pdf')) {
+        try {
+          const pdfjsLib = await import('pdfjs-dist');
+          if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+          }
+          const arrayBuffer = await file.arrayBuffer();
+          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+          const numPages = pdf.numPages;
+          
+          for (let i = 1; i <= numPages; i++) {
+            const page = await pdf.getPage(i);
+            const viewport = page.getViewport({ scale: 2.0 }); // scale for better quality
+            const canvas = document.createElement("canvas");
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) continue;
+            
+            await page.render({ canvasContext: ctx, viewport } as any).promise;
+            const base64 = canvas.toDataURL("image/jpeg", 0.95);
+            newPages.push({ url: base64, name: `${file.name.replace('.pdf', '')}_page${i}.jpg` });
+          }
+        } catch (e) {
+          console.error("Failed to parse PDF", e);
+        }
+      } else if (file.type.startsWith("image/")) {
+        const base64 = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = (event) => resolve(event.target?.result as string);
+          reader.readAsDataURL(file);
+        });
+        newPages.push({ url: base64, name: file.name });
+      }
     }
     
     if (newPages.length > 0) {
@@ -609,6 +690,11 @@ export default function WorkspacePage() {
                 />
               </div>
             </div>
+
+            {/* Hidden container for offscreen rendering */}
+            <div id="offscreen-container" className="fixed top-0 left-0 w-full max-w-4xl opacity-0 pointer-events-none -z-50" style={{ visibility: 'hidden' }}>
+              <img id="offscreen-image" alt="offscreen" className="max-w-full h-auto" crossOrigin="anonymous" />
+            </div>
             
             {isDragging && (
               <div className="fixed inset-0 z-50 bg-background/80 flex items-center justify-center">
@@ -623,11 +709,11 @@ export default function WorkspacePage() {
             <div className={`w-full aspect-video rounded-xl border border-dashed flex flex-col items-center justify-center transition-colors duration-200 ${isDragging ? 'border-primary bg-primary/5' : 'border-surface-hover hover:border-muted'}`}>
               <Upload className={`w-8 h-8 mb-4 ${isDragging ? 'text-primary' : 'text-muted'}`} />
               <p className="text-foreground text-lg mb-1 font-medium">Drag & Drop manga pages</p>
-              <p className="text-muted text-sm mb-6">Support for PNG, JPG, WebP</p>
+              <p className="text-muted text-sm mb-6">Support for Images, ZIP, CBZ, and PDF</p>
               
               <label className="bg-surface hover:bg-surface-hover text-foreground px-6 py-2 rounded-md text-sm font-medium cursor-pointer transition-colors duration-150 border border-surface-hover">
                 Browse Files
-                <input type="file" multiple accept="image/*" className="hidden" onChange={handleImageUpload} />
+                <input type="file" multiple accept="image/*,.zip,.cbz,.pdf" className="hidden" onChange={handleImageUpload} />
               </label>
             </div>
           </div>
@@ -738,7 +824,7 @@ export default function WorkspacePage() {
             <label className="flex-shrink-0 flex flex-col items-center justify-center w-14 h-16 rounded-md border border-dashed border-surface-hover hover:border-muted text-muted hover:text-foreground cursor-pointer transition-colors duration-150" title="Add more pages">
               <Upload className="w-4 h-4 mb-0.5" />
               <span className="text-[10px]">Add</span>
-              <input type="file" multiple accept="image/*" className="hidden" onChange={handleImageUpload} />
+              <input type="file" multiple accept="image/*,.zip,.cbz,.pdf" className="hidden" onChange={handleImageUpload} />
             </label>
 
             {/* Clear All button */}

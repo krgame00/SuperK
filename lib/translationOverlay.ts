@@ -1,10 +1,15 @@
 
 import { undoManager } from './undoManager';
 
-export const downloadTranslatedImage = (viewMode: "single" | "scroll", currentPage: number, defaultFilename = "translated.png", returnDataUrl = false) => {
-  const container = viewMode === "scroll"
-    ? document.querySelector(`#spage-${currentPage}`)
-    : document.getElementById("pageContainer");
+export const downloadTranslatedImage = (viewMode: "single" | "scroll" | "offscreen", currentPage: number, defaultFilename = "translated.png", returnDataUrl = false) => {
+  let container;
+  if (viewMode === "offscreen") {
+    container = document.getElementById("offscreen-container");
+  } else if (viewMode === "scroll") {
+    container = document.querySelector(`#spage-${currentPage}`);
+  } else {
+    container = document.getElementById("pageContainer");
+  }
   if (!container) return null;
 
   const img = container.querySelector("img");
@@ -39,7 +44,7 @@ export const downloadTranslatedImage = (viewMode: "single" | "scroll", currentPa
     }
   });
 
-  const dataUrl = exportCanvas.toDataURL("image/png");
+  const dataUrl = exportCanvas.toDataURL("image/jpeg", 0.9);
   if (returnDataUrl) return dataUrl;
 
   const link = document.createElement("a");
@@ -51,15 +56,20 @@ export const downloadTranslatedImage = (viewMode: "single" | "scroll", currentPa
 
 export const applyTranslationOverlay = async (
   bubbles: any[],
-  viewMode: "single" | "scroll",
+  viewMode: "single" | "scroll" | "offscreen",
   currentPage: number,
   setTranslationResult: (msg: string | null) => void,
   onComplete?: (dataUrl: string) => void,
   textStyleRef?: React.MutableRefObject<any>
 ) => {
-  const container = viewMode === "scroll"
-    ? document.querySelector(`#spage-${currentPage}`)
-    : document.getElementById("pageContainer");
+  let container;
+  if (viewMode === "offscreen") {
+    container = document.getElementById("offscreen-container");
+  } else if (viewMode === "scroll") {
+    container = document.querySelector(`#spage-${currentPage}`);
+  } else {
+    container = document.getElementById("pageContainer");
+  }
   
   if (!container) return;
 
@@ -120,7 +130,8 @@ export const applyTranslationOverlay = async (
           rawH = Math.abs(ymax - ymin) / 10;
           
           // Detect hallucinated full-screen boxes or zero-size boxes
-          if ((rawW >= 95 && rawH >= 95) || (rawW === 0 && rawH === 0)) {
+          // A box covering >= 45% of both width and height is extremely rare for a manga bubble and is usually a hallucination.
+          if ((rawW >= 45 && rawH >= 45) || (rawW === 0 && rawH === 0)) {
             isInvalidBox = true;
           }
         } else {
@@ -216,15 +227,22 @@ export const applyTranslationOverlay = async (
 
     setTranslationResult("✨ วางข้อความแปลเสร็จเรียบร้อย!");
 
+    let fallbackY2 = 10;
     real.forEach(b => {
       let rawX = 50, rawY = 50, rawW = 22, rawH = 10;
       
+      let isInvalidBox = b.isInvalidBox === true;
+
       if (Array.isArray(b.box) && b.box.length === 4) {
         const [ymin, xmin, ymax, xmax] = b.box;
         rawX = (xmin + xmax) / 2 / 10;
         rawY = (ymin + ymax) / 2 / 10;
         rawW = Math.abs(xmax - xmin) / 10;
         rawH = Math.abs(ymax - ymin) / 10;
+        
+        if ((rawW >= 45 && rawH >= 45) || (rawW === 0 && rawH === 0)) {
+          isInvalidBox = true;
+        }
       } else {
         rawX = typeof b.x === "number" ? b.x : 50;
         rawY = typeof b.y === "number" ? b.y : 50;
@@ -236,6 +254,15 @@ export const applyTranslationOverlay = async (
           rawW = rawW / 10;
           rawH = rawH / 10;
         }
+      }
+      
+      if (isInvalidBox) {
+        rawX = 50;
+        rawY = fallbackY2;
+        rawW = 30;
+        rawH = 15;
+        fallbackY2 = (fallbackY2 + 15 > 90) ? 10 : fallbackY2 + 15;
+        b.isInvalidBox = true;
       }
 
       const tx = Math.max(0, Math.min(rawX, 100));
