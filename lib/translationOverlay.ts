@@ -244,6 +244,9 @@ export const applyTranslationOverlay = async (
           isInvalidBox = true;
         }
       } else {
+        if (typeof b.x !== "number" && typeof b.y !== "number") {
+          isInvalidBox = true;
+        }
         rawX = typeof b.x === "number" ? b.x : 50;
         rawY = typeof b.y === "number" ? b.y : 50;
         rawW = typeof b.w === "number" ? b.w : 22;
@@ -270,8 +273,8 @@ export const applyTranslationOverlay = async (
       let tw = rawW;
       let th = rawH;
 
-      tw = Math.max(12, Math.min(tw, 60)); 
-      th = Math.max(6, Math.min(th, 45));  
+      tw = Math.max(3, Math.min(tw, 85)); 
+      th = Math.max(2, Math.min(th, 85));  
 
       const cx = (tx / 100) * iw;
       const cy = (ty / 100) * ih;

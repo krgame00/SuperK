@@ -400,10 +400,10 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
     const batchStartTime = Date.now();
     
     const interruptibleDelay = async (ms: number) => {
-      const steps = ms / 100;
-      for (let i = 0; i < steps; i++) {
+      const endTime = Date.now() + ms;
+      while (Date.now() < endTime) {
         if (cancelTranslateAllRef.current) return;
-        await new Promise(r => setTimeout(r, 100));
+        await new Promise(r => setTimeout(r, 1000));
       }
     };
     
@@ -433,20 +433,13 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
           console.warn(`Error on page ${i + 1}, retry ${retries + 1}/3:`, errMsg);
           
           if (errMsg.includes("429") || errMsg.includes("โควต้าเต็ม") || errMsg.includes("Failed")) {
-            setTranslateAllProgress({ current: i + 1, total: pages.length, status: "waiting", message: `รอโควต้า API (30 วิ)... หน้า ${i + 1}/${pages.length}`, startTime: batchStartTime });
-            setTranslationResult(`API Limit Reached! รอ 30 วิ... (รอบ ${retries + 1}/3)`);
-            await interruptibleDelay(30000);
+            setTranslateAllProgress({ current: i + 1, total: pages.length, status: "waiting", message: `รอโควต้า API (60 วิ)... หน้า ${i + 1}/${pages.length}`, startTime: batchStartTime });
+            setTranslationResult(`API Limit Reached! รอ 60 วิ... (รอบ ${retries + 1}/3)`);
+            await interruptibleDelay(60000);
           } else {
             // Other error (Censorship, parse error, no text)
-            // Smart Retry: auto fallback to 18+ mode if not already using it
-            if (!nsfwBypassMode && !forceNsfw) {
-              forceNsfw = true;
-              setTranslationResult(`แปลไม่ผ่าน ลองเปิดโหมด 18+ อัตโนมัติ...`);
-              await interruptibleDelay(2000);
-            } else {
-              setTranslationResult(`แปลไม่ผ่าน รอ 5 วิเพื่อลองใหม่... (รอบ ${retries + 1}/3)`);
-              await interruptibleDelay(5000);
-            }
+            setTranslationResult(`แปลไม่ผ่าน รอ 5 วิเพื่อลองใหม่... (รอบ ${retries + 1}/3)`);
+            await interruptibleDelay(5000);
           }
           retries++;
         }
@@ -454,8 +447,21 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
       
       if (!success) {
         console.warn(`Skipping page ${i + 1} after 3 failed attempts.`);
+        if (retries >= 3 && translatedImageCacheRef.current.size === 0 && i > 0) {
+           // We could check if it's a persistent quota error, but if a page fails 3 times,
+           // maybe we shouldn't abort entirely unless we track the error.
+        }
       }
       
+      if (!success) {
+        console.warn(`Translation failed for page ${i + 1} after 3 attempts.`);
+        const lastMsg = translationResult || "";
+        if (lastMsg.includes("API Limit Reached") || lastMsg.includes("โควต้า")) {
+           setTranslationResult(`❌ โควต้า API เต็ม! กรุณารอรีเซ็ต (หากเป็นโควต้ารายวันจะรีเซ็ตตอน 14:00 น.)`);
+           break; // Abort Translate All
+        }
+      }
+
       if (success && i < pages.length - 1 && !cancelTranslateAllRef.current) {
         setTranslateAllProgress({ current: i + 1, total: pages.length, status: "cooldown", message: `พักโหลด 3 วิ... หน้า ${i + 1}/${pages.length}`, startTime: batchStartTime });
         await interruptibleDelay(3000);

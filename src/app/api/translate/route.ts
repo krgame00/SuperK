@@ -26,14 +26,13 @@ export async function POST(req: Request) {
       `- Arrange sentences beautifully according to native Thai idioms and phrasing (เรียบเรียงประโยคให้สละสลวยเหมือนคนไทยพูดกันในชีวิตจริง ไม่แปลตรงตัว).\n`+
       `- Do NOT use line breaks (\\n) in the translated text. Keep the text of each bubble on a single continuous line (ห้ามเว้นบรรทัดมั่ว ให้ต่อเป็นบรรทัดเดียวกัน).\n`+
       `- For Thai: Adapt pronouns (แก, ฉัน, นาย, ข้า, เอ็ง) and endings (ครับ, ค่ะ, วะ, เว้ย, สิ, นะ) based on character relationships and mood.\n`+
-      `- Translate Sound Effects (SFX) and wrap them in asterisks, e.g., *BOOM* or *ตู้ม*.\n`+
+      `- IGNORE all Sound Effects (SFX). Do NOT translate them. Only translate spoken dialogues, thoughts, and narration.\n`+
       `- DO NOT hallucinate text on textures, leaves, clothing, shading, or backgrounds. If an area does not clearly contain readable text, ignore it completely.\n`+
-      `- Do not over-translate or repeatedly translate the same sound effect in the same area. Group repetitive sound effects into a single bubble.\n`+
       `- Read order is usually Right-to-Left, Top-to-Bottom.\n`+
       `Output ONLY valid JSON, no markdown, no explanation.\n`+
       `Format: {"bubbles":[{"original_text": "text found in image", "t":"translated text in Thai","box":[ymin, xmin, ymax, xmax]}]}\n`+
       `box: bounding box coordinates in 0-1000 scale (ymin, xmin = top-left, ymax, xmax = bottom-right).\n`+
-      `IMPORTANT: The JSON key is 'bubbles', but you MUST include ALL text blocks (including floating text, stylized red text, background text, and SFX). Do NOT skip text.\n`+
+      `IMPORTANT: The JSON key is 'bubbles', but you MUST include ALL dialogue blocks (including floating text, stylized red text, background text). Do NOT skip spoken text or thoughts.\n`+
       `CRITICAL: Force extraction. You must first transcribe the text into 'original_text', then translate it into 't'. I will check if you missed the large red text on the left.\n`+
       `ALL translations in 't' MUST be in ${targetLang || 'Thai'}.\n`+
       `If no text found: {"bubbles":[]}`;
