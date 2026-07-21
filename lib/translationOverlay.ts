@@ -15,8 +15,8 @@ export const downloadTranslatedImage = (viewMode: "single" | "scroll" | "offscre
   const img = container.querySelector("img");
   if (!img) return null;
 
-  const iw = img.offsetWidth || img.naturalWidth;
-  const ih = img.offsetHeight || img.naturalHeight;
+  const iw = img.naturalWidth || img.offsetWidth;
+  const ih = img.naturalHeight || img.offsetHeight;
 
   const exportCanvas = document.createElement("canvas");
   exportCanvas.width = iw;
@@ -34,13 +34,26 @@ export const downloadTranslatedImage = (viewMode: "single" | "scroll" | "offscre
 
   const wrappers = container.querySelectorAll(".tl-canvas > div");
   wrappers.forEach((wrapper: any) => {
-    const left = parseFloat(wrapper.style.left) || 0;
-    const top = parseFloat(wrapper.style.top) || 0;
+    const leftPercent = parseFloat(wrapper.style.left) || 0;
+    const topPercent = parseFloat(wrapper.style.top) || 0;
+    const widthPercent = parseFloat(wrapper.style.width) || 0;
+    const heightPercent = parseFloat(wrapper.style.height) || 0;
+    
     const bCanvas = wrapper.querySelector("canvas");
     if (bCanvas) {
-      const pLeft = parseFloat(bCanvas.style.left) || 0;
-      const pTop = parseFloat(bCanvas.style.top) || 0;
-      ctx.drawImage(bCanvas, left + pLeft, top + pTop);
+      const pLeftPercent = parseFloat(bCanvas.style.left) || 0;
+      const pTopPercent = parseFloat(bCanvas.style.top) || 0;
+      
+      const absLeft = (leftPercent / 100) * iw;
+      const absTop = (topPercent / 100) * ih;
+      
+      const wrapperAbsW = (widthPercent / 100) * iw;
+      const wrapperAbsH = (heightPercent / 100) * ih;
+      
+      const bCanvasAbsLeft = absLeft + (pLeftPercent / 100) * wrapperAbsW;
+      const bCanvasAbsTop = absTop + (pTopPercent / 100) * wrapperAbsH;
+      
+      ctx.drawImage(bCanvas, bCanvasAbsLeft, bCanvasAbsTop, bCanvas.width, bCanvas.height);
     }
   });
 
@@ -85,8 +98,8 @@ export const applyTranslationOverlay = async (
 
   const paint = async () => {
     await document.fonts.load('bold 16px Itim');
-    const iw = img.offsetWidth || img.naturalWidth;
-    const ih = img.offsetHeight || img.naturalHeight;
+    const iw = img.naturalWidth || img.offsetWidth;
+    const ih = img.naturalHeight || img.offsetHeight;
     if (!iw || !ih) { setTimeout(paint, 100); return; }
 
     const tlContainer = document.createElement("div");
@@ -366,27 +379,28 @@ export const applyTranslationOverlay = async (
            currentBh = requiredH; 
         }
 
-        wrapper.style.left = `${currentBx}px`;
-        wrapper.style.top = `${currentBy}px`;
-        wrapper.style.width = `${currentBw}px`;
-        wrapper.style.height = `${currentBh}px`;
+        wrapper.style.left = `${(currentBx / iw) * 100}%`;
+        wrapper.style.top = `${(currentBy / ih) * 100}%`;
+        wrapper.style.width = `${(currentBw / iw) * 100}%`;
+        wrapper.style.height = `${(currentBh / ih) * 100}%`;
 
-        const pad = 6;
-        const r = 8;
-        const bubbleW = currentBw + pad * 2 + 6;
-        const bubbleH = currentBh + pad * 2 + 6;
+        // Scale up pad if image is huge so bubble edges look right (baseline 12px for a 800px image width)
+        const pad = Math.max(6, Math.round((iw / 800) * 8));
+        const r = Math.max(8, Math.round((iw / 800) * 10));
+        const bubbleW = currentBw + pad * 2 + r;
+        const bubbleH = currentBh + pad * 2 + r;
         
         bCanvas.width = bubbleW;
         bCanvas.height = bubbleH;
-        bCanvas.style.left = `-${pad + 3}px`;
-        bCanvas.style.top = `-${pad + 3}px`;
-        bCanvas.style.width = `${bubbleW}px`;
-        bCanvas.style.height = `${bubbleH}px`;
+        bCanvas.style.left = `${-((pad + r/2) / currentBw) * 100}%`;
+        bCanvas.style.top = `${-((pad + r/2) / currentBh) * 100}%`;
+        bCanvas.style.width = `${(bubbleW / currentBw) * 100}%`;
+        bCanvas.style.height = `${(bubbleH / currentBh) * 100}%`;
 
         const ctx = bCanvas.getContext("2d");
         if (!ctx) return;
         ctx.clearRect(0, 0, bubbleW, bubbleH);
-        ctx.translate(pad + 3, pad + 3);
+        ctx.translate(pad + r/2, pad + r/2);
 
         const fgColor = ts.textColor;
         const outlineColor = ts.textOutline;

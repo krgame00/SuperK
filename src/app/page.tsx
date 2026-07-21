@@ -5,7 +5,7 @@ import { useTranslation } from "@/hooks/useTranslation";
 import { jsPDF } from "jspdf";
 import { Toaster } from "react-hot-toast";
 import { downloadTranslatedImage, applyTranslationOverlay } from "@/lib/translationOverlay";
-import { Upload, ChevronLeft, ChevronRight, Wand2, Download, Archive, Flame, Eye, EyeOff, Undo2, Redo2, Trash2 } from "lucide-react";
+import { Upload, ChevronLeft, ChevronRight, Wand2, Download, Archive, Flame, Eye, EyeOff, Undo2, Redo2, Trash2, GalleryVertical, RectangleHorizontal, Menu, X, ChevronUp, ChevronDown, Maximize2, Minimize2 } from "lucide-react";
 import { undoManager } from "@/lib/undoManager";
 import JSZip from "jszip";
 
@@ -14,6 +14,35 @@ export default function WorkspacePage() {
   const [currentPage, setCurrentPage] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const [showOriginal, setShowOriginal] = useState(false);
+  const [viewLayout, setViewLayout] = useState<'single' | 'scroll'>('single');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isThumbnailsCollapsed, setIsThumbnailsCollapsed] = useState(false);
+
+  // Touch Swipe Gesture State for Mobile Reader
+  const touchStartXRef = useRef<number | null>(null);
+  const touchStartYRef = useRef<number | null>(null);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartXRef.current = e.touches[0].clientX;
+    touchStartYRef.current = e.touches[0].clientY;
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartXRef.current === null || touchStartYRef.current === null) return;
+    const diffX = touchStartXRef.current - e.changedTouches[0].clientX;
+    const diffY = touchStartYRef.current - e.changedTouches[0].clientY;
+
+    if (Math.abs(diffX) > 40 && Math.abs(diffX) > Math.abs(diffY) * 1.2) {
+      if (diffX > 0 && currentPage < pages.length - 1) {
+        setCurrentPage(prev => prev + 1);
+      } else if (diffX < 0 && currentPage > 0) {
+        setCurrentPage(prev => prev - 1);
+      }
+    }
+    touchStartXRef.current = null;
+    touchStartYRef.current = null;
+  };
+
   const thumbnailContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -386,33 +415,28 @@ export default function WorkspacePage() {
       )}
 
       {/* Header Panel */}
-      <header className="w-full bg-background/80 backdrop-blur-md border-b border-surface-hover h-16 flex justify-between items-center px-6 z-50 fixed top-0">
-        <div className="flex items-center gap-3">
+      <header className="w-full bg-background/80 backdrop-blur-md border-b border-surface-hover h-16 flex justify-between items-center px-2 sm:px-6 z-50 fixed top-0">
+        <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0 mr-2">
           <h1 className="text-lg font-medium tracking-tight text-foreground">
             Super<span className="text-primary">K</span>
           </h1>
           <span className="text-muted text-sm hidden sm:inline-block pl-3 border-l border-surface-hover">Manga Translator</span>
         </div>
         
-        <div className="flex items-center gap-1.5 sm:gap-3">
-          <div className="relative flex-shrink-0">
-            <button
-              onClick={() => setIsSettingsOpen(!isSettingsOpen)}
-              className="px-2 sm:px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150 text-muted hover:text-foreground hover:bg-surface"
-              title="Settings"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-            </button>
-
-            {/* Simple Settings Modal */}
-            {isSettingsOpen && (
-              <div id="settings-modal" className="fixed inset-x-4 top-16 sm:absolute sm:inset-auto sm:right-0 sm:top-12 sm:mt-2 w-auto sm:w-80 max-w-sm bg-surface/95 backdrop-blur-xl border border-surface-hover rounded-xl shadow-2xl p-4 z-[100] max-h-[80vh] overflow-y-auto mx-auto">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="font-medium text-foreground">Settings</h3>
-                  <button onClick={() => setIsSettingsOpen(false)} className="text-muted hover:text-foreground">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                  </button>
-                </div>
+      {/* Simple Settings Modal with Backdrop */}
+      {isSettingsOpen && (
+        <>
+          <div 
+            className="fixed inset-0 bg-black/60 backdrop-blur-xs z-[90] animate-in fade-in duration-200" 
+            onClick={() => setIsSettingsOpen(false)} 
+          />
+          <div id="settings-modal" className="fixed inset-x-4 top-16 sm:absolute sm:inset-auto sm:right-6 sm:top-14 w-auto sm:w-80 max-w-sm bg-surface/95 backdrop-blur-xl border border-surface-hover rounded-xl shadow-2xl p-4 z-[100] max-h-[85vh] overflow-y-auto mx-auto animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-medium text-foreground">Settings</h3>
+              <button onClick={() => setIsSettingsOpen(false)} className="text-muted hover:text-foreground p-1 rounded-md hover:bg-surface">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+              </button>
+            </div>
               
               <div className="space-y-4">
                 <div>
@@ -517,30 +541,49 @@ export default function WorkspacePage() {
 
               </div>
             </div>
-            )}
-          </div>
+          </>
+        )}
+            
+        {/* Desktop Menu */}
+        <div className="hidden xl:flex items-center gap-2 xl:gap-3">
+          <button
+            onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+            className="flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150 text-muted hover:text-foreground hover:bg-surface"
+            title="Settings"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
 
           <button
             onClick={() => setNsfwBypassMode(!nsfwBypassMode)}
-            className={`flex-shrink-0 px-2 sm:px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 sm:gap-2 transition-colors duration-150 ${nsfwBypassMode ? 'text-primary bg-primary/10' : 'text-muted hover:text-foreground hover:bg-surface'}`}
+            className={`flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150 ${nsfwBypassMode ? 'text-primary bg-primary/10' : 'text-muted hover:text-foreground hover:bg-surface'}`}
             title="Slice image to bypass AI censorship"
           >
             <Flame className="w-4 h-4" />
-            <span className="hidden sm:inline">18+ Mode</span>
+            <span>18+ Mode</span>
           </button>
           
           <button
             onClick={() => setShowOriginal(!showOriginal)}
             disabled={activeBubbles.length === 0}
-            className={`flex-shrink-0 px-2 sm:px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 sm:gap-2 transition-colors duration-150 border border-transparent ${showOriginal ? 'text-primary bg-primary/10 border-primary/20' : 'text-muted hover:text-foreground hover:bg-surface'}`}
+            className={`flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150 border border-transparent ${showOriginal ? 'text-primary bg-primary/10 border-primary/20' : 'text-muted hover:text-foreground hover:bg-surface'}`}
             title="Toggle original image"
           >
             {showOriginal ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            <span className="hidden lg:inline">{showOriginal ? 'Show Translation' : 'View Original'}</span>
+            <span>{showOriginal ? 'Show Translation' : 'View Original'}</span>
           </button>
 
-          {/* Undo/Redo Buttons */}
-          <div className="flex-shrink-0 flex items-center gap-1 border-l border-surface-hover pl-1.5 sm:pl-3 ml-0 sm:ml-1">
+          <button
+            onClick={() => setViewLayout(prev => prev === 'single' ? 'scroll' : 'single')}
+            disabled={pages.length === 0}
+            className={`flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150 border border-transparent ${viewLayout === 'scroll' ? 'text-primary bg-primary/10 border-primary/20' : 'text-muted hover:text-foreground hover:bg-surface'}`}
+            title="Toggle Read Mode"
+          >
+            {viewLayout === 'scroll' ? <GalleryVertical className="w-4 h-4" /> : <RectangleHorizontal className="w-4 h-4" />}
+            <span>{viewLayout === 'scroll' ? 'Scroll Mode' : 'Single Mode'}</span>
+          </button>
+
+          <div className="flex-shrink-0 flex items-center gap-1 border-l border-surface-hover pl-3 ml-1">
             <button
               onClick={() => {
                 const label = undoManager.undo();
@@ -568,37 +611,37 @@ export default function WorkspacePage() {
           <button 
             onClick={() => handleTranslate()}
             disabled={isTranslating || pages.length === 0}
-            className="flex-shrink-0 bg-primary text-primary-content hover:bg-primary-hover disabled:opacity-50 disabled:hover:bg-primary px-3 sm:px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 sm:gap-2 transition-colors duration-150"
+            className="flex-shrink-0 bg-primary text-primary-content hover:bg-primary-hover disabled:opacity-50 disabled:hover:bg-primary px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150"
           >
             {isTranslating ? (
-              <span className="flex items-center gap-1.5 sm:gap-2">
+              <span className="flex items-center gap-2">
                 <span className="animate-spin h-3 w-3 border-2 border-primary-content border-t-transparent rounded-full"></span>
-                <span className="hidden md:inline">Translating</span>
+                <span>Translating</span>
               </span>
             ) : (
-              <span className="flex items-center gap-1.5 sm:gap-2">
+              <span className="flex items-center gap-2">
                 <Wand2 className="w-4 h-4" />
-                <span className="hidden md:inline">Translate</span>
+                <span>Translate</span>
               </span>
             )}
           </button>
 
           {isTranslatingAll ? (
-            <div className="flex-shrink-0 flex items-center gap-2 sm:gap-3">
+            <div className="flex-shrink-0 flex items-center gap-3">
               <div className="flex items-center gap-2 text-sm text-primary font-medium">
                 <span className="animate-spin h-3 w-3 border-2 border-primary border-t-transparent rounded-full"></span>
-                <span className="hidden sm:inline">{translateAllProgress?.message || 'กำลังเตรียม...'}</span>
+                <span>{translateAllProgress?.message || 'กำลังเตรียม...'}</span>
                 {translateAllProgress && translateAllProgress.current > 1 && (() => {
                   const elapsed = (Date.now() - translateAllProgress.startTime) / 1000;
                   const avgPerPage = elapsed / translateAllProgress.current;
                   const remaining = avgPerPage * (translateAllProgress.total - translateAllProgress.current);
-                  if (remaining < 60) return <span className="text-muted hidden md:inline">· ~{Math.ceil(remaining)} วิ</span>;
-                  return <span className="text-muted hidden md:inline">· ~{Math.ceil(remaining / 60)} นาที</span>;
+                  if (remaining < 60) return <span className="text-muted">· ~{Math.ceil(remaining)} วิ</span>;
+                  return <span className="text-muted">· ~{Math.ceil(remaining / 60)} นาที</span>;
                 })()}
               </div>
               <button 
                 onClick={cancelTranslateAll} 
-                className="bg-red-500/20 text-red-500 hover:bg-red-500/30 px-3 sm:px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-all"
+                className="bg-red-500/20 text-red-500 hover:bg-red-500/30 px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-all"
               >
                 Stop
               </button>
@@ -607,10 +650,10 @@ export default function WorkspacePage() {
             <button 
               onClick={() => handleTranslateAll()}
               disabled={isTranslating || pages.length === 0}
-              className="flex-shrink-0 bg-primary/20 text-primary hover:bg-primary/30 disabled:opacity-50 px-3 sm:px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 sm:gap-2 transition-colors duration-150"
+              className="flex-shrink-0 bg-primary/20 text-primary hover:bg-primary/30 disabled:opacity-50 px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150"
             >
               <Wand2 className="w-4 h-4" />
-              <span className="hidden md:inline">Translate All</span>
+              <span>Translate All</span>
             </button>
           )}
 
@@ -624,7 +667,7 @@ export default function WorkspacePage() {
                 downloadTranslatedImage("single", currentPage, filename);
               }}
               disabled={activeBubbles.length === 0 || showOriginal}
-              className="flex-shrink-0 text-foreground disabled:opacity-50 px-2 sm:px-3 py-1.5 text-sm font-medium flex items-center gap-2 border-r border-surface-hover"
+              className="flex-shrink-0 text-foreground disabled:opacity-50 px-3 py-1.5 text-sm font-medium flex items-center gap-2 border-r border-surface-hover"
               title="Download current page"
             >
               <Download className="w-4 h-4" />
@@ -632,42 +675,192 @@ export default function WorkspacePage() {
             <button
               onClick={() => handleDownloadAll("zip")}
               disabled={isZipping || pages.length === 0}
-              className="flex-shrink-0 text-foreground disabled:opacity-50 px-2 sm:px-3 py-1.5 text-sm font-medium flex items-center gap-2 border-r border-surface-hover"
+              className="flex-shrink-0 text-foreground disabled:opacity-50 px-3 py-1.5 text-sm font-medium flex items-center gap-2 border-r border-surface-hover"
               title="Download all as ZIP"
             >
-              {isZipping ? (
-                <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span>
-              ) : (
-                <span className="text-[10px] sm:text-xs font-bold">ZIP</span>
-              )}
+              {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <span className="text-xs font-bold">ZIP</span>}
             </button>
             <button
               onClick={() => handleDownloadAll("cbz")}
               disabled={isZipping || pages.length === 0}
-              className="flex-shrink-0 text-foreground disabled:opacity-50 px-2 sm:px-3 py-1.5 text-sm font-medium flex items-center gap-2 border-r border-surface-hover"
+              className="flex-shrink-0 text-foreground disabled:opacity-50 px-3 py-1.5 text-sm font-medium flex items-center gap-2 border-r border-surface-hover"
               title="Download all as CBZ (Comic format)"
             >
-              {isZipping ? (
-                <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span>
-              ) : (
-                <span className="text-[10px] sm:text-xs font-bold">CBZ</span>
-              )}
+              {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <span className="text-xs font-bold">CBZ</span>}
             </button>
             <button
               onClick={() => handleDownloadAll("pdf")}
               disabled={isZipping || pages.length === 0}
-              className="flex-shrink-0 text-foreground disabled:opacity-50 px-2 sm:px-3 py-1.5 text-sm font-medium flex items-center gap-2"
+              className="flex-shrink-0 text-foreground disabled:opacity-50 px-3 py-1.5 text-sm font-medium flex items-center gap-2"
               title="Download all as PDF"
             >
-              {isZipping ? (
-                <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span>
-              ) : (
-                <span className="text-[10px] sm:text-xs font-bold">PDF</span>
-              )}
+              {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <span className="text-xs font-bold">PDF</span>}
             </button>
           </div>
         </div>
-      </header>
+
+        {/* Mobile Header Controls */}
+        <div className="flex xl:hidden items-center gap-2">
+          <button 
+            onClick={() => handleTranslate()}
+            disabled={isTranslating || pages.length === 0}
+            className="bg-primary text-primary-content hover:bg-primary-hover disabled:opacity-50 disabled:hover:bg-primary px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150"
+          >
+            {isTranslating ? (
+              <span className="flex items-center gap-2">
+                <span className="animate-spin h-3 w-3 border-2 border-primary-content border-t-transparent rounded-full"></span>
+                <span>Translating</span>
+              </span>
+            ) : (
+              <span className="flex items-center gap-2">
+                <Wand2 className="w-4 h-4" />
+                <span>Translate</span>
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            className={`p-2 rounded-md transition-colors ${isMobileMenuOpen ? 'bg-surface text-foreground' : 'text-muted hover:text-foreground hover:bg-surface'}`}
+          >
+            {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+          </button>
+        </div>
+
+        {/* Mobile Dropdown Menu with Backdrop */}
+        {isMobileMenuOpen && (
+          <>
+            <div 
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 xl:hidden animate-in fade-in duration-200" 
+              onClick={() => setIsMobileMenuOpen(false)} 
+            />
+            <div className="absolute top-[60px] right-3 left-3 sm:right-6 sm:w-80 sm:left-auto bg-background border border-surface shadow-2xl rounded-xl p-3.5 z-50 xl:hidden flex flex-col gap-2.5 max-h-[calc(100vh-80px)] overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-200">
+            {isTranslatingAll ? (
+              <div className="flex flex-col gap-2 p-2 bg-surface/50 rounded-lg mb-2">
+                <div className="flex items-center gap-2 text-sm text-primary font-medium">
+                  <span className="animate-spin h-3 w-3 border-2 border-primary border-t-transparent rounded-full"></span>
+                  <span>{translateAllProgress?.message || 'กำลังเตรียม...'}</span>
+                </div>
+                <button 
+                  onClick={cancelTranslateAll} 
+                  className="w-full bg-red-500/20 text-red-500 hover:bg-red-500/30 px-4 py-2 rounded-md text-sm font-medium flex justify-center items-center gap-2 transition-all"
+                >
+                  Stop
+                </button>
+              </div>
+            ) : (
+              <button 
+                onClick={() => { handleTranslateAll(); setIsMobileMenuOpen(false); }}
+                disabled={isTranslating || pages.length === 0}
+                className="w-full bg-primary/20 text-primary hover:bg-primary/30 disabled:opacity-50 px-4 py-2.5 rounded-md text-sm font-medium flex items-center justify-center gap-2 transition-colors duration-150 mb-2"
+              >
+                <Wand2 className="w-4 h-4" />
+                <span>Translate All</span>
+              </button>
+            )}
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => { setViewLayout(prev => prev === 'single' ? 'scroll' : 'single'); setIsMobileMenuOpen(false); }}
+                disabled={pages.length === 0}
+                className={`p-2 rounded-md text-sm font-medium flex flex-col items-center justify-center gap-1 transition-colors duration-150 ${viewLayout === 'scroll' ? 'text-primary bg-primary/10' : 'bg-surface text-foreground'}`}
+              >
+                {viewLayout === 'scroll' ? <GalleryVertical className="w-5 h-5" /> : <RectangleHorizontal className="w-5 h-5" />}
+                <span>{viewLayout === 'scroll' ? 'Scroll Mode' : 'Single Mode'}</span>
+              </button>
+
+              <button
+                onClick={() => { setShowOriginal(!showOriginal); setIsMobileMenuOpen(false); }}
+                disabled={activeBubbles.length === 0}
+                className={`p-2 rounded-md text-sm font-medium flex flex-col items-center justify-center gap-1 transition-colors duration-150 ${showOriginal ? 'text-primary bg-primary/10' : 'bg-surface text-foreground'}`}
+              >
+                {showOriginal ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                <span>{showOriginal ? 'Show Translate' : 'View Original'}</span>
+              </button>
+            </div>
+
+            <button
+              onClick={() => { setNsfwBypassMode(!nsfwBypassMode); setIsMobileMenuOpen(false); }}
+              className={`w-full p-2.5 rounded-md text-sm font-medium flex items-center gap-3 transition-colors duration-150 ${nsfwBypassMode ? 'text-primary bg-primary/10' : 'bg-surface text-foreground'}`}
+            >
+              <Flame className="w-5 h-5" />
+              <span>18+ Bypass Mode</span>
+            </button>
+
+            <button
+              onClick={() => { setIsSettingsOpen(true); setIsMobileMenuOpen(false); }}
+              className="w-full bg-surface text-foreground p-2.5 rounded-md text-sm font-medium flex items-center gap-3"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+              <span>API Settings</span>
+            </button>
+
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              <button
+                onClick={() => {
+                  const label = undoManager.undo();
+                  if (label) import('react-hot-toast').then(m => m.default(`↩️ Undo: ${label}`, { duration: 1500 }));
+                }}
+                disabled={!canUndo}
+                className="bg-surface text-foreground disabled:opacity-30 p-2 rounded-md text-sm font-medium flex justify-center items-center gap-2"
+              >
+                <Undo2 className="w-4 h-4" /> Undo
+              </button>
+              <button
+                onClick={() => {
+                  const label = undoManager.redo();
+                  if (label) import('react-hot-toast').then(m => m.default(`↪️ Redo: ${label}`, { duration: 1500 }));
+                }}
+                disabled={!canRedo}
+                className="bg-surface text-foreground disabled:opacity-30 p-2 rounded-md text-sm font-medium flex justify-center items-center gap-2"
+              >
+                <Redo2 className="w-4 h-4" /> Redo
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-2 mt-2 bg-surface/50 p-2 rounded-lg border border-surface-hover">
+              <div className="text-xs font-semibold text-muted mb-1 px-1">Download</div>
+              <button
+                onClick={() => {
+                  const originalName = pages[currentPage].name;
+                  const extension = originalName.includes('.') ? originalName.split('.').pop() : 'png';
+                  const baseName = originalName.includes('.') ? originalName.substring(0, originalName.lastIndexOf('.')) : originalName;
+                  const filename = `SuperK_Page_${String(currentPage + 1).padStart(3, '0')}_${baseName}.${extension}`;
+                  downloadTranslatedImage("single", currentPage, filename);
+                  setIsMobileMenuOpen(false);
+                }}
+                disabled={activeBubbles.length === 0 || showOriginal}
+                className="w-full bg-surface text-foreground disabled:opacity-50 p-2 rounded-md text-sm font-medium flex items-center justify-center gap-2"
+              >
+                <Download className="w-4 h-4" /> Current Page
+              </button>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  onClick={() => { handleDownloadAll("zip"); setIsMobileMenuOpen(false); }}
+                  disabled={isZipping || pages.length === 0}
+                  className="bg-surface text-foreground disabled:opacity-50 p-2 rounded-md text-sm font-bold flex justify-center items-center"
+                >
+                  {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : 'ZIP'}
+                </button>
+                <button
+                  onClick={() => { handleDownloadAll("cbz"); setIsMobileMenuOpen(false); }}
+                  disabled={isZipping || pages.length === 0}
+                  className="bg-surface text-foreground disabled:opacity-50 p-2 rounded-md text-sm font-bold flex justify-center items-center"
+                >
+                  {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : 'CBZ'}
+                </button>
+                <button
+                  onClick={() => { handleDownloadAll("pdf"); setIsMobileMenuOpen(false); }}
+                  disabled={isZipping || pages.length === 0}
+                  className="bg-surface text-foreground disabled:opacity-50 p-2 rounded-md text-sm font-bold flex justify-center items-center"
+                >
+                  {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : 'PDF'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </header>
 
       {/* Main Workspace */}
       <main className={`flex-1 w-full mt-16 flex flex-col items-center transition-opacity duration-300 ${isDragging ? 'opacity-50' : 'opacity-100'} ${pages.length > 0 ? 'mb-24 sm:mb-28' : ''}`}>
@@ -678,17 +871,80 @@ export default function WorkspacePage() {
         )}
 
         {pages.length > 0 ? (
-          <div className="w-full flex flex-col items-center flex-1 px-4 py-6">
+          <div className="w-full flex flex-col items-center flex-1 px-2 sm:px-4 py-4 sm:py-6">
             
-            <div className="relative w-full flex justify-center h-full min-h-[70vh]">
-              <div key={currentPage} id="pageContainer" className={`relative w-full max-w-4xl flex justify-center ${showOriginal ? 'show-original' : ''}`}>
-                <img 
-                  src={pages[currentPage].url} 
-                  alt={pages[currentPage].name} 
-                  title={pages[currentPage].name}
-                  className="max-w-full h-auto object-contain drop-shadow-sm"
-                />
-              </div>
+            <div className="relative w-full flex justify-center items-center flex-1 min-h-[60vh]">
+              {viewLayout === 'scroll' ? (
+                <div className="flex flex-col items-center gap-0 w-full max-w-3xl sm:max-w-4xl lg:max-w-5xl pb-32">
+                  {pages.map((p, idx) => {
+                    const isTranslated = translatedImageCacheRef.current.has(p.url);
+                    const imgSrc = (showOriginal || !isTranslated) ? p.url : translatedImageCacheRef.current.get(p.url)!;
+                    return (
+                      <div 
+                        key={idx} 
+                        className="w-full relative cursor-pointer hover:opacity-95 transition-opacity"
+                        onClick={() => {
+                          setCurrentPage(idx);
+                          setViewLayout('single');
+                        }}
+                        title="Click to edit this page"
+                      >
+                        <img 
+                          src={imgSrc} 
+                          alt={`Page ${idx + 1}`} 
+                          className="w-full h-auto object-contain block m-0 p-0"
+                        />
+                        <div className="absolute top-2 left-2 bg-black/70 text-white text-xs px-2.5 py-1 rounded-md opacity-0 hover:opacity-100 pointer-events-none transition-opacity">
+                          {idx + 1} / {pages.length}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div 
+                  onTouchStart={handleTouchStart}
+                  onTouchEnd={handleTouchEnd}
+                  className={`relative w-full max-w-full sm:max-w-3xl md:max-w-4xl lg:max-w-5xl xl:max-w-6xl flex justify-center items-center ${showOriginal ? 'show-original' : ''}`}
+                >
+                  {/* Left Arrow Floating Button */}
+                  {currentPage > 0 && (
+                    <button
+                      onClick={() => setCurrentPage(prev => prev - 1)}
+                      className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 bg-background/80 hover:bg-surface text-foreground p-2 rounded-full shadow-lg border border-surface-hover z-30 transition-all opacity-80 hover:opacity-100 hover:scale-110 active:scale-95"
+                      title="Previous Page (Left Arrow)"
+                    >
+                      <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" />
+                    </button>
+                  )}
+
+                  {/* Inner container that hugs the image tightly */}
+                  <div key={currentPage} id="pageContainer" className="relative inline-flex justify-center items-center">
+                    <img 
+                      src={pages[currentPage].url} 
+                      alt={pages[currentPage].name} 
+                      title={pages[currentPage].name}
+                      className="max-w-full max-h-[calc(100vh-160px)] sm:max-h-[calc(100vh-180px)] w-auto h-auto object-contain drop-shadow-sm select-none block"
+                    />
+                  </div>
+
+                  {/* Right Arrow Floating Button */}
+                  {currentPage < pages.length - 1 && (
+                    <button
+                      onClick={() => setCurrentPage(prev => prev + 1)}
+                      className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 bg-background/80 hover:bg-surface text-foreground p-2 rounded-full shadow-lg border border-surface-hover z-30 transition-all opacity-80 hover:opacity-100 hover:scale-110 active:scale-95"
+                      title="Next Page (Right Arrow)"
+                    >
+                      <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6" />
+                    </button>
+                  )}
+
+                  {/* Floating Page Badge */}
+                  <div className="absolute bottom-2 bg-background/80 backdrop-blur-xs text-foreground text-xs px-3 py-1 rounded-full border border-surface-hover shadow-sm pointer-events-none z-30">
+                    {currentPage + 1} / {pages.length}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Hidden container for offscreen rendering */}
@@ -722,10 +978,29 @@ export default function WorkspacePage() {
 
       {/* Bottom Thumbnail Strip */}
       {pages.length > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 bg-background/90 backdrop-blur-md border-t border-surface-hover">
+        <div className={`fixed bottom-0 left-0 right-0 z-40 bg-background/95 backdrop-blur-md border-t border-surface-hover transition-transform duration-300 ${isThumbnailsCollapsed ? 'translate-y-full' : 'translate-y-0'}`}>
+          {/* Collapse / Expand Toggle Tab */}
+          <button
+            onClick={() => setIsThumbnailsCollapsed(!isThumbnailsCollapsed)}
+            className="absolute -top-7 right-4 bg-background/95 border-t border-x border-surface-hover text-muted hover:text-foreground rounded-t-md px-2.5 py-1 text-xs flex items-center gap-1.5 shadow-md backdrop-blur-md transition-colors"
+            title={isThumbnailsCollapsed ? "Show Thumbnails" : "Hide Thumbnails"}
+          >
+            {isThumbnailsCollapsed ? (
+              <>
+                <ChevronUp className="w-3.5 h-3.5" />
+                <span>Pages ({currentPage + 1}/{pages.length})</span>
+              </>
+            ) : (
+              <>
+                <ChevronDown className="w-3.5 h-3.5" />
+                <span>Hide</span>
+              </>
+            )}
+          </button>
+
           <div 
             ref={thumbnailContainerRef}
-            className="flex items-center h-20 sm:h-24 px-3 gap-2 overflow-x-auto scrollbar-thin"
+            className="flex items-center h-16 sm:h-20 px-3 gap-2 overflow-x-auto scrollbar-thin"
           >
             {pages.map((page, i) => (
               <div key={i} className="relative group flex-shrink-0">

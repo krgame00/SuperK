@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, Itim, Prompt, Kanit, Sarabun } from "next/font/google";
 import "./globals.css";
 
@@ -30,6 +30,14 @@ const sarabunFont = Sarabun({
   variable: "--font-sarabun",
   subsets: ["thai", "latin"],
 });
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  viewportFit: "cover",
+  themeColor: "#101010",
+};
 
 export const metadata: Metadata = {
   title: "SuperK Manga Translator",
