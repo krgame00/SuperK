@@ -4,7 +4,7 @@ let globalKeyIndex = 0;
 
 export async function POST(req: Request) {
   try {
-    const { imageBase64, mimeType, targetLang, sourceLang, modelPreference, apiKey: customApiKey } = await req.json();
+    const { imageBase64, mimeType, targetLang, sourceLang, modelPreference, apiKey: customApiKey, isRetry } = await req.json();
     
     if (!imageBase64) {
       return NextResponse.json({ error: "Missing image data" }, { status: 400 });
@@ -20,8 +20,12 @@ export async function POST(req: Request) {
 
     const sourceHint = sourceLang && sourceLang !== 'auto' ? `The source language is ${sourceLang}. ` : '';
 
+    const retryDirective = isRetry 
+      ? `\nCRITICAL RETRY ATTEMPT: The previous OCR attempt detected 0 text bubbles. Re-examine the image with high precision. Pay close attention to faint, handwritten, small, stylized, red, or vertical text inside bubbles or floating text. Do NOT skip any dialogue.\n`
+      : '';
+
     const promptText = 
-      `You are an expert manga translator. ${sourceHint}Translate this manga page to ${targetLang || 'Thai'}.\n`+
+      `You are an expert manga translator. ${sourceHint}Translate this manga page to ${targetLang || 'Thai'}.${retryDirective}\n`+
       `- Use highly natural, conversational flow appropriate for comic books. Avoid rigid word-for-word translation.\n`+
       `- Arrange sentences beautifully according to native Thai idioms and phrasing (เรียบเรียงประโยคให้สละสลวยเหมือนคนไทยพูดกันในชีวิตจริง ไม่แปลตรงตัว).\n`+
       `- Do NOT use line breaks (\\n) in the translated text. Keep the text of each bubble on a single continuous line (ห้ามเว้นบรรทัดมั่ว ให้ต่อเป็นบรรทัดเดียวกัน).\n`+
@@ -77,7 +81,16 @@ export async function POST(req: Request) {
       "gemini-2.5-flash-lite"
     ];
 
-    if (modelPreference && modelPreference !== "auto") {
+    if (isRetry && (!modelPreference || modelPreference === "auto")) {
+      // On retry, try gemini-2.5-flash first as it has different OCR vision behavior
+      MODELS = [
+        "gemini-2.5-flash",
+        "gemini-3-flash",
+        "gemini-3.5-flash",
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-flash-lite"
+      ];
+    } else if (modelPreference && modelPreference !== "auto") {
       MODELS = [modelPreference];
     }
 

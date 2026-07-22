@@ -165,7 +165,7 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
     }
   };
 
-  const performTranslation = async (pageUrl: string, pageIndex: number, forceNsfwBypass: boolean = false): Promise<boolean> => {
+  const performTranslation = async (pageUrl: string, pageIndex: number, forceNsfwBypass: boolean = false, isAutoRetry: boolean = false): Promise<boolean> => {
     try {
       const resImg = await fetch(pageUrl);
       if (!resImg.ok) throw new Error(`ไม่สามารถโหลดรูปภาพได้ (HTTP ${resImg.status})`);
@@ -335,8 +335,57 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
       
       let parsed = data.text ? parseLLMJSON(data.text) : data;
       
-      if (!parsed || !Array.isArray(parsed.bubbles)) { 
-        throw new Error("ไม่พบข้อความในหน้านี้"); 
+      if (!parsed || !Array.isArray(parsed.bubbles) || parsed.bubbles.length === 0) { 
+        if (!isAutoRetry && !nsfwBypassMode && !forceNsfwBypass) {
+          console.log(`[Auto-Retry] 0 bubbles found for page ${pageIndex + 1}. Retrying with enhanced single image...`);
+          if (activePageRef.current === pageUrl) {
+            setTranslationResult("⏳ ไม่พบข้อความ! กำลังปรับความคมชัดภาพและ Auto-Retry...");
+          }
+          
+          try {
+            const imgEl = new Image();
+            imgEl.src = pageUrl;
+            await new Promise(r => { imgEl.onload = r; });
+
+            const canvas = document.createElement("canvas");
+            canvas.width = imgEl.naturalWidth;
+            canvas.height = imgEl.naturalHeight;
+            const ctx = canvas.getContext("2d")!;
+            ctx.filter = "contrast(1.35) brightness(1.05)";
+            ctx.drawImage(imgEl, 0, 0);
+            const enhancedBase64 = canvas.toDataURL("image/jpeg", 0.9).split(",")[1];
+
+            const retryRes = await fetch("/api/translate", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                imageBase64: enhancedBase64,
+                mimeType: "image/jpeg",
+                targetLang,
+                sourceLang,
+                modelPreference,
+                apiKey: userApiKey,
+                isRetry: true
+              })
+            });
+
+            const retryData = await retryRes.json();
+            if (retryRes.ok && retryData.text) {
+              const retryParsed = parseLLMJSON(retryData.text);
+              if (retryParsed && Array.isArray(retryParsed.bubbles) && retryParsed.bubbles.length > 0) {
+                parsed = retryParsed; // Success on retry!
+              } else {
+                throw new Error("ไม่พบข้อความในหน้านี้");
+              }
+            } else {
+              throw new Error("ไม่พบข้อความในหน้านี้");
+            }
+          } catch (retryErr) {
+            throw new Error("ไม่พบข้อความในหน้านี้");
+          }
+        } else {
+          throw new Error("ไม่พบข้อความในหน้านี้");
+        }
       }
 
       // Filter out hallucinated repetitive SFX

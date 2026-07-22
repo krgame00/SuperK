@@ -62,6 +62,7 @@ export default function WorkspacePage() {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [dragPosition, setDragPosition] = useState<'left' | 'right' | null>(null);
+  const [brokenPages, setBrokenPages] = useState<Set<string>>(new Set());
   
   // Settings Modal State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -201,6 +202,12 @@ export default function WorkspacePage() {
             return;
           }
           
+          // Safety timeout (4 seconds) so export never hangs indefinitely
+          const timeout = setTimeout(() => {
+            console.warn(`Offscreen render timed out for page ${index + 1}`);
+            resolve(pageUrl);
+          }, 4000);
+
           offscreenContainer.querySelectorAll(".tl-overlay,.tl-canvas").forEach((el) => el.remove());
           
           offscreenImg.onload = () => {
@@ -210,13 +217,17 @@ export default function WorkspacePage() {
               -1,
               () => {},
               (renderedUrl) => {
+                clearTimeout(timeout);
                 translatedImageCacheRef.current.set(pageUrl, renderedUrl);
                 resolve(renderedUrl);
               },
               textStyleRef
             );
           };
-          offscreenImg.onerror = () => resolve(pageUrl);
+          offscreenImg.onerror = () => {
+            clearTimeout(timeout);
+            resolve(pageUrl);
+          };
           offscreenImg.src = pageUrl;
         });
       }
@@ -226,27 +237,49 @@ export default function WorkspacePage() {
     if (format === "pdf") {
       try {
         const pdf = new jsPDF({ orientation: "portrait", unit: "px" });
+        let addedCount = 0;
+
         for (let i = 0; i < pages.length; i++) {
-          const dataUrl = await getExportDataUrl(pages[i].url, i);
-          
-          const img = new Image();
-          img.src = dataUrl;
-          await new Promise(r => { img.onload = r; });
-          
-          const orientation = img.naturalWidth > img.naturalHeight ? "l" : "p";
-          if (i > 0) pdf.addPage([img.naturalWidth, img.naturalHeight], orientation);
-          else pdf.setPage(1);
-          
-          if (i === 0) {
-            pdf.deletePage(1);
-            pdf.addPage([img.naturalWidth, img.naturalHeight], orientation);
+          try {
+            const dataUrl = await getExportDataUrl(pages[i].url, i);
+            if (!dataUrl) continue;
+            
+            const img = new Image();
+            img.src = dataUrl;
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(() => resolve(), 3000);
+              img.onload = () => { clearTimeout(timer); resolve(); };
+              img.onerror = () => { clearTimeout(timer); resolve(); };
+            });
+            
+            if (!img.naturalWidth || !img.naturalHeight) {
+              console.warn(`Skipping broken page ${i + 1} for PDF export`);
+              continue;
+            }
+
+            const orientation = img.naturalWidth > img.naturalHeight ? "l" : "p";
+            if (addedCount > 0) pdf.addPage([img.naturalWidth, img.naturalHeight], orientation);
+            else pdf.setPage(1);
+            
+            if (addedCount === 0) {
+              pdf.deletePage(1);
+              pdf.addPage([img.naturalWidth, img.naturalHeight], orientation);
+            }
+            
+            pdf.addImage(dataUrl, "JPEG", 0, 0, img.naturalWidth, img.naturalHeight);
+            addedCount++;
+          } catch (err) {
+            console.warn(`Error processing PDF page ${i + 1}`, err);
           }
-          
-          pdf.addImage(dataUrl, "JPEG", 0, 0, img.naturalWidth, img.naturalHeight);
         }
-        setTranslationResult(`⏳ กำลังบันทึก PDF...`);
-        pdf.save("SuperK_Translations.pdf");
-        setTranslationResult(`✅ ดาวน์โหลด PDF สำเร็จ!`);
+        
+        if (addedCount > 0) {
+          setTranslationResult(`⏳ กำลังบันทึก PDF...`);
+          pdf.save("SuperK_Translations.pdf");
+          setTranslationResult(`✅ ดาวน์โหลด PDF สำเร็จ! (${addedCount} หน้า)`);
+        } else {
+          setTranslationResult(`❌ ไม่พบรูปภาพที่สมบูรณ์สำหรับสร้าง PDF`);
+        }
         setTimeout(() => setTranslationResult(null), 3000);
       } catch (e) {
         console.error("Failed to generate PDF", e);
@@ -259,26 +292,38 @@ export default function WorkspacePage() {
     }
     
     const zip = new JSZip();
+    let zipAddedCount = 0;
     
     for (let i = 0; i < pages.length; i++) {
-      const dataUrl = await getExportDataUrl(pages[i].url, i);
-      const base64Data = dataUrl.split(",")[1];
-      
-      const originalName = pages[i].name;
-      const extension = originalName.includes('.') ? originalName.split('.').pop() : 'png';
-      const baseName = originalName.includes('.') ? originalName.substring(0, originalName.lastIndexOf('.')) : originalName;
-      const filename = `SuperK_Page_${String(i + 1).padStart(3, '0')}_${baseName}.${extension}`;
-      zip.file(filename, base64Data, { base64: true });
+      try {
+        const dataUrl = await getExportDataUrl(pages[i].url, i);
+        if (!dataUrl || !dataUrl.includes(",")) continue;
+        const base64Data = dataUrl.split(",")[1];
+        if (!base64Data) continue;
+        
+        const originalName = pages[i].name;
+        const extension = originalName.includes('.') ? originalName.split('.').pop() : 'png';
+        const baseName = originalName.includes('.') ? originalName.substring(0, originalName.lastIndexOf('.')) : originalName;
+        const filename = `SuperK_Page_${String(i + 1).padStart(3, '0')}_${baseName}.${extension}`;
+        zip.file(filename, base64Data, { base64: true });
+        zipAddedCount++;
+      } catch (err) {
+        console.warn(`Error processing ZIP page ${i + 1}`, err);
+      }
     }
     
     try {
-      setTranslationResult(`⏳ กำลังสร้างไฟล์ ${format.toUpperCase()}...`);
-      const content = await zip.generateAsync({ type: "blob" });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(content);
-      link.download = format === "cbz" ? "SuperK_Translations.cbz" : "SuperK_Translations.zip";
-      link.click();
-      setTranslationResult(`✅ ดาวน์โหลด ${format.toUpperCase()} สำเร็จ!`);
+      if (zipAddedCount > 0) {
+        setTranslationResult(`⏳ กำลังสร้างไฟล์ ${format.toUpperCase()}...`);
+        const content = await zip.generateAsync({ type: "blob" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(content);
+        link.download = format === "cbz" ? "SuperK_Translations.cbz" : "SuperK_Translations.zip";
+        link.click();
+        setTranslationResult(`✅ ดาวน์โหลด ${format.toUpperCase()} สำเร็จ! (${zipAddedCount} หน้า)`);
+      } else {
+        setTranslationResult(`❌ ไม่พบรูปภาพที่สมบูรณ์สำหรับสร้าง ${format.toUpperCase()}`);
+      }
       setTimeout(() => setTranslationResult(null), 3000);
     } catch (e) {
       console.error(`Failed to generate ${format}`, e);
@@ -920,12 +965,36 @@ export default function WorkspacePage() {
 
                   {/* Inner container that hugs the image tightly */}
                   <div key={currentPage} id="pageContainer" className="relative inline-flex justify-center items-center">
-                    <img 
-                      src={pages[currentPage].url} 
-                      alt={pages[currentPage].name} 
-                      title={pages[currentPage].name}
-                      className="max-w-full max-h-[calc(100vh-160px)] sm:max-h-[calc(100vh-180px)] w-auto h-auto object-contain drop-shadow-sm select-none block"
-                    />
+                    {brokenPages.has(pages[currentPage].url) ? (
+                      <div className="flex flex-col items-center justify-center p-8 bg-surface/40 border border-red-500/30 rounded-xl text-center gap-3 my-8">
+                        <div className="text-red-400 font-medium text-base">⚠️ รูปภาพนี้เสีย หรือโหลดไม่สมบูรณ์ ({pages[currentPage].name})</div>
+                        <p className="text-muted text-xs max-w-sm">รูปนี้อาจมาจากไฟล์ทอร์เรนต์ที่โหลดไม่ครบ 100% ทำให้ไม่สามารถแสดงผลได้</p>
+                        <button
+                          onClick={() => {
+                            setPages(prev => {
+                              const newPages = prev.filter((_, idx) => idx !== currentPage);
+                              if (newPages.length === 0) setCurrentPage(0);
+                              else if (currentPage >= newPages.length) setCurrentPage(newPages.length - 1);
+                              return newPages;
+                            });
+                            import('react-hot-toast').then(m => m.default("ลบรูปพังออกแล้ว", { duration: 1500 }));
+                          }}
+                          className="bg-red-500/20 text-red-400 hover:bg-red-500/30 px-4 py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer"
+                        >
+                          🗑️ ลบรูปพังนี้ออก
+                        </button>
+                      </div>
+                    ) : (
+                      <img 
+                        src={pages[currentPage].url} 
+                        alt={pages[currentPage].name} 
+                        title={pages[currentPage].name}
+                        onError={() => {
+                          setBrokenPages(prev => new Set(prev).add(pages[currentPage].url));
+                        }}
+                        className="max-w-full max-h-[calc(100vh-160px)] sm:max-h-[calc(100vh-180px)] w-auto h-auto object-contain drop-shadow-sm select-none block"
+                      />
+                    )}
                   </div>
 
                   {/* Right Arrow Floating Button */}
