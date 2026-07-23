@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { applyTranslationOverlay } from "@/lib/translationOverlay";
+import { saveProjectSession, loadProjectSession, clearProjectSession } from "@/lib/projectStore";
 
 const parseLLMJSON = (text: string) => {
   if (!text) return null;
@@ -105,11 +106,34 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
     }
   }, [currentPage, pages, viewMode]);
 
-  // Helper to save bubbles to cache AND state
-  const saveBubbles = useCallback((pageKey: string, bubbles: any[]) => {
-    bubbleCacheRef.current.set(pageKey, bubbles);
-    setActiveBubbles(bubbles);
-  }, []);
+  // Auto-save session to IndexedDB (debounced)
+  useEffect(() => {
+    if (pages.length === 0) return;
+    const timer = setTimeout(() => {
+      saveProjectSession({
+        pages: pages.map(p => typeof p === 'string' ? { url: p, name: 'Page' } : p),
+        currentPage,
+        bubbleCache: bubbleCacheRef.current,
+        translatedImageCache: translatedImageCacheRef.current
+      });
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [pages, currentPage, activeBubbles]);
+
+  // Restore saved session helper
+  const restoreSavedSession = async () => {
+    const saved = await loadProjectSession();
+    if (!saved) return null;
+    bubbleCacheRef.current = saved.bubbleCache;
+    translatedImageCacheRef.current = saved.translatedImageCache;
+    return saved;
+  };
+
+  const clearSavedSession = async () => {
+    bubbleCacheRef.current.clear();
+    translatedImageCacheRef.current.clear();
+    await clearProjectSession();
+  };
 
   const translateCrop = async (cropBox: { x: number, y: number, w: number, h: number }, cropBase64: string, fullWidth: number, fullHeight: number) => {
     setIsTranslating(true);
@@ -557,6 +581,8 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
       setUserApiKey(key);
       if (key) localStorage.setItem("gemini_api_key", key);
       else localStorage.removeItem("gemini_api_key");
-    }
+    },
+    restoreSavedSession,
+    clearSavedSession
   };
 }

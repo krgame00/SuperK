@@ -98,12 +98,25 @@ export default function WorkspacePage() {
     sourceLang,
     setSourceLang,
     textStyle,
-    setTextStyle
+    setTextStyle,
+    restoreSavedSession,
+    clearSavedSession
   } = useTranslation({
     currentPage,
     pages: pageUrls,
     viewMode: "single"
   });
+
+  const [savedSessionData, setSavedSessionData] = useState<{ pages: { url: string, name: string }[], currentPage: number } | null>(null);
+
+  // Check for saved IndexedDB session on mount
+  useEffect(() => {
+    restoreSavedSession().then(saved => {
+      if (saved && saved.pages && saved.pages.length > 0) {
+        setSavedSessionData({ pages: saved.pages, currentPage: saved.currentPage });
+      }
+    });
+  }, []);
 
   // Keyboard shortcuts refs (to access latest state from event listener closure)
   const currentPageRef = useRef(currentPage);
@@ -1032,7 +1045,42 @@ export default function WorkspacePage() {
             )}
           </div>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center w-full max-w-2xl px-4">
+          <div className="flex-1 flex flex-col items-center justify-center w-full max-w-2xl px-4 gap-4">
+            {savedSessionData && (
+              <div className="w-full bg-primary/10 border border-primary/30 rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left animate-in fade-in slide-in-from-top-2 duration-300">
+                <div className="flex items-center gap-3">
+                  <div className="text-2xl">💾</div>
+                  <div>
+                    <h4 className="text-sm font-semibold text-foreground">พบงานแปลค้างไว้ล่าสุด ({savedSessionData.pages.length} หน้า)</h4>
+                    <p className="text-xs text-muted">ระบบจำสถานะคำแปลและรูปภาพเดิมไว้ สามารถดึงกลับมาทำต่อได้ทันที</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    onClick={() => {
+                      setPages(savedSessionData.pages);
+                      setCurrentPage(savedSessionData.currentPage || 0);
+                      setSavedSessionData(null);
+                      import('react-hot-toast').then(m => m.default("ดึงค่างานเดิมกลับมาเรียบร้อย!", { duration: 2000 }));
+                    }}
+                    className="bg-primary text-primary-content hover:bg-primary-hover px-3.5 py-1.5 rounded-md text-xs font-semibold shadow-sm transition-colors cursor-pointer"
+                  >
+                    📂 คืนค่างานเดิม
+                  </button>
+                  <button
+                    onClick={() => {
+                      clearSavedSession();
+                      setSavedSessionData(null);
+                      import('react-hot-toast').then(m => m.default("ล้างเซสชันเก่าแล้ว", { duration: 1500 }));
+                    }}
+                    className="bg-surface hover:bg-surface-hover text-muted hover:text-foreground border border-surface-hover px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer"
+                  >
+                    ล้างแล้วเริ่มใหม่
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className={`w-full aspect-video rounded-xl border border-dashed flex flex-col items-center justify-center transition-colors duration-200 ${isDragging ? 'border-primary bg-primary/5' : 'border-surface-hover hover:border-muted'}`}>
               <Upload className={`w-8 h-8 mb-4 ${isDragging ? 'text-primary' : 'text-muted'}`} />
               <p className="text-foreground text-lg mb-1 font-medium">Drag & Drop manga pages</p>
@@ -1180,7 +1228,7 @@ export default function WorkspacePage() {
                   if (confirm("ลบรูปภาพทั้งหมดใช่ไหม?")) {
                     setPages([]);
                     setCurrentPage(0);
-                    translatedImageCacheRef.current.clear();
+                    clearSavedSession();
                   }
                 }}
                 className="flex-shrink-0 flex flex-col items-center justify-center w-14 h-16 rounded-md border border-dashed border-surface-hover hover:border-red-500/50 text-muted hover:text-red-500 cursor-pointer transition-colors duration-150" 
