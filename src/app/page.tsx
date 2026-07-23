@@ -561,11 +561,13 @@ export default function WorkspacePage() {
                     className="w-full bg-background border border-surface-hover rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary appearance-none"
                   >
                     <option value="auto">Auto (สลับโมเดลอัตโนมัติเมื่อโควต้าเต็ม)</option>
+                    <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash Lite (แนะนำ! โควต้าเหลือเพียบ 500 RPD)</option>
+                    <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
+                    <option value="gemini-3-flash">Gemini 3.0 Flash</option>
+                    <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+                    <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite</option>
                     <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-                    <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
-                    <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
-                    <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite</option>
-                    <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                    <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
                   </select>
                 </div>
                 

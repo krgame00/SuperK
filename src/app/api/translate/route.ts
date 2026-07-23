@@ -74,21 +74,24 @@ export async function POST(req: Request) {
     };
 
     let MODELS = [
+      "gemini-3.5-flash-lite", // Fresh quota: 500 RPD, 15 RPM
+      "gemini-3.6-flash",      // Fresh quota: 20 RPD, 5 RPM
+      "gemini-3-flash",        // Fresh quota: 20 RPD, 5 RPM
+      "gemini-3.5-flash",
+      "gemini-3.1-flash-lite",
       "gemini-2.5-flash",
-      "gemini-2.0-flash",
-      "gemini-1.5-flash",
-      "gemini-2.0-flash-lite",
-      "gemini-1.5-pro"
+      "gemini-2.5-flash-lite"
     ];
 
     if (isRetry && (!modelPreference || modelPreference === "auto")) {
-      // On retry, try gemini-2.0-flash first as it has different OCR vision behavior
+      // On retry, try gemini-3.6-flash first
       MODELS = [
-        "gemini-2.0-flash",
-        "gemini-2.5-flash",
-        "gemini-1.5-flash",
-        "gemini-2.0-flash-lite",
-        "gemini-1.5-pro"
+        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3-flash",
+        "gemini-3.5-flash",
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-flash"
       ];
     } else if (modelPreference && modelPreference !== "auto") {
       MODELS = [modelPreference];
