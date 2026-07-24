@@ -143,8 +143,8 @@ export const applyTranslationOverlay = async (
           rawH = Math.abs(ymax - ymin) / 10;
           
           // Detect hallucinated full-screen boxes or zero-size boxes
-          // A box covering >= 45% of both width and height is extremely rare for a manga bubble and is usually a hallucination.
-          if ((rawW >= 45 && rawH >= 45) || (rawW === 0 && rawH === 0)) {
+          // Only flag if box covers >= 85% of both width and height (e.g. full-page summary [0,0,1000,1000])
+          if ((rawW >= 85 && rawH >= 85) || (rawW === 0 && rawH === 0)) {
             isInvalidBox = true;
           }
         } else {
@@ -152,11 +152,17 @@ export const applyTranslationOverlay = async (
         }
 
         if (isInvalidBox) {
-          rawX = 50;
-          rawY = fallbackY;
+          // Keep rawX/rawY from real box if available, otherwise stack near top margin instead of dead center (rawX=50)
+          if (Array.isArray(b.box) && b.box.length === 4 && (b.box[1] !== 0 || b.box[3] !== 1000)) {
+            rawX = (b.box[1] + b.box[3]) / 2 / 10;
+            rawY = (b.box[0] + b.box[2]) / 2 / 10;
+          } else {
+            rawX = 50;
+            rawY = fallbackY;
+            fallbackY = (fallbackY + 15 > 85) ? 8 : fallbackY + 12;
+          }
           rawW = 30;
           rawH = 15;
-          fallbackY = (fallbackY + 15 > 90) ? 10 : fallbackY + 15;
           b.isInvalidBox = true; // Flag for renderBubble to draw a background
         } else {
           // Normalize legacy fields if needed
@@ -253,7 +259,7 @@ export const applyTranslationOverlay = async (
         rawW = Math.abs(xmax - xmin) / 10;
         rawH = Math.abs(ymax - ymin) / 10;
         
-        if ((rawW >= 45 && rawH >= 45) || (rawW === 0 && rawH === 0)) {
+        if ((rawW >= 85 && rawH >= 85) || (rawW === 0 && rawH === 0)) {
           isInvalidBox = true;
         }
       } else {
@@ -273,11 +279,16 @@ export const applyTranslationOverlay = async (
       }
       
       if (isInvalidBox) {
-        rawX = 50;
-        rawY = fallbackY2;
+        if (Array.isArray(b.box) && b.box.length === 4 && (b.box[1] !== 0 || b.box[3] !== 1000)) {
+          rawX = (b.box[1] + b.box[3]) / 2 / 10;
+          rawY = (b.box[0] + b.box[2]) / 2 / 10;
+        } else {
+          rawX = 50;
+          rawY = fallbackY2;
+          fallbackY2 = (fallbackY2 + 15 > 85) ? 8 : fallbackY2 + 12;
+        }
         rawW = 30;
         rawH = 15;
-        fallbackY2 = (fallbackY2 + 15 > 90) ? 10 : fallbackY2 + 15;
         b.isInvalidBox = true;
       }
 
