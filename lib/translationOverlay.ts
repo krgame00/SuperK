@@ -176,7 +176,8 @@ export const applyTranslationOverlay = async (
         let bw = (Math.max(12, Math.min(rawW, 60)) / 100) * iw;
         let bh = (Math.max(6, Math.min(rawH, 45)) / 100) * ih;
         
-        const pad = Math.max(8, Math.round(scale * 10)); 
+        // Keep inpainting mask extremely tight (2px) so it never bleeds into character faces or detailed background artwork
+        const pad = Math.max(1, Math.round(scale * 2)); 
         const rx = (cx - bw/2 - pad) * scale;
         const ry = (cy - bh/2 - pad) * scale;
         const rw = (bw + pad*2) * scale;
