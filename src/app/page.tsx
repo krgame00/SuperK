@@ -5,7 +5,7 @@ import { useTranslation } from "@/hooks/useTranslation";
 import { jsPDF } from "jspdf";
 import { Toaster } from "react-hot-toast";
 import { downloadTranslatedImage, applyTranslationOverlay } from "@/lib/translationOverlay";
-import { Upload, ChevronLeft, ChevronRight, Wand2, Download, Archive, Flame, Eye, EyeOff, Undo2, Redo2, Trash2, GalleryVertical, RectangleHorizontal, Menu, X, ChevronUp, ChevronDown, Maximize2, Minimize2 } from "lucide-react";
+import { Upload, ChevronLeft, ChevronRight, Wand2, Download, Archive, Flame, Eye, EyeOff, Undo2, Redo2, Trash2, GalleryVertical, RectangleHorizontal, Menu, X, ChevronUp, ChevronDown, Maximize2, Minimize2, Settings, FileArchive, BookOpen, FileText, Sparkles } from "lucide-react";
 import { undoManager } from "@/lib/undoManager";
 import JSZip from "jszip";
 
@@ -604,53 +604,57 @@ export default function WorkspacePage() {
           </>
         )}
             
-        {/* Desktop Menu */}
-        <div className="hidden xl:flex items-center gap-2 xl:gap-3">
-          <button
-            onClick={() => setIsSettingsOpen(!isSettingsOpen)}
-            className="flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150 text-muted hover:text-foreground hover:bg-surface"
-            title="Settings"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-          </button>
+        {/* Desktop Menu — Grouped: [Settings | View] | [Undo/Redo] | [Translate] | [Download] */}
+        <div className="hidden xl:flex items-center gap-1.5 xl:gap-2">
+          {/* ── Group 1: Settings & View ── */}
+          <div className="flex items-center gap-1 bg-surface/50 rounded-lg px-1 py-0.5 border border-surface-hover/50">
+            <button
+              onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+              className={`px-2.5 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 transition-all duration-150 ${isSettingsOpen ? 'text-primary bg-primary/10' : 'text-muted hover:text-foreground hover:bg-surface-hover'}`}
+              title="ตั้งค่า API & ฟอนต์"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
 
-          <button
-            onClick={() => setNsfwBypassMode(!nsfwBypassMode)}
-            className={`flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150 ${nsfwBypassMode ? 'text-primary bg-primary/10' : 'text-muted hover:text-foreground hover:bg-surface'}`}
-            title="Slice image to bypass AI censorship"
-          >
-            <Flame className="w-4 h-4" />
-            <span>18+ Mode</span>
-          </button>
-          
-          <button
-            onClick={() => setShowOriginal(!showOriginal)}
-            disabled={activeBubbles.length === 0}
-            className={`flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150 border border-transparent ${showOriginal ? 'text-primary bg-primary/10 border-primary/20' : 'text-muted hover:text-foreground hover:bg-surface'}`}
-            title="Toggle original image"
-          >
-            {showOriginal ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            <span>{showOriginal ? 'Show Translation' : 'View Original'}</span>
-          </button>
+            <button
+              onClick={() => setNsfwBypassMode(!nsfwBypassMode)}
+              className={`px-2.5 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 transition-all duration-150 ${nsfwBypassMode ? 'text-red-400 bg-red-500/15 shadow-[0_0_8px_rgba(239,68,68,0.2)]' : 'text-muted hover:text-foreground hover:bg-surface-hover'}`}
+              title="โหมด 18+ หั่นภาพหลบเซนเซอร์"
+            >
+              <Flame className="w-4 h-4" />
+              {nsfwBypassMode && <span className="text-[10px] font-bold bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded-full leading-none">ON</span>}
+            </button>
 
-          <button
-            onClick={() => setViewLayout(prev => prev === 'single' ? 'scroll' : 'single')}
-            disabled={pages.length === 0}
-            className={`flex-shrink-0 px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150 border border-transparent ${viewLayout === 'scroll' ? 'text-primary bg-primary/10 border-primary/20' : 'text-muted hover:text-foreground hover:bg-surface'}`}
-            title="Toggle Read Mode"
-          >
-            {viewLayout === 'scroll' ? <GalleryVertical className="w-4 h-4" /> : <RectangleHorizontal className="w-4 h-4" />}
-            <span>{viewLayout === 'scroll' ? 'Scroll Mode' : 'Single Mode'}</span>
-          </button>
+            <div className="w-px h-5 bg-surface-hover mx-0.5" />
 
-          <div className="flex-shrink-0 flex items-center gap-1 border-l border-surface-hover pl-3 ml-1">
+            <button
+              onClick={() => setShowOriginal(!showOriginal)}
+              disabled={activeBubbles.length === 0}
+              className={`px-2.5 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 transition-all duration-150 ${showOriginal ? 'text-primary bg-primary/10' : 'text-muted hover:text-foreground hover:bg-surface-hover'} disabled:opacity-30`}
+              title={showOriginal ? 'แสดงคำแปล' : 'ดูต้นฉบับ'}
+            >
+              {showOriginal ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+
+            <button
+              onClick={() => setViewLayout(prev => prev === 'single' ? 'scroll' : 'single')}
+              disabled={pages.length === 0}
+              className={`px-2.5 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 transition-all duration-150 ${viewLayout === 'scroll' ? 'text-primary bg-primary/10' : 'text-muted hover:text-foreground hover:bg-surface-hover'} disabled:opacity-30`}
+              title={viewLayout === 'scroll' ? 'โหมดเลื่อนอ่าน' : 'โหมดทีละหน้า'}
+            >
+              {viewLayout === 'scroll' ? <GalleryVertical className="w-4 h-4" /> : <RectangleHorizontal className="w-4 h-4" />}
+            </button>
+          </div>
+
+          {/* ── Group 2: Undo / Redo ── */}
+          <div className="flex items-center gap-0.5 bg-surface/50 rounded-lg px-1 py-0.5 border border-surface-hover/50">
             <button
               onClick={() => {
                 const label = undoManager.undo();
                 if (label) import('react-hot-toast').then(m => m.default(`↩️ Undo: ${label}`, { duration: 1500 }));
               }}
               disabled={!canUndo}
-              className="px-2 py-1.5 rounded-md text-sm font-medium flex items-center gap-1 transition-colors duration-150 text-muted hover:text-foreground hover:bg-surface disabled:opacity-30 disabled:hover:bg-transparent"
+              className="px-2 py-1.5 rounded-md text-sm font-medium flex items-center gap-1 transition-all duration-150 text-muted hover:text-foreground hover:bg-surface-hover disabled:opacity-20"
               title="Undo (Ctrl+Z)"
             >
               <Undo2 className="w-4 h-4" />
@@ -661,63 +665,82 @@ export default function WorkspacePage() {
                 if (label) import('react-hot-toast').then(m => m.default(`↪️ Redo: ${label}`, { duration: 1500 }));
               }}
               disabled={!canRedo}
-              className="px-2 py-1.5 rounded-md text-sm font-medium flex items-center gap-1 transition-colors duration-150 text-muted hover:text-foreground hover:bg-surface disabled:opacity-30 disabled:hover:bg-transparent"
+              className="px-2 py-1.5 rounded-md text-sm font-medium flex items-center gap-1 transition-all duration-150 text-muted hover:text-foreground hover:bg-surface-hover disabled:opacity-20"
               title="Redo (Ctrl+Shift+Z)"
             >
               <Redo2 className="w-4 h-4" />
             </button>
           </div>
           
-          <button 
-            onClick={() => handleTranslate()}
-            disabled={isTranslating || pages.length === 0}
-            className="flex-shrink-0 bg-primary text-primary-content hover:bg-primary-hover disabled:opacity-50 disabled:hover:bg-primary px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150"
-          >
-            {isTranslating ? (
-              <span className="flex items-center gap-2">
-                <span className="animate-spin h-3 w-3 border-2 border-primary-content border-t-transparent rounded-full"></span>
-                <span>Translating</span>
-              </span>
-            ) : (
-              <span className="flex items-center gap-2">
-                <Wand2 className="w-4 h-4" />
-                <span>Translate</span>
-              </span>
-            )}
-          </button>
-
-          {isTranslatingAll ? (
-            <div className="flex-shrink-0 flex items-center gap-3">
-              <div className="flex items-center gap-2 text-sm text-primary font-medium">
-                <span className="animate-spin h-3 w-3 border-2 border-primary border-t-transparent rounded-full"></span>
-                <span>{translateAllProgress?.message || 'กำลังเตรียม...'}</span>
-                {translateAllProgress && translateAllProgress.current > 1 && (() => {
-                  const elapsed = (Date.now() - translateAllProgress.startTime) / 1000;
-                  const avgPerPage = elapsed / translateAllProgress.current;
-                  const remaining = avgPerPage * (translateAllProgress.total - translateAllProgress.current);
-                  if (remaining < 60) return <span className="text-muted">· ~{Math.ceil(remaining)} วิ</span>;
-                  return <span className="text-muted">· ~{Math.ceil(remaining / 60)} นาที</span>;
-                })()}
-              </div>
-              <button 
-                onClick={cancelTranslateAll} 
-                className="bg-red-500/20 text-red-500 hover:bg-red-500/30 px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-all"
-              >
-                Stop
-              </button>
-            </div>
-          ) : (
+          {/* ── Group 3: Translate Actions ── */}
+          <div className="flex items-center gap-1.5">
             <button 
-              onClick={() => handleTranslateAll()}
+              onClick={() => handleTranslate()}
               disabled={isTranslating || pages.length === 0}
-              className="flex-shrink-0 bg-primary/20 text-primary hover:bg-primary/30 disabled:opacity-50 px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150"
+              className="flex-shrink-0 bg-primary text-primary-content hover:bg-primary-hover disabled:opacity-50 px-4 py-1.5 rounded-md text-sm font-semibold flex items-center gap-2 transition-all duration-150 shadow-sm hover:shadow-md"
             >
-              <Wand2 className="w-4 h-4" />
-              <span>Translate All</span>
+              {isTranslating ? (
+                <span className="flex items-center gap-2">
+                  <span className="animate-spin h-3 w-3 border-2 border-primary-content border-t-transparent rounded-full"></span>
+                  <span>กำลังแปล...</span>
+                </span>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <Wand2 className="w-4 h-4" />
+                  <span>แปลหน้านี้</span>
+                </span>
+              )}
             </button>
-          )}
 
-          <div className="flex-shrink-0 flex bg-surface hover:bg-surface-hover rounded-md border border-surface-hover transition-colors duration-150">
+            {isTranslatingAll ? (
+              <div className="flex-shrink-0 flex items-center gap-2 bg-primary/5 border border-primary/20 rounded-lg px-3 py-1">
+                <div className="flex flex-col gap-1 min-w-[140px]">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-primary font-semibold flex items-center gap-1.5">
+                      <span className="animate-spin h-3 w-3 border-2 border-primary border-t-transparent rounded-full"></span>
+                      {translateAllProgress ? `${translateAllProgress.current}/${translateAllProgress.total}` : 'เตรียม...'}
+                    </span>
+                    {translateAllProgress && (
+                      <span className="text-muted font-medium">
+                        {Math.round((translateAllProgress.current / translateAllProgress.total) * 100)}%
+                      </span>
+                    )}
+                  </div>
+                  <div className="w-full h-1.5 bg-surface rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-gradient-to-r from-primary to-primary/70 rounded-full transition-all duration-500 ease-out"
+                      style={{ width: translateAllProgress ? `${(translateAllProgress.current / translateAllProgress.total) * 100}%` : '0%' }}
+                    />
+                  </div>
+                  {translateAllProgress && translateAllProgress.current > 1 && (() => {
+                    const elapsed = (Date.now() - translateAllProgress.startTime) / 1000;
+                    const avgPerPage = elapsed / translateAllProgress.current;
+                    const remaining = avgPerPage * (translateAllProgress.total - translateAllProgress.current);
+                    if (remaining < 60) return <span className="text-[10px] text-muted">เหลือ ~{Math.ceil(remaining)} วิ</span>;
+                    return <span className="text-[10px] text-muted">เหลือ ~{Math.ceil(remaining / 60)} นาที</span>;
+                  })()}
+                </div>
+                <button 
+                  onClick={cancelTranslateAll} 
+                  className="bg-red-500/15 text-red-400 hover:bg-red-500/25 px-3 py-1.5 rounded-md text-xs font-semibold transition-all"
+                >
+                  หยุด
+                </button>
+              </div>
+            ) : (
+              <button 
+                onClick={() => handleTranslateAll()}
+                disabled={isTranslating || pages.length === 0}
+                className="flex-shrink-0 bg-gradient-to-r from-primary/20 to-primary/10 text-primary hover:from-primary/30 hover:to-primary/20 disabled:opacity-50 px-4 py-1.5 rounded-md text-sm font-semibold flex items-center gap-2 transition-all duration-150 border border-primary/20"
+              >
+                <Sparkles className="w-4 h-4" />
+                <span>แปลทั้งเล่ม</span>
+              </button>
+            )}
+          </div>
+
+          {/* ── Group 4: Download ── */}
+          <div className="flex-shrink-0 flex items-center bg-surface/50 rounded-lg border border-surface-hover/50 overflow-hidden">
             <button
               onClick={() => {
                 const originalName = pages[currentPage].name;
@@ -727,34 +750,34 @@ export default function WorkspacePage() {
                 downloadTranslatedImage("single", currentPage, filename);
               }}
               disabled={activeBubbles.length === 0 || showOriginal}
-              className="flex-shrink-0 text-foreground disabled:opacity-50 px-3 py-1.5 text-sm font-medium flex items-center gap-2 border-r border-surface-hover"
-              title="Download current page"
+              className="text-foreground disabled:opacity-40 px-2.5 py-1.5 text-sm font-medium flex items-center gap-1.5 border-r border-surface-hover/60 hover:bg-surface-hover transition-all"
+              title="ดาวน์โหลดหน้านี้"
             >
-              <Download className="w-4 h-4" />
+              <Download className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => handleDownloadAll("zip")}
               disabled={isZipping || pages.length === 0}
-              className="flex-shrink-0 text-foreground disabled:opacity-50 px-3 py-1.5 text-sm font-medium flex items-center gap-2 border-r border-surface-hover"
-              title="Download all as ZIP"
+              className="text-foreground disabled:opacity-40 px-2.5 py-1.5 text-sm flex items-center gap-1 border-r border-surface-hover/60 hover:bg-surface-hover transition-all"
+              title="ดาวน์โหลดทั้งหมดเป็น ZIP"
             >
-              {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <span className="text-xs font-bold">ZIP</span>}
+              {isZipping ? <span className="animate-spin h-3.5 w-3.5 border-2 border-foreground border-t-transparent rounded-full"></span> : <><FileArchive className="w-3.5 h-3.5 text-muted" /><span className="text-xs font-bold">ZIP</span></>}
             </button>
             <button
               onClick={() => handleDownloadAll("cbz")}
               disabled={isZipping || pages.length === 0}
-              className="flex-shrink-0 text-foreground disabled:opacity-50 px-3 py-1.5 text-sm font-medium flex items-center gap-2 border-r border-surface-hover"
-              title="Download all as CBZ (Comic format)"
+              className="text-foreground disabled:opacity-40 px-2.5 py-1.5 text-sm flex items-center gap-1 border-r border-surface-hover/60 hover:bg-surface-hover transition-all"
+              title="ดาวน์โหลดทั้งหมดเป็น CBZ"
             >
-              {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <span className="text-xs font-bold">CBZ</span>}
+              {isZipping ? <span className="animate-spin h-3.5 w-3.5 border-2 border-foreground border-t-transparent rounded-full"></span> : <><BookOpen className="w-3.5 h-3.5 text-muted" /><span className="text-xs font-bold">CBZ</span></>}
             </button>
             <button
               onClick={() => handleDownloadAll("pdf")}
               disabled={isZipping || pages.length === 0}
-              className="flex-shrink-0 text-foreground disabled:opacity-50 px-3 py-1.5 text-sm font-medium flex items-center gap-2"
-              title="Download all as PDF"
+              className="text-foreground disabled:opacity-40 px-2.5 py-1.5 text-sm flex items-center gap-1 hover:bg-surface-hover transition-all"
+              title="ดาวน์โหลดทั้งหมดเป็น PDF"
             >
-              {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <span className="text-xs font-bold">PDF</span>}
+              {isZipping ? <span className="animate-spin h-3.5 w-3.5 border-2 border-foreground border-t-transparent rounded-full"></span> : <><FileText className="w-3.5 h-3.5 text-muted" /><span className="text-xs font-bold">PDF</span></>}
             </button>
           </div>
         </div>
@@ -793,77 +816,114 @@ export default function WorkspacePage() {
               className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 xl:hidden animate-in fade-in duration-200" 
               onClick={() => setIsMobileMenuOpen(false)} 
             />
-            <div className="absolute top-[60px] right-3 left-3 sm:right-6 sm:w-80 sm:left-auto bg-background border border-surface shadow-2xl rounded-xl p-3.5 z-50 xl:hidden flex flex-col gap-2.5 max-h-[calc(100vh-80px)] overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-200">
-            {isTranslatingAll ? (
-              <div className="flex flex-col gap-2 p-2 bg-surface/50 rounded-lg mb-2">
-                <div className="flex items-center gap-2 text-sm text-primary font-medium">
-                  <span className="animate-spin h-3 w-3 border-2 border-primary border-t-transparent rounded-full"></span>
-                  <span>{translateAllProgress?.message || 'กำลังเตรียม...'}</span>
+            <div className="absolute top-[60px] right-3 left-3 sm:right-6 sm:w-80 sm:left-auto bg-background border border-surface shadow-2xl rounded-xl p-3.5 z-50 xl:hidden flex flex-col gap-3 max-h-[calc(100vh-80px)] overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-200">
+
+            {/* ── Section: 🔤 การแปล ── */}
+            <div>
+              <div className="text-[10px] font-bold text-muted uppercase tracking-wider px-1 mb-1.5 flex items-center gap-1.5">🔤 การแปล</div>
+              {isTranslatingAll ? (
+                <div className="flex flex-col gap-2 p-2.5 bg-primary/5 rounded-lg border border-primary/15">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-primary font-semibold flex items-center gap-1.5">
+                      <span className="animate-spin h-3 w-3 border-2 border-primary border-t-transparent rounded-full"></span>
+                      {translateAllProgress ? `หน้า ${translateAllProgress.current}/${translateAllProgress.total}` : 'กำลังเตรียม...'}
+                    </span>
+                    {translateAllProgress && (
+                      <span className="text-muted font-bold">
+                        {Math.round((translateAllProgress.current / translateAllProgress.total) * 100)}%
+                      </span>
+                    )}
+                  </div>
+                  <div className="w-full h-2 bg-surface rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-gradient-to-r from-primary to-primary/60 rounded-full transition-all duration-500 ease-out"
+                      style={{ width: translateAllProgress ? `${(translateAllProgress.current / translateAllProgress.total) * 100}%` : '0%' }}
+                    />
+                  </div>
+                  {translateAllProgress && translateAllProgress.current > 1 && (() => {
+                    const elapsed = (Date.now() - translateAllProgress.startTime) / 1000;
+                    const avgPerPage = elapsed / translateAllProgress.current;
+                    const remaining = avgPerPage * (translateAllProgress.total - translateAllProgress.current);
+                    if (remaining < 60) return <span className="text-[10px] text-muted">เหลืออีก ~{Math.ceil(remaining)} วินาที</span>;
+                    return <span className="text-[10px] text-muted">เหลืออีก ~{Math.ceil(remaining / 60)} นาที</span>;
+                  })()}
+                  <button 
+                    onClick={cancelTranslateAll} 
+                    className="w-full bg-red-500/15 text-red-400 hover:bg-red-500/25 px-4 py-2 rounded-md text-sm font-semibold flex justify-center items-center gap-2 transition-all"
+                  >
+                    ⏹ หยุดแปล
+                  </button>
                 </div>
+              ) : (
                 <button 
-                  onClick={cancelTranslateAll} 
-                  className="w-full bg-red-500/20 text-red-500 hover:bg-red-500/30 px-4 py-2 rounded-md text-sm font-medium flex justify-center items-center gap-2 transition-all"
+                  onClick={() => { handleTranslateAll(); setIsMobileMenuOpen(false); }}
+                  disabled={isTranslating || pages.length === 0}
+                  className="w-full bg-gradient-to-r from-primary/20 to-primary/10 text-primary hover:from-primary/30 hover:to-primary/20 disabled:opacity-50 px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-all duration-150 border border-primary/20"
                 >
-                  Stop
+                  <Sparkles className="w-4 h-4" />
+                  <span>✨ แปลทั้งเล่ม</span>
                 </button>
-              </div>
-            ) : (
-              <button 
-                onClick={() => { handleTranslateAll(); setIsMobileMenuOpen(false); }}
-                disabled={isTranslating || pages.length === 0}
-                className="w-full bg-primary/20 text-primary hover:bg-primary/30 disabled:opacity-50 px-4 py-2.5 rounded-md text-sm font-medium flex items-center justify-center gap-2 transition-colors duration-150 mb-2"
-              >
-                <Wand2 className="w-4 h-4" />
-                <span>Translate All</span>
-              </button>
-            )}
-
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => { setViewLayout(prev => prev === 'single' ? 'scroll' : 'single'); setIsMobileMenuOpen(false); }}
-                disabled={pages.length === 0}
-                className={`p-2 rounded-md text-sm font-medium flex flex-col items-center justify-center gap-1 transition-colors duration-150 ${viewLayout === 'scroll' ? 'text-primary bg-primary/10' : 'bg-surface text-foreground'}`}
-              >
-                {viewLayout === 'scroll' ? <GalleryVertical className="w-5 h-5" /> : <RectangleHorizontal className="w-5 h-5" />}
-                <span>{viewLayout === 'scroll' ? 'Scroll Mode' : 'Single Mode'}</span>
-              </button>
-
-              <button
-                onClick={() => { setShowOriginal(!showOriginal); setIsMobileMenuOpen(false); }}
-                disabled={activeBubbles.length === 0}
-                className={`p-2 rounded-md text-sm font-medium flex flex-col items-center justify-center gap-1 transition-colors duration-150 ${showOriginal ? 'text-primary bg-primary/10' : 'bg-surface text-foreground'}`}
-              >
-                {showOriginal ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                <span>{showOriginal ? 'Show Translate' : 'View Original'}</span>
-              </button>
+              )}
             </div>
 
-            <button
-              onClick={() => { setNsfwBypassMode(!nsfwBypassMode); setIsMobileMenuOpen(false); }}
-              className={`w-full p-2.5 rounded-md text-sm font-medium flex items-center gap-3 transition-colors duration-150 ${nsfwBypassMode ? 'text-primary bg-primary/10' : 'bg-surface text-foreground'}`}
-            >
-              <Flame className="w-5 h-5" />
-              <span>18+ Bypass Mode</span>
-            </button>
+            {/* ── Section: 👁️ การแสดงผล ── */}
+            <div>
+              <div className="text-[10px] font-bold text-muted uppercase tracking-wider px-1 mb-1.5 flex items-center gap-1.5">👁️ การแสดงผล</div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => { setViewLayout(prev => prev === 'single' ? 'scroll' : 'single'); setIsMobileMenuOpen(false); }}
+                  disabled={pages.length === 0}
+                  className={`p-2.5 rounded-lg text-xs font-medium flex flex-col items-center justify-center gap-1.5 transition-all duration-150 border ${viewLayout === 'scroll' ? 'text-primary bg-primary/10 border-primary/20' : 'bg-surface text-foreground border-transparent'}`}
+                >
+                  {viewLayout === 'scroll' ? <GalleryVertical className="w-5 h-5" /> : <RectangleHorizontal className="w-5 h-5" />}
+                  <span>{viewLayout === 'scroll' ? 'เลื่อนอ่าน' : 'ทีละหน้า'}</span>
+                </button>
 
-            <button
-              onClick={() => { setIsSettingsOpen(true); setIsMobileMenuOpen(false); }}
-              className="w-full bg-surface text-foreground p-2.5 rounded-md text-sm font-medium flex items-center gap-3"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-              <span>API Settings</span>
-            </button>
+                <button
+                  onClick={() => { setShowOriginal(!showOriginal); setIsMobileMenuOpen(false); }}
+                  disabled={activeBubbles.length === 0}
+                  className={`p-2.5 rounded-lg text-xs font-medium flex flex-col items-center justify-center gap-1.5 transition-all duration-150 border ${showOriginal ? 'text-primary bg-primary/10 border-primary/20' : 'bg-surface text-foreground border-transparent'}`}
+                >
+                  {showOriginal ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  <span>{showOriginal ? 'แสดงคำแปล' : 'ดูต้นฉบับ'}</span>
+                </button>
+              </div>
+            </div>
 
-            <div className="grid grid-cols-2 gap-2 mt-2">
+            {/* ── Section: ⚙️ ตั้งค่า ── */}
+            <div>
+              <div className="text-[10px] font-bold text-muted uppercase tracking-wider px-1 mb-1.5 flex items-center gap-1.5">⚙️ ตั้งค่า</div>
+              <div className="flex flex-col gap-1.5">
+                <button
+                  onClick={() => { setNsfwBypassMode(!nsfwBypassMode); setIsMobileMenuOpen(false); }}
+                  className={`w-full p-2.5 rounded-lg text-sm font-medium flex items-center gap-3 transition-all duration-150 border ${nsfwBypassMode ? 'text-red-400 bg-red-500/10 border-red-500/20 shadow-[0_0_10px_rgba(239,68,68,0.1)]' : 'bg-surface text-foreground border-transparent'}`}
+                >
+                  <Flame className="w-5 h-5" />
+                  <span>18+ Bypass Mode</span>
+                  {nsfwBypassMode && <span className="ml-auto text-[10px] font-bold bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full">ON</span>}
+                </button>
+
+                <button
+                  onClick={() => { setIsSettingsOpen(true); setIsMobileMenuOpen(false); }}
+                  className="w-full bg-surface text-foreground p-2.5 rounded-lg text-sm font-medium flex items-center gap-3 border border-transparent"
+                >
+                  <Settings className="w-5 h-5" />
+                  <span>API Key & ฟอนต์</span>
+                </button>
+              </div>
+            </div>
+
+            {/* ── Section: ↩️ ย้อนกลับ ── */}
+            <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => {
                   const label = undoManager.undo();
                   if (label) import('react-hot-toast').then(m => m.default(`↩️ Undo: ${label}`, { duration: 1500 }));
                 }}
                 disabled={!canUndo}
-                className="bg-surface text-foreground disabled:opacity-30 p-2 rounded-md text-sm font-medium flex justify-center items-center gap-2"
+                className="bg-surface text-foreground disabled:opacity-25 p-2.5 rounded-lg text-sm font-medium flex justify-center items-center gap-2 border border-transparent"
               >
-                <Undo2 className="w-4 h-4" /> Undo
+                <Undo2 className="w-4 h-4" /> ย้อนกลับ
               </button>
               <button
                 onClick={() => {
@@ -871,14 +931,15 @@ export default function WorkspacePage() {
                   if (label) import('react-hot-toast').then(m => m.default(`↪️ Redo: ${label}`, { duration: 1500 }));
                 }}
                 disabled={!canRedo}
-                className="bg-surface text-foreground disabled:opacity-30 p-2 rounded-md text-sm font-medium flex justify-center items-center gap-2"
+                className="bg-surface text-foreground disabled:opacity-25 p-2.5 rounded-lg text-sm font-medium flex justify-center items-center gap-2 border border-transparent"
               >
-                <Redo2 className="w-4 h-4" /> Redo
+                <Redo2 className="w-4 h-4" /> ทำซ้ำ
               </button>
             </div>
 
-            <div className="flex flex-col gap-2 mt-2 bg-surface/50 p-2 rounded-lg border border-surface-hover">
-              <div className="text-xs font-semibold text-muted mb-1 px-1">Download</div>
+            {/* ── Section: 📥 ดาวน์โหลด ── */}
+            <div className="bg-surface/50 p-2.5 rounded-lg border border-surface-hover">
+              <div className="text-[10px] font-bold text-muted uppercase tracking-wider px-1 mb-2 flex items-center gap-1.5">📥 ดาวน์โหลด</div>
               <button
                 onClick={() => {
                   const originalName = pages[currentPage].name;
@@ -889,31 +950,31 @@ export default function WorkspacePage() {
                   setIsMobileMenuOpen(false);
                 }}
                 disabled={activeBubbles.length === 0 || showOriginal}
-                className="w-full bg-surface text-foreground disabled:opacity-50 p-2 rounded-md text-sm font-medium flex items-center justify-center gap-2"
+                className="w-full bg-surface text-foreground disabled:opacity-40 p-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2 mb-2 border border-transparent"
               >
-                <Download className="w-4 h-4" /> Current Page
+                <Download className="w-4 h-4" /> บันทึกหน้านี้
               </button>
               <div className="grid grid-cols-3 gap-2">
                 <button
                   onClick={() => { handleDownloadAll("zip"); setIsMobileMenuOpen(false); }}
                   disabled={isZipping || pages.length === 0}
-                  className="bg-surface text-foreground disabled:opacity-50 p-2 rounded-md text-sm font-bold flex justify-center items-center"
+                  className="bg-surface text-foreground disabled:opacity-40 p-2 rounded-lg text-xs font-bold flex flex-col items-center justify-center gap-1 border border-transparent"
                 >
-                  {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : 'ZIP'}
+                  {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <><FileArchive className="w-4 h-4 text-muted" /><span>ZIP</span></>}
                 </button>
                 <button
                   onClick={() => { handleDownloadAll("cbz"); setIsMobileMenuOpen(false); }}
                   disabled={isZipping || pages.length === 0}
-                  className="bg-surface text-foreground disabled:opacity-50 p-2 rounded-md text-sm font-bold flex justify-center items-center"
+                  className="bg-surface text-foreground disabled:opacity-40 p-2 rounded-lg text-xs font-bold flex flex-col items-center justify-center gap-1 border border-transparent"
                 >
-                  {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : 'CBZ'}
+                  {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <><BookOpen className="w-4 h-4 text-muted" /><span>CBZ</span></>}
                 </button>
                 <button
                   onClick={() => { handleDownloadAll("pdf"); setIsMobileMenuOpen(false); }}
                   disabled={isZipping || pages.length === 0}
-                  className="bg-surface text-foreground disabled:opacity-50 p-2 rounded-md text-sm font-bold flex justify-center items-center"
+                  className="bg-surface text-foreground disabled:opacity-40 p-2 rounded-lg text-xs font-bold flex flex-col items-center justify-center gap-1 border border-transparent"
                 >
-                  {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : 'PDF'}
+                  {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <><FileText className="w-4 h-4 text-muted" /><span>PDF</span></>}
                 </button>
               </div>
             </div>
