@@ -176,16 +176,22 @@ export const applyTranslationOverlay = async (
         let bw = (Math.max(12, Math.min(rawW, 60)) / 100) * iw;
         let bh = (Math.max(6, Math.min(rawH, 45)) / 100) * ih;
         
-        // Keep inpainting mask extremely tight (2px) so it never bleeds into character faces or detailed background artwork
-        const pad = Math.max(1, Math.round(scale * 2)); 
-        const rx = (cx - bw/2 - pad) * scale;
-        const ry = (cy - bh/2 - pad) * scale;
-        const rw = (bw + pad*2) * scale;
-        const rh = (bh + pad*2) * scale;
+        // Shrink mask area by 5% from each edge to avoid bleeding into surrounding artwork
+        const shrink = 0.95;
+        const maskBw = bw * shrink;
+        const maskBh = bh * shrink;
         
-        if (!isInvalidBox) {
-          mctx.fillRect(rx, ry, rw, rh);
+        const pad = 0;
+        const rx = Math.max(0, Math.round((cx - maskBw/2) * scale));
+        const ry = Math.max(0, Math.round((cy - maskBh/2) * scale));
+        const rw = Math.min(sw - rx, Math.round(maskBw * scale));
+        const rh = Math.min(sh - ry, Math.round(maskBh * scale));
+        
+        if (!isInvalidBox && rw > 0 && rh > 0) {
           rois.push({x: rx, y: ry, w: rw, h: rh});
+          // Mark only text-like pixels (bright/white) inside the box instead of solid rectangle
+          // This preserves character faces, hair, and artwork behind floating text
+          b._maskRect = { rx, ry, rw, rh };
         }
       });
 
@@ -195,6 +201,57 @@ export const applyTranslationOverlay = async (
       sctx.drawImage(img, 0, 0, sw, sh);
 
       const srcData = sctx.getImageData(0, 0, sw, sh);
+      
+      // Smart per-pixel mask: only mark text-like pixels (bright/high-contrast) inside each bubble box
+      // This preserves character artwork, faces, and hair that overlap with text regions
+      real.forEach(b => {
+        if (!b._maskRect) return;
+        const { rx, ry, rw, rh } = b._maskRect;
+        
+        // First pass: compute average brightness of the box to determine text color
+        let totalBrightness = 0;
+        let pixelCount = 0;
+        for (let py = ry; py < ry + rh && py < sh; py++) {
+          for (let px = rx; px < rx + rw && px < sw; px++) {
+            const idx = (py * sw + px) * 4;
+            const brightness = (srcData.data[idx] * 0.299 + srcData.data[idx+1] * 0.587 + srcData.data[idx+2] * 0.114);
+            totalBrightness += brightness;
+            pixelCount++;
+          }
+        }
+        const avgBrightness = pixelCount > 0 ? totalBrightness / pixelCount : 128;
+        
+        // Determine if text is light-on-dark or dark-on-light
+        const isLightText = avgBrightness < 140;
+        
+        // Threshold: mask pixels that look like text
+        // For light text on dark bg: mask bright pixels (brightness > 180)
+        // For dark text on light bg: mask dark pixels (brightness < 80)
+        const brightThresh = isLightText ? 175 : 80;
+        
+        for (let py = ry; py < ry + rh && py < sh; py++) {
+          for (let px = rx; px < rx + rw && px < sw; px++) {
+            const idx = (py * sw + px) * 4;
+            const r = srcData.data[idx], g = srcData.data[idx+1], b2 = srcData.data[idx+2];
+            const brightness = r * 0.299 + g * 0.587 + b2 * 0.114;
+            
+            let isText = false;
+            if (isLightText) {
+              // Light text: mask bright pixels + near-white pixels  
+              isText = brightness > brightThresh;
+            } else {
+              // Dark text: mask dark pixels
+              isText = brightness < brightThresh;
+            }
+            
+            if (isText) {
+              const mIdx = (py * sw + px) * 4;
+              mctx.fillRect(px, py, 1, 1);
+            }
+          }
+        }
+      });
+      
       const maskData = mctx.getImageData(0, 0, sw, sh);
       
       setTranslationResult("⏳ Cleaning original text (Inpainting in background)...");
