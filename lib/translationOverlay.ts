@@ -176,7 +176,7 @@ export const applyTranslationOverlay = async (
         let bw = (Math.max(12, Math.min(rawW, 60)) / 100) * iw;
         let bh = (Math.max(6, Math.min(rawH, 45)) / 100) * ih;
         
-        const pad = 4; 
+        const pad = Math.max(8, Math.round(scale * 10)); 
         const rx = (cx - bw/2 - pad) * scale;
         const ry = (cy - bh/2 - pad) * scale;
         const rw = (bw + pad*2) * scale;
@@ -435,8 +435,9 @@ export const applyTranslationOverlay = async (
         const totalTH = lines2.length * lineH;
         const startY = currentBh / 2 - totalTH / 2 + lineH * 0.8;
 
-        ctx.lineWidth = 3;
+        ctx.lineWidth = Math.max(4, Math.round(fs * 0.22));
         ctx.lineJoin = "round";
+        ctx.miterLimit = 2;
         ctx.strokeStyle = outlineColor;
         lines2.forEach((ln, i) => ctx.strokeText(ln, currentBw/2, startY + i * lineH, maxW));
 
