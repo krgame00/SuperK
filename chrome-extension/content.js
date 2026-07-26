@@ -86,6 +86,27 @@ function handleTranslationSuccess(imageUrl, bubbles) {
   // Log coordinates for debugging
   console.log('[SuperK] Image rect:', imgRect, 'Bubbles:', bubbles);
 
+  // Calculate actual rendered image dimensions in case of object-fit: contain
+  const objectFit = window.getComputedStyle(img).objectFit;
+  let renderW = imgRect.width;
+  let renderH = imgRect.height;
+  let offsetX = 0;
+  let offsetY = 0;
+
+  if (img.naturalWidth && img.naturalHeight && (objectFit === 'contain' || objectFit === 'scale-down')) {
+    const imgRatio = img.naturalWidth / img.naturalHeight;
+    const boxRatio = imgRect.width / imgRect.height;
+    if (imgRatio > boxRatio) {
+      renderW = imgRect.width;
+      renderH = imgRect.width / imgRatio;
+      offsetY = (imgRect.height - renderH) / 2;
+    } else {
+      renderH = imgRect.height;
+      renderW = imgRect.height * imgRatio;
+      offsetX = (imgRect.width - renderW) / 2;
+    }
+  }
+
   // 1. Create clean mask canvas to ERASE original text completely
   const cleanCanvas = document.createElement('canvas');
   cleanCanvas.className = 'superk-clean-canvas';
@@ -110,20 +131,20 @@ function handleTranslationSuccess(imageUrl, bubbles) {
     let rawYmax = Math.max(b.box[0], b.box[2]);
     let rawXmax = Math.max(b.box[1], b.box[3]);
 
-    // Convert 0-1000 to pixel coordinates
-    const x = (rawXmin / 1000) * imgRect.width;
-    const y = (rawYmin / 1000) * imgRect.height;
-    const w = ((rawXmax - rawXmin) / 1000) * imgRect.width;
-    const h = ((rawYmax - rawYmin) / 1000) * imgRect.height;
+    // Convert 0-1000 to true pixel coordinates accounting for object-fit
+    const x = offsetX + (rawXmin / 1000) * renderW;
+    const y = offsetY + (rawYmin / 1000) * renderH;
+    const w = ((rawXmax - rawXmin) / 1000) * renderW;
+    const h = ((rawYmax - rawYmin) / 1000) * renderH;
 
-    // Shrink mask by 10% inward from edges to stay inside bubble border
-    const shrink = 0.9;
+    // Shrink mask slightly to stay inside bubble border
+    const shrink = 0.95;
     const mx = x + w * (1 - shrink) / 2;
     const my = y + h * (1 - shrink) / 2;
     const mw = w * shrink;
     const mh = h * shrink;
 
-    // Draw rounded rectangle instead of ellipse for tighter fit
+    // Draw rounded rectangle for text removal
     const radius = Math.min(8, mw / 4, mh / 4);
     cctx.fillStyle = '#ffffff';
     cctx.beginPath();
@@ -151,12 +172,11 @@ function handleTranslationSuccess(imageUrl, bubbles) {
     let rawYmax = Math.max(b.box[0], b.box[2]);
     let rawXmax = Math.max(b.box[1], b.box[3]);
 
-    const origW = (rawXmax - rawXmin) / 1000 * imgRect.width;
-    const origH = (rawYmax - rawYmin) / 1000 * imgRect.height;
-    const origX = (rawXmin / 1000) * imgRect.width;
-    const origY = (rawYmin / 1000) * imgRect.height;
+    const origW = ((rawXmax - rawXmin) / 1000) * renderW;
+    const origH = ((rawYmax - rawYmin) / 1000) * renderH;
+    const origX = offsetX + (rawXmin / 1000) * renderW;
+    const origY = offsetY + (rawYmin / 1000) * renderH;
 
-    // Use the original box position and size directly — don't try to auto-expand
     // Just shrink inward slightly to stay inside the speech bubble
     const shrink = 0.88;
     let widthPx = origW * shrink;
@@ -183,16 +203,21 @@ function handleTranslationSuccess(imageUrl, bubbles) {
       pointer-events: auto;
       cursor: move;
       color: #000000;
-      font-weight: 700;
-      font-size: clamp(12px, ${Math.max(13, imgRect.width * 0.016)}px, 22px);
+      font-weight: 800;
+      font-size: clamp(12px, ${Math.max(13, renderW * 0.016)}px, 22px);
       line-height: 1.35;
-      padding: 6px 10px;
-      border-radius: 12px;
-      background: #ffffff;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-      border: 1px solid rgba(0, 0, 0, 0.1);
+      padding: 0;
+      background: transparent;
+      border: none;
+      box-shadow: none;
+      text-shadow: 
+        -2px -2px 0 #fff, 2px -2px 0 #fff, 
+        -2px 2px 0 #fff, 2px 2px 0 #fff,
+        0px 2px 0 #fff, 0px -2px 0 #fff,
+        2px 0px 0 #fff, -2px 0px 0 #fff,
+        -1px -1px 0 #fff, 1px -1px 0 #fff, 
+        -1px 1px 0 #fff, 1px 1px 0 #fff;
       user-select: text;
-      transition: box-shadow 0.2s;
       word-break: break-word;
       z-index: 2;
     `;
