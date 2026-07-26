@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SuperK Manga Translator Settings</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --primary: #38bdf8;
+      --primary-hover: #0284c7;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --border: #334155;
+      --success: #10b981;
+      --danger: #ef4444;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      width: 320px;
+      padding: 16px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 13px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .logo {
+      font-size: 24px;
+    }
+
+    .title {
+      font-size: 16px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #38bdf8, #818cf8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .subtitle {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .form-group {
+      margin-bottom: 14px;
+    }
+
+    label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    input, select {
+      width: 100%;
+      padding: 8px 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    input:focus, select:focus {
+      border-color: var(--primary);
+    }
+
+    .btn-save {
+      width: 100%;
+      padding: 10px;
+      background: var(--primary);
+      color: #0f172a;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .btn-save:hover {
+      background: var(--primary-hover);
+    }
+
+    .btn-save:active {
+      transform: scale(0.98);
+    }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      margin-bottom: 14px;
+    }
+
+    .status-ready {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--success);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .status-warn {
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--danger);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
+    .guide-box {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      margin-top: 14px;
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .guide-title {
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+
+    a {
+      color: var(--primary);
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">🪄</div>
+    <div>
+      <div class="title">SuperK Translator</div>
+      <div class="subtitle">Extension แปลมังงะสดบนหน้าเว็บ</div>
+    </div>
+  </div>
+
+  <div id="statusBadge" class="status-badge status-warn">
+    <span>⚠️ กรุณากรอก Gemini API Key</span>
+  </div>
+
+  <div class="form-group">
+    <label for="apiKey">Gemini API Key</label>
+    <input type="password" id="apiKey" placeholder="AIzaSy..." />
+    <div style="font-size: 10px; color: var(--muted); margin-top: 4px;">
+      รับ API Key ฟรีได้จาก <a href="https://aistudio.google.com/app/apikey" target="_blank">Google AI Studio</a>
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label for="targetLang">ภาษาเป้าหมาย</label>
+    <select id="targetLang">
+      <option value="Thai">ภาษาไทย (Thai)</option>
+      <option value="English">English</option>
+      <option value="Japanese">Japanese</option>
+      <option value="Chinese">Chinese</option>
+    </select>
+  </div>
+
+  <div class="form-group">
+    <label for="modelPreference">โมเดล AI (Model)</label>
+    <select id="modelPreference">
+      <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash Lite (แนะนำ! 500 RPD)</option>
+      <option value="gemini-3.6-flash">Gemini 3.6 Flash (ความแม่นยำสูง)</option>
+      <option value="gemini-3-flash">Gemini 3.0 Flash</option>
+    </select>
+  </div>
+
+  <button id="btnSave" class="btn-save">
+    <span>💾 บันทึกการตั้งค่า</span>
+  </button>
+
+  <div class="guide-box">
+    <div class="guide-title">📌 วิธีใช้งาน:</div>
+    1. เปิดเว็บอ่านมังงะเว็บไหนก็ได้<br>
+    2. <strong>คลิกขวาที่รูปมังงะ</strong><br>
+    3. เลือก <strong>🪄 แปลภาพมังงะด้วย SuperK</strong>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
