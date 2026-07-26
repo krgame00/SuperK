@@ -58,40 +58,35 @@ function handleTranslationSuccess(imageUrl, bubbles) {
     return;
   }
 
-  // Build overlay container over target image
-  const rect = img.getBoundingClientRect();
-  const naturalW = img.naturalWidth || rect.width;
-  const naturalH = img.naturalHeight || rect.height;
-
-  // Ensure parent is positioned relative or wrap image
-  let wrapper = img.parentElement;
-  if (!wrapper || window.getComputedStyle(wrapper).position === 'static') {
-    const parent = img.parentNode;
-    wrapper = document.createElement('div');
-    wrapper.className = 'superk-img-wrapper';
-    wrapper.style.cssText = `position: relative; display: inline-block; max-width: 100%;`;
-    parent.insertBefore(wrapper, img);
-    wrapper.appendChild(img);
-  }
-
-  // Remove previous overlay if exists
-  const oldOverlay = wrapper.querySelector('.superk-overlay-container');
+  // Remove any previous overlay for this image
+  const oldOverlay = document.querySelector(`.superk-overlay-container[data-superk-for="${hashCode(imageUrl)}"]`);
   if (oldOverlay) oldOverlay.remove();
 
+  // Get actual rendered position and size of the image on screen
+  const imgRect = img.getBoundingClientRect();
+  const scrollX = window.scrollX || window.pageXOffset;
+  const scrollY = window.scrollY || window.pageYOffset;
+
+  // Create overlay container that exactly matches image position using absolute positioning in the document
   const overlayContainer = document.createElement('div');
   overlayContainer.className = 'superk-overlay-container';
+  overlayContainer.dataset.superkFor = hashCode(imageUrl);
   overlayContainer.style.cssText = `
     position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
+    top: ${imgRect.top + scrollY}px;
+    left: ${imgRect.left + scrollX}px;
+    width: ${imgRect.width}px;
+    height: ${imgRect.height}px;
     pointer-events: none;
-    z-index: 9999;
+    z-index: 99999;
     font-family: 'Itim', 'FC Subject', sans-serif;
+    overflow: hidden;
   `;
 
-  // Render bubbles
+  // Log coordinates for debugging
+  console.log('[SuperK] Image rect:', imgRect, 'Bubbles:', bubbles);
+
+  // Render bubbles using pixel positions relative to overlay
   bubbles.forEach((b, idx) => {
     if (!b.t || !b.box || b.box.length !== 4) return;
     
@@ -100,31 +95,24 @@ function handleTranslationSuccess(imageUrl, bubbles) {
     let rawYmax = Math.max(b.box[0], b.box[2]);
     let rawXmax = Math.max(b.box[1], b.box[3]);
 
-    // If all coordinates are <= 100, they are already 0-100 percentage
-    if (rawYmax <= 100 && rawXmax <= 100) {
-      // Keep as is
-    } else {
-      // Scale down 0-1000 to 0-100 percentage
-      rawYmin /= 10;
-      rawXmin /= 10;
-      rawYmax /= 10;
-      rawXmax /= 10;
-    }
+    // Normalize to 0-1000 range then convert to percentage of overlay size
+    // Gemini returns 0-1000 coordinates
+    const topPx = (rawYmin / 1000) * imgRect.height;
+    const leftPx = (rawXmin / 1000) * imgRect.width;
+    const widthPx = Math.max(imgRect.width * 0.08, ((rawXmax - rawXmin) / 1000) * imgRect.width);
+    const heightPx = Math.max(imgRect.height * 0.03, ((rawYmax - rawYmin) / 1000) * imgRect.height);
 
-    const topPct = Math.max(0, Math.min(95, rawYmin)).toFixed(2);
-    const leftPct = Math.max(0, Math.min(95, rawXmin)).toFixed(2);
-    const widthPct = Math.max(8, Math.min(98, rawXmax - rawXmin)).toFixed(2);
-    const heightPct = Math.max(3, Math.min(95, rawYmax - rawYmin)).toFixed(2);
+    console.log(`[SuperK] Bubble ${idx}: box=[${b.box}] -> top=${topPx.toFixed(0)}px left=${leftPx.toFixed(0)}px w=${widthPx.toFixed(0)} h=${heightPx.toFixed(0)} text="${b.t.slice(0,30)}..."`);
 
     const bubbleEl = document.createElement('div');
     bubbleEl.className = 'superk-text-bubble';
-    bubbleEl.dataset.originalTop = `${topPct}%`;
     bubbleEl.style.cssText = `
       position: absolute;
-      top: ${topPct}%;
-      left: ${leftPct}%;
-      width: ${widthPct}%;
-      min-height: ${heightPct}%;
+      top: ${topPx}px;
+      left: ${leftPx}px;
+      width: ${widthPx}px;
+      min-height: ${heightPx}px;
+      max-width: ${imgRect.width * 0.9}px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -133,16 +121,17 @@ function handleTranslationSuccess(imageUrl, bubbles) {
       cursor: move;
       color: #000000;
       font-weight: bold;
-      font-size: clamp(12px, 1.4vw, 22px);
+      font-size: clamp(11px, ${Math.max(12, imgRect.width * 0.018)}px, 24px);
       line-height: 1.3;
-      padding: 4px 6px;
+      padding: 4px 8px;
       border-radius: 8px;
-      background: rgba(255, 255, 255, 0.92);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-      border: 1px solid rgba(0, 0, 0, 0.15);
+      background: rgba(255, 255, 255, 0.94);
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+      border: 1.5px solid rgba(0, 0, 0, 0.12);
       text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff;
       user-select: text;
-      transition: top 0.3s ease, box-shadow 0.2s;
+      transition: box-shadow 0.2s;
+      word-break: break-word;
     `;
 
     bubbleEl.innerText = b.t;
@@ -154,20 +143,20 @@ function handleTranslationSuccess(imageUrl, bubbles) {
     overlayContainer.appendChild(bubbleEl);
   });
 
-  // Floating Control Bar (Align Top / Align Bottom / Toggle Original)
+  // Floating Control Bar
   const controlBar = document.createElement('div');
   controlBar.className = 'superk-control-bar';
   controlBar.innerHTML = `
-    <button class="superk-ctrl-btn" id="btnAlignTop" title="ย้ายข้อความไปด้านบนภาพ">⬆️ ดึงขึ้นบน</button>
-    <button class="superk-ctrl-btn" id="btnToggle" title="สลับดูภาพต้นฉบับ">✨ ดูต้นฉบับ</button>
+    <button class="superk-ctrl-btn" data-action="toggle" title="สลับดูภาพต้นฉบับ">✨ ดูต้นฉบับ</button>
+    <button class="superk-ctrl-btn" data-action="close" title="ปิด overlay">✕</button>
   `;
 
   let showingOriginal = false;
 
-  controlBar.querySelector('#btnToggle').onclick = (e) => {
+  controlBar.querySelector('[data-action="toggle"]').onclick = (e) => {
     e.stopPropagation();
     showingOriginal = !showingOriginal;
-    const btn = controlBar.querySelector('#btnToggle');
+    const btn = controlBar.querySelector('[data-action="toggle"]');
     if (showingOriginal) {
       overlayContainer.querySelectorAll('.superk-text-bubble').forEach(el => el.style.display = 'none');
       btn.innerHTML = '👁️ ดูคำแปล';
@@ -177,16 +166,36 @@ function handleTranslationSuccess(imageUrl, bubbles) {
     }
   };
 
-  controlBar.querySelector('#btnAlignTop').onclick = (e) => {
+  controlBar.querySelector('[data-action="close"]').onclick = (e) => {
     e.stopPropagation();
-    const bubbles = overlayContainer.querySelectorAll('.superk-text-bubble');
-    bubbles.forEach(b => {
-      b.style.top = '3%';
-    });
+    overlayContainer.remove();
   };
 
   overlayContainer.appendChild(controlBar);
-  wrapper.appendChild(overlayContainer);
+
+  // Append to document.body (not the image wrapper) for reliable positioning
+  document.body.appendChild(overlayContainer);
+
+  // Update position on scroll/resize so overlay stays on top of image
+  const updatePosition = () => {
+    const newRect = img.getBoundingClientRect();
+    const newScrollX = window.scrollX || window.pageXOffset;
+    const newScrollY = window.scrollY || window.pageYOffset;
+    overlayContainer.style.top = `${newRect.top + newScrollY}px`;
+    overlayContainer.style.left = `${newRect.left + newScrollX}px`;
+    overlayContainer.style.width = `${newRect.width}px`;
+    overlayContainer.style.height = `${newRect.height}px`;
+  };
+
+  window.addEventListener('resize', updatePosition);
+  // Use IntersectionObserver to detect if image moves  
+  const observer = new MutationObserver(updatePosition);
+  observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+  // Clean up after 2 minutes to prevent memory leaks
+  setTimeout(() => {
+    window.removeEventListener('resize', updatePosition);
+    observer.disconnect();
+  }, 120000);
 
   // Success Toast
   showToast(img, "✨ แปลเสร็จเรียบร้อย!");
