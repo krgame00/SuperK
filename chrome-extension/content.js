@@ -102,7 +102,7 @@ function handleTranslationSuccess(imageUrl, bubbles) {
   `;
   const cctx = cleanCanvas.getContext('2d');
 
-  // Fill canvas with white masks over original text areas
+  // Fill canvas with white masks over original text areas (tight fit inside speech bubbles)
   bubbles.forEach(b => {
     if (!b.box || b.box.length !== 4) return;
     let rawYmin = Math.min(b.box[0], b.box[2]);
@@ -110,24 +110,34 @@ function handleTranslationSuccess(imageUrl, bubbles) {
     let rawYmax = Math.max(b.box[0], b.box[2]);
     let rawXmax = Math.max(b.box[1], b.box[3]);
 
-    const boxW = (rawXmax - rawXmin) / 1000 * imgRect.width;
-    const boxH = (rawYmax - rawYmin) / 1000 * imgRect.height;
-    const centerX = ((rawXmin + rawXmax) / 2000) * imgRect.width;
-    const centerY = ((rawYmin + rawYmax) / 2000) * imgRect.height;
+    // Convert 0-1000 to pixel coordinates
+    const x = (rawXmin / 1000) * imgRect.width;
+    const y = (rawYmin / 1000) * imgRect.height;
+    const w = ((rawXmax - rawXmin) / 1000) * imgRect.width;
+    const h = ((rawYmax - rawYmin) / 1000) * imgRect.height;
 
-    // Pad slightly to ensure original Japanese/English text is 100% erased
-    const rx = Math.max(boxW / 2 + 6, 20);
-    const ry = Math.max(boxH / 2 + 6, 16);
+    // Shrink mask by 10% inward from edges to stay inside bubble border
+    const shrink = 0.9;
+    const mx = x + w * (1 - shrink) / 2;
+    const my = y + h * (1 - shrink) / 2;
+    const mw = w * shrink;
+    const mh = h * shrink;
 
+    // Draw rounded rectangle instead of ellipse for tighter fit
+    const radius = Math.min(8, mw / 4, mh / 4);
     cctx.fillStyle = '#ffffff';
     cctx.beginPath();
-    cctx.ellipse(centerX, centerY, rx, ry, 0, 0, Math.PI * 2);
+    cctx.moveTo(mx + radius, my);
+    cctx.lineTo(mx + mw - radius, my);
+    cctx.quadraticCurveTo(mx + mw, my, mx + mw, my + radius);
+    cctx.lineTo(mx + mw, my + mh - radius);
+    cctx.quadraticCurveTo(mx + mw, my + mh, mx + mw - radius, my + mh);
+    cctx.lineTo(mx + radius, my + mh);
+    cctx.quadraticCurveTo(mx, my + mh, mx, my + mh - radius);
+    cctx.lineTo(mx, my + radius);
+    cctx.quadraticCurveTo(mx, my, mx + radius, my);
+    cctx.closePath();
     cctx.fill();
-
-    // Soft white glow around border for natural blending with speech bubble
-    cctx.lineWidth = 4;
-    cctx.strokeStyle = '#ffffff';
-    cctx.stroke();
   });
 
   overlayContainer.appendChild(cleanCanvas);
@@ -143,26 +153,29 @@ function handleTranslationSuccess(imageUrl, bubbles) {
 
     const origW = (rawXmax - rawXmin) / 1000 * imgRect.width;
     const origH = (rawYmax - rawYmin) / 1000 * imgRect.height;
-    const centerX = ((rawXmin + rawXmax) / 2000) * imgRect.width;
-    const centerY = ((rawYmin + rawYmax) / 2000) * imgRect.height;
+    const origX = (rawXmin / 1000) * imgRect.width;
+    const origY = (rawYmin / 1000) * imgRect.height;
 
-    // Auto-adjust width for Thai text: Thai text reads horizontally, so narrow vertical Japanese boxes need wider width
-    let widthPx = Math.max(origW, Math.min(imgRect.width * 0.4, b.t.length * 9 + 30));
-    // Keep box bounded
-    widthPx = Math.min(widthPx, imgRect.width * 0.85);
+    // Use the original box position and size directly — don't try to auto-expand
+    // Just shrink inward slightly to stay inside the speech bubble
+    const shrink = 0.88;
+    let widthPx = origW * shrink;
+    let heightPx = origH * shrink;
+    const topPx = origY + origH * (1 - shrink) / 2;
+    const leftPx = origX + origW * (1 - shrink) / 2;
 
-    const topPx = Math.max(4, centerY - origH / 2);
-    const leftPx = Math.max(4, centerX - widthPx / 2);
-    const minHeightPx = Math.max(24, origH);
+    // Clamp to stay within image bounds
+    const clampedLeft = Math.max(2, Math.min(leftPx, imgRect.width - widthPx - 2));
+    const clampedTop = Math.max(2, Math.min(topPx, imgRect.height - heightPx - 2));
 
     const bubbleEl = document.createElement('div');
     bubbleEl.className = 'superk-text-bubble';
     bubbleEl.style.cssText = `
       position: absolute;
-      top: ${topPx.toFixed(0)}px;
-      left: ${leftPx.toFixed(0)}px;
+      top: ${clampedTop.toFixed(0)}px;
+      left: ${clampedLeft.toFixed(0)}px;
       width: ${widthPx.toFixed(0)}px;
-      min-height: ${minHeightPx.toFixed(0)}px;
+      min-height: ${heightPx.toFixed(0)}px;
       display: flex;
       align-items: center;
       justify-content: center;
