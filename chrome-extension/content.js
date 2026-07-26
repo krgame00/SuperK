@@ -94,15 +94,31 @@ function handleTranslationSuccess(imageUrl, bubbles) {
   // Render bubbles
   bubbles.forEach((b, idx) => {
     if (!b.t || !b.box || b.box.length !== 4) return;
-    const [ymin, xmin, ymax, xmax] = b.box;
+    
+    let rawYmin = Math.min(b.box[0], b.box[2]);
+    let rawXmin = Math.min(b.box[1], b.box[3]);
+    let rawYmax = Math.max(b.box[0], b.box[2]);
+    let rawXmax = Math.max(b.box[1], b.box[3]);
 
-    const topPct = (ymin / 10).toFixed(2);
-    const leftPct = (xmin / 10).toFixed(2);
-    const widthPct = Math.max(8, ((xmax - xmin) / 10)).toFixed(2);
-    const heightPct = Math.max(4, ((ymax - ymin) / 10)).toFixed(2);
+    // If all coordinates are <= 100, they are already 0-100 percentage
+    if (rawYmax <= 100 && rawXmax <= 100) {
+      // Keep as is
+    } else {
+      // Scale down 0-1000 to 0-100 percentage
+      rawYmin /= 10;
+      rawXmin /= 10;
+      rawYmax /= 10;
+      rawXmax /= 10;
+    }
+
+    const topPct = Math.max(0, Math.min(95, rawYmin)).toFixed(2);
+    const leftPct = Math.max(0, Math.min(95, rawXmin)).toFixed(2);
+    const widthPct = Math.max(8, Math.min(98, rawXmax - rawXmin)).toFixed(2);
+    const heightPct = Math.max(3, Math.min(95, rawYmax - rawYmin)).toFixed(2);
 
     const bubbleEl = document.createElement('div');
     bubbleEl.className = 'superk-text-bubble';
+    bubbleEl.dataset.originalTop = `${topPct}%`;
     bubbleEl.style.cssText = `
       position: absolute;
       top: ${topPct}%;
@@ -126,7 +142,7 @@ function handleTranslationSuccess(imageUrl, bubbles) {
       border: 1px solid rgba(0, 0, 0, 0.15);
       text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff;
       user-select: text;
-      transition: box-shadow 0.2s;
+      transition: top 0.3s ease, box-shadow 0.2s;
     `;
 
     bubbleEl.innerText = b.t;
@@ -138,25 +154,38 @@ function handleTranslationSuccess(imageUrl, bubbles) {
     overlayContainer.appendChild(bubbleEl);
   });
 
-  // Floating Toggle Control (Show Original / Show Translation)
-  const toggleBtn = document.createElement('button');
-  toggleBtn.className = 'superk-toggle-btn';
-  toggleBtn.innerHTML = '✨ ดูต้นฉบับ';
+  // Floating Control Bar (Align Top / Align Bottom / Toggle Original)
+  const controlBar = document.createElement('div');
+  controlBar.className = 'superk-control-bar';
+  controlBar.innerHTML = `
+    <button class="superk-ctrl-btn" id="btnAlignTop" title="ย้ายข้อความไปด้านบนภาพ">⬆️ ดึงขึ้นบน</button>
+    <button class="superk-ctrl-btn" id="btnToggle" title="สลับดูภาพต้นฉบับ">✨ ดูต้นฉบับ</button>
+  `;
+
   let showingOriginal = false;
 
-  toggleBtn.onclick = (e) => {
+  controlBar.querySelector('#btnToggle').onclick = (e) => {
     e.stopPropagation();
     showingOriginal = !showingOriginal;
+    const btn = controlBar.querySelector('#btnToggle');
     if (showingOriginal) {
-      overlayContainer.style.display = 'none';
-      toggleBtn.innerHTML = '👁️ ดูคำแปล';
+      overlayContainer.querySelectorAll('.superk-text-bubble').forEach(el => el.style.display = 'none');
+      btn.innerHTML = '👁️ ดูคำแปล';
     } else {
-      overlayContainer.style.display = 'block';
-      toggleBtn.innerHTML = '✨ ดูต้นฉบับ';
+      overlayContainer.querySelectorAll('.superk-text-bubble').forEach(el => el.style.display = 'flex');
+      btn.innerHTML = '✨ ดูต้นฉบับ';
     }
   };
 
-  overlayContainer.appendChild(toggleBtn);
+  controlBar.querySelector('#btnAlignTop').onclick = (e) => {
+    e.stopPropagation();
+    const bubbles = overlayContainer.querySelectorAll('.superk-text-bubble');
+    bubbles.forEach(b => {
+      b.style.top = '3%';
+    });
+  };
+
+  overlayContainer.appendChild(controlBar);
   wrapper.appendChild(overlayContainer);
 
   // Success Toast

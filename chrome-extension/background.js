@@ -88,20 +88,22 @@ async function translateImageWithGemini(base64Data, settings) {
     throw new Error("กรุณาใส่ Gemini API Key ในเมนู Extension ก่อนใช้งานครับ!");
   }
 
-  const prompt = `You are a professional manga/comic translator. Detect all speech bubbles, text boxes, and floating text in this manga page.
-Return ONLY a valid JSON object matching this schema:
+  const prompt = `You are an expert manga translator. Detect all speech bubbles, text boxes, and floating text in this image. Translate to ${settings.targetLang || 'Thai'}.
+Output ONLY valid JSON matching this schema:
 {
   "bubbles": [
     {
-      "box": [ymin, xmin, ymax, xmax],
-      "t": "Translated text in ${settings.targetLang}"
+      "original_text": "text in image",
+      "t": "translated text in ${settings.targetLang || 'Thai'}",
+      "box": [ymin, xmin, ymax, xmax]
     }
   ]
 }
 Notes:
-- box coordinates must be integers 0-1000 representing normalized box positions [ymin, xmin, ymax, xmax].
-- Translate speech bubbles accurately to natural ${settings.targetLang} manga phrasing.
-- Do NOT wrap in markdown or commentary, output JSON only.`;
+- box coordinates MUST be integers 0-1000 representing [ymin, xmin, ymax, xmax] of the EXACT text area.
+- ymin, xmin = top-left corner (0-1000), ymax, xmax = bottom-right corner (0-1000).
+- Transcribe original_text first to ensure precise bounding box position.
+- Do NOT wrap in markdown, commentary, or explanation. JSON only.`;
 
   const modelsToTry = [
     settings.modelPreference === "auto" ? "gemini-3.5-flash-lite" : settings.modelPreference,
@@ -131,6 +133,12 @@ Notes:
               }
             ]
           }
+        ],
+        safetySettings: [
+          { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+          { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+          { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+          { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
         ],
         generationConfig: {
           response_mime_type: "application/json"
