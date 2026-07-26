@@ -86,7 +86,53 @@ function handleTranslationSuccess(imageUrl, bubbles) {
   // Log coordinates for debugging
   console.log('[SuperK] Image rect:', imgRect, 'Bubbles:', bubbles);
 
-  // Render bubbles using pixel positions relative to overlay
+  // 1. Create clean mask canvas to ERASE original text completely
+  const cleanCanvas = document.createElement('canvas');
+  cleanCanvas.className = 'superk-clean-canvas';
+  cleanCanvas.width = Math.round(imgRect.width);
+  cleanCanvas.height = Math.round(imgRect.height);
+  cleanCanvas.style.cssText = `
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 1;
+  `;
+  const cctx = cleanCanvas.getContext('2d');
+
+  // Fill canvas with white masks over original text areas
+  bubbles.forEach(b => {
+    if (!b.box || b.box.length !== 4) return;
+    let rawYmin = Math.min(b.box[0], b.box[2]);
+    let rawXmin = Math.min(b.box[1], b.box[3]);
+    let rawYmax = Math.max(b.box[0], b.box[2]);
+    let rawXmax = Math.max(b.box[1], b.box[3]);
+
+    const boxW = (rawXmax - rawXmin) / 1000 * imgRect.width;
+    const boxH = (rawYmax - rawYmin) / 1000 * imgRect.height;
+    const centerX = ((rawXmin + rawXmax) / 2000) * imgRect.width;
+    const centerY = ((rawYmin + rawYmax) / 2000) * imgRect.height;
+
+    // Pad slightly to ensure original Japanese/English text is 100% erased
+    const rx = Math.max(boxW / 2 + 6, 20);
+    const ry = Math.max(boxH / 2 + 6, 16);
+
+    cctx.fillStyle = '#ffffff';
+    cctx.beginPath();
+    cctx.ellipse(centerX, centerY, rx, ry, 0, 0, Math.PI * 2);
+    cctx.fill();
+
+    // Soft white glow around border for natural blending with speech bubble
+    cctx.lineWidth = 4;
+    cctx.strokeStyle = '#ffffff';
+    cctx.stroke();
+  });
+
+  overlayContainer.appendChild(cleanCanvas);
+
+  // 2. Render Thai text bubbles on top of the clean canvas
   bubbles.forEach((b, idx) => {
     if (!b.t || !b.box || b.box.length !== 4) return;
     
@@ -95,24 +141,28 @@ function handleTranslationSuccess(imageUrl, bubbles) {
     let rawYmax = Math.max(b.box[0], b.box[2]);
     let rawXmax = Math.max(b.box[1], b.box[3]);
 
-    // Normalize to 0-1000 range then convert to percentage of overlay size
-    // Gemini returns 0-1000 coordinates
-    const topPx = (rawYmin / 1000) * imgRect.height;
-    const leftPx = (rawXmin / 1000) * imgRect.width;
-    const widthPx = Math.max(imgRect.width * 0.08, ((rawXmax - rawXmin) / 1000) * imgRect.width);
-    const heightPx = Math.max(imgRect.height * 0.03, ((rawYmax - rawYmin) / 1000) * imgRect.height);
+    const origW = (rawXmax - rawXmin) / 1000 * imgRect.width;
+    const origH = (rawYmax - rawYmin) / 1000 * imgRect.height;
+    const centerX = ((rawXmin + rawXmax) / 2000) * imgRect.width;
+    const centerY = ((rawYmin + rawYmax) / 2000) * imgRect.height;
 
-    console.log(`[SuperK] Bubble ${idx}: box=[${b.box}] -> top=${topPx.toFixed(0)}px left=${leftPx.toFixed(0)}px w=${widthPx.toFixed(0)} h=${heightPx.toFixed(0)} text="${b.t.slice(0,30)}..."`);
+    // Auto-adjust width for Thai text: Thai text reads horizontally, so narrow vertical Japanese boxes need wider width
+    let widthPx = Math.max(origW, Math.min(imgRect.width * 0.4, b.t.length * 9 + 30));
+    // Keep box bounded
+    widthPx = Math.min(widthPx, imgRect.width * 0.85);
+
+    const topPx = Math.max(4, centerY - origH / 2);
+    const leftPx = Math.max(4, centerX - widthPx / 2);
+    const minHeightPx = Math.max(24, origH);
 
     const bubbleEl = document.createElement('div');
     bubbleEl.className = 'superk-text-bubble';
     bubbleEl.style.cssText = `
       position: absolute;
-      top: ${topPx}px;
-      left: ${leftPx}px;
-      width: ${widthPx}px;
-      min-height: ${heightPx}px;
-      max-width: ${imgRect.width * 0.9}px;
+      top: ${topPx.toFixed(0)}px;
+      left: ${leftPx.toFixed(0)}px;
+      width: ${widthPx.toFixed(0)}px;
+      min-height: ${minHeightPx.toFixed(0)}px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -120,18 +170,18 @@ function handleTranslationSuccess(imageUrl, bubbles) {
       pointer-events: auto;
       cursor: move;
       color: #000000;
-      font-weight: bold;
-      font-size: clamp(11px, ${Math.max(12, imgRect.width * 0.018)}px, 24px);
-      line-height: 1.3;
-      padding: 4px 8px;
-      border-radius: 8px;
-      background: rgba(255, 255, 255, 0.94);
-      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
-      border: 1.5px solid rgba(0, 0, 0, 0.12);
-      text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff;
+      font-weight: 700;
+      font-size: clamp(12px, ${Math.max(13, imgRect.width * 0.016)}px, 22px);
+      line-height: 1.35;
+      padding: 6px 10px;
+      border-radius: 12px;
+      background: #ffffff;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      border: 1px solid rgba(0, 0, 0, 0.1);
       user-select: text;
       transition: box-shadow 0.2s;
       word-break: break-word;
+      z-index: 2;
     `;
 
     bubbleEl.innerText = b.t;
