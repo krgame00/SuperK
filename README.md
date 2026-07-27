@@ -1,36 +1,74 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SuperK Manga Translator
 
-## Getting Started
+เว็บแปลมังงะพร้อมระบบคลีนข้อความแบบ local-first สำหรับ Windows ตัวคลีนใช้
+CTD + OpenCV + AOT ONNX บน CPU และไม่เรียก paid API ส่วนการแปลภาษายังคงเป็น
+ฟังก์ชันแยกที่ต้องตั้งค่า provider/API key ตามที่หน้าเว็บระบุ
 
-First, run the development server:
+## ติดตั้งระบบคลีน
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+ต้องมี Python และ Node.js ก่อน จาก PowerShell ที่โฟลเดอร์โปรเจกต์:
+
+```powershell
+cd ocr-service
+py -3.12 -m venv .venv
+.\.venv\Scripts\python -m pip install --require-hashes -r requirements.lock
+.\.venv\Scripts\python scripts\install_models.py --baseline
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+ไฟล์โมเดลจะถูกตรวจ SHA-256 ตาม `models/manifest.json` และไม่ถูก commit เข้า
+Git ดูแหล่งที่มา ใบอนุญาต และ checksum ได้ใน
+`ocr-service/THIRD_PARTY_MODELS.md`
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## เปิดใช้งาน
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+เปิด PowerShell หนึ่งหน้าต่างสำหรับ local cleaning service:
 
-## Learn More
+```powershell
+.\ocr-service\run.ps1
+```
 
-To learn more about Next.js, take a look at the following resources:
+เปิดอีกหน้าต่างสำหรับเว็บ:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```powershell
+npm install
+npm run dev
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+จากนั้นเปิด `http://localhost:3000` อัปโหลดภาพ/ZIP/CBZ/PDF แล้วใช้ปุ่ม
+“คลีนข้อความ” สามารถสลับ Original, Clean และ Mask รวมถึงแก้ mask และ retry
+เฉพาะ region ได้
 
-## Deploy on Vercel
+## ทดสอบ
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```powershell
+cd ocr-service
+.\.venv\Scripts\pytest tests -v
+.\.venv\Scripts\ruff check app scripts tests
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+cd ..
+npm test
+npx tsc --noEmit
+npm run build
+```
+
+## Benchmark
+
+corpus manifest เก็บเฉพาะ hash, ขนาดภาพ และหมวดหมู่ ไม่เก็บชื่อโดจินหรือพาธ
+จริง:
+
+```powershell
+cd ocr-service
+.\.venv\Scripts\python scripts\build_benchmark_manifest.py `
+  --root "F:\Doujin\Download" --count 30
+
+.\.venv\Scripts\python scripts\benchmark.py `
+  --root "F:\Doujin\Download" `
+  --manifest benchmarks\manifest.json `
+  --cleaner aot `
+  --regression-page "E:\SuperK\SuperK_Page_001_1.webp" `
+  --regression-page "E:\SuperK\SuperK_Page_001_2.webp"
+```
+
+ผล JSON/Markdown ถูกเขียนใน `ocr-service/benchmark-results/` ซึ่ง Git ignore
+ไว้ รายละเอียดวิธีวัดและผล acceptance ล่าสุดอยู่ที่
+`docs/cleaning-benchmark.md`

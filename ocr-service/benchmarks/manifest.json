@@ -1,0 +1,276 @@
+{
+  "version": 1,
+  "seed": 20260727,
+  "pages": [
+    {
+      "relative_path_hash": "585d5f42335dd9ae9dc9574a32d84d022721b3991613eb7c9745a74e6bf7190d",
+      "sha256": "81e9c49b744b1f5b3960d5fb57a175328dc892491520a2d587c380764866b0da",
+      "width": 1125,
+      "height": 1600,
+      "categories": [
+        "white-bubble"
+      ]
+    },
+    {
+      "relative_path_hash": "9ced7c36e617fff4f4a659bc13b404458b4b425d9a41bcc9bf51e1f14ea70d65",
+      "sha256": "c740f9461d64372ae1fd0ef1465faaa0634c9158c99dd464457ed6614c5b4286",
+      "width": 1280,
+      "height": 1280,
+      "categories": [
+        "colored-bubble"
+      ]
+    },
+    {
+      "relative_path_hash": "80149c6caf4f991abf989e38c9b6cdbd918dafd936063eb49d2f4e8ee85467f9",
+      "sha256": "1c713bfc18f1b7f4ff6270ea3fe9757f25ff5ab6250771645a0c9bb4dcbe549f",
+      "width": 1631,
+      "height": 2880,
+      "categories": [
+        "vertical-japanese"
+      ]
+    },
+    {
+      "relative_path_hash": "03ef6bf5a7c9bc7cec9e3034c26e0b7b285fc3d221a0508efc1f32e30e20e63e",
+      "sha256": "8fe48eee3791ecc53552aceb2cddb86fb24c9d77d4f723404bb4aa2c71bb4e99",
+      "width": 1024,
+      "height": 1476,
+      "categories": [
+        "outlined-or-colored-text"
+      ]
+    },
+    {
+      "relative_path_hash": "010146185ce14e6b34738d92af982eff5e3b28a64286fccd36070a8d1e7f885d",
+      "sha256": "fa4b97b184b32d242e52db389ba49c8e7ab5dd45d6f5d354f8431548763c563a",
+      "width": 1280,
+      "height": 1813,
+      "categories": [
+        "artwork-sfx"
+      ]
+    },
+    {
+      "relative_path_hash": "2dd1ed91db27bf606823752db3e7289cbb7bada2a21e88d8ba6b6b334796f51a",
+      "sha256": "a0e9a605fee9ce926fe401d7eb6dfff05ea33394759e06c50dadb87c0098ed0a",
+      "width": 1280,
+      "height": 1830,
+      "categories": [
+        "screentone"
+      ]
+    },
+    {
+      "relative_path_hash": "9afe5892078e5f2d281543edc6840282a4fa62393b9045237d0a1c3dbb499425",
+      "sha256": "fc457bcdcb1a924353eb9443418ff987b6790d30fe60f4b76ca4896d17f4f8da",
+      "width": 1280,
+      "height": 1280,
+      "categories": [
+        "complex-color"
+      ]
+    },
+    {
+      "relative_path_hash": "972add710834e94433d059daa94f4ae3cc68bd0fc37bf94c8305236a1ab3da43",
+      "sha256": "9ed8381862e7d54e0919c6bb4d1f7506c3b2a202c40f156c3e3ee0fafa1f6525",
+      "width": 1414,
+      "height": 2000,
+      "categories": [
+        "dense-text"
+      ]
+    },
+    {
+      "relative_path_hash": "0aaaa93a3683143d51cb558c7ebd9f5a086fc93944a8fdc311314f520c95f5b2",
+      "sha256": "da7cd533203177299bf0e94ab82fa5797a2a570eda66fe2dc733cabc58acc0c7",
+      "width": 1280,
+      "height": 1807,
+      "categories": [
+        "text-free"
+      ]
+    },
+    {
+      "relative_path_hash": "0808079abc93ce3609349f52cdaa9cb1cf171a87f1c291b7124b4fe259f570a5",
+      "sha256": "8e27ff6139d1132ad02e388df020dc2328366443957ddd8746281d31603b1614",
+      "width": 1254,
+      "height": 1771,
+      "categories": [
+        "screentone"
+      ]
+    },
+    {
+      "relative_path_hash": "42e7f27d9d9df5763b48e8125361f5f0d80f078caef2be93a497891675c7f772",
+      "sha256": "88cb45307a0fca53ba2f8a274aa9f58506a54139b984b993465aaf02e49908e8",
+      "width": 1280,
+      "height": 1837,
+      "categories": [
+        "screentone"
+      ]
+    },
+    {
+      "relative_path_hash": "4d04bad2637bd664416de3f7ff06e656da536e6948b0fc0a000b830b19ffe189",
+      "sha256": "0de725e27fcc459bbb41a54dde951a6dce2a397c5d596ade3ff3427bcf486560",
+      "width": 1044,
+      "height": 1500,
+      "categories": [
+        "screentone"
+      ]
+    },
+    {
+      "relative_path_hash": "e0baee2ba57d942b697f9274c0d8b349c7c139a76b2ba132871e0e8f6b9c717b",
+      "sha256": "28002631d9adea3225d03a2449d609d66a56592369cc932653576fef6dac4d79",
+      "width": 1280,
+      "height": 1837,
+      "categories": [
+        "screentone"
+      ]
+    },
+    {
+      "relative_path_hash": "61aa5761d468ec7fcd7d7008751ee751f1fa13bf714168010de8858b7f9f293f",
+      "sha256": "c5305dc2632819f13d212737dae85dda03130971cdea26892c0df850e4009626",
+      "width": 1280,
+      "height": 629,
+      "categories": [
+        "screentone"
+      ]
+    },
+    {
+      "relative_path_hash": "9a375287158f12f31bb30898a410ee195159095a7a333e215e485422c2e08220",
+      "sha256": "f77d2e660e4f453d0d89c36efd4ef0941a2c7757da001359917b31bc2fb096e3",
+      "width": 1280,
+      "height": 1808,
+      "categories": [
+        "screentone"
+      ]
+    },
+    {
+      "relative_path_hash": "21d73c9cb1ee857d3948dec6676287a3bbbccf7666b4cd9c649c38cf0e97844c",
+      "sha256": "f474f854b81e40171ccf4e5d9aee38d9b46459ea56b62e14681bcdec52897055",
+      "width": 1280,
+      "height": 1823,
+      "categories": [
+        "screentone"
+      ]
+    },
+    {
+      "relative_path_hash": "ca8d6270d6e6db0c303a28788020168d9d66d6c3eba9966c95ac4ec06eb89a74",
+      "sha256": "c9dad772cea739ccde61ea089b3af92490011034311055199cd50b9739d687d1",
+      "width": 1280,
+      "height": 1837,
+      "categories": [
+        "screentone"
+      ]
+    },
+    {
+      "relative_path_hash": "97032dd27a47b91f8765029cf2feedc41847b6a6533fbf6113d5a54b5736d825",
+      "sha256": "5b8dc03110fb523b9887033281e254cc41beec6ca691c0ffa916b5332a288aaf",
+      "width": 2480,
+      "height": 3508,
+      "categories": [
+        "complex-color"
+      ]
+    },
+    {
+      "relative_path_hash": "63022f2ccda95b0f35f8f78293146052d44f6f0ce9027e2c5b51445aca8f66a3",
+      "sha256": "9606a3482157e3cf2542e0a35b03cd1059b82685dadb30597638fc6fc3c2e968",
+      "width": 1280,
+      "height": 1807,
+      "categories": [
+        "screentone"
+      ]
+    },
+    {
+      "relative_path_hash": "dd7bc4cda7b7e263544bcd9e3212887a1347c04d21591767b8aa729b26e516e6",
+      "sha256": "33f5d3ba51b15b82f8cd696e9a0745257ee941555e2038ff8def079a84f1b876",
+      "width": 1280,
+      "height": 1785,
+      "categories": [
+        "complex-color"
+      ]
+    },
+    {
+      "relative_path_hash": "da36f5a0e0be1c6ea751ebb48d6676cf59c57d882aebea5d1100a040d8cd7bf4",
+      "sha256": "c20a59792ebb707107324d975c943f9db55042c4ee3ebee408988177d75b9ee5",
+      "width": 1280,
+      "height": 1807,
+      "categories": [
+        "screentone"
+      ]
+    },
+    {
+      "relative_path_hash": "7176bef810b7df5de1ca7f2e579646ee185e0333bf055012f2718185136217fb",
+      "sha256": "f74e06e98e0126266d6f636d04793ff2a9e8bba5bf4a39780f85e54e81ac7b75",
+      "width": 1044,
+      "height": 1500,
+      "categories": [
+        "screentone"
+      ]
+    },
+    {
+      "relative_path_hash": "88d49834697a4b436631fbd03bc4dd01547a19d841622783992620bd49189d34",
+      "sha256": "c1ef101701269af0c73fbf8e89f6e225058824c08d98aa31a069cb18638935a7",
+      "width": 1280,
+      "height": 1791,
+      "categories": [
+        "screentone"
+      ]
+    },
+    {
+      "relative_path_hash": "0a7fd509e293aa139e9fd08f188c599d824b7dd061b82473464ed6f0bd6f4cd0",
+      "sha256": "34e25f11bedc27c4977a2da2e5c2b415b78df996ad72889c290c35985a2215af",
+      "width": 1280,
+      "height": 1837,
+      "categories": [
+        "screentone"
+      ]
+    },
+    {
+      "relative_path_hash": "902299e343837ac9f80400d313dea361188a8e26a2f073cf6e12917a4ca9ae25",
+      "sha256": "05f1fd0a9d3ae126dc4007ad400f712614446ad2c8c7fbcb6767ba3e3084d9a7",
+      "width": 1280,
+      "height": 1807,
+      "categories": [
+        "screentone"
+      ]
+    },
+    {
+      "relative_path_hash": "58488bb4ccbcb7d6a4db977d848ff93c9c33f6b01b7f7594677eff585cc7078c",
+      "sha256": "e8fd49ab4db236aa23f7f9c598ebb6802cba88c25d6ce042bd5eb86a29a185f1",
+      "width": 719,
+      "height": 1080,
+      "categories": [
+        "white-bubble"
+      ]
+    },
+    {
+      "relative_path_hash": "1640c5313abacae6d4f23d15234a36875504689fb387d559a015d13a04e086d6",
+      "sha256": "85b2f3a9af2b5cce1b6f3292f93fa33d3bedb734764f7be2d19771e664a6527f",
+      "width": 1280,
+      "height": 1280,
+      "categories": [
+        "complex-color"
+      ]
+    },
+    {
+      "relative_path_hash": "9c043ad40faa0b0198d3c0ce55cba2a3e9a27aa11b336f21aadbd5c7eda414f1",
+      "sha256": "44276f06694dbfd15a50ac8dc563024d36fa4a953967fc7ff45c7161d0d92831",
+      "width": 1280,
+      "height": 1807,
+      "categories": [
+        "screentone"
+      ]
+    },
+    {
+      "relative_path_hash": "62fdc913492ee8b7660cbca85b8ed808afac06d1c25c2695dc88ce09dfbad1d1",
+      "sha256": "f2cac13e2b79ee75ee8eb9c81293df5a9ff74625abd8e1ed5e18571c5c977337",
+      "width": 2480,
+      "height": 3508,
+      "categories": [
+        "complex-color"
+      ]
+    },
+    {
+      "relative_path_hash": "af9beb2902ccab08ea8e35a31ee9d44924af372e7b030df2f547d205efe4958e",
+      "sha256": "96f5b6992bec594d30b4c8d776b874d8488b749b616e559ad3c004ef67b5c544",
+      "width": 2480,
+      "height": 3508,
+      "categories": [
+        "screentone"
+      ]
+    }
+  ]
+}
