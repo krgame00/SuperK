@@ -1,0 +1,6 @@
+-r requirements.in
+pytest>=8.4,<9
+pytest-cov>=6,<7
+httpx>=0.28,<1
+ruff>=0.12,<1
+pip-tools>=7.5,<8

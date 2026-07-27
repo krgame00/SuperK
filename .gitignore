@@ -20,6 +20,13 @@
 # production
 /build
 /.worktrees/
+/ocr-service/venv/
+/ocr-service/.venv/
+/ocr-service/models/*.onnx
+/ocr-service/models/*.ckpt
+/ocr-service/models/*.pt
+/ocr-service/.cache/
+/ocr-service/benchmark-results/
 
 # misc
 .DS_Store
