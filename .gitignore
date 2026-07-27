@@ -27,6 +27,8 @@
 /ocr-service/models/*.pt
 /ocr-service/.cache/
 /ocr-service/benchmark-results/
+__pycache__/
+*.py[cod]
 
 # misc
 .DS_Store
