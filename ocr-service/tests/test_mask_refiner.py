@@ -75,3 +75,16 @@ def test_refine_mask_builds_regions_from_detector_probability() -> None:
     assert result.mask[25, 27] == 255
     assert len(result.regions) == 1
     assert result.regions[0].rect.x <= 25
+
+
+def test_nearby_mixed_orientation_glyphs_share_one_repair_region() -> None:
+    probability = np.zeros((48, 48), np.float32)
+    probability[14:17, 10:20] = 1
+    probability[12:22, 23:26] = 1
+    result = refine_probability_mask(
+        probability,
+        np.zeros((48, 48), np.uint8),
+        threshold=0.5,
+        minimum_component_area=1,
+    )
+    assert len(result.regions) == 1

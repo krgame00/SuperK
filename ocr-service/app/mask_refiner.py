@@ -138,7 +138,9 @@ def _group_regions(
         for component_id in component_ids
     }
     median_height = float(np.median([rect.height for rect in rects.values()]))
-    maximum_gap = max(1.0, 1.5 * median_height)
+    mask_height, mask_width = next(iter(component_masks.values())).shape
+    page_scale_floor = 0.02 * min(mask_height, mask_width)
+    maximum_gap = max(1.0, 1.5 * median_height, page_scale_floor)
     parents = {component_id: component_id for component_id in component_ids}
 
     def find(component_id: int) -> int:
@@ -159,8 +161,7 @@ def _group_regions(
             right = rects[right_id]
             if _rect_distance(left, right) > maximum_gap:
                 continue
-            if _orientation(left) == _orientation(right):
-                union(left_id, right_id)
+            union(left_id, right_id)
 
     groups: dict[int, list[int]] = {}
     for component_id in component_ids:
@@ -202,11 +203,3 @@ def _rect_distance(left: PixelRect, right: PixelRect) -> float:
         0,
     )
     return float(np.hypot(horizontal, vertical))
-
-
-def _orientation(rect: PixelRect) -> str:
-    if rect.height > rect.width * 1.25:
-        return "vertical"
-    if rect.width > rect.height * 1.25:
-        return "horizontal"
-    return "square"

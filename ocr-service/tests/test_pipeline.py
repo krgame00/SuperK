@@ -90,6 +90,60 @@ def test_pipeline_retries_once_then_restores_failed_region() -> None:
     assert output.regions[0].status is RegionStatus.NEEDS_REVIEW
 
 
+def test_pipeline_batches_initial_residual_detection_across_regions() -> None:
+    mask = np.zeros((32, 32), np.uint8)
+    mask[4:8, 4:8] = 255
+    mask[20:24, 20:24] = 255
+    regions = [
+        MaskRegion(
+            id="region-1",
+            rect=PixelRect(x=2, y=2, width=8, height=8),
+            component_ids=(1,),
+            stroke_radius=2,
+        ),
+        MaskRegion(
+            id="region-2",
+            rect=PixelRect(x=18, y=18, width=8, height=8),
+            component_ids=(2,),
+            stroke_radius=2,
+        ),
+    ]
+
+    class Cleaner:
+        def clean(self, image, active_mask, _region):
+            result = image.copy()
+            result[active_mask > 0] = 255
+            return result
+
+    class BatchProbe:
+        batch_calls = 0
+        single_calls = 0
+
+        def score(self, _crop, _mask):
+            self.single_calls += 1
+            return 0.0
+
+        def score_many(self, _image, items):
+            self.batch_calls += 1
+            return {region.id: 0.0 for region, _mask in items}
+
+    probe = BatchProbe()
+    pipeline = CleaningPipeline(
+        detector=NoTextDetector(),
+        refiner=lambda _source, _detection: RefinedMask(
+            mask,
+            regions,
+            np.zeros_like(mask),
+        ),
+        cleaners={"flat": Cleaner()},
+        residual_probe=probe,
+    )
+    output = pipeline.run(np.zeros((32, 32, 3), np.uint8))
+    assert len(output.regions) == 2
+    assert probe.batch_calls == 1
+    assert probe.single_calls == 0
+
+
 def test_result_cache_round_trips_lossless_assets(tmp_path: Path) -> None:
     cache = ResultCache(tmp_path)
     key = cache.key_for(
