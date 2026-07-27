@@ -1,0 +1,20 @@
+{
+  "ctd-onnx": {
+    "url": "https://huggingface.co/lemondouble/lemon-manga-translator/resolve/e8c08f38f188db684fdc32c4cf88627c7df92096/onnx/comic-text-detector/ctd.onnx",
+    "sha256": "eea9f9ccad2364fcb15bdfeca25268be273fea80b111ba6a6f4c03f556c24c26",
+    "filename": "ctd.onnx",
+    "license": "GPL-3.0-only"
+  },
+  "aot-onnx": {
+    "url": "https://huggingface.co/lemondouble/lemon-manga-translator/resolve/e8c08f38f188db684fdc32c4cf88627c7df92096/onnx/aot-inpainting/aot_folded.onnx",
+    "sha256": "e0d8f438ca9567eccc9d358963427601b6f64a650cbe6189ec82fc43830a0390",
+    "filename": "aot_folded.onnx",
+    "license": "GPL-3.0-only"
+  },
+  "anime-lama": {
+    "url": "https://huggingface.co/df1412/anime-big-lama/resolve/main/anime-manga-big-lama.pt",
+    "sha256": "479d3afdcb7ed2fd944ed4ebcc39ca45b33491f0f2e43eb1000bd623cfb41823",
+    "filename": "anime-manga-big-lama.pt",
+    "license": "MIT"
+  }
+}
