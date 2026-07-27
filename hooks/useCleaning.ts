@@ -290,7 +290,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
     [currentPageUrl, resultsByPage],
   );
   const progress =
-    progressState?.pageUrl === currentPageUrl
+    progressState && progressState.pageUrl === currentPageUrl
       ? progressState.value
       : undefined;
 

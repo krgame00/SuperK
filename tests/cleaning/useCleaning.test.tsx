@@ -90,6 +90,15 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+test("renders safely before any page is uploaded", () => {
+  const { result } = renderHook(() =>
+    useCleaning({ pages: [], currentPage: 0 }),
+  );
+
+  expect(result.current.progress).toBeUndefined();
+  expect(result.current.currentResult).toBeUndefined();
+});
+
 test("polls until succeeded and stores result for current page", async () => {
   vi.mocked(createCleaningJob).mockResolvedValue(queuedJob);
   vi.mocked(getCleaningJob)

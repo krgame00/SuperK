@@ -8,6 +8,12 @@ import { downloadTranslatedImage, applyTranslationOverlay } from "@/lib/translat
 import { Upload, ChevronLeft, ChevronRight, Wand2, Download, Archive, Flame, Eye, EyeOff, Undo2, Redo2, Trash2, GalleryVertical, RectangleHorizontal, Menu, X, ChevronUp, ChevronDown, Maximize2, Minimize2, Settings, FileArchive, BookOpen, FileText, Sparkles } from "lucide-react";
 import { undoManager } from "@/lib/undoManager";
 import JSZip from "jszip";
+import { useCleaning } from "@/hooks/useCleaning";
+import {
+  CleaningToolbar,
+  type CleaningLayer,
+} from "@/components/cleaning/CleaningToolbar";
+import { MaskEditor } from "@/components/cleaning/MaskEditor";
 
 export default function WorkspacePage() {
   const [pages, setPages] = useState<{url: string, name: string}[]>([]);
@@ -17,6 +23,9 @@ export default function WorkspacePage() {
   const [viewLayout, setViewLayout] = useState<'single' | 'scroll'>('single');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isThumbnailsCollapsed, setIsThumbnailsCollapsed] = useState(false);
+  const [cleaningLayer, setCleaningLayer] =
+    useState<CleaningLayer>("original");
+  const [isMaskEditorOpen, setIsMaskEditorOpen] = useState(false);
 
   // Touch Swipe Gesture State for Mobile Reader
   const touchStartXRef = useRef<number | null>(null);
@@ -71,6 +80,22 @@ export default function WorkspacePage() {
   const [canRedo, setCanRedo] = useState(false);
 
   const pageUrls = useMemo(() => pages.map(p => p.url), [pages]);
+  const {
+    cleanCurrentPage,
+    retryRegion,
+    currentResult: currentCleaningResult,
+    progress: cleaningProgress,
+    error: cleaningError,
+    resultsByPage: cleaningResultsByPage,
+  } = useCleaning({ pages: pageUrls, currentPage });
+
+  const handleCleanCurrentPage = async () => {
+    const page = pages[currentPage];
+    if (!page) return;
+    const response = await fetch(page.url);
+    await cleanCurrentPage(await response.blob());
+    setCleaningLayer("clean");
+  };
 
   const {
     targetLang,
@@ -241,7 +266,8 @@ export default function WorkspacePage() {
             clearTimeout(timeout);
             resolve(pageUrl);
           };
-          offscreenImg.src = pageUrl;
+          offscreenImg.src =
+            cleaningResultsByPage.get(pageUrl)?.cleanUrl ?? pageUrl;
         });
       }
       return pageUrl;
@@ -993,13 +1019,29 @@ export default function WorkspacePage() {
 
         {pages.length > 0 ? (
           <div className="w-full flex flex-col items-center flex-1 px-2 sm:px-4 py-4 sm:py-6">
-            
+            <CleaningToolbar
+              hasPage={pages.length > 0}
+              hasResult={Boolean(currentCleaningResult)}
+              layer={cleaningLayer}
+              onClean={() => void handleCleanCurrentPage()}
+              onEditMask={() => setIsMaskEditorOpen(true)}
+              onLayerChange={setCleaningLayer}
+              progress={cleaningProgress}
+              error={cleaningError}
+            />
+
             <div className="relative w-full flex justify-center items-center flex-1 min-h-[60vh]">
               {viewLayout === 'scroll' ? (
                 <div className="flex flex-col items-center gap-0 w-full max-w-3xl sm:max-w-4xl lg:max-w-5xl pb-32">
                   {pages.map((p, idx) => {
                     const isTranslated = translatedImageCacheRef.current.has(p.url);
-                    const imgSrc = (showOriginal || !isTranslated) ? p.url : translatedImageCacheRef.current.get(p.url)!;
+                    const cleanedSrc =
+                      cleaningResultsByPage.get(p.url)?.cleanUrl ?? p.url;
+                    const imgSrc = showOriginal
+                      ? p.url
+                      : isTranslated
+                        ? translatedImageCacheRef.current.get(p.url)!
+                        : cleanedSrc;
                     return (
                       <div 
                         key={idx} 
@@ -1062,13 +1104,25 @@ export default function WorkspacePage() {
                       </div>
                     ) : (
                       <img 
-                        src={pages[currentPage].url} 
+                        src={
+                          cleaningLayer === "original"
+                            ? pages[currentPage].url
+                            : currentCleaningResult?.cleanUrl ??
+                              pages[currentPage].url
+                        }
                         alt={pages[currentPage].name} 
                         title={pages[currentPage].name}
                         onError={() => {
                           setBrokenPages(prev => new Set(prev).add(pages[currentPage].url));
                         }}
                         className="max-w-full max-h-[calc(100vh-160px)] sm:max-h-[calc(100vh-180px)] w-auto h-auto object-contain drop-shadow-sm select-none block"
+                      />
+                    )}
+                    {cleaningLayer === "mask" && currentCleaningResult && (
+                      <img
+                        src={currentCleaningResult.maskUrl}
+                        alt="Text cleaning mask"
+                        className="pointer-events-none absolute inset-0 h-full w-full object-fill opacity-55 mix-blend-screen"
                       />
                     )}
                   </div>
@@ -1301,6 +1355,15 @@ export default function WorkspacePage() {
             )}
           </div>
         </div>
+      )}
+      {isMaskEditorOpen && currentCleaningResult && pages[currentPage] && (
+        <MaskEditor
+          sourceUrl={currentCleaningResult.cleanUrl}
+          maskUrl={currentCleaningResult.maskUrl}
+          regions={currentCleaningResult.regions}
+          onClose={() => setIsMaskEditorOpen(false)}
+          onRetry={retryRegion}
+        />
       )}
     </div>
   );
