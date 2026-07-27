@@ -20,6 +20,8 @@
 # production
 /build
 /.worktrees/
+
+# ocr-service venv & models
 /ocr-service/venv/
 /ocr-service/.venv/
 /ocr-service/models/*.onnx
