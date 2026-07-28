@@ -25,9 +25,14 @@ from app.cleaners.aot import AotCleaner
 from app.cleaners.flat import FlatCleaner, GradientCleaner
 from app.detector import TextDetector
 from app.model_store import ModelStore
-from app.pipeline import CleaningPipeline
+from app.pipeline import CleaningPipeline, PipelineOutput
 from app.residual_probe import CompositeResidualProbe
-from app.schemas import AutomaticAction, CleanerRoute, RegionStatus
+from app.schemas import (
+    AutomaticAction,
+    CleanerRoute,
+    PageRole,
+    RegionStatus,
+)
 from scripts.build_benchmark_manifest import (
     IMAGE_SUFFIXES,
     anonymized_relative_path_hash,
@@ -90,6 +95,24 @@ def resolve_manifest_pages(
 def load_rgb(path: Path) -> np.ndarray:
     with Image.open(path) as image:
         return np.asarray(image.convert("RGB"), dtype=np.uint8)
+
+
+def count_unattempted_comic_regions(output: PipelineOutput) -> int:
+    count = 0
+    for region in output.regions:
+        if (
+            region.page_role is not PageRole.COMIC
+            or region.automatic_action is AutomaticAction.CLEAN
+        ):
+            continue
+        rect = region.rect
+        protected = output.protected_mask[
+            rect.y : rect.y + rect.height,
+            rect.x : rect.x + rect.width,
+        ]
+        if not np.any(protected):
+            count += 1
+    return count
 
 
 def measure_page(
@@ -160,6 +183,9 @@ def measure_page(
         "region_count": region_count,
         "route_counts": dict(route_counts),
         "eligible_region_count": eligible_regions,
+        "comic_unattempted_detected_region_count": (
+            count_unattempted_comic_regions(output)
+        ),
         "residual_pass_rate": _ratio(residual_pass, eligible_regions),
         "automatic_region_pass_rate": _ratio(repaired, eligible_regions),
         "needs_review_rate": (
@@ -306,6 +332,10 @@ def aggregate(
             total_regions - automatic_passes,
             total_regions,
         ),
+        "comic_unattempted_detected_region_count": sum(
+            page["comic_unattempted_detected_region_count"]
+            for page in pages
+        ),
         "changed_pixels_outside_support": sum(
             page["changed_pixels_outside_support"] for page in pages
         ),
@@ -332,6 +362,7 @@ def aggregate(
         summary["median_total_ms"] <= 30_000
         and summary["residual_pass_rate"] >= 0.95
         and summary["automatic_region_pass_rate"] >= 0.90
+        and summary["comic_unattempted_detected_region_count"] == 0
         and summary["changed_pixels_outside_support"] == 0
         and summary["changed_pixels_inside_protected"] == 0
         and summary["credit_ui_pages_pixel_identical"]
@@ -398,6 +429,10 @@ def markdown_report(report: dict[str, Any]) -> str:
         (
             f"- Automatic region pass: "
             f"{summary['automatic_region_pass_rate']:.1%}"
+        ),
+        (
+            f"- Unattempted comic detector regions: "
+            f"{summary['comic_unattempted_detected_region_count']}"
         ),
         (
             f"- Changed pixels outside support: "

@@ -5,9 +5,23 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-from scripts.benchmark import peak_rss_bytes
+from app.pipeline import PipelineOutput
+from app.schemas import (
+    AutomaticAction,
+    CleanerRoute,
+    PageRole,
+    PixelRect,
+    RegionRecord,
+    RegionStatus,
+    TextRole,
+)
+from scripts.benchmark import (
+    count_unattempted_comic_regions,
+    peak_rss_bytes,
+)
 from scripts.build_benchmark_manifest import (
     anonymized_relative_path_hash,
     should_include_relative_path,
@@ -33,6 +47,61 @@ REQUIRED_CATEGORIES = {
 
 def _manifest() -> dict[str, object]:
     return json.loads(MANIFEST.read_text(encoding="utf-8"))
+
+
+def _benchmark_region(
+    region_id: str,
+    action: AutomaticAction,
+    *,
+    x: int = 0,
+) -> RegionRecord:
+    return RegionRecord(
+        id=region_id,
+        rect=PixelRect(x=x, y=8, width=8, height=8),
+        route=CleanerRoute.FLAT,
+        confidence=0.8,
+        status=RegionStatus.PRESERVED,
+        residual_score=0,
+        damage_score=0,
+        page_role=PageRole.COMIC,
+        text_role=TextRole.REVIEW,
+        eligibility_confidence=0.5,
+        automatic_action=action,
+        protection_reasons=[],
+    )
+
+
+def _benchmark_output(
+    regions: list[RegionRecord],
+    *,
+    protected_slice: tuple[int, int],
+) -> PipelineOutput:
+    source = np.zeros((32, 32, 3), np.uint8)
+    mask = np.zeros((32, 32), np.uint8)
+    protected = np.zeros_like(mask)
+    protected[8:16, protected_slice[0] : protected_slice[1]] = 255
+    return PipelineOutput(
+        source_image=source,
+        clean_image=source.copy(),
+        mask=mask.copy(),
+        review_mask=mask.copy(),
+        protected_mask=protected,
+        regions=regions,
+        timings_ms={"total": 1},
+    )
+
+
+def test_unattempted_metric_excludes_hard_protected_regions() -> None:
+    output = _benchmark_output(
+        [
+            _benchmark_region("attempted", AutomaticAction.CLEAN),
+            _benchmark_region("missed", AutomaticAction.PRESERVE, x=8),
+            _benchmark_region("protected", AutomaticAction.PRESERVE, x=16),
+        ],
+        protected_slice=(16, 24),
+    )
+
+    assert count_unattempted_comic_regions(output) == 1
 
 
 def test_manifest_has_30_unique_source_pages() -> None:
