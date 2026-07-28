@@ -14,12 +14,15 @@ from app.schemas import (
     CleanerRoute,
     PageRole,
     PixelRect,
+    ProtectionReason,
     RegionRecord,
     RegionStatus,
     TextRole,
 )
 from scripts.benchmark import (
-    count_unattempted_detected_regions,
+    aggregate,
+    count_preserved_sfx_regions,
+    count_unexpected_unattempted_regions,
     peak_rss_bytes,
 )
 from scripts.build_benchmark_manifest import (
@@ -55,6 +58,8 @@ def _benchmark_region(
     *,
     x: int = 0,
     role: PageRole = PageRole.COMIC,
+    text_role: TextRole = TextRole.REVIEW,
+    protection_reasons: list[ProtectionReason] | None = None,
 ) -> RegionRecord:
     return RegionRecord(
         id=region_id,
@@ -65,10 +70,10 @@ def _benchmark_region(
         residual_score=0,
         damage_score=0,
         page_role=role,
-        text_role=TextRole.REVIEW,
+        text_role=text_role,
         eligibility_confidence=0.5,
         automatic_action=action,
-        protection_reasons=[],
+        protection_reasons=protection_reasons or [],
     )
 
 
@@ -92,27 +97,62 @@ def _benchmark_output(
     )
 
 
-def test_unattempted_metric_covers_every_page_role() -> None:
+def test_policy_metrics_exclude_preserved_sfx_and_hard_protection() -> None:
     output = _benchmark_output(
         [
             _benchmark_region("attempted", AutomaticAction.CLEAN),
             _benchmark_region(
-                "missed-ui",
+                "unexpected",
                 AutomaticAction.PRESERVE,
                 x=8,
                 role=PageRole.UI,
             ),
             _benchmark_region(
-                "protected-credit",
+                "sfx",
                 AutomaticAction.PRESERVE,
                 x=16,
-                role=PageRole.CREDITS,
+                text_role=TextRole.SFX,
+                protection_reasons=[ProtectionReason.SFX_POLICY],
+            ),
+            _benchmark_region(
+                "protected",
+                AutomaticAction.PRESERVE,
+                x=24,
             ),
         ],
-        protected_slice=(16, 24),
+        protected_slice=(24, 32),
     )
 
-    assert count_unattempted_detected_regions(output) == 1
+    assert count_unexpected_unattempted_regions(output) == 1
+    assert count_preserved_sfx_regions(output) == 1
+
+
+def test_aggregate_does_not_count_preserved_sfx_as_needs_review() -> None:
+    page = {
+        "timings_ms": {"total": 100},
+        "region_count": 2,
+        "eligible_region_count": 1,
+        "residual_pass_rate": 1.0,
+        "automatic_region_pass_rate": 1.0,
+        "needs_review_count": 0,
+        "unexpected_unattempted_region_count": 0,
+        "preserved_sfx_region_count": 1,
+        "changed_pixels_outside_support": 0,
+        "changed_pixels_inside_protected": 0,
+        "text_free_pixel_identical": None,
+        "peak_rss_mb": 100.0,
+    }
+
+    summary = aggregate(
+        [page],
+        regressions=[],
+        protected_pages=[],
+        visual_gate={"passed": True},
+    )
+
+    assert summary["needs_review_count"] == 0
+    assert summary["needs_review_rate"] == 0
+    assert summary["preserved_sfx_region_count"] == 1
 
 
 def test_manifest_has_30_unique_source_pages() -> None:

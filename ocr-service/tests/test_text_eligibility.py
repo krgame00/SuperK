@@ -163,7 +163,8 @@ def test_high_confidence_artwork_text_is_sfx() -> None:
 
     assert decision.text_role is TextRole.SFX
     assert decision.confidence >= 0.90
-    assert decision.action is AutomaticAction.CLEAN
+    assert decision.action is AutomaticAction.PRESERVE
+    assert decision.protection_reasons == [ProtectionReason.SFX_POLICY]
 
 
 def test_irregular_free_text_can_be_sfx_without_dense_artwork() -> None:
@@ -173,7 +174,8 @@ def test_irregular_free_text_can_be_sfx_without_dense_artwork() -> None:
 
     assert decision.text_role is TextRole.SFX
     assert decision.confidence >= 0.90
-    assert decision.action is AutomaticAction.CLEAN
+    assert decision.action is AutomaticAction.PRESERVE
+    assert decision.protection_reasons == [ProtectionReason.SFX_POLICY]
 
 
 def test_margin_review_text_is_attempted_on_comic_page() -> None:
@@ -245,22 +247,32 @@ def test_narration_threshold_only_changes_semantic_role(
 
 
 @pytest.mark.parametrize(
-    ("score", "expected_role"),
+    ("score", "expected_role", "expected_action", "expected_reason"),
     [
-        (0.899, TextRole.REVIEW),
-        (0.900, TextRole.SFX),
+        (
+            0.899,
+            TextRole.REVIEW,
+            AutomaticAction.CLEAN,
+            ProtectionReason.LOW_CONFIDENCE,
+        ),
+        (
+            0.900,
+            TextRole.SFX,
+            AutomaticAction.PRESERVE,
+            ProtectionReason.SFX_POLICY,
+        ),
     ],
 )
-def test_sfx_threshold_only_changes_semantic_role(
+def test_sfx_threshold_controls_preservation(
     score: float,
     expected_role: TextRole,
+    expected_action: AutomaticAction,
+    expected_reason: ProtectionReason,
 ) -> None:
     decision = _classify(
         _features(artwork_edges=score, irregularity=score),
     )
 
-    assert decision.action is AutomaticAction.CLEAN
     assert decision.text_role is expected_role
-    assert (
-        ProtectionReason.LOW_CONFIDENCE in decision.protection_reasons
-    ) is (expected_role is TextRole.REVIEW)
+    assert decision.action is expected_action
+    assert decision.protection_reasons == [expected_reason]

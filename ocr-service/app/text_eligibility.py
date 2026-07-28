@@ -104,12 +104,7 @@ def classify_eligibility(
         features.artwork_edge_density >= 0.35
         or features.stroke_irregularity >= 0.35
     ):
-        return _threshold_decision(
-            TextRole.SFX,
-            sfx_score,
-            SFX_THRESHOLD,
-            features,
-        )
+        return _sfx_decision(sfx_score, features)
 
     return EligibilityDecision(
         text_role=TextRole.REVIEW,
@@ -193,6 +188,27 @@ def _threshold_decision(
         protection_reasons=(
             [] if confident else [ProtectionReason.LOW_CONFIDENCE]
         ),
+        features=features,
+    )
+
+
+def _sfx_decision(
+    confidence: float,
+    features: EligibilityFeatures,
+) -> EligibilityDecision:
+    if confidence >= SFX_THRESHOLD:
+        return EligibilityDecision(
+            text_role=TextRole.SFX,
+            confidence=confidence,
+            action=AutomaticAction.PRESERVE,
+            protection_reasons=[ProtectionReason.SFX_POLICY],
+            features=features,
+        )
+    return EligibilityDecision(
+        text_role=TextRole.REVIEW,
+        confidence=confidence,
+        action=AutomaticAction.CLEAN,
+        protection_reasons=[ProtectionReason.LOW_CONFIDENCE],
         features=features,
     )
 

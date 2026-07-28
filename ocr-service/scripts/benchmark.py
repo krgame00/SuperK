@@ -30,7 +30,10 @@ from app.residual_probe import CompositeResidualProbe
 from app.schemas import (
     AutomaticAction,
     CleanerRoute,
+    ProtectionReason,
+    RegionRecord,
     RegionStatus,
+    TextRole,
 )
 from scripts.build_benchmark_manifest import (
     IMAGE_SUFFIXES,
@@ -96,19 +99,42 @@ def load_rgb(path: Path) -> np.ndarray:
         return np.asarray(image.convert("RGB"), dtype=np.uint8)
 
 
-def count_unattempted_detected_regions(output: PipelineOutput) -> int:
+def _record_intersects_mask(
+    region: RegionRecord,
+    mask: np.ndarray,
+) -> bool:
+    rect = region.rect
+    return bool(
+        np.any(
+            mask[
+                rect.y : rect.y + rect.height,
+                rect.x : rect.x + rect.width,
+            ],
+        ),
+    )
+
+
+def count_unexpected_unattempted_regions(output: PipelineOutput) -> int:
     count = 0
     for region in output.regions:
-        if region.automatic_action is AutomaticAction.CLEAN:
+        if (
+            region.automatic_action is AutomaticAction.CLEAN
+            or ProtectionReason.SFX_POLICY in region.protection_reasons
+        ):
             continue
-        rect = region.rect
-        protected = output.protected_mask[
-            rect.y : rect.y + rect.height,
-            rect.x : rect.x + rect.width,
-        ]
-        if not np.any(protected):
+        if not _record_intersects_mask(region, output.protected_mask):
             count += 1
     return count
+
+
+def count_preserved_sfx_regions(output: PipelineOutput) -> int:
+    return sum(
+        region.text_role is TextRole.SFX
+        and region.automatic_action is AutomaticAction.PRESERVE
+        and ProtectionReason.SFX_POLICY in region.protection_reasons
+        and not _record_intersects_mask(region, output.protected_mask)
+        for region in output.regions
+    )
 
 
 def measure_page(
@@ -167,6 +193,9 @@ def measure_page(
         if region.automatic_action is AutomaticAction.CLEAN
     )
     region_count = len(output.regions)
+    needs_review_count = sum(
+        region.status is RegionStatus.NEEDS_REVIEW for region in output.regions
+    )
     is_text_free = region_count == 0
 
     return {
@@ -179,15 +208,17 @@ def measure_page(
         "region_count": region_count,
         "route_counts": dict(route_counts),
         "eligible_region_count": eligible_regions,
-        "unattempted_detected_region_count": (
-            count_unattempted_detected_regions(output)
+        "unexpected_unattempted_region_count": (
+            count_unexpected_unattempted_regions(output)
         ),
+        "preserved_sfx_region_count": count_preserved_sfx_regions(output),
         "residual_pass_rate": _ratio(residual_pass, eligible_regions),
         "automatic_region_pass_rate": _ratio(repaired, eligible_regions),
+        "needs_review_count": needs_review_count,
         "needs_review_rate": (
             0.0
             if region_count == 0
-            else _ratio(region_count - eligible_regions, region_count)
+            else _ratio(needs_review_count, region_count)
         ),
         "changed_pixels_outside_support": changed_outside_support,
         "changed_pixels_inside_protected": int(
@@ -308,6 +339,7 @@ def aggregate(
     total_eligible_regions = sum(
         page["eligible_region_count"] for page in pages
     )
+    needs_review_count = sum(page["needs_review_count"] for page in pages)
     text_free = [
         page["text_free_pixel_identical"]
         for page in pages
@@ -324,12 +356,18 @@ def aggregate(
             automatic_passes,
             total_eligible_regions,
         ),
-        "needs_review_rate": _ratio(
-            total_regions - automatic_passes,
-            total_regions,
+        "needs_review_count": needs_review_count,
+        "needs_review_rate": (
+            0.0
+            if total_regions == 0
+            else _ratio(needs_review_count, total_regions)
         ),
-        "unattempted_detected_region_count": sum(
-            page["unattempted_detected_region_count"]
+        "unexpected_unattempted_region_count": sum(
+            page["unexpected_unattempted_region_count"]
+            for page in pages
+        ),
+        "preserved_sfx_region_count": sum(
+            page["preserved_sfx_region_count"]
             for page in pages
         ),
         "changed_pixels_outside_support": sum(
@@ -353,7 +391,7 @@ def aggregate(
         summary["median_total_ms"] <= 30_000
         and summary["residual_pass_rate"] >= 0.95
         and summary["automatic_region_pass_rate"] >= 0.90
-        and summary["unattempted_detected_region_count"] == 0
+        and summary["unexpected_unattempted_region_count"] == 0
         and summary["changed_pixels_outside_support"] == 0
         and summary["changed_pixels_inside_protected"] == 0
         and summary["text_free_pages_pixel_identical"]
@@ -421,8 +459,12 @@ def markdown_report(report: dict[str, Any]) -> str:
             f"{summary['automatic_region_pass_rate']:.1%}"
         ),
         (
-            f"- Unattempted detector regions: "
-            f"{summary['unattempted_detected_region_count']}"
+            f"- Unexpected unattempted regions: "
+            f"{summary['unexpected_unattempted_region_count']}"
+        ),
+        (
+            f"- Preserved SFX regions: "
+            f"{summary['preserved_sfx_region_count']}"
         ),
         (
             f"- Changed pixels outside support: "

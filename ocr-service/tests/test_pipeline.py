@@ -13,6 +13,7 @@ from app.schemas import (
     ManualRegionAction,
     PageRole,
     PixelRect,
+    ProtectionReason,
     RegionRecord,
     RegionStatus,
     TextRole,
@@ -147,6 +148,62 @@ def test_pipeline_never_changes_protected_pixels() -> None:
 
     assert np.array_equal(output.clean_image[support], source[support])
     assert not np.any(output.mask[support])
+
+
+def test_policy_preserved_sfx_is_not_sent_to_cleaner() -> None:
+    mask = np.zeros((32, 32), np.uint8)
+    mask[8:16, 8:16] = 255
+    region = MaskRegion(
+        id="sfx-1",
+        rect=PixelRect(x=8, y=8, width=8, height=8),
+        component_ids=(1,),
+        stroke_radius=2,
+    )
+
+    def sfx_decision(*_args) -> EligibilityDecision:
+        return EligibilityDecision(
+            text_role=TextRole.SFX,
+            confidence=0.95,
+            action=AutomaticAction.PRESERVE,
+            protection_reasons=[ProtectionReason.SFX_POLICY],
+            features=EligibilityFeatures(
+                enclosure_score=0,
+                backing_uniformity=0,
+                rectangular_backing=0,
+                artwork_edge_density=0.95,
+                stroke_irregularity=0.95,
+                margin_fraction=0,
+            ),
+        )
+
+    class FailingCleaner:
+        def clean(self, *_args):
+            raise AssertionError("policy-preserved SFX reached cleaner")
+
+    failing_cleaner = FailingCleaner()
+    pipeline = CleaningPipeline(
+        detector=NoTextDetector(),
+        refiner=lambda _source, _detection: RefinedMask(
+            mask,
+            [region],
+            np.zeros_like(mask),
+        ),
+        cleaners={
+            "flat": failing_cleaner,
+            "gradient": failing_cleaner,
+            "artwork": failing_cleaner,
+        },
+        page_classifier=_comic_page,
+        protection_detector=_empty_protection,
+        eligibility_classifier=sfx_decision,
+    )
+    source = np.full((32, 32, 3), 100, np.uint8)
+    output = pipeline.run(source)
+
+    assert np.array_equal(output.clean_image, source)
+    assert output.regions[0].status is RegionStatus.PRESERVED
+    assert output.regions[0].text_role is TextRole.SFX
+    assert output.regions[0].automatic_action is AutomaticAction.PRESERVE
 
 
 def test_force_clean_is_the_only_action_that_can_override_review() -> None:

@@ -42,6 +42,7 @@ class ProtectionReason(StrEnum):
     MARGIN_MARK = "margin-mark"
     LOGO = "logo"
     LOW_CONFIDENCE = "low-confidence"
+    SFX_POLICY = "sfx-policy"
 
 
 class RegionStatus(StrEnum):
