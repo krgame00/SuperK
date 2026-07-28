@@ -1,6 +1,25 @@
 import { NextResponse } from "next/server";
 
+import {
+  GeminiRequestError,
+  requestGemini,
+} from "@/lib/server/geminiRequest";
+
 let globalKeyIndex = 0;
+
+interface GeminiResponseData {
+  promptFeedback?: {
+    blockReason?: string;
+  };
+  candidates?: Array<{
+    finishReason?: string;
+    content?: {
+      parts?: Array<{
+        text?: string;
+      }>;
+    };
+  }>;
+}
 
 export async function POST(req: Request) {
   try {
@@ -97,81 +116,28 @@ export async function POST(req: Request) {
       MODELS = [modelPreference];
     }
 
-    let data = null;
-    let resOk = false;
-    let resStatus = 500;
-    let firstError = null;
-
-    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-    for (const model of MODELS) {
-      let retryCount = 0;
-      const maxRetries = 2; // 3 attempts total per model/key combo
-      
-      let keyAttempt = 0;
-      let modelSuccess = false;
-
-      while (keyAttempt < apiKeys.length) {
-        const currentKey = apiKeys[(globalKeyIndex + keyAttempt) % apiKeys.length];
-        
-        while (retryCount <= maxRetries) {
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${currentKey}`;
-          const res = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-          });
-          data = await res.json();
-          resOk = res.ok;
-          resStatus = res.status;
-
-          if (resOk) {
-            modelSuccess = true;
-            globalKeyIndex = (globalKeyIndex + keyAttempt) % apiKeys.length; // Stick to the working key
-            break;
-          }
-          
-          const errorMsg = data?.error?.message || "Unknown error";
-          console.warn(`Model ${model} (Key ...${currentKey.slice(-4)}) failed with status ${res.status}: ${errorMsg}`);
-          
-          if (!firstError) firstError = errorMsg;
-          
-          // If 503 (Overloaded) or 500, retry with exponential backoff
-          if (resStatus === 503 || resStatus === 500) {
-            retryCount++;
-            if (retryCount <= maxRetries) {
-              const delay = retryCount * 2000; // 2s, then 4s
-              console.log(`[High Demand] Retrying ${model} in ${delay}ms...`);
-              await sleep(delay);
-              continue; // Retry same model and key
-            }
-          }
-          
-          break; // Break retry loop for other errors (e.g. 429, 400, 403)
-        }
-
-        if (modelSuccess) break; // exit key loop
-        
-        // If 429 (Quota) or 403/400 (Invalid Key), try the next key!
-        if (resStatus === 429 || resStatus === 403 || resStatus === 400) {
-          console.warn(`Key ...${currentKey.slice(-4)} hit error ${resStatus} on ${model}. Trying next key...`);
-          keyAttempt++;
-          retryCount = 0; // reset retries for the new key
-          continue;
-        }
-        
-        break; // if it wasn't a quota or auth error, just stop trying keys and fallback to the next model
+    let data: GeminiResponseData;
+    try {
+      const result = await requestGemini<GeminiResponseData>({
+        apiKeys,
+        models: MODELS,
+        payload,
+        initialKeyIndex: globalKeyIndex,
+      });
+      data = result.data;
+      globalKeyIndex = result.keyIndex;
+    } catch (error) {
+      if (error instanceof GeminiRequestError) {
+        return NextResponse.json(
+          {
+            error: error.message,
+            code: error.code,
+            retryable: error.retryable,
+          },
+          { status: error.status },
+        );
       }
-
-      if (modelSuccess) break; // Success, exit model loop
-      
-      // If user specifically requested this model, don't fallback to anything else
-      if (modelPreference && modelPreference !== "auto") break;
-    }
-
-    if (!resOk) {
-      console.error("Gemini API Error after all fallbacks:", data);
-      return NextResponse.json({ error: firstError || "Failed to translate from Gemini after multiple attempts" }, { status: resStatus });
+      throw error;
     }
 
     if (data.promptFeedback?.blockReason) {
@@ -190,7 +156,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "AI ไม่สามารถอ่านข้อความจากภาพนี้ได้ หรือภาพถูกบล็อก" }, { status: 500 });
     }
 
-    let cleanText = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+    const cleanText = text.replace(/```json/gi, '').replace(/```/g, '').trim();
     return NextResponse.json({ text: cleanText });
 
   } catch (error) {

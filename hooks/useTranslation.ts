@@ -1,4 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import {
+  getTranslationRetryDelay,
+  readTranslationResponse,
+  TranslationRequestError,
+} from "@/lib/translation/requestError";
 import { applyTranslationOverlay } from "@/lib/translationOverlay";
 import { saveProjectSession, loadProjectSession, clearProjectSession } from "@/lib/projectStore";
 
@@ -144,8 +149,7 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ imageBase64: cropBase64, mimeType: "image/jpeg", targetLang, sourceLang, modelPreference, apiKey: userApiKey })
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      const data = await readTranslationResponse<{ text: string }>(res);
       const parsed = JSON.parse(data.text);
       if (!parsed || !parsed.bubbles || parsed.bubbles.length === 0) {
         setTranslationResult("❌ ไม่พบข้อความในจุดที่เลือก");
@@ -245,8 +249,7 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ imageBase64: slice.base64, mimeType: "image/jpeg", targetLang, sourceLang, modelPreference, apiKey: userApiKey })
             });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error);
+            const data = await readTranslationResponse<{ text: string }>(res);
             
             const parsed = parseLLMJSON(data.text);
             if (parsed.bubbles) {
@@ -305,7 +308,7 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
             }
           } catch (err: any) {
             console.warn(`Slice ${i + 1} failed:`, err);
-            if (err.message && (err.message.includes("429") || err.message.includes("โควต้าเต็ม"))) {
+            if (getTranslationRetryDelay(err) !== null) {
               throw err;
             }
           }
@@ -354,8 +357,7 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
         body: JSON.stringify({ imageBase64: base64, mimeType: actualMimeType, targetLang, sourceLang, modelPreference, apiKey: userApiKey })
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to translate");
+      const data = await readTranslationResponse<{ text: string }>(res);
       
       let parsed = data.text ? parseLLMJSON(data.text) : data;
       
@@ -393,8 +395,9 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
               })
             });
 
-            const retryData = await retryRes.json();
-            if (retryRes.ok && retryData.text) {
+            const retryData =
+              await readTranslationResponse<{ text: string }>(retryRes);
+            if (retryData.text) {
               const retryParsed = parseLLMJSON(retryData.text);
               if (retryParsed && Array.isArray(retryParsed.bubbles) && retryParsed.bubbles.length > 0) {
                 parsed = retryParsed; // Success on retry!
@@ -405,6 +408,9 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
               throw new Error("ไม่พบข้อความในหน้านี้");
             }
           } catch (retryErr) {
+            if (retryErr instanceof TranslationRequestError) {
+              throw retryErr;
+            }
             throw new Error("ไม่พบข้อความในหน้านี้");
           }
         } else {
@@ -503,17 +509,23 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
           if (!success) throw new Error("Translation failed");
         } catch (err: any) {
           const errMsg = err.message || "";
+          const retryDelay = getTranslationRetryDelay(err);
           console.warn(`Error on page ${i + 1}, retry ${retries + 1}/3:`, errMsg);
-          
-          if (errMsg.includes("429") || errMsg.includes("โควต้าเต็ม") || errMsg.includes("Failed")) {
+
+          if (retryDelay === null) {
+            setTranslationResult(`แปลไม่สำเร็จ: ${errMsg}`);
+            break;
+          }
+          if (
+            err instanceof TranslationRequestError
+            && err.code === "GEMINI_QUOTA"
+          ) {
             setTranslateAllProgress({ current: i + 1, total: pages.length, status: "waiting", message: `รอโควต้า API (60 วิ)... หน้า ${i + 1}/${pages.length}`, startTime: batchStartTime });
             setTranslationResult(`API Limit Reached! รอ 60 วิ... (รอบ ${retries + 1}/3)`);
-            await interruptibleDelay(60000);
           } else {
-            // Other error (Censorship, parse error, no text)
             setTranslationResult(`แปลไม่ผ่าน รอ 5 วิเพื่อลองใหม่... (รอบ ${retries + 1}/3)`);
-            await interruptibleDelay(5000);
           }
+          await interruptibleDelay(retryDelay);
           retries++;
         }
       }
