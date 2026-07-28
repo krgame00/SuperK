@@ -20,6 +20,27 @@ export type CleanerOverride =
   | "aot"
   | "anime-lama";
 
+export type PageRole = "comic" | "credits" | "ui" | "unknown";
+
+export type TextRole =
+  | "dialogue"
+  | "narration"
+  | "sfx"
+  | "protected"
+  | "review";
+
+export type AutomaticAction = "clean" | "preserve";
+
+export type ManualRegionAction = "automatic" | "force-clean" | "protect";
+
+export type ProtectionReason =
+  | "qr"
+  | "credit-page"
+  | "ui-page"
+  | "margin-mark"
+  | "logo"
+  | "low-confidence";
+
 export interface CleaningProgress {
   stage: CleaningJobStage;
   completedRegions: number;
@@ -47,9 +68,14 @@ export interface CleaningRegion {
   rect: PixelRect;
   route: "flat" | "gradient" | "artwork";
   confidence: number;
-  status: "ready" | "repaired" | "needs_review";
+  status: "ready" | "repaired" | "needs_review" | "preserved";
   residualScore: number;
   damageScore: number;
+  pageRole: PageRole;
+  textRole: TextRole;
+  eligibilityConfidence: number;
+  automaticAction: AutomaticAction;
+  protectionReasons: ProtectionReason[];
 }
 
 export interface CleaningResult {
@@ -59,6 +85,8 @@ export interface CleaningResult {
   height: number;
   cleanAsset: string;
   maskAsset: string;
+  reviewMaskAsset: string;
+  protectedMaskAsset: string;
   regions: CleaningRegion[];
   timingsMs: Record<string, number>;
 }

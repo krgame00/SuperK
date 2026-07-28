@@ -1,6 +1,16 @@
 from pydantic import ValidationError
 
-from app.schemas import CleanerRoute, CleaningResult, PixelRect
+from app.schemas import (
+    AutomaticAction,
+    CleanerRoute,
+    CleaningResult,
+    PageRole,
+    PixelRect,
+    ProtectionReason,
+    RegionRecord,
+    RegionStatus,
+    TextRole,
+)
 from app.settings import Settings
 
 
@@ -20,11 +30,33 @@ def test_cleaning_result_uses_stable_asset_paths() -> None:
         height=1800,
         clean_asset="/v1/jobs/job-1/assets/clean.png",
         mask_asset="/v1/jobs/job-1/assets/mask.png",
+        review_mask_asset="/v1/jobs/job-1/assets/review-mask.png",
+        protected_mask_asset="/v1/jobs/job-1/assets/protected-mask.png",
         regions=[],
         timings_ms={"total": 1234},
     )
     assert result.clean_asset.endswith("/clean.png")
     assert CleanerRoute.ARTWORK.value == "artwork"
+
+
+def test_region_contract_describes_eligibility() -> None:
+    record = RegionRecord(
+        id="region-1",
+        rect={"x": 10, "y": 20, "width": 30, "height": 40},
+        route="flat",
+        confidence=0.9,
+        status=RegionStatus.PRESERVED,
+        residual_score=0,
+        damage_score=0,
+        page_role=PageRole.COMIC,
+        text_role=TextRole.NARRATION,
+        eligibility_confidence=0.81,
+        automatic_action=AutomaticAction.PRESERVE,
+        protection_reasons=[ProtectionReason.LOW_CONFIDENCE],
+    )
+
+    assert record.automatic_action is AutomaticAction.PRESERVE
+    assert record.protection_reasons == [ProtectionReason.LOW_CONFIDENCE]
 
 
 def test_settings_use_single_cpu_worker_by_default() -> None:

@@ -135,6 +135,12 @@ function decodeResult(payload: unknown): CleaningResult {
     height: requireNumber(raw.height, "height"),
     cleanAsset: proxyAsset(requireString(raw.clean_asset, "clean_asset")),
     maskAsset: proxyAsset(requireString(raw.mask_asset, "mask_asset")),
+    reviewMaskAsset: proxyAsset(
+      requireString(raw.review_mask_asset, "review_mask_asset"),
+    ),
+    protectedMaskAsset: proxyAsset(
+      requireString(raw.protected_mask_asset, "protected_mask_asset"),
+    ),
     regions,
     timingsMs: decodeTimings(raw.timings_ms),
   };
@@ -162,7 +168,37 @@ function decodeRegion(value: unknown): CleaningRegion {
       "region.residual_score",
     ),
     damageScore: requireNumber(raw.damage_score, "region.damage_score"),
+    pageRole: requireString(
+      raw.page_role,
+      "region.page_role",
+    ) as CleaningRegion["pageRole"],
+    textRole: requireString(
+      raw.text_role,
+      "region.text_role",
+    ) as CleaningRegion["textRole"],
+    eligibilityConfidence: requireNumber(
+      raw.eligibility_confidence,
+      "region.eligibility_confidence",
+    ),
+    automaticAction: requireString(
+      raw.automatic_action,
+      "region.automatic_action",
+    ) as CleaningRegion["automaticAction"],
+    protectionReasons: decodeStringArray(
+      raw.protection_reasons,
+      "region.protection_reasons",
+    ) as CleaningRegion["protectionReasons"],
   };
+}
+
+function decodeStringArray(value: unknown, field: string): string[] {
+  if (
+    !Array.isArray(value) ||
+    value.some((item) => typeof item !== "string")
+  ) {
+    throw new TypeError(`Missing ${field} in cleaning service response.`);
+  }
+  return value;
 }
 
 function decodeTimings(value: unknown): Record<string, number> {

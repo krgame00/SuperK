@@ -34,6 +34,8 @@ test("getCleaningResult decodes snake case and proxies asset paths", async () =>
       height: 1800,
       clean_asset: "/v1/jobs/job-1/assets/clean.png",
       mask_asset: "/v1/jobs/job-1/assets/mask.png",
+      review_mask_asset: "/v1/jobs/job-1/assets/review-mask.png",
+      protected_mask_asset: "/v1/jobs/job-1/assets/protected-mask.png",
       regions: [
         {
           id: "region-1",
@@ -43,6 +45,11 @@ test("getCleaningResult decodes snake case and proxies asset paths", async () =>
           status: "repaired",
           residual_score: 0.1,
           damage_score: 0.01,
+          page_role: "comic",
+          text_role: "narration",
+          eligibility_confidence: 0.84,
+          automatic_action: "clean",
+          protection_reasons: [],
         },
       ],
       timings_ms: { total: 1234 },
@@ -53,7 +60,22 @@ test("getCleaningResult decodes snake case and proxies asset paths", async () =>
   expect(result.cleanAsset).toBe(
     "/api/clean/v1/jobs/job-1/assets/clean.png",
   );
+  expect(result.reviewMaskAsset).toBe(
+    "/api/clean/v1/jobs/job-1/assets/review-mask.png",
+  );
+  expect(result.protectedMaskAsset).toBe(
+    "/api/clean/v1/jobs/job-1/assets/protected-mask.png",
+  );
   expect(result.regions[0].residualScore).toBe(0.1);
+  expect(result.regions[0]).toEqual(
+    expect.objectContaining({
+      pageRole: "comic",
+      textRole: "narration",
+      eligibilityConfidence: 0.84,
+      automaticAction: "clean",
+      protectionReasons: [],
+    }),
+  );
   expect(result.timingsMs.total).toBe(1234);
 });
 

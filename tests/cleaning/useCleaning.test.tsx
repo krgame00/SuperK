@@ -58,6 +58,8 @@ const cleaningResult = {
   height: 8,
   cleanAsset: "/api/clean/v1/jobs/job-1/assets/clean.png",
   maskAsset: "/api/clean/v1/jobs/job-1/assets/mask.png",
+  reviewMaskAsset: "/api/clean/v1/jobs/job-1/assets/review-mask.png",
+  protectedMaskAsset: "/api/clean/v1/jobs/job-1/assets/protected-mask.png",
   regions: [],
   timingsMs: { total: 10 },
 };
