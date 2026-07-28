@@ -5,8 +5,19 @@ import numpy as np
 from app.cache import ResultCache
 from app.detector import DetectionResult, LetterboxTransform
 from app.mask_refiner import MaskRegion, RefinedMask
-from app.pipeline import CleaningPipeline
-from app.schemas import PixelRect, RegionStatus
+from app.page_context import PageContext, PageFeatures
+from app.pipeline import CleaningPipeline, PipelineOutput
+from app.protection import ProtectionResult
+from app.schemas import (
+    AutomaticAction,
+    ManualRegionAction,
+    PageRole,
+    PixelRect,
+    RegionRecord,
+    RegionStatus,
+    TextRole,
+)
+from app.text_eligibility import EligibilityDecision, EligibilityFeatures
 
 
 class NoTextDetector:
@@ -17,6 +28,182 @@ class NoTextDetector:
             [],
             LetterboxTransform(width, height, max(width, height), 1, 0, 0),
         )
+
+
+def _comic_page(*_args) -> PageContext:
+    return PageContext(
+        role=PageRole.COMIC,
+        confidence=0.95,
+        features=PageFeatures(0.1, 0.1, 0.1, 0.1, 0),
+    )
+
+
+def _empty_protection(image, _page, _regions) -> ProtectionResult:
+    empty = np.zeros(image.shape[:2], np.uint8)
+    return ProtectionResult(empty.copy(), empty.copy(), [])
+
+
+def _clean_decision(*_args) -> EligibilityDecision:
+    return EligibilityDecision(
+        text_role=TextRole.DIALOGUE,
+        confidence=0.95,
+        action=AutomaticAction.CLEAN,
+        protection_reasons=[],
+        features=EligibilityFeatures(
+            enclosure_score=0.95,
+            backing_uniformity=0,
+            rectangular_backing=0,
+            artwork_edge_density=0,
+            stroke_irregularity=0,
+            margin_fraction=0,
+        ),
+    )
+
+
+class SolidCleaner:
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def clean(self, image, active_mask, _region):
+        result = image.copy()
+        result[active_mask > 0] = self.value
+        return result
+
+
+def _single_region_output(
+    *,
+    source_value: int = 100,
+    clean_value: int = 100,
+) -> PipelineOutput:
+    source = np.full((32, 32, 3), source_value, np.uint8)
+    clean = np.full_like(source, clean_value)
+    empty = np.zeros((32, 32), np.uint8)
+    return PipelineOutput(
+        source_image=source,
+        clean_image=clean,
+        mask=empty.copy(),
+        review_mask=empty.copy(),
+        protected_mask=empty.copy(),
+        regions=[
+            RegionRecord(
+                id="region-1",
+                rect=PixelRect(x=8, y=8, width=12, height=12),
+                route="flat",
+                confidence=0.9,
+                status=RegionStatus.PRESERVED,
+                residual_score=0,
+                damage_score=0,
+                page_role=PageRole.COMIC,
+                text_role=TextRole.REVIEW,
+                eligibility_confidence=0.6,
+                automatic_action=AutomaticAction.PRESERVE,
+                protection_reasons=[],
+            ),
+        ],
+        timings_ms={"total": 1},
+    )
+
+
+def test_pipeline_never_changes_protected_pixels() -> None:
+    source = np.random.default_rng(20260728).integers(
+        0,
+        256,
+        (32, 32, 3),
+        dtype=np.uint8,
+    )
+    refined_mask = np.zeros((32, 32), np.uint8)
+    refined_mask[8:24, 8:24] = 255
+    protected = np.zeros_like(refined_mask)
+    protected[12:20, 12:20] = 255
+    region = MaskRegion(
+        id="region-1",
+        rect=PixelRect(x=8, y=8, width=16, height=16),
+        component_ids=(1,),
+        stroke_radius=2,
+    )
+
+    def protection_detector(_image, _page, _regions):
+        return ProtectionResult(protected, np.zeros_like(protected), [])
+
+    pipeline = CleaningPipeline(
+        detector=NoTextDetector(),
+        refiner=lambda _source, _detection: RefinedMask(
+            refined_mask,
+            [region],
+            np.zeros_like(refined_mask),
+        ),
+        cleaners={
+            "flat": SolidCleaner(0),
+            "gradient": SolidCleaner(0),
+            "artwork": SolidCleaner(0),
+        },
+        page_classifier=_comic_page,
+        protection_detector=protection_detector,
+        eligibility_classifier=_clean_decision,
+    )
+
+    output = pipeline.run(source)
+    support = protected > 0
+
+    assert np.array_equal(output.clean_image[support], source[support])
+    assert not np.any(output.mask[support])
+
+
+def test_force_clean_is_the_only_action_that_can_override_review() -> None:
+    output = _single_region_output()
+    user_mask = np.zeros((32, 32), np.uint8)
+    user_mask[10:14, 10:14] = 255
+    pipeline = CleaningPipeline(
+        detector=NoTextDetector(),
+        cleaners={"flat": SolidCleaner(0), "aot": SolidCleaner(0)},
+        page_classifier=_comic_page,
+        protection_detector=_empty_protection,
+        eligibility_classifier=_clean_decision,
+    )
+
+    forced = pipeline.retry_region(
+        output,
+        "region-1",
+        user_mask,
+        "aot",
+        ManualRegionAction.FORCE_CLEAN,
+    )
+
+    assert forced.regions[0].automatic_action is AutomaticAction.CLEAN
+    assert np.all(forced.clean_image[user_mask > 0] == 0)
+    assert np.array_equal(
+        forced.clean_image[user_mask == 0],
+        output.clean_image[user_mask == 0],
+    )
+
+
+def test_protect_restores_source_pixels() -> None:
+    output = _single_region_output(clean_value=0)
+    user_mask = np.zeros((32, 32), np.uint8)
+    user_mask[10:14, 10:14] = 255
+    pipeline = CleaningPipeline(
+        detector=NoTextDetector(),
+        cleaners={},
+        page_classifier=_comic_page,
+        protection_detector=_empty_protection,
+        eligibility_classifier=_clean_decision,
+    )
+
+    protected = pipeline.retry_region(
+        output,
+        "region-1",
+        user_mask,
+        "auto",
+        ManualRegionAction.PROTECT,
+    )
+    support = user_mask > 0
+
+    assert np.array_equal(
+        protected.clean_image[support],
+        protected.source_image[support],
+    )
+    assert np.all(protected.protected_mask[support] == 255)
+    assert not np.any(protected.mask[support])
 
 
 def test_text_free_pipeline_is_pixel_identical() -> None:
@@ -83,6 +270,9 @@ def test_pipeline_retries_once_then_restores_failed_region() -> None:
         ),
         cleaners={"flat": cleaner},
         residual_probe=Probe(),
+        page_classifier=_comic_page,
+        protection_detector=_empty_protection,
+        eligibility_classifier=_clean_decision,
     )
     output = pipeline.run(image)
     assert cleaner.calls == 2
@@ -137,6 +327,9 @@ def test_pipeline_batches_initial_residual_detection_across_regions() -> None:
         ),
         cleaners={"flat": Cleaner()},
         residual_probe=probe,
+        page_classifier=_comic_page,
+        protection_detector=_empty_protection,
+        eligibility_classifier=_clean_decision,
     )
     output = pipeline.run(np.zeros((32, 32, 3), np.uint8))
     assert len(output.regions) == 2
