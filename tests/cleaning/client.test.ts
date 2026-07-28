@@ -91,12 +91,14 @@ test("retryCleaningRegion sends selected cleaner and mask", async () => {
     "region-1",
     new Blob(["mask"], { type: "image/png" }),
     "opencv",
+    "protect",
   );
   const request = fetchMock.mock.calls[0];
   expect(request[0]).toBe(
     "/api/clean/v1/jobs/job-1/regions/region-1/retry",
   );
   expect((request[1]?.body as FormData).get("cleaner")).toBe("opencv");
+  expect((request[1]?.body as FormData).get("action")).toBe("protect");
 });
 
 test("client exposes safe recovery guidance for failed requests", async () => {

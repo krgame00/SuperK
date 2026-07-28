@@ -14,6 +14,7 @@ import type {
   CleaningJob,
   CleaningProgress,
   CleaningResult,
+  ManualRegionAction,
 } from "@/lib/cleaning/types";
 import {
   loadCleaningResultsMetadata,
@@ -25,6 +26,8 @@ const POLL_INTERVAL_MS = 500;
 export interface PageCleaningResult extends CleaningResult {
   cleanUrl: string;
   maskUrl: string;
+  reviewMaskUrl: string;
+  protectedMaskUrl: string;
 }
 
 export interface CleaningHookError {
@@ -71,6 +74,8 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
   const revokeResult = useCallback((result: PageCleaningResult) => {
     URL.revokeObjectURL(result.cleanUrl);
     URL.revokeObjectURL(result.maskUrl);
+    URL.revokeObjectURL(result.reviewMaskUrl);
+    URL.revokeObjectURL(result.protectedMaskUrl);
   }, []);
 
   const replaceResult = useCallback(
@@ -88,25 +93,47 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
 
   const hydrateResult = useCallback(
     async (result: CleaningResult): Promise<PageCleaningResult> => {
-      const [cleanResponse, maskResponse] = await Promise.all([
+      const [
+        cleanResponse,
+        maskResponse,
+        reviewResponse,
+        protectedResponse,
+      ] = await Promise.all([
         fetch(result.cleanAsset, { cache: "no-store" }),
         fetch(result.maskAsset, { cache: "no-store" }),
+        fetch(result.reviewMaskAsset, { cache: "no-store" }),
+        fetch(result.protectedMaskAsset, { cache: "no-store" }),
       ]);
-      if (!cleanResponse.ok || !maskResponse.ok) {
+      const responses = [
+        cleanResponse,
+        maskResponse,
+        reviewResponse,
+        protectedResponse,
+      ];
+      if (responses.some((response) => !response.ok)) {
         throw new CleaningClientError(
-          Math.max(cleanResponse.status, maskResponse.status),
+          Math.max(...responses.map((response) => response.status)),
           "Saved cleaning assets are unavailable.",
           "Clean this page again.",
         );
       }
-      const [cleanBlob, maskBlob] = await Promise.all([
+      const [
+        cleanBlob,
+        maskBlob,
+        reviewBlob,
+        protectedBlob,
+      ] = await Promise.all([
         cleanResponse.blob(),
         maskResponse.blob(),
+        reviewResponse.blob(),
+        protectedResponse.blob(),
       ]);
       return {
         ...result,
         cleanUrl: URL.createObjectURL(cleanBlob),
         maskUrl: URL.createObjectURL(maskBlob),
+        reviewMaskUrl: URL.createObjectURL(reviewBlob),
+        protectedMaskUrl: URL.createObjectURL(protectedBlob),
       };
     },
     [],
@@ -211,6 +238,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
       regionId: string,
       mask: Blob,
       cleaner: CleanerOverride = "auto",
+      action: ManualRegionAction = "automatic",
     ): Promise<void> => {
       const pageUrl = pageUrlRef.current;
       const current = pageUrl
@@ -226,6 +254,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
           regionId,
           mask,
           cleaner,
+          action,
         );
         await runJob(job, token, pageUrl);
       } catch (caught) {

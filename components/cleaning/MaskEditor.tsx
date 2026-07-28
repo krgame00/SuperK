@@ -7,6 +7,7 @@ import { applyBrush, type BrushMode } from "@/lib/cleaning/maskEdits";
 import type {
   CleanerOverride,
   CleaningRegion,
+  ManualRegionAction,
 } from "@/lib/cleaning/types";
 import { undoManager } from "@/lib/undoManager";
 
@@ -19,6 +20,7 @@ interface MaskEditorProps {
     regionId: string,
     mask: Blob,
     cleaner: CleanerOverride,
+    action: ManualRegionAction,
   ) => Promise<void>;
 }
 
@@ -113,7 +115,7 @@ export function MaskEditor({
     });
   };
 
-  const submit = async () => {
+  const submit = async (action: ManualRegionAction) => {
     const imageData = imageDataRef.current;
     if (!imageData || !regionId) return;
     setIsSubmitting(true);
@@ -133,7 +135,7 @@ export function MaskEditor({
       }
       context.putImageData(grayscale, 0, 0);
       const blob = await canvasToBlob(output);
-      await onRetry(regionId, blob, cleaner);
+      await onRetry(regionId, blob, cleaner, action);
       onClose();
     } finally {
       setIsSubmitting(false);
@@ -190,7 +192,7 @@ export function MaskEditor({
           </div>
         </div>
 
-        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-surface-hover px-3 py-3">
+        <footer className="flex flex-col gap-3 border-t border-surface-hover px-3 py-3 sm:flex-row sm:items-end sm:justify-between">
           <div className="flex flex-wrap items-center gap-2">
             {(["paint", "erase"] as const).map((item) => (
               <button
@@ -222,14 +224,14 @@ export function MaskEditor({
               <RotateCcw className="h-4 w-4" />
             </button>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
             <select
               aria-label="Cleaner"
               value={cleaner}
               onChange={(event) =>
                 setCleaner(event.target.value as CleanerOverride)
               }
-              className="h-9 rounded-md bg-surface px-2 text-xs text-foreground"
+              className="h-9 w-full rounded-md bg-surface px-2 text-xs text-foreground sm:w-auto"
             >
               {cleaners.map((item) => (
                 <option key={item.value} value={item.value}>
@@ -237,14 +239,35 @@ export function MaskEditor({
                 </option>
               ))}
             </select>
-            <button
-              type="button"
-              disabled={isSubmitting || !regionId}
-              onClick={submit}
-              className="h-9 rounded-md bg-primary px-4 text-sm font-semibold text-primary-content hover:bg-primary-hover disabled:opacity-40"
-            >
-              {isSubmitting ? "กำลังลองใหม่…" : "Retry region"}
-            </button>
+            <p className="text-xs text-red-300">
+              ลบตาม Mask นี้แม้ระบบป้องกันไว้
+            </p>
+            <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:justify-end">
+              <button
+                type="button"
+                disabled={isSubmitting || !regionId}
+                onClick={() => submit("automatic")}
+                className="h-9 flex-1 rounded-md bg-surface px-3 text-xs font-medium text-foreground transition-colors duration-150 hover:bg-surface-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-40 sm:flex-none"
+              >
+                Reset to automatic
+              </button>
+              <button
+                type="button"
+                disabled={isSubmitting || !regionId}
+                onClick={() => submit("protect")}
+                className="h-9 flex-1 rounded-md bg-blue-500/20 px-3 text-xs font-semibold text-blue-200 transition-colors duration-150 hover:bg-blue-500/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400 disabled:opacity-40 sm:flex-none"
+              >
+                Protect
+              </button>
+              <button
+                type="button"
+                disabled={isSubmitting || !regionId}
+                onClick={() => submit("force-clean")}
+                className="h-9 flex-1 rounded-md bg-primary px-3 text-xs font-semibold text-primary-content transition-colors duration-150 hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-40 sm:flex-none"
+              >
+                {isSubmitting ? "กำลังประมวลผล…" : "Force clean"}
+              </button>
+            </div>
           </div>
         </footer>
       </div>

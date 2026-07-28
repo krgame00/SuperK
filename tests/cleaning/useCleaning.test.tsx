@@ -80,7 +80,9 @@ beforeEach(() => {
     value: vi
       .fn()
       .mockReturnValueOnce("blob:clean")
-      .mockReturnValueOnce("blob:mask"),
+      .mockReturnValueOnce("blob:mask")
+      .mockReturnValueOnce("blob:review")
+      .mockReturnValueOnce("blob:protected"),
   });
   Object.defineProperty(URL, "revokeObjectURL", {
     configurable: true,
@@ -123,6 +125,10 @@ test("polls until succeeded and stores result for current page", async () => {
   });
   expect(result.current.currentResult?.jobId).toBe("job-1");
   expect(result.current.currentResult?.cleanUrl).toBe("blob:clean");
+  expect(result.current.currentResult?.reviewMaskUrl).toBe("blob:review");
+  expect(result.current.currentResult?.protectedMaskUrl).toBe(
+    "blob:protected",
+  );
   expect(saveCleaningResultMetadata).toHaveBeenCalledWith(
     expect.objectContaining({ pageUrl: "blob:page-1", jobId: "job-1" }),
   );
@@ -201,4 +207,6 @@ test("unmount revokes generated asset URLs", async () => {
   unmount();
   expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:clean");
   expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:mask");
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:review");
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:protected");
 });

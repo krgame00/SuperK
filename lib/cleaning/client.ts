@@ -6,6 +6,7 @@ import type {
   CleaningProgress,
   CleaningRegion,
   CleaningResult,
+  ManualRegionAction,
 } from "./types";
 
 const PROXY_BASE = "/api/clean";
@@ -57,10 +58,12 @@ export async function retryCleaningRegion(
   regionId: string,
   mask: Blob,
   cleaner: CleanerOverride,
+  action: ManualRegionAction,
 ): Promise<CleaningJob> {
   const form = new FormData();
   form.append("mask", mask, "mask.png");
   form.append("cleaner", cleaner);
+  form.append("action", action);
   return decodeJob(
     await requestJson(
       `${PROXY_BASE}/v1/jobs/${encodeURIComponent(jobId)}/regions/${encodeURIComponent(regionId)}/retry`,

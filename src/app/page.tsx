@@ -14,6 +14,7 @@ import {
   type CleaningLayer,
 } from "@/components/cleaning/CleaningToolbar";
 import { MaskEditor } from "@/components/cleaning/MaskEditor";
+import { MaskLegend } from "@/components/cleaning/MaskLegend";
 
 export default function WorkspacePage() {
   const [pages, setPages] = useState<{url: string, name: string}[]>([]);
@@ -1119,11 +1120,46 @@ export default function WorkspacePage() {
                       />
                     )}
                     {cleaningLayer === "mask" && currentCleaningResult && (
-                      <img
-                        src={currentCleaningResult.maskUrl}
-                        alt="Text cleaning mask"
-                        className="pointer-events-none absolute inset-0 h-full w-full object-fill opacity-55 mix-blend-screen"
-                      />
+                      <>
+                        {[
+                          {
+                            url: currentCleaningResult.maskUrl,
+                            color: "rgba(255, 55, 80, .58)",
+                            label: "Eligible cleaning mask",
+                          },
+                          {
+                            url: currentCleaningResult.reviewMaskUrl,
+                            color: "rgba(255, 190, 40, .58)",
+                            label: "Review mask",
+                          },
+                          {
+                            url: currentCleaningResult.protectedMaskUrl,
+                            color: "rgba(45, 145, 255, .58)",
+                            label: "Protected mask",
+                          },
+                        ].map((maskLayer) => (
+                          <span
+                            key={maskLayer.label}
+                            role="img"
+                            aria-label={maskLayer.label}
+                            className="pointer-events-none absolute inset-0 mix-blend-screen"
+                            style={{
+                              backgroundColor: maskLayer.color,
+                              maskImage: `url(${maskLayer.url})`,
+                              WebkitMaskImage: `url(${maskLayer.url})`,
+                              maskPosition: "center",
+                              WebkitMaskPosition: "center",
+                              maskRepeat: "no-repeat",
+                              WebkitMaskRepeat: "no-repeat",
+                              maskSize: "100% 100%",
+                              WebkitMaskSize: "100% 100%",
+                            }}
+                          />
+                        ))}
+                        <MaskLegend
+                          regions={currentCleaningResult.regions}
+                        />
+                      </>
                     )}
                   </div>
 
