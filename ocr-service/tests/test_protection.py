@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from app.mask_refiner import MaskRegion
 from app.page_context import PageContext, PageFeatures
@@ -58,26 +59,20 @@ def test_qr_polygon_is_protected_with_eight_pixel_margin() -> None:
     assert result.regions[0].reason is ProtectionReason.QR
 
 
-def test_credit_page_protects_all_detected_text() -> None:
+@pytest.mark.parametrize(
+    "role",
+    [PageRole.CREDITS, PageRole.UI, PageRole.UNKNOWN],
+)
+def test_page_role_does_not_create_protection(role: PageRole) -> None:
     result = detect_protection(
         np.full((100, 100, 3), 255, np.uint8),
-        _context(PageRole.CREDITS),
+        _context(role),
         [_region()],
     )
 
-    assert np.all(result.protected_mask[20:40, 20:60] == 255)
-    assert result.regions[0].reason is ProtectionReason.CREDIT_PAGE
-
-
-def test_unknown_page_sends_detected_text_to_review() -> None:
-    result = detect_protection(
-        np.full((100, 100, 3), 255, np.uint8),
-        _context(PageRole.UNKNOWN),
-        [_region()],
-    )
-
-    assert np.all(result.review_mask[20:40, 20:60] == 255)
     assert not np.any(result.protected_mask)
+    assert not np.any(result.review_mask)
+    assert result.regions == []
 
 
 def test_compact_margin_text_is_not_blocked_on_comic_page() -> None:

@@ -30,7 +30,6 @@ from app.residual_probe import CompositeResidualProbe
 from app.schemas import (
     AutomaticAction,
     CleanerRoute,
-    PageRole,
     RegionStatus,
 )
 from scripts.build_benchmark_manifest import (
@@ -97,13 +96,10 @@ def load_rgb(path: Path) -> np.ndarray:
         return np.asarray(image.convert("RGB"), dtype=np.uint8)
 
 
-def count_unattempted_comic_regions(output: PipelineOutput) -> int:
+def count_unattempted_detected_regions(output: PipelineOutput) -> int:
     count = 0
     for region in output.regions:
-        if (
-            region.page_role is not PageRole.COMIC
-            or region.automatic_action is AutomaticAction.CLEAN
-        ):
+        if region.automatic_action is AutomaticAction.CLEAN:
             continue
         rect = region.rect
         protected = output.protected_mask[
@@ -183,8 +179,8 @@ def measure_page(
         "region_count": region_count,
         "route_counts": dict(route_counts),
         "eligible_region_count": eligible_regions,
-        "comic_unattempted_detected_region_count": (
-            count_unattempted_comic_regions(output)
+        "unattempted_detected_region_count": (
+            count_unattempted_detected_regions(output)
         ),
         "residual_pass_rate": _ratio(residual_pass, eligible_regions),
         "automatic_region_pass_rate": _ratio(repaired, eligible_regions),
@@ -332,8 +328,8 @@ def aggregate(
             total_regions - automatic_passes,
             total_regions,
         ),
-        "comic_unattempted_detected_region_count": sum(
-            page["comic_unattempted_detected_region_count"]
+        "unattempted_detected_region_count": sum(
+            page["unattempted_detected_region_count"]
             for page in pages
         ),
         "changed_pixels_outside_support": sum(
@@ -346,11 +342,6 @@ def aggregate(
             page["changed_pixels_inside_protected"]
             for page in protected_pages
         ),
-        "credit_ui_pages_pixel_identical": all(
-            page["page_pixel_identical"]
-            for page in protected_pages
-            if page["page_pixel_identical"] is not None
-        ),
         "text_free_pages_pixel_identical": all(text_free),
         "rectangular_patch_regressions_pass": not any(
             item["failed"] for item in regressions
@@ -362,10 +353,9 @@ def aggregate(
         summary["median_total_ms"] <= 30_000
         and summary["residual_pass_rate"] >= 0.95
         and summary["automatic_region_pass_rate"] >= 0.90
-        and summary["comic_unattempted_detected_region_count"] == 0
+        and summary["unattempted_detected_region_count"] == 0
         and summary["changed_pixels_outside_support"] == 0
         and summary["changed_pixels_inside_protected"] == 0
-        and summary["credit_ui_pages_pixel_identical"]
         and summary["text_free_pages_pixel_identical"]
         and summary["rectangular_patch_regressions_pass"]
         and summary["visual_review_pass"]
@@ -431,8 +421,8 @@ def markdown_report(report: dict[str, Any]) -> str:
             f"{summary['automatic_region_pass_rate']:.1%}"
         ),
         (
-            f"- Unattempted comic detector regions: "
-            f"{summary['comic_unattempted_detected_region_count']}"
+            f"- Unattempted detector regions: "
+            f"{summary['unattempted_detected_region_count']}"
         ),
         (
             f"- Changed pixels outside support: "
@@ -441,10 +431,6 @@ def markdown_report(report: dict[str, Any]) -> str:
         (
             f"- Changed pixels inside protected: "
             f"{summary['changed_pixels_inside_protected']}"
-        ),
-        (
-            f"- Credit/UI identity: "
-            f"{summary['credit_ui_pages_pixel_identical']}"
         ),
         f"- Visual review: {summary['visual_review_pass']}",
         f"- Peak RSS: {summary['peak_rss_mb']:.1f} MB",

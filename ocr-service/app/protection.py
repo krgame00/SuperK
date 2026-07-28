@@ -10,7 +10,7 @@ import numpy as np
 from app.detector import RgbImage
 from app.mask_refiner import BinaryMask, MaskRegion
 from app.page_context import PageContext
-from app.schemas import PageRole, PixelRect, ProtectionReason
+from app.schemas import PixelRect, ProtectionReason
 
 QR_PROTECTION_MARGIN = 8
 
@@ -76,45 +76,7 @@ def detect_protection(
             ),
         )
 
-    if page.role in (PageRole.CREDITS, PageRole.UI):
-        reason = (
-            ProtectionReason.CREDIT_PAGE
-            if page.role is PageRole.CREDITS
-            else ProtectionReason.UI_PAGE
-        )
-        for region in text_regions:
-            _fill_rect(protected, region.rect)
-            regions.append(
-                ProtectedRegion(
-                    rect=region.rect,
-                    reason=reason,
-                    confidence=page.confidence,
-                ),
-            )
-        return ProtectionResult(protected, review, regions)
-
-    if page.role is PageRole.UNKNOWN:
-        for region in text_regions:
-            _fill_rect(review, region.rect)
-            regions.append(
-                ProtectedRegion(
-                    rect=region.rect,
-                    reason=ProtectionReason.LOW_CONFIDENCE,
-                    confidence=page.confidence,
-                ),
-            )
-        return ProtectionResult(protected, review, regions)
-
     return ProtectionResult(protected, review, regions)
-
-
-def _fill_rect(mask: BinaryMask, rect: PixelRect) -> None:
-    height, width = mask.shape
-    x1 = min(max(rect.x, 0), width)
-    y1 = min(max(rect.y, 0), height)
-    x2 = min(max(rect.x + rect.width, 0), width)
-    y2 = min(max(rect.y + rect.height, 0), height)
-    mask[y1:y2, x1:x2] = 255
 
 
 def _mask_rect(mask: BinaryMask) -> PixelRect:

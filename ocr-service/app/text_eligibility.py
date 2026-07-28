@@ -12,7 +12,6 @@ from app.page_context import PageContext
 from app.protection import ProtectionResult
 from app.schemas import (
     AutomaticAction,
-    PageRole,
     ProtectionReason,
     TextRole,
 )
@@ -56,13 +55,6 @@ def classify_eligibility(
     extractor = feature_extractor or extract_eligibility_features
     features = extractor(image_rgb, region_mask, region)
 
-    if page.role is not PageRole.COMIC:
-        return _preserve(
-            TextRole.PROTECTED,
-            page.confidence,
-            [_page_reason(page.role)],
-            features,
-        )
     if _intersects(region_mask, protection.protected_mask):
         reasons = _protection_reasons(protection)
         return _preserve(TextRole.PROTECTED, 1.0, reasons, features)
@@ -218,14 +210,6 @@ def _preserve(
         protection_reasons=reasons,
         features=features,
     )
-
-
-def _page_reason(role: PageRole) -> ProtectionReason:
-    if role is PageRole.CREDITS:
-        return ProtectionReason.CREDIT_PAGE
-    if role is PageRole.UI:
-        return ProtectionReason.UI_PAGE
-    return ProtectionReason.LOW_CONFIDENCE
 
 
 def _intersects(left: BinaryMask, right: BinaryMask) -> bool:

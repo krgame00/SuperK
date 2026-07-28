@@ -19,7 +19,7 @@ from app.schemas import (
     TextRole,
 )
 from scripts.benchmark import (
-    count_unattempted_comic_regions,
+    count_unattempted_detected_regions,
     peak_rss_bytes,
 )
 from scripts.build_benchmark_manifest import (
@@ -54,6 +54,7 @@ def _benchmark_region(
     action: AutomaticAction,
     *,
     x: int = 0,
+    role: PageRole = PageRole.COMIC,
 ) -> RegionRecord:
     return RegionRecord(
         id=region_id,
@@ -63,7 +64,7 @@ def _benchmark_region(
         status=RegionStatus.PRESERVED,
         residual_score=0,
         damage_score=0,
-        page_role=PageRole.COMIC,
+        page_role=role,
         text_role=TextRole.REVIEW,
         eligibility_confidence=0.5,
         automatic_action=action,
@@ -91,17 +92,27 @@ def _benchmark_output(
     )
 
 
-def test_unattempted_metric_excludes_hard_protected_regions() -> None:
+def test_unattempted_metric_covers_every_page_role() -> None:
     output = _benchmark_output(
         [
             _benchmark_region("attempted", AutomaticAction.CLEAN),
-            _benchmark_region("missed", AutomaticAction.PRESERVE, x=8),
-            _benchmark_region("protected", AutomaticAction.PRESERVE, x=16),
+            _benchmark_region(
+                "missed-ui",
+                AutomaticAction.PRESERVE,
+                x=8,
+                role=PageRole.UI,
+            ),
+            _benchmark_region(
+                "protected-credit",
+                AutomaticAction.PRESERVE,
+                x=16,
+                role=PageRole.CREDITS,
+            ),
         ],
         protected_slice=(16, 24),
     )
 
-    assert count_unattempted_comic_regions(output) == 1
+    assert count_unattempted_detected_regions(output) == 1
 
 
 def test_manifest_has_30_unique_source_pages() -> None:

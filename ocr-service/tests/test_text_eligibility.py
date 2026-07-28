@@ -205,15 +205,21 @@ def test_qr_intersection_remains_preserved_on_comic_page() -> None:
     assert decision.text_role is TextRole.PROTECTED
 
 
-def test_non_comic_page_is_never_automatically_cleaned() -> None:
+@pytest.mark.parametrize(
+    "role",
+    [PageRole.UI, PageRole.CREDITS, PageRole.UNKNOWN],
+)
+def test_unprotected_text_is_attempted_on_every_page_role(
+    role: PageRole,
+) -> None:
     decision = _classify(
         _features(enclosure=1),
-        page=_page(PageRole.CREDITS),
+        page=_page(role),
     )
 
-    assert decision.text_role is TextRole.PROTECTED
-    assert decision.action is AutomaticAction.PRESERVE
-    assert ProtectionReason.CREDIT_PAGE in decision.protection_reasons
+    assert decision.text_role is TextRole.DIALOGUE
+    assert decision.action is AutomaticAction.CLEAN
+    assert decision.protection_reasons == []
 
 
 @pytest.mark.parametrize(
