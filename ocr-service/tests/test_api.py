@@ -100,12 +100,20 @@ def test_job_lifecycle_result_and_assets(
     assert result["height"] == 8
     assert result["clean_asset"].endswith("/assets/clean.png")
     assert result["mask_asset"].endswith("/assets/mask.png")
+    assert result["review_mask_asset"].endswith("/assets/review-mask.png")
+    assert result["protected_mask_asset"].endswith(
+        "/assets/protected-mask.png",
+    )
 
     clean = client.get(result["clean_asset"])
     mask = client.get(result["mask_asset"])
+    review_mask = client.get(result["review_mask_asset"])
+    protected_mask = client.get(result["protected_mask_asset"])
     assert clean.status_code == 200
     assert clean.headers["content-type"] == "image/png"
     assert mask.status_code == 200
+    assert review_mask.status_code == 200
+    assert protected_mask.status_code == 200
     assert clean.content.startswith(b"\x89PNG")
     assert mask.content.startswith(b"\x89PNG")
     assert client.get(f"/v1/jobs/{created['job_id']}").headers[
@@ -177,13 +185,14 @@ def test_region_retry_creates_derived_job_without_overwriting_parent(
         response = client.post(
             f"/v1/jobs/{parent_id}/regions/region-1/retry",
             files={"mask": ("mask.png", _mask_png(), "image/png")},
-            data={"cleaner": "opencv"},
+            data={"cleaner": "opencv", "action": "protect"},
         )
         assert response.status_code == 202
         derived_id = response.json()["job_id"]
         assert derived_id != parent_id
         assert _wait_for_terminal(client, derived_id)["status"] == "succeeded"
         assert pipeline.retry_cleaner == "opencv"
+        assert pipeline.retry_action == "protect"
         assert (
             client.get(f"/v1/jobs/{parent_id}/assets/clean.png").content
             == original_asset
@@ -228,8 +237,11 @@ class _IdentityPipeline:
 
             progress_callback(JobStage.CLEANING, 0, 0)
         return PipelineOutput(
+            source_image=image_rgb.copy(),
             clean_image=image_rgb.copy(),
             mask=np.zeros(image_rgb.shape[:2], np.uint8),
+            review_mask=np.zeros(image_rgb.shape[:2], np.uint8),
+            protected_mask=np.zeros(image_rgb.shape[:2], np.uint8),
             regions=[],
             timings_ms={"total": 1},
         )
@@ -277,6 +289,7 @@ class _FailingPipeline:
 
 class _RetryPipeline(_IdentityPipeline):
     retry_cleaner: str | None = None
+    retry_action: str | None = None
 
     def retry_region(
         self,
@@ -284,13 +297,18 @@ class _RetryPipeline(_IdentityPipeline):
         region_id: str,
         mask,
         cleaner: str,
+        action,
     ) -> PipelineOutput:
         self.retry_cleaner = cleaner
+        self.retry_action = action.value
         clean = output.clean_image.copy()
         clean[mask > 0] = 128
         return PipelineOutput(
+            source_image=output.source_image,
             clean_image=clean,
             mask=np.maximum(output.mask, mask),
+            review_mask=output.review_mask,
+            protected_mask=output.protected_mask,
             regions=output.regions,
             timings_ms={"total": 1},
         )

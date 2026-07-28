@@ -348,8 +348,21 @@ def test_result_cache_round_trips_lossless_assets(tmp_path: Path) -> None:
     )
     image = np.full((8, 8, 3), 123, np.uint8)
     mask = np.zeros((8, 8), np.uint8)
-    cache.store(key, image, mask, {"job_id": "job-1"})
+    review_mask = np.zeros_like(mask)
+    review_mask[1:3, 1:3] = 255
+    protected_mask = np.zeros_like(mask)
+    protected_mask[5:7, 5:7] = 255
+    cache.store(
+        key,
+        image,
+        mask,
+        review_mask,
+        protected_mask,
+        {"job_id": "job-1"},
+    )
     loaded = cache.load(key)
     assert loaded is not None
     assert np.array_equal(loaded.clean_image, image)
     assert np.array_equal(loaded.mask, mask)
+    assert np.array_equal(loaded.review_mask, review_mask)
+    assert np.array_equal(loaded.protected_mask, protected_mask)

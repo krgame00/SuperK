@@ -18,6 +18,8 @@ from app.mask_refiner import BinaryMask
 class CachedResult:
     clean_image: RgbImage
     mask: BinaryMask
+    review_mask: BinaryMask
+    protected_mask: BinaryMask
     metadata: dict[str, object]
 
 
@@ -55,6 +57,8 @@ class ResultCache:
         key: str,
         clean_image: RgbImage,
         mask: BinaryMask,
+        review_mask: BinaryMask,
+        protected_mask: BinaryMask,
         metadata: dict[str, object],
     ) -> Path:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -68,6 +72,12 @@ class ResultCache:
                 temporary / "clean.png",
             )
             Image.fromarray(mask).save(temporary / "mask.png")
+            Image.fromarray(review_mask).save(
+                temporary / "review-mask.png",
+            )
+            Image.fromarray(protected_mask).save(
+                temporary / "protected-mask.png",
+            )
             (temporary / "result.json").write_text(
                 json.dumps(metadata, sort_keys=True),
                 encoding="utf-8",
@@ -82,14 +92,35 @@ class ResultCache:
         target = self.root / key
         if not target.is_dir():
             return None
+        required = (
+            "clean.png",
+            "mask.png",
+            "review-mask.png",
+            "protected-mask.png",
+            "result.json",
+        )
+        if any(not (target / name).is_file() for name in required):
+            return None
         clean_image = np.asarray(
             Image.open(target / "clean.png").convert("RGB"),
         ).copy()
         mask = np.asarray(Image.open(target / "mask.png").convert("L")).copy()
+        review_mask = np.asarray(
+            Image.open(target / "review-mask.png").convert("L"),
+        ).copy()
+        protected_mask = np.asarray(
+            Image.open(target / "protected-mask.png").convert("L"),
+        ).copy()
         metadata = json.loads(
             (target / "result.json").read_text(encoding="utf-8"),
         )
-        return CachedResult(clean_image, mask, metadata)
+        return CachedResult(
+            clean_image,
+            mask,
+            review_mask,
+            protected_mask,
+            metadata,
+        )
 
     @staticmethod
     def retry_key(automatic_key: str, region_id: str, mask_bytes: bytes) -> str:

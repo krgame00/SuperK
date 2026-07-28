@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
+import shutil
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -20,6 +21,7 @@ from app.schemas import (
     JobProgress,
     JobStage,
     JobStatus,
+    ManualRegionAction,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -40,6 +42,7 @@ class RetryablePipeline(Pipeline, Protocol):
         region_id: str,
         mask: np.ndarray,
         cleaner: str,
+        action: ManualRegionAction,
     ) -> PipelineOutput: ...
 
 
@@ -122,6 +125,7 @@ class JobStore:
         region_id: str,
         mask_bytes: bytes,
         cleaner: str,
+        action: ManualRegionAction,
     ) -> str:
         parent = self.get(parent_id)
         if parent is None:
@@ -149,6 +153,7 @@ class JobStore:
             region_id,
             mask_bytes,
             cleaner,
+            action,
         )
         return job_id
 
@@ -198,6 +203,7 @@ class JobStore:
         region_id: str,
         mask_bytes: bytes,
         cleaner: str,
+        action: ManualRegionAction,
     ) -> None:
         with job.lock:
             job.status = JobStatus.RUNNING
@@ -215,7 +221,7 @@ class JobStore:
             retry = getattr(pipeline, "retry_region", None)
             if retry is None:
                 raise RuntimeError("pipeline does not support region retry")
-            output = retry(parent_output, region_id, mask, cleaner)
+            output = retry(parent_output, region_id, mask, cleaner, action)
             self._complete(job, output, mask.shape)
         except Exception:
             LOGGER.exception("retry job %s failed", job.id)
@@ -242,6 +248,12 @@ class JobStore:
             height=height,
             clean_asset=f"/v1/jobs/{job.id}/assets/clean.png",
             mask_asset=f"/v1/jobs/{job.id}/assets/mask.png",
+            review_mask_asset=(
+                f"/v1/jobs/{job.id}/assets/review-mask.png"
+            ),
+            protected_mask_asset=(
+                f"/v1/jobs/{job.id}/assets/protected-mask.png"
+            ),
             regions=output.regions,
             timings_ms=output.timings_ms,
         )
@@ -276,9 +288,22 @@ class JobStore:
 
     def _write_assets(self, job_id: str, output: PipelineOutput) -> Path:
         target = self.cache_dir / job_id
-        target.mkdir(parents=True, exist_ok=False)
-        Image.fromarray(output.clean_image).save(target / "clean.png")
-        Image.fromarray(output.mask).save(target / "mask.png")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.parent / f".{job_id}.{uuid.uuid4().hex}.tmp"
+        temporary.mkdir()
+        try:
+            Image.fromarray(output.clean_image).save(temporary / "clean.png")
+            Image.fromarray(output.mask).save(temporary / "mask.png")
+            Image.fromarray(output.review_mask).save(
+                temporary / "review-mask.png",
+            )
+            Image.fromarray(output.protected_mask).save(
+                temporary / "protected-mask.png",
+            )
+            temporary.replace(target)
+        except Exception:
+            shutil.rmtree(temporary, ignore_errors=True)
+            raise
         return target
 
 

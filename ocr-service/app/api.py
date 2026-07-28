@@ -17,7 +17,12 @@ from app.jobs import JobStore, Pipeline, PipelineFactory
 from app.model_store import ModelStore
 from app.pipeline import CleaningPipeline
 from app.residual_probe import CompositeResidualProbe
-from app.schemas import CleanerRoute, JobStage, JobStatus
+from app.schemas import (
+    CleanerRoute,
+    JobStage,
+    JobStatus,
+    ManualRegionAction,
+)
 from app.settings import Settings
 
 SUPPORTED_MEDIA_TYPES = {"image/png", "image/jpeg", "image/webp"}
@@ -81,7 +86,12 @@ def create_app(
 
     @app.get("/v1/jobs/{job_id}/assets/{asset_name}")
     def get_asset(job_id: str, asset_name: str) -> FileResponse:
-        if asset_name not in {"clean.png", "mask.png"}:
+        if asset_name not in {
+            "clean.png",
+            "mask.png",
+            "review-mask.png",
+            "protected-mask.png",
+        }:
             raise HTTPException(status_code=404, detail="Asset not found.")
         job = _job_or_404(store, job_id)
         with job.lock:
@@ -105,6 +115,9 @@ def create_app(
         region_id: str,
         mask: Annotated[UploadFile, File()],
         cleaner: Annotated[str, Form()] = "auto",
+        action: Annotated[ManualRegionAction, Form()] = (
+            ManualRegionAction.AUTOMATIC
+        ),
     ) -> dict[str, str]:
         _job_or_404(store, job_id)
         if cleaner not in RETRY_CLEANERS:
@@ -124,6 +137,7 @@ def create_app(
             region_id,
             mask_bytes,
             cleaner,
+            action,
         )
         return {
             "job_id": derived_id,
