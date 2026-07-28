@@ -13,8 +13,6 @@ from app.page_context import PageContext
 from app.schemas import PageRole, PixelRect, ProtectionReason
 
 QR_PROTECTION_MARGIN = 8
-OUTER_MARGIN_FRACTION = 0.08
-COMPACT_REGION_AREA_FRACTION = 0.02
 
 
 class QrScanner(Protocol):
@@ -107,37 +105,7 @@ def detect_protection(
             )
         return ProtectionResult(protected, review, regions)
 
-    page_area = height * width
-    for region in text_regions:
-        if (
-            region.rect.width * region.rect.height
-            <= page_area * COMPACT_REGION_AREA_FRACTION
-            and _intersects_outer_margin(region.rect, width, height)
-        ):
-            _fill_rect(review, region.rect)
-            regions.append(
-                ProtectedRegion(
-                    rect=region.rect,
-                    reason=ProtectionReason.MARGIN_MARK,
-                    confidence=0.80,
-                ),
-            )
     return ProtectionResult(protected, review, regions)
-
-
-def _intersects_outer_margin(
-    rect: PixelRect,
-    width: int,
-    height: int,
-) -> bool:
-    margin_x = width * OUTER_MARGIN_FRACTION
-    margin_y = height * OUTER_MARGIN_FRACTION
-    return (
-        rect.x < margin_x
-        or rect.y < margin_y
-        or rect.x + rect.width > width - margin_x
-        or rect.y + rect.height > height - margin_y
-    )
 
 
 def _fill_rect(mask: BinaryMask, rect: PixelRect) -> None:

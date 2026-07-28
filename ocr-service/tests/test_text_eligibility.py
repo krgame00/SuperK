@@ -176,15 +176,33 @@ def test_irregular_free_text_can_be_sfx_without_dense_artwork() -> None:
     assert decision.action is AutomaticAction.CLEAN
 
 
-def test_margin_text_is_preserved_for_review() -> None:
+def test_margin_review_text_is_attempted_on_comic_page() -> None:
     decision = _classify(
         _features(enclosure=1),
         protection=_protection(review=True),
     )
 
-    assert decision.action is AutomaticAction.PRESERVE
+    assert decision.action is AutomaticAction.CLEAN
     assert decision.text_role is TextRole.REVIEW
     assert ProtectionReason.MARGIN_MARK in decision.protection_reasons
+
+
+def test_low_confidence_comic_text_is_attempted_for_review() -> None:
+    decision = _classify(_features())
+
+    assert decision.action is AutomaticAction.CLEAN
+    assert decision.text_role is TextRole.REVIEW
+    assert ProtectionReason.LOW_CONFIDENCE in decision.protection_reasons
+
+
+def test_qr_intersection_remains_preserved_on_comic_page() -> None:
+    decision = _classify(
+        _features(enclosure=1),
+        protection=_protection(protected=True),
+    )
+
+    assert decision.action is AutomaticAction.PRESERVE
+    assert decision.text_role is TextRole.PROTECTED
 
 
 def test_non_comic_page_is_never_automatically_cleaned() -> None:
@@ -199,36 +217,44 @@ def test_non_comic_page_is_never_automatically_cleaned() -> None:
 
 
 @pytest.mark.parametrize(
-    ("score", "expected"),
+    ("score", "expected_role"),
     [
-        (0.819, AutomaticAction.PRESERVE),
-        (0.820, AutomaticAction.CLEAN),
+        (0.819, TextRole.REVIEW),
+        (0.820, TextRole.NARRATION),
     ],
 )
-def test_narration_threshold_is_conservative(
+def test_narration_threshold_only_changes_semantic_role(
     score: float,
-    expected: AutomaticAction,
+    expected_role: TextRole,
 ) -> None:
     decision = _classify(
         _features(uniformity=score, rectangular=score),
     )
 
-    assert decision.action is expected
+    assert decision.action is AutomaticAction.CLEAN
+    assert decision.text_role is expected_role
+    assert (
+        ProtectionReason.LOW_CONFIDENCE in decision.protection_reasons
+    ) is (expected_role is TextRole.REVIEW)
 
 
 @pytest.mark.parametrize(
-    ("score", "expected"),
+    ("score", "expected_role"),
     [
-        (0.899, AutomaticAction.PRESERVE),
-        (0.900, AutomaticAction.CLEAN),
+        (0.899, TextRole.REVIEW),
+        (0.900, TextRole.SFX),
     ],
 )
-def test_sfx_threshold_is_conservative(
+def test_sfx_threshold_only_changes_semantic_role(
     score: float,
-    expected: AutomaticAction,
+    expected_role: TextRole,
 ) -> None:
     decision = _classify(
         _features(artwork_edges=score, irregularity=score),
     )
 
-    assert decision.action is expected
+    assert decision.action is AutomaticAction.CLEAN
+    assert decision.text_role is expected_role
+    assert (
+        ProtectionReason.LOW_CONFIDENCE in decision.protection_reasons
+    ) is (expected_role is TextRole.REVIEW)

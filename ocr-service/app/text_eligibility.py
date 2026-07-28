@@ -71,7 +71,13 @@ def classify_eligibility(
             protection,
             fallback=ProtectionReason.MARGIN_MARK,
         )
-        return _preserve(TextRole.REVIEW, 1.0, reasons, features)
+        return EligibilityDecision(
+            text_role=TextRole.REVIEW,
+            confidence=1.0,
+            action=AutomaticAction.CLEAN,
+            protection_reasons=reasons,
+            features=features,
+        )
 
     if features.enclosure_score >= 0.72:
         return EligibilityDecision(
@@ -113,11 +119,12 @@ def classify_eligibility(
             features,
         )
 
-    return _preserve(
-        TextRole.REVIEW,
-        max(narration_score, sfx_score),
-        [ProtectionReason.LOW_CONFIDENCE],
-        features,
+    return EligibilityDecision(
+        text_role=TextRole.REVIEW,
+        confidence=float(np.clip(max(narration_score, sfx_score), 0, 1)),
+        action=AutomaticAction.CLEAN,
+        protection_reasons=[ProtectionReason.LOW_CONFIDENCE],
+        features=features,
     )
 
 
@@ -186,17 +193,13 @@ def _threshold_decision(
     threshold: float,
     features: EligibilityFeatures,
 ) -> EligibilityDecision:
-    clean = confidence >= threshold
+    confident = confidence >= threshold
     return EligibilityDecision(
-        text_role=role if clean else TextRole.REVIEW,
+        text_role=role if confident else TextRole.REVIEW,
         confidence=confidence,
-        action=(
-            AutomaticAction.CLEAN
-            if clean
-            else AutomaticAction.PRESERVE
-        ),
+        action=AutomaticAction.CLEAN,
         protection_reasons=(
-            [] if clean else [ProtectionReason.LOW_CONFIDENCE]
+            [] if confident else [ProtectionReason.LOW_CONFIDENCE]
         ),
         features=features,
     )

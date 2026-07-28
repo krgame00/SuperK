@@ -80,12 +80,13 @@ def test_unknown_page_sends_detected_text_to_review() -> None:
     assert not np.any(result.protected_mask)
 
 
-def test_compact_margin_text_is_reviewed_on_comic_page() -> None:
+def test_compact_margin_text_is_not_blocked_on_comic_page() -> None:
     result = detect_protection(
         np.full((100, 100, 3), 255, np.uint8),
         _context(PageRole.COMIC),
         [_region(x=1, y=40, width=12, height=8)],
     )
 
-    assert np.all(result.review_mask[40:48, 1:13] == 255)
-    assert result.regions[0].reason is ProtectionReason.MARGIN_MARK
+    assert not np.any(result.review_mask)
+    assert not np.any(result.protected_mask)
+    assert result.regions == []
