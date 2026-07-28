@@ -27,7 +27,7 @@ from app.detector import TextDetector
 from app.model_store import ModelStore
 from app.pipeline import CleaningPipeline
 from app.residual_probe import CompositeResidualProbe
-from app.schemas import CleanerRoute, RegionStatus
+from app.schemas import AutomaticAction, CleanerRoute, RegionStatus
 from scripts.build_benchmark_manifest import (
     IMAGE_SUFFIXES,
     anonymized_relative_path_hash,
@@ -96,10 +96,23 @@ def measure_page(
     pipeline: CleaningPipeline,
     path: Path,
     metadata: dict[str, Any],
+    visual_hashes: set[str] | None = None,
+    visual_output_dir: Path | None = None,
 ) -> dict[str, Any]:
     image = load_rgb(path)
     started = perf_counter()
     output = pipeline.run(image)
+    if (
+        visual_hashes is not None
+        and visual_output_dir is not None
+        and metadata["sha256"] in visual_hashes
+    ):
+        render_visual_artifact(
+            image,
+            output,
+            metadata["sha256"],
+            visual_output_dir,
+        )
     pipeline_elapsed = round((perf_counter() - started) * 1000)
     encode_started = perf_counter()
     encoded, _ = cv2.imencode(
@@ -122,11 +135,17 @@ def measure_page(
     route_counts = Counter(region.route.value for region in output.regions)
     repaired = sum(
         region.status is RegionStatus.REPAIRED
+        and region.automatic_action is AutomaticAction.CLEAN
+        for region in output.regions
+    )
+    eligible_regions = sum(
+        region.automatic_action is AutomaticAction.CLEAN
         for region in output.regions
     )
     residual_pass = sum(
         region.residual_score <= 0.18
         for region in output.regions
+        if region.automatic_action is AutomaticAction.CLEAN
     )
     region_count = len(output.regions)
     is_text_free = region_count == 0
@@ -140,20 +159,64 @@ def measure_page(
         "timings_ms": timings,
         "region_count": region_count,
         "route_counts": dict(route_counts),
-        "residual_pass_rate": _ratio(residual_pass, region_count),
-        "automatic_region_pass_rate": _ratio(repaired, region_count),
+        "eligible_region_count": eligible_regions,
+        "residual_pass_rate": _ratio(residual_pass, eligible_regions),
+        "automatic_region_pass_rate": _ratio(repaired, eligible_regions),
         "needs_review_rate": (
             0.0
             if region_count == 0
-            else _ratio(region_count - repaired, region_count)
+            else _ratio(region_count - eligible_regions, region_count)
         ),
         "changed_pixels_outside_support": changed_outside_support,
+        "changed_pixels_inside_protected": int(
+            np.count_nonzero(changed & (output.protected_mask > 0)),
+        ),
         "text_free_pixel_identical": (
             bool(np.array_equal(image, output.clean_image))
             if is_text_free
             else None
         ),
         "peak_rss_mb": round(peak_rss_bytes() / (1024 * 1024), 1),
+    }
+
+
+def measure_protected_page(
+    pipeline: CleaningPipeline,
+    path: Path,
+    metadata: dict[str, Any],
+    visual_hashes: set[str] | None = None,
+    visual_output_dir: Path | None = None,
+) -> dict[str, Any]:
+    image = load_rgb(path)
+    output = pipeline.run(image)
+    if (
+        visual_hashes is not None
+        and visual_output_dir is not None
+        and metadata["sha256"] in visual_hashes
+    ):
+        render_visual_artifact(
+            image,
+            output,
+            metadata["sha256"],
+            visual_output_dir,
+        )
+    changed = np.any(image != output.clean_image, axis=2)
+    categories = metadata["protection_categories"]
+    page_identity_required = bool(
+        {"credits", "ui"} & set(categories),
+    )
+    return {
+        "relative_path_hash": metadata["relative_path_hash"],
+        "sha256": metadata["sha256"],
+        "protection_categories": categories,
+        "changed_pixels_inside_protected": int(
+            np.count_nonzero(changed & (output.protected_mask > 0)),
+        ),
+        "page_pixel_identical": (
+            bool(np.array_equal(image, output.clean_image))
+            if page_identity_required
+            else None
+        ),
     }
 
 
@@ -201,16 +264,27 @@ def measure_regression(
 def aggregate(
     pages: list[dict[str, Any]],
     regressions: list[dict[str, Any]],
+    protected_pages: list[dict[str, Any]],
+    visual_gate: dict[str, Any],
 ) -> dict[str, Any]:
     totals = [page["timings_ms"]["total"] for page in pages]
     total_regions = sum(page["region_count"] for page in pages)
     residual_passes = sum(
-        round(page["residual_pass_rate"] * page["region_count"])
+        round(
+            page["residual_pass_rate"]
+            * page["eligible_region_count"],
+        )
         for page in pages
     )
     automatic_passes = sum(
-        round(page["automatic_region_pass_rate"] * page["region_count"])
+        round(
+            page["automatic_region_pass_rate"]
+            * page["eligible_region_count"],
+        )
         for page in pages
+    )
+    total_eligible_regions = sum(
+        page["eligible_region_count"] for page in pages
     )
     text_free = [
         page["text_free_pixel_identical"]
@@ -220,10 +294,13 @@ def aggregate(
     summary = {
         "median_total_ms": round(statistics.median(totals)),
         "p95_total_ms": round(_percentile(totals, 0.95)),
-        "residual_pass_rate": _ratio(residual_passes, total_regions),
+        "residual_pass_rate": _ratio(
+            residual_passes,
+            total_eligible_regions,
+        ),
         "automatic_region_pass_rate": _ratio(
             automatic_passes,
-            total_regions,
+            total_eligible_regions,
         ),
         "needs_review_rate": _ratio(
             total_regions - automatic_passes,
@@ -232,19 +309,35 @@ def aggregate(
         "changed_pixels_outside_support": sum(
             page["changed_pixels_outside_support"] for page in pages
         ),
+        "changed_pixels_inside_protected": sum(
+            page["changed_pixels_inside_protected"] for page in pages
+        )
+        + sum(
+            page["changed_pixels_inside_protected"]
+            for page in protected_pages
+        ),
+        "credit_ui_pages_pixel_identical": all(
+            page["page_pixel_identical"]
+            for page in protected_pages
+            if page["page_pixel_identical"] is not None
+        ),
         "text_free_pages_pixel_identical": all(text_free),
         "rectangular_patch_regressions_pass": not any(
             item["failed"] for item in regressions
         ),
         "peak_rss_mb": max(page["peak_rss_mb"] for page in pages),
+        "visual_review_pass": visual_gate["passed"],
     }
     summary["passed"] = bool(
         summary["median_total_ms"] <= 30_000
         and summary["residual_pass_rate"] >= 0.95
         and summary["automatic_region_pass_rate"] >= 0.90
         and summary["changed_pixels_outside_support"] == 0
+        and summary["changed_pixels_inside_protected"] == 0
+        and summary["credit_ui_pages_pixel_identical"]
         and summary["text_free_pages_pixel_identical"]
         and summary["rectangular_patch_regressions_pass"]
+        and summary["visual_review_pass"]
     )
     return summary
 
@@ -310,6 +403,15 @@ def markdown_report(report: dict[str, Any]) -> str:
             f"- Changed pixels outside support: "
             f"{summary['changed_pixels_outside_support']}"
         ),
+        (
+            f"- Changed pixels inside protected: "
+            f"{summary['changed_pixels_inside_protected']}"
+        ),
+        (
+            f"- Credit/UI identity: "
+            f"{summary['credit_ui_pages_pixel_identical']}"
+        ),
+        f"- Visual review: {summary['visual_review_pass']}",
         f"- Peak RSS: {summary['peak_rss_mb']:.1f} MB",
         f"- Acceptance: {'PASS' if summary['passed'] else 'FAIL'}",
         "",
@@ -343,10 +445,68 @@ def _percentile(values: list[int], quantile: float) -> float:
     return ordered[lower] * (1 - fraction) + ordered[upper] * fraction
 
 
+def visual_review_gate(document: dict[str, Any]) -> dict[str, Any]:
+    passed = [
+        item for item in document["pages"] if item["decision"] == "pass"
+    ]
+    categories = Counter(
+        category for item in passed for category in item["categories"]
+    )
+    required = ("dialogue", "narration", "sfx", "protected-heavy")
+    return {
+        "passed": len(passed) >= 12
+        and all(categories[category] >= 3 for category in required),
+        "passed_pages": len(passed),
+        "categories": dict(categories),
+    }
+
+
+def render_visual_artifact(
+    image: np.ndarray,
+    output,
+    source_hash: str,
+    output_dir: Path,
+) -> None:
+    height = 360
+    width = max(1, round(image.shape[1] * height / image.shape[0]))
+    original = cv2.resize(image, (width, height))
+    clean = cv2.resize(output.clean_image, (width, height))
+    eligible = cv2.resize(
+        output.mask,
+        (width, height),
+        interpolation=cv2.INTER_NEAREST,
+    )
+    protected = cv2.resize(
+        output.protected_mask,
+        (width, height),
+        interpolation=cv2.INTER_NEAREST,
+    )
+    eligible_rgb = np.zeros_like(original)
+    eligible_rgb[eligible > 0] = (255, 55, 80)
+    protected_rgb = np.zeros_like(original)
+    protected_rgb[protected > 0] = (45, 145, 255)
+    difference = np.clip(
+        np.abs(clean.astype(np.int16) - original.astype(np.int16)) * 5,
+        0,
+        255,
+    ).astype(np.uint8)
+    sheet = np.concatenate(
+        (original, clean, eligible_rgb, protected_rgb, difference),
+        axis=1,
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(sheet).save(
+        output_dir / f"{source_hash[:12]}.jpg",
+        quality=92,
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--protected-manifest", type=Path, required=True)
+    parser.add_argument("--visual-review", type=Path, required=True)
     parser.add_argument("--cleaner", choices=("aot", "anime-lama"), default="aot")
     parser.add_argument(
         "--regression-page",
@@ -366,6 +526,16 @@ def main() -> None:
     args = parse_args()
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     pages = resolve_manifest_pages(args.root.resolve(), manifest)
+    protected_manifest = json.loads(
+        args.protected_manifest.read_text(encoding="utf-8"),
+    )
+    protected_pages = resolve_manifest_pages(
+        args.root.resolve(),
+        protected_manifest,
+    )
+    visual_review = json.loads(
+        args.visual_review.read_text(encoding="utf-8"),
+    )
     pipeline = build_pipeline(SERVICE_ROOT, args.cleaner)
 
     warmup_image = load_rgb(pages[0][0])
@@ -373,14 +543,42 @@ def main() -> None:
     pipeline.run(warmup_image)
 
     page_reports: list[dict[str, Any]] = []
+    visual_hashes = {
+        item["sha256"] for item in visual_review["pages"]
+    }
     for index, (path, metadata) in enumerate(pages, start=1):
         print(f"Benchmark {index}/{len(pages)}", flush=True)
-        page_reports.append(measure_page(pipeline, path, metadata))
+        page_reports.append(
+            measure_page(
+                pipeline,
+                path,
+                metadata,
+                visual_hashes,
+                args.output_dir / "visual",
+            ),
+        )
+    protected_reports = []
+    for path, metadata in protected_pages:
+        protected_reports.append(
+            measure_protected_page(
+                pipeline,
+                path,
+                metadata,
+                visual_hashes,
+                args.output_dir / "visual",
+            ),
+        )
     regression_reports = [
         measure_regression(pipeline, path.resolve())
         for path in args.regression_page
     ]
-    summary = aggregate(page_reports, regression_reports)
+    visual_gate = visual_review_gate(visual_review)
+    summary = aggregate(
+        page_reports,
+        regression_reports,
+        protected_reports,
+        visual_gate,
+    )
     report = {
         "version": 1,
         "generated_at": datetime.now(UTC).isoformat(),
@@ -390,6 +588,8 @@ def main() -> None:
         ).hexdigest(),
         "pages": page_reports,
         "regressions": regression_reports,
+        "protected_pages": protected_reports,
+        "visual_gate": visual_gate,
         "summary": summary,
     }
     args.output_dir.mkdir(parents=True, exist_ok=True)

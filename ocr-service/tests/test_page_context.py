@@ -55,6 +55,43 @@ def test_horizontal_text_bands_are_ui() -> None:
     assert result.role is PageRole.UI
 
 
+def test_dense_comic_art_wins_over_horizontal_dark_rows() -> None:
+    image = np.full((200, 160, 3), 255, np.uint8)
+    image[20:180:8, 15:145] = 0
+    image[20:180, 15:145:8] = 0
+    image[35:45, 5:155] = 0
+    image[100:110, 5:155] = 0
+
+    result = classify_page(
+        image,
+        [_region(20, 30, 130, 120)],
+        qr_polygons=[],
+    )
+
+    assert result.features.horizontal_band_score >= 0.72
+    assert result.features.text_coverage >= 0.08
+    assert result.role is PageRole.COMIC
+
+
+def test_sparse_full_width_interface_is_ui_despite_artwork() -> None:
+    image = np.full((200, 160, 3), 255, np.uint8)
+    image[20:180:10, 20:140] = 0
+    image[20:180, 20:140:10] = 0
+    image[50:62, :] = 0
+    image[120:132, :] = 0
+
+    result = classify_page(
+        image,
+        [_region(5, 175, 150, 8)],
+        qr_polygons=[],
+    )
+
+    assert result.features.line_art_density >= 0.035
+    assert result.features.horizontal_band_score >= 0.98
+    assert result.features.text_coverage < 0.08
+    assert result.role is PageRole.UI
+
+
 def test_ambiguous_blank_page_is_unknown() -> None:
     image = np.full((800, 600, 3), 255, np.uint8)
 

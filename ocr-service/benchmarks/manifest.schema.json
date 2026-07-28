@@ -19,7 +19,8 @@
           "sha256",
           "width",
           "height",
-          "categories"
+          "categories",
+          "review_label"
         ],
         "additionalProperties": false,
         "properties": {
@@ -33,6 +34,7 @@
           },
           "width": { "type": "integer", "minimum": 1 },
           "height": { "type": "integer", "minimum": 1 },
+          "review_label": { "const": "original_comic" },
           "categories": {
             "type": "array",
             "minItems": 1,

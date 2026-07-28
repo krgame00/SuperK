@@ -1,13 +1,23 @@
 import json
 import os
+import subprocess
+import sys
+from collections import Counter
 from pathlib import Path
 
 import pytest
 
 from scripts.benchmark import peak_rss_bytes
-from scripts.build_benchmark_manifest import anonymized_relative_path_hash
+from scripts.build_benchmark_manifest import (
+    anonymized_relative_path_hash,
+    should_include_relative_path,
+)
+from scripts.review_benchmark_corpus import build_review_artifacts
 
 MANIFEST = Path(__file__).parents[1] / "benchmarks" / "manifest.json"
+VISUAL_REVIEW = (
+    Path(__file__).parents[1] / "benchmarks" / "visual-review.json"
+)
 REQUIRED_CATEGORIES = {
     "white-bubble",
     "colored-bubble",
@@ -31,6 +41,23 @@ def test_manifest_has_30_unique_source_pages() -> None:
     assert len(pages) == 30
     assert len({page["sha256"] for page in pages}) == 30
     assert len({page["relative_path_hash"] for page in pages}) == 30
+    assert {page["review_label"] for page in pages} == {
+        "original_comic",
+    }
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "[English]/01.webp",
+        "[Chinese]/01.webp",
+        "[Thai]/01.webp",
+        "ภาษาไทย/01.webp",
+        "[中国語版]/01.webp",
+    ],
+)
+def test_language_tagged_paths_are_excluded(relative: str) -> None:
+    assert should_include_relative_path(Path(relative)) is False
 
 
 def test_manifest_does_not_store_external_paths_or_language_tags() -> None:
@@ -62,6 +89,74 @@ def test_path_hash_accepts_legacy_surrogate_filenames() -> None:
     path = root / "legacy-\udde1" / "01.webp"
 
     assert len(anonymized_relative_path_hash(path, root)) == 64
+
+
+def test_review_artifacts_contain_hashes_without_source_paths(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "private-corpus"
+    root.mkdir()
+    from PIL import Image
+
+    Image.new("RGB", (64, 96), "white").save(root / "page.png")
+    output = tmp_path / "review"
+
+    build_review_artifacts(root, output, count=1)
+
+    candidates = (output / "candidates.json").read_text(encoding="utf-8")
+    assert str(root) not in candidates
+    assert "page.png" not in candidates
+    payload = json.loads(candidates)
+    assert len(payload["candidates"][0]["sha256"]) == 64
+
+
+def test_review_script_runs_as_a_direct_cli(tmp_path: Path) -> None:
+    root = tmp_path / "corpus"
+    root.mkdir()
+    from PIL import Image
+
+    Image.new("RGB", (64, 96), "white").save(root / "page.png")
+    output = tmp_path / "review"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/review_benchmark_corpus.py",
+            "--root",
+            str(root),
+            "--emit-review-dir",
+            str(output),
+            "--count",
+            "1",
+        ],
+        cwd=Path(__file__).parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_visual_review_has_required_coverage() -> None:
+    visual_review = json.loads(
+        VISUAL_REVIEW.read_text(encoding="utf-8"),
+    )
+    passed = [
+        item
+        for item in visual_review["pages"]
+        if item["decision"] == "pass"
+    ]
+    assert len(passed) >= 12
+    categories = Counter(
+        category
+        for item in passed
+        for category in item["categories"]
+    )
+    assert categories["dialogue"] >= 3
+    assert categories["narration"] >= 3
+    assert categories["sfx"] >= 3
+    assert categories["protected-heavy"] >= 3
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows RSS implementation")

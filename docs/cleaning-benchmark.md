@@ -6,18 +6,25 @@ benchmark นี้วัดระบบคลีน local บน CPU ด้ว�
 flat/gradient reconstruction และ AOT สำหรับ artwork region ไม่มี paid API
 หรือ network call ระหว่างประมวลผล
 
-corpus มี 30 ภาพต้นฉบับจาก `F:\Doujin\Download` เลือกแบบ deterministic ด้วย
-seed `20260727` ครอบคลุม white/colored bubble, vertical Japanese,
+corpus หลักมี 30 ภาพต้นฉบับจาก `F:\Doujin\Download` ที่ผ่านการรีวิวด้วยคนและ
+ติด label `original_comic` ก่อนเลือกแบบ deterministic ด้วย seed `20260727`
+ระบบตัดพาธที่มี `[English]`, `[Chinese]`, `[Thai]`, `ภาษาไทย` หรือ
+`[中国語版]` ออกก่อนเปิดและวิเคราะห์ภาพ corpus ครอบคลุม white/colored bubble, vertical Japanese,
 outlined/colored text, artwork SFX, screentone, complex color, dense text และ
 text-free หมวดหมู่เป็น heuristic สำหรับความหลากหลายของ corpus ไม่ใช่
 ground-truth annotation
 
+มี protected corpus แยกอีก 10 ภาพสำหรับ credits, QR, UI, watermark และ logo
+เพื่อไม่ให้คะแนนการคลีนข้อความทั่วไปกลบ regression ด้านการปกป้องข้อความ
+สำคัญ
+
 manifest ที่ commit เก็บเฉพาะ:
 
-- SHA-256 ของ relative path หลังตัด language tag
+- SHA-256 ของ relative path
 - SHA-256 ของเนื้อหาไฟล์
 - ความกว้างและความสูง
 - หมวดหมู่
+- review label
 
 ไม่มีชื่อเรื่อง ชื่อโฟลเดอร์ พาธเต็ม หรือภาพต้นฉบับอยู่ใน Git ตัว runner สแกน
 root ที่ผู้ใช้ระบุและจับคู่ด้วย hash ตอนรัน
@@ -31,9 +38,14 @@ root ที่ผู้ใช้ระบุและจับคู่ด้ว
    feather support และ peak RSS
 4. ตรวจหน้าที่ detector/refiner คืน 0 regions ว่าภาพ output เหมือน input
    ทุกพิกเซล
-5. รัน regression สองภาพจาก `E:\SuperK` และตรวจ connected changed area
+5. รัน protected corpus และตรวจว่าไม่มีพิกเซลเปลี่ยนใน protected mask รวมถึง
+   หน้า credits/UI ต้อง pixel-identical
+6. รัน regression สองภาพจาก `E:\SuperK` และตรวจ connected changed area
    ไม่ให้เกิด patch สี่เหลี่ยมที่ fill ratio อย่างน้อย 0.85 และกินพื้นที่เกิน
    1% ของหน้า
+7. สร้าง comparison artifact แบบ Original/Clean/Eligible/Protected/Diff×5
+   แล้วรีวิวด้วยคนอย่างน้อย 12 ภาพ: dialogue, narration, SFX และ
+   protected-heavy อย่างละ 3 ภาพ
 
 รายงานดิบถูกเขียนเป็น `benchmark-results/latest-aot.json` และ
 `benchmark-results/latest-aot.md` โดยโฟลเดอร์นี้ไม่ถูก commit
@@ -44,33 +56,42 @@ root ที่ผู้ใช้ระบุและจับคู่ด้ว
 - residual pass อย่างน้อย 95%
 - automatic region pass อย่างน้อย 90%
 - changed pixels outside feather support เท่ากับ 0
+- changed pixels inside protected mask เท่ากับ 0
+- หน้า credits/UI ใน protected corpus ต้อง pixel-identical
 - หน้าที่ไม่มี region ต้อง pixel-identical
 - regression rectangular-patch ต้องผ่าน
+- visual review ต้องผ่านอย่างน้อย 12 ภาพและครบ 4 หมวด หมวดละ 3 ภาพ
 
 ## ผลล่าสุด
 
-รันเมื่อ 27 กรกฎาคม 2026 บน Windows/CPU target:
+รันเมื่อ 28 กรกฎาคม 2026 บน Windows/CPU target:
 
 | Metric | Result | Gate |
 |---|---:|---:|
-| Median total | 14,626 ms | ≤ 30,000 ms |
-| p95 total | 43,680 ms | informational |
+| Median total | 7,950 ms | ≤ 30,000 ms |
+| p95 total | 15,366 ms | informational |
 | Residual pass | 100.0% | ≥ 95% |
 | Automatic region pass | 100.0% | ≥ 90% |
 | Changed pixels outside support | 0 | = 0 |
+| Changed pixels inside protected | 0 | = 0 |
+| Credits/UI pixel identity | ผ่าน | ต้องผ่าน |
 | Text-free pixel identity | ผ่าน | ต้องผ่าน |
 | Rectangular-patch regression | ผ่าน | ต้องผ่าน |
-| Peak RSS | 2,416.6 MB | informational |
+| Visual review | 12/12 ผ่าน | ต้องผ่าน |
+| Needs review | 73.3% | informational |
+| Peak RSS | 1,052.1 MB | informational |
 
 ผลรวม: **PASS**
 
-หน้าโดยทั่วไปอยู่ในช่วงเป้าหมาย แต่ยังไม่ใช่การรับประกัน 30 วินาทีทุกหน้า:
-p95 คือ 43.7 วินาทีและหน้าหนักสุดใน corpus ใช้ 72.8 วินาที โดยเวลาหลักมาจาก
-หลาย artwork regions ที่เรียก AOT ซ้ำ
+ทั้ง median และ p95 อยู่ต่ำกว่าเป้าหมาย 20–30 วินาทีต่อหน้าใน corpus นี้
+แต่ยังไม่ใช่การรับประกันทุกเครื่องหรือทุกความละเอียด เวลาจะสูงขึ้นตามจำนวน
+artwork regions ที่เรียก AOT และกำลัง CPU
 
 ## ข้อจำกัดด้านคุณภาพ
 
 residual score เป็นการตรวจซ้ำด้วย CTD ภายใน support และ damage score
 ตรวจการเปลี่ยนภาพนอก support จึงเหมาะเป็น regression gate แต่ไม่แทนการรีวิว
-สายตามนุษย์ โดยเฉพาะ SFX ที่ทับเส้น artwork หนาแน่น งานลักษณะนี้ควรตรวจ
-Clean/Mask layer และใช้ manual region retry เมื่อจำเป็น
+สายตามนุษย์ ระบบตั้งใจ preserve region ที่ความมั่นใจไม่ถึงเกณฑ์ โดยผลล่าสุด
+ส่ง 73.3% ของ region ไป review เพื่อไม่ให้ลบเครดิต UI watermark หรือเส้นภาพ
+โดยพลการ โดยเฉพาะ SFX ที่ทับเส้น artwork หนาแน่นควรตรวจ Clean/Mask/Protected
+layer และใช้ manual region retry เมื่อจำเป็น

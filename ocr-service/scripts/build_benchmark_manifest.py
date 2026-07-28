@@ -28,6 +28,13 @@ LANGUAGE_TAGS = re.compile(
     r"\[(?:English|Chinese|Thai|中国語版)\]|ภาษาไทย",
     flags=re.IGNORECASE,
 )
+EXCLUDED_PATH_TAGS = (
+    "[english]",
+    "[chinese]",
+    "[thai]",
+    "ภาษาไทย",
+    "[中国語版]",
+)
 
 
 @dataclass(frozen=True)
@@ -53,6 +60,13 @@ def anonymized_relative_path_hash(path: Path, root: Path) -> str:
     return hashlib.sha256(
         normalized.encode("utf-8", errors="surrogatepass"),
     ).hexdigest()
+
+
+def should_include_relative_path(relative: Path) -> bool:
+    folded = relative.as_posix().casefold()
+    return not any(
+        tag.casefold() in folded for tag in EXCLUDED_PATH_TAGS
+    )
 
 
 def analyze(path: Path, root: Path) -> Candidate | None:
@@ -104,6 +118,8 @@ def discover(root: Path) -> list[Candidate]:
     candidates: list[Candidate] = []
     for path in sorted(root.rglob("*"), key=lambda item: item.as_posix().casefold()):
         if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES:
+            if not should_include_relative_path(path.relative_to(root)):
+                continue
             candidate = analyze(path, root)
             if candidate is not None:
                 candidates.append(candidate)
@@ -159,8 +175,21 @@ def select(candidates: list[Candidate], count: int) -> list[tuple[Candidate, str
     return selected
 
 
-def build_manifest(root: Path, count: int) -> dict[str, object]:
-    selected = select(discover(root), count)
+def build_manifest(
+    root: Path,
+    count: int,
+    review_labels: dict[str, str],
+) -> dict[str, object]:
+    reviewed = [
+        candidate
+        for candidate in discover(root)
+        if review_labels.get(sha256_file(candidate.path)) == "original_comic"
+    ]
+    if len(reviewed) < count:
+        raise RuntimeError(
+            f"found only {len(reviewed)} reviewed original_comic pages",
+        )
+    selected = select(reviewed, count)
     pages = [
         {
             "relative_path_hash": candidate.relative_path_hash,
@@ -168,6 +197,7 @@ def build_manifest(root: Path, count: int) -> dict[str, object]:
             "width": candidate.width,
             "height": candidate.height,
             "categories": [category],
+            "review_label": "original_comic",
         }
         for candidate, category in selected
     ]
@@ -184,6 +214,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--count", type=int, default=30)
     parser.add_argument(
+        "--review-labels",
+        type=Path,
+        required=True,
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=Path(__file__).parents[1] / "benchmarks" / "manifest.json",
@@ -196,7 +231,11 @@ def main() -> None:
     root = args.root.resolve()
     if not root.is_dir():
         raise SystemExit(f"benchmark root does not exist: {root}")
-    manifest = build_manifest(root, args.count)
+    labels_document = json.loads(
+        args.review_labels.read_text(encoding="utf-8"),
+    )
+    review_labels = labels_document.get("labels", labels_document)
+    manifest = build_manifest(root, args.count, review_labels)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",

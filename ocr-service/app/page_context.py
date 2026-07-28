@@ -94,8 +94,9 @@ def _classify_features(
     if features.qr_count > 0 and features.margin_text_fraction >= 0.45:
         return PageRole.CREDITS, 0.95
     if (
-        features.horizontal_band_score >= 0.72
-        and features.text_coverage >= 0.08
+        features.horizontal_band_score >= 0.98
+        and features.text_coverage < 0.08
+        and has_text_regions
     ):
         return PageRole.UI, 0.90
     if features.line_art_density >= 0.035 and has_text_regions:
@@ -104,4 +105,9 @@ def _classify_features(
             0.70 + (features.line_art_density - 0.035) * 4,
         )
         return PageRole.COMIC, confidence
+    if (
+        features.horizontal_band_score >= 0.72
+        and features.text_coverage >= 0.08
+    ):
+        return PageRole.UI, 0.90
     return PageRole.UNKNOWN, 0.75

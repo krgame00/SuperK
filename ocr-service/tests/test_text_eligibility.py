@@ -1,5 +1,6 @@
 from collections.abc import Callable
 
+import cv2
 import numpy as np
 import pytest
 
@@ -13,7 +14,11 @@ from app.schemas import (
     ProtectionReason,
     TextRole,
 )
-from app.text_eligibility import EligibilityFeatures, classify_eligibility
+from app.text_eligibility import (
+    EligibilityFeatures,
+    classify_eligibility,
+    extract_eligibility_features,
+)
 
 
 def _page(role: PageRole = PageRole.COMIC) -> PageContext:
@@ -100,6 +105,38 @@ def test_enclosed_text_is_automatic_dialogue() -> None:
     assert decision.action is AutomaticAction.CLEAN
 
 
+def test_bubble_outline_beyond_stroke_padding_is_detected() -> None:
+    image = np.full((100, 100, 3), 255, np.uint8)
+    cv2.ellipse(image, (50, 40), (32, 20), 0, 0, 360, (0, 0, 0), 2)
+    image[35:45, 40:60] = 0
+
+    decision = classify_eligibility(
+        image,
+        _mask(),
+        _region(),
+        _page(),
+        _protection(),
+    )
+
+    assert decision.features.enclosure_score >= 0.72
+    assert decision.text_role is TextRole.DIALOGUE
+    assert decision.action is AutomaticAction.CLEAN
+
+
+def test_local_artwork_edges_are_not_diluted_by_bubble_search_area() -> None:
+    image = np.full((100, 100, 3), 255, np.uint8)
+    image[26:28, 24:76] = 0
+    image[52:54, 24:76] = 0
+
+    features = extract_eligibility_features(
+        image,
+        _mask(),
+        _region(),
+    )
+
+    assert features.artwork_edge_density >= 0.30
+
+
 def test_rectangular_caption_without_bubble_is_automatic_narration() -> None:
     decision = _classify(
         _features(uniformity=0.90, rectangular=0.90),
@@ -110,9 +147,28 @@ def test_rectangular_caption_without_bubble_is_automatic_narration() -> None:
     assert decision.action is AutomaticAction.CLEAN
 
 
+def test_uniform_caption_can_be_narration_without_visible_border() -> None:
+    decision = _classify(
+        _features(uniformity=0.90, rectangular=0),
+    )
+
+    assert decision.text_role is TextRole.NARRATION
+    assert decision.action is AutomaticAction.CLEAN
+
+
 def test_high_confidence_artwork_text_is_sfx() -> None:
     decision = _classify(
         _features(artwork_edges=0.95, irregularity=0.95),
+    )
+
+    assert decision.text_role is TextRole.SFX
+    assert decision.confidence >= 0.90
+    assert decision.action is AutomaticAction.CLEAN
+
+
+def test_irregular_free_text_can_be_sfx_without_dense_artwork() -> None:
+    decision = _classify(
+        _features(artwork_edges=0.78, irregularity=0.99),
     )
 
     assert decision.text_role is TextRole.SFX

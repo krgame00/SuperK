@@ -82,9 +82,10 @@ def classify_eligibility(
             features=features,
         )
 
-    narration_score = (
+    narration_score = max(
+        features.backing_uniformity,
         0.55 * features.backing_uniformity
-        + 0.45 * features.rectangular_backing
+        + 0.45 * features.rectangular_backing,
     )
     if (
         features.backing_uniformity >= 0.55
@@ -98,8 +99,8 @@ def classify_eligibility(
         )
 
     sfx_score = (
-        0.60 * features.artwork_edge_density
-        + 0.40 * features.stroke_irregularity
+        0.40 * features.artwork_edge_density
+        + 0.60 * features.stroke_irregularity
     )
     if (
         features.artwork_edge_density >= 0.35
@@ -127,11 +128,11 @@ def extract_eligibility_features(
 ) -> EligibilityFeatures:
     height, width = region_mask.shape
     rect = region.rect
-    padding = max(4, region.stroke_radius * 3)
-    x1 = max(0, rect.x - padding)
-    y1 = max(0, rect.y - padding)
-    x2 = min(width, rect.x + rect.width + padding)
-    y2 = min(height, rect.y + rect.height + padding)
+    local_padding = max(4, region.stroke_radius * 3)
+    x1 = max(0, rect.x - local_padding)
+    y1 = max(0, rect.y - local_padding)
+    x2 = min(width, rect.x + rect.width + local_padding)
+    y2 = min(height, rect.y + rect.height + local_padding)
     gray = cv2.cvtColor(image_rgb[y1:y2, x1:x2], cv2.COLOR_RGB2GRAY)
     mask_crop = region_mask[y1:y2, x1:x2] > 0
     backing = gray[~mask_crop]
@@ -146,9 +147,25 @@ def extract_eligibility_features(
         1.0,
         float(np.count_nonzero(edges)) / max(edges.size * 0.20, 1),
     )
+    shape_padding = max(
+        12,
+        region.stroke_radius * 3,
+        round(max(rect.width, rect.height) * 0.35),
+    )
+    shape_x1 = max(0, rect.x - shape_padding)
+    shape_y1 = max(0, rect.y - shape_padding)
+    shape_x2 = min(width, rect.x + rect.width + shape_padding)
+    shape_y2 = min(height, rect.y + rect.height + shape_padding)
+    shape_gray = cv2.cvtColor(
+        image_rgb[shape_y1:shape_y2, shape_x1:shape_x2],
+        cv2.COLOR_RGB2GRAY,
+    )
     enclosure, rectangle = _backing_shape_scores(
-        gray,
-        rect_center=(rect.x + rect.width / 2 - x1, rect.y + rect.height / 2 - y1),
+        shape_gray,
+        rect_center=(
+            rect.x + rect.width / 2 - shape_x1,
+            rect.y + rect.height / 2 - shape_y1,
+        ),
         minimum_area=rect.width * rect.height * 1.10,
     )
     irregularity = _stroke_irregularity(region_mask)
