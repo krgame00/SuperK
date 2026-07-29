@@ -21,7 +21,7 @@ interface MaskEditorProps {
     mask: Blob,
     cleaner: CleanerOverride,
     action: ManualRegionAction,
-  ) => Promise<void>;
+  ) => Promise<unknown>;
 }
 
 const cleaners: { value: CleanerOverride; label: string }[] = [

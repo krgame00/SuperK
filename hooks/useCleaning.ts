@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
 import {
   CleaningClientError,
   createCleaningJob,
@@ -29,17 +28,14 @@ export interface PageCleaningResult extends CleaningResult {
   reviewMaskUrl: string;
   protectedMaskUrl: string;
 }
-
 export interface CleaningHookError {
   message: string;
   recovery: "retry" | "start-local-service" | "reclean";
 }
-
 interface UseCleaningInput {
   pages: string[];
   currentPage: number;
 }
-
 class PollingCancelled extends Error {}
 
 export function useCleaning({ pages, currentPage }: UseCleaningInput) {
@@ -54,8 +50,14 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
   const tokenRef = useRef(0);
   const currentPageUrl = pages[currentPage];
   const pageUrlRef = useRef(currentPageUrl);
+  const pagesRef = useRef(pages);
   const resultsRef = useRef(resultsByPage);
   const restoreStartedRef = useRef(false);
+  const cancelOnPageChangeRef = useRef(false);
+  const activeRequestRef = useRef<
+    { token: number; pageUrl: string } | undefined
+  >(undefined);
+  pagesRef.current = pages;
 
   useEffect(() => {
     resultsRef.current = resultsByPage;
@@ -67,9 +69,20 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
   }, []);
 
   useEffect(() => {
+    const pageChanged = pageUrlRef.current !== currentPageUrl;
     pageUrlRef.current = currentPageUrl;
-    tokenRef.current += 1;
-  }, [currentPageUrl]);
+    const activeRequest = activeRequestRef.current;
+    if (
+      activeRequest &&
+      (!pagesRef.current.includes(activeRequest.pageUrl) ||
+        (cancelOnPageChangeRef.current && pageChanged))
+    ) {
+      tokenRef.current += 1;
+      setProgressState((previous) =>
+        previous?.pageUrl === activeRequest.pageUrl ? undefined : previous,
+      );
+    }
+  }, [currentPageUrl, pages]);
 
   const revokeResult = useCallback((result: PageCleaningResult) => {
     URL.revokeObjectURL(result.cleanUrl);
@@ -80,36 +93,24 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
 
   const replaceResult = useCallback(
     (pageUrl: string, next: PageCleaningResult) => {
-      setResultsByPage((previous) => {
-        const old = previous.get(pageUrl);
-        if (old) revokeResult(old);
-        const updated = new Map(previous);
-        updated.set(pageUrl, next);
-        return updated;
-      });
+      const old = resultsRef.current.get(pageUrl);
+      if (old) revokeResult(old);
+      const updated = new Map(resultsRef.current);
+      updated.set(pageUrl, next);
+      resultsRef.current = updated;
+      setResultsByPage(updated);
     },
     [revokeResult],
   );
 
   const hydrateResult = useCallback(
     async (result: CleaningResult): Promise<PageCleaningResult> => {
-      const [
-        cleanResponse,
-        maskResponse,
-        reviewResponse,
-        protectedResponse,
-      ] = await Promise.all([
+      const responses = await Promise.all([
         fetch(result.cleanAsset, { cache: "no-store" }),
         fetch(result.maskAsset, { cache: "no-store" }),
         fetch(result.reviewMaskAsset, { cache: "no-store" }),
         fetch(result.protectedMaskAsset, { cache: "no-store" }),
       ]);
-      const responses = [
-        cleanResponse,
-        maskResponse,
-        reviewResponse,
-        protectedResponse,
-      ];
       if (responses.some((response) => !response.ok)) {
         throw new CleaningClientError(
           Math.max(...responses.map((response) => response.status)),
@@ -117,17 +118,8 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
           "Clean this page again.",
         );
       }
-      const [
-        cleanBlob,
-        maskBlob,
-        reviewBlob,
-        protectedBlob,
-      ] = await Promise.all([
-        cleanResponse.blob(),
-        maskResponse.blob(),
-        reviewResponse.blob(),
-        protectedResponse.blob(),
-      ]);
+      const [cleanBlob, maskBlob, reviewBlob, protectedBlob] =
+        await Promise.all(responses.map((response) => response.blob()));
       return {
         ...result,
         cleanUrl: URL.createObjectURL(cleanBlob),
@@ -150,14 +142,12 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
         await delay(POLL_INTERVAL_MS);
         if (
           token !== tokenRef.current ||
-          pageUrl !== pageUrlRef.current
+          !pagesRef.current.includes(pageUrl)
         ) {
           throw new PollingCancelled();
         }
         job = await getCleaningJob(job.jobId);
-        if (job.progress) {
-          setProgressState({ pageUrl, value: job.progress });
-        }
+        if (job.progress) setProgressState({ pageUrl, value: job.progress });
       }
       if (job.status === "failed") {
         throw new Error(job.error || "Image cleaning failed.");
@@ -168,10 +158,17 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
   );
 
   const finishJob = useCallback(
-    async (job: CleaningJob, token: number, pageUrl: string) => {
+    async (
+      job: CleaningJob,
+      token: number,
+      pageUrl: string,
+    ): Promise<PageCleaningResult> => {
       const result = await getCleaningResult(job.jobId);
       const hydrated = await hydrateResult(result);
-      if (token !== tokenRef.current || pageUrl !== pageUrlRef.current) {
+      if (
+        token !== tokenRef.current ||
+        !pagesRef.current.includes(pageUrl)
+      ) {
         revokeResult(hydrated);
         throw new PollingCancelled();
       }
@@ -184,6 +181,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
         updatedAt: Date.now(),
       });
       setProgressState(undefined);
+      return hydrated;
     },
     [hydrateResult, replaceResult, revokeResult],
   );
@@ -193,9 +191,9 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
       initial: CleaningJob,
       token: number,
       pageUrl: string,
-    ): Promise<void> => {
+    ): Promise<PageCleaningResult> => {
       const terminal = await waitForJob(initial, token, pageUrl);
-      await finishJob(terminal, token, pageUrl);
+      return finishJob(terminal, token, pageUrl);
     },
     [finishJob, waitForJob],
   );
@@ -203,10 +201,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
   const handleFailure = useCallback((caught: unknown) => {
     if (caught instanceof PollingCancelled) return;
     if (caught instanceof CleaningClientError && caught.status === 503) {
-      setError({
-        message: caught.message,
-        recovery: "start-local-service",
-      });
+      setError({ message: caught.message, recovery: "start-local-service" });
       return;
     }
     setError({
@@ -216,21 +211,46 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
     });
   }, []);
 
+  const cleanPage = useCallback(
+    async (
+      pageUrl: string,
+      source: Blob,
+    ): Promise<PageCleaningResult> => {
+      setError(undefined);
+      const cached = resultsRef.current.get(pageUrl);
+      if (cached) return cached;
+      const token = tokenRef.current + 1;
+      tokenRef.current = token;
+      activeRequestRef.current = { token, pageUrl };
+      try {
+        const job = await createCleaningJob(source);
+        return await runJob(job, token, pageUrl);
+      } catch (caught) {
+        handleFailure(caught);
+        throw caught;
+      } finally {
+        if (activeRequestRef.current?.token === token) {
+          activeRequestRef.current = undefined;
+        }
+      }
+    },
+    [handleFailure, runJob],
+  );
+
   const cleanCurrentPage = useCallback(
     async (source: Blob): Promise<void> => {
       const pageUrl = pageUrlRef.current;
       if (!pageUrl || resultsRef.current.has(pageUrl)) return;
-      const token = tokenRef.current + 1;
-      tokenRef.current = token;
-      setError(undefined);
+      cancelOnPageChangeRef.current = true;
       try {
-        const job = await createCleaningJob(source);
-        await runJob(job, token, pageUrl);
-      } catch (caught) {
-        handleFailure(caught);
+        await cleanPage(pageUrl, source);
+      } catch {
+        // CleaningToolbar renders the structured hook error.
+      } finally {
+        cancelOnPageChangeRef.current = false;
       }
     },
-    [handleFailure, runJob],
+    [cleanPage],
   );
 
   const retryRegion = useCallback(
@@ -239,7 +259,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
       mask: Blob,
       cleaner: CleanerOverride = "auto",
       action: ManualRegionAction = "automatic",
-    ): Promise<void> => {
+    ): Promise<PageCleaningResult | undefined> => {
       const pageUrl = pageUrlRef.current;
       const current = pageUrl
         ? resultsRef.current.get(pageUrl)
@@ -247,6 +267,8 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
       if (!pageUrl || !current) return;
       const token = tokenRef.current + 1;
       tokenRef.current = token;
+      activeRequestRef.current = { token, pageUrl };
+      cancelOnPageChangeRef.current = true;
       setError(undefined);
       try {
         const job = await retryCleaningRegion(
@@ -256,9 +278,14 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
           cleaner,
           action,
         );
-        await runJob(job, token, pageUrl);
+        return await runJob(job, token, pageUrl);
       } catch (caught) {
         handleFailure(caught);
+      } finally {
+        cancelOnPageChangeRef.current = false;
+        if (activeRequestRef.current?.token === token) {
+          activeRequestRef.current = undefined;
+        }
       }
     },
     [handleFailure, runJob],
@@ -268,17 +295,29 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
     if (restoreStartedRef.current || pages.length === 0) return;
     restoreStartedRef.current = true;
     let active = true;
+    let completed = false;
     void (async () => {
       const saved = await loadCleaningResultsMetadata();
       for (const [pageUrl, metadata] of saved) {
-        if (!active || !pages.includes(pageUrl)) continue;
+        if (
+          !active ||
+          !pagesRef.current.includes(pageUrl) ||
+          resultsRef.current.has(pageUrl)
+        ) {
+          continue;
+        }
         try {
           const result = await getCleaningResult(metadata.jobId);
           if (result.sourceHash !== metadata.sourceHash) continue;
           const hydrated = await hydrateResult(result);
-          if (!active) {
+          if (
+            !active ||
+            !pagesRef.current.includes(pageUrl) ||
+            resultsRef.current.has(pageUrl)
+          ) {
             revokeResult(hydrated);
-            return;
+            if (!active) return;
+            continue;
           }
           replaceResult(pageUrl, hydrated);
         } catch {
@@ -290,20 +329,28 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
           }
         }
       }
+      completed = true;
     })();
     return () => {
       active = false;
+      if (!completed) restoreStartedRef.current = false;
     };
-  }, [hydrateResult, pages, replaceResult, revokeResult]);
+  }, [hydrateResult, pages.length, replaceResult, revokeResult]);
 
   useEffect(() => {
-    if (pages.length !== 0) return;
-    for (const result of resultsRef.current.values()) revokeResult(result);
-    queueMicrotask(() => {
-      resultsRef.current = new Map();
-      setResultsByPage(new Map());
-    });
-  }, [pages.length, revokeResult]);
+    const retained = new Map<string, PageCleaningResult>();
+    let removed = false;
+    for (const [pageUrl, result] of resultsRef.current) {
+      if (pagesRef.current.includes(pageUrl)) retained.set(pageUrl, result);
+      else {
+        revokeResult(result);
+        removed = true;
+      }
+    }
+    if (!removed) return;
+    resultsRef.current = retained;
+    setResultsByPage(retained);
+  }, [pages, revokeResult]);
 
   useEffect(
     () => () => {
@@ -314,8 +361,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
   );
 
   const currentResult = useMemo(
-    () =>
-      currentPageUrl ? resultsByPage.get(currentPageUrl) : undefined,
+    () => (currentPageUrl ? resultsByPage.get(currentPageUrl) : undefined),
     [currentPageUrl, resultsByPage],
   );
   const progress =
@@ -324,6 +370,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
       : undefined;
 
   return {
+    cleanPage,
     cleanCurrentPage,
     retryRegion,
     cancelPolling,
