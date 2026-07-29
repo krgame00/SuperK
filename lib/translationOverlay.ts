@@ -1,13 +1,19 @@
 
 import { undoManager } from './undoManager';
 
-export const downloadTranslatedImage = (viewMode: "single" | "scroll" | "offscreen", currentPage: number, defaultFilename = "translated.png", returnDataUrl = false) => {
-  let container;
-  if (viewMode === "offscreen") {
+export const downloadTranslatedImage = (
+  viewMode: "single" | "scroll" | "offscreen",
+  currentPage: number,
+  defaultFilename = "translated.png",
+  returnDataUrl = false,
+  containerOverride?: Element,
+) => {
+  let container: Element | null | undefined = containerOverride;
+  if (!container && viewMode === "offscreen") {
     container = document.getElementById("offscreen-container");
-  } else if (viewMode === "scroll") {
+  } else if (!container && viewMode === "scroll") {
     container = document.querySelector(`#spage-${currentPage}`);
-  } else {
+  } else if (!container) {
     container = document.getElementById("pageContainer");
   }
   if (!container) return null;
@@ -67,14 +73,15 @@ export const applyTranslationOverlay = async (
   currentPage: number,
   setTranslationResult: (msg: string | null) => void,
   onComplete?: (dataUrl: string) => void,
-  textStyleRef?: React.MutableRefObject<any>
+  textStyleRef?: React.MutableRefObject<any>,
+  containerOverride?: Element,
 ) => {
-  let container;
-  if (viewMode === "offscreen") {
+  let container: Element | null | undefined = containerOverride;
+  if (!container && viewMode === "offscreen") {
     container = document.getElementById("offscreen-container");
-  } else if (viewMode === "scroll") {
+  } else if (!container && viewMode === "scroll") {
     container = document.querySelector(`#spage-${currentPage}`);
-  } else {
+  } else if (!container) {
     container = document.getElementById("pageContainer");
   }
   
@@ -590,7 +597,13 @@ export const applyTranslationOverlay = async (
 
     if (onComplete) {
       setTimeout(() => {
-        const url = downloadTranslatedImage(viewMode, currentPage, "", true);
+        const url = downloadTranslatedImage(
+          viewMode,
+          currentPage,
+          "",
+          true,
+          container,
+        );
         if (url) onComplete(url);
       }, 100);
     }

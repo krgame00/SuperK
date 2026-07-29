@@ -17,7 +17,7 @@ const parseLLMJSON = (text: string) => {
        let clean = text.replace(/```json/gi, "").replace(/```/g, "").trim();
        // Fix trailing commas
        clean = clean.replace(/,\s*([\]}])/g, '$1');
-       
+
        if (!clean.endsWith("}")) {
           const lastBrace = clean.lastIndexOf("}");
           if (lastBrace !== -1) {
@@ -32,23 +32,77 @@ const parseLLMJSON = (text: string) => {
   }
 };
 
+export type TranslationWorkflowPhase = "cleaning" | "translating";
+
+export interface BatchPageFailure {
+  pageIndex: number;
+  pageUrl: string;
+  stage: "cleaning" | "translation";
+  message: string;
+}
+
 interface UseTranslationProps {
   currentPage: number;
   pages: string[];
   viewMode: "single" | "scroll";
+  preparePageForTranslation: (
+    pageUrl: string,
+    pageIndex: number,
+  ) => Promise<string>;
 }
 
-export function useTranslation({ currentPage, pages, viewMode }: UseTranslationProps) {
+const waitForImageReady = (src: string): Promise<HTMLImageElement> =>
+  new Promise((resolve, reject) => {
+    const image = new Image();
+    let settled = false;
+    const watchdog = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      image.onload = null;
+      image.onerror = null;
+      reject(new Error("โหลดรูปภาพไม่สำเร็จ"));
+    }, 30_000);
+
+    const cleanup = () => {
+      clearTimeout(watchdog);
+      image.onload = null;
+      image.onerror = null;
+    };
+    image.onload = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(image);
+    };
+    image.onerror = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error("โหลดรูปภาพไม่สำเร็จ"));
+    };
+    image.src = src;
+  });
+
+export function useTranslation({
+  currentPage,
+  pages,
+  viewMode,
+  preparePageForTranslation,
+}: UseTranslationProps) {
   const [isTranslatingAll, setIsTranslatingAll] = useState(false);
   const [translateAllProgress, setTranslateAllProgress] = useState<{
     current: number;
     total: number;
-    status: "translating" | "waiting" | "cooldown";
+    status: "cleaning" | "translating" | "waiting" | "cooldown";
     message: string;
     startTime: number;
   } | null>(null);
   const cancelTranslateAllRef = useRef(false);
-  
+  const translationOperationLockRef = useRef(false);
+  const [batchFailures, setBatchFailures] = useState<BatchPageFailure[]>([]);
+  const [workflowPhase, setWorkflowPhase] =
+    useState<TranslationWorkflowPhase | null>(null);
+
   const [targetLang, setTargetLang] = useState("Thai");
   const [sourceLang, setSourceLang] = useState("auto");
   const [modelPreference, setModelPreference] = useState("auto");
@@ -59,13 +113,14 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
     fontSizeMultiplier: 1.0
   });
   const textStyleRef = useRef(textStyle);
-  
+
   const [nsfwBypassMode, setNsfwBypassMode] = useState(false);
   const [isTranslating, setIsTranslating] = useState(false);
   const [translationResult, setTranslationResult] = useState<string | null>(null);
   const [showTranslate, setShowTranslate] = useState(false);
   const [activeBubbles, setActiveBubbles] = useState<any[]>([]);
-  
+  const [cacheRevision, setCacheRevision] = useState(0);
+
   useEffect(() => {
     textStyleRef.current = textStyle;
     activeBubbles.forEach(b => {
@@ -80,17 +135,28 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
       activePageRef.current = pages[currentPage];
     }
   }, [currentPage, pages]);
-  
+
   // Load API key from local storage on mount
   useEffect(() => {
     const savedKey = localStorage.getItem("gemini_api_key");
     if (savedKey) setUserApiKey(savedKey);
   }, []);
-  
+
   // Per-page bubble cache, keyed by image data URL so it survives reordering
   const bubbleCacheRef = useRef<Map<string, any[]>>(new Map());
   // Per-page final translated image dataUrl cache
   const translatedImageCacheRef = useRef<Map<string, string>>(new Map());
+
+  const getManualBubblesForPage = (pageUrl: string): any[] => {
+    const cachedBubbles = bubbleCacheRef.current.get(pageUrl);
+    if (cachedBubbles) {
+      return cachedBubbles.filter((bubble) => bubble.isManual);
+    }
+    if (activePageRef.current === pageUrl) {
+      return activeBubbles.filter((bubble) => bubble.isManual);
+    }
+    return [];
+  };
 
   // When currentPage changes, restore cached bubbles and re-apply overlay
   useEffect(() => {
@@ -101,9 +167,14 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
       setActiveBubbles(cached);
       // Small delay so the DOM (pageContainer + img) is rendered first
       const timer = setTimeout(() => {
-        applyTranslationOverlay(cached, viewMode, currentPage, setTranslationResult, (dataUrl) => {
-          translatedImageCacheRef.current.set(currentKey, dataUrl);
-        }, textStyleRef);
+        applyTranslationOverlay(
+          cached,
+          viewMode,
+          currentPage,
+          setTranslationResult,
+          undefined,
+          textStyleRef,
+        );
       }, 100);
       return () => clearTimeout(timer);
     } else {
@@ -123,7 +194,7 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
       });
     }, 1000);
     return () => clearTimeout(timer);
-  }, [pages, currentPage, activeBubbles]);
+  }, [pages, currentPage, activeBubbles, cacheRevision]);
 
   // Restore saved session helper
   const restoreSavedSession = async () => {
@@ -155,7 +226,7 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
         setTranslationResult("❌ ไม่พบข้อความในจุดที่เลือก");
         return;
       }
-      
+
       const newBubbles = parsed.bubbles.map((b: any) => {
         if (!b.box || b.box.length !== 4) return b;
         const cropYminPx = (b.box[0] / 1000) * cropBox.h;
@@ -176,7 +247,7 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
 
       const updatedBubbles = [...activeBubbles, ...newBubbles];
       bubbleCacheRef.current.set(pages[currentPage], updatedBubbles);
-      
+
       if (activePageRef.current === pages[currentPage]) {
         setActiveBubbles(updatedBubbles);
         applyTranslationOverlay(updatedBubbles, viewMode, currentPage, setTranslationResult, (dataUrl) => {
@@ -184,7 +255,7 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
         }, textStyleRef);
         setTranslationResult("✅ แปลเฉพาะจุดสำเร็จ!");
       }
-      
+
     } catch (error: any) {
       setTranslationResult("❌ Error: " + error.message);
     } finally {
@@ -193,9 +264,88 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
     }
   };
 
-  const performTranslation = async (pageUrl: string, pageIndex: number, forceNsfwBypass: boolean = false, isAutoRetry: boolean = false): Promise<boolean> => {
+  const renderAndCacheTranslation = useCallback(
+    async (
+      bubbles: any[],
+      preparedUrl: string,
+      pageUrl: string,
+      pageIndex: number,
+    ): Promise<void> => {
+      const offscreenContainer = document.createElement("div");
+      offscreenContainer.dataset.translationOffscreen = pageUrl;
+      offscreenContainer.style.cssText =
+        "position:fixed;left:-100000px;top:0;pointer-events:none;";
+      const image = document.createElement("img");
+      image.src = preparedUrl;
+      offscreenContainer.appendChild(image);
+      document.body.appendChild(offscreenContainer);
+
+      try {
+        await new Promise<void>((resolve, reject) => {
+          let settled = false;
+          const cleanup = () => clearTimeout(watchdog);
+          const rejectOnce = (error: unknown) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(error);
+          };
+          const complete = (dataUrl: string) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            translatedImageCacheRef.current.set(pageUrl, dataUrl);
+            setCacheRevision((revision) => revision + 1);
+            resolve();
+          };
+          const watchdog = setTimeout(
+            () => rejectOnce(new Error("สร้างภาพคำแปลไม่สำเร็จ")),
+            30_000,
+          );
+          void Promise.resolve()
+            .then(() =>
+              applyTranslationOverlay(
+                bubbles,
+                "offscreen",
+                pageIndex,
+                () => {},
+                complete,
+                textStyleRef,
+                offscreenContainer,
+              ),
+            )
+            .catch(rejectOnce);
+        });
+      } finally {
+        image.onload = null;
+        image.onerror = null;
+        offscreenContainer.remove();
+      }
+
+      if (activePageRef.current === pageUrl) {
+        setActiveBubbles(bubbles);
+        void applyTranslationOverlay(
+          bubbles,
+          viewMode,
+          pageIndex,
+          setTranslationResult,
+          undefined,
+          textStyleRef,
+        );
+      }
+    },
+    [viewMode],
+  );
+
+  const performTranslation = async (
+    preparedUrl: string,
+    pageUrl: string,
+    pageIndex: number,
+    forceNsfwBypass: boolean = false,
+    isAutoRetry: boolean = false,
+  ): Promise<boolean> => {
     try {
-      const resImg = await fetch(pageUrl);
+      const resImg = await fetch(preparedUrl);
       if (!resImg.ok) throw new Error(`ไม่สามารถโหลดรูปภาพได้ (HTTP ${resImg.status})`);
       const blob = await resImg.blob();
       const actualMimeType = blob.type && blob.type.startsWith('image/') ? blob.type : "image/jpeg";
@@ -206,9 +356,7 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
       });
 
       if (nsfwBypassMode || forceNsfwBypass) {
-        const imgEl = new Image();
-        imgEl.src = pageUrl;
-        await new Promise(r => { imgEl.onload = r; });
+        const imgEl = await waitForImageReady(preparedUrl);
 
         const slices = [];
         const rows = 3;
@@ -236,7 +384,7 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
             slices.push({ row, col, sx, sy, sWidth, sHeight, base64: sliceBase64 });
           }
         }
-        
+
         let allBubbles: any[] = [];
         let successCount = 0;
 
@@ -250,12 +398,12 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
               body: JSON.stringify({ imageBase64: slice.base64, mimeType: "image/jpeg", targetLang, sourceLang, modelPreference, apiKey: userApiKey })
             });
             const data = await readTranslationResponse<{ text: string }>(res);
-            
+
             const parsed = parseLLMJSON(data.text);
             if (parsed.bubbles) {
               successCount++;
               const { sx, sy, sWidth, sHeight } = slice;
-              
+
               for (const b of parsed.bubbles) {
                 if (!b.box || b.box.length !== 4) {
                   b.box = [0, 0, 1000, 1000];
@@ -278,7 +426,7 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
                 b.box[1] = Math.round((global_xmin_px / imgEl.naturalWidth) * 1000);
                 b.box[2] = Math.round((global_ymax_px / imgEl.naturalHeight) * 1000);
                 b.box[3] = Math.round((global_xmax_px / imgEl.naturalWidth) * 1000);
-                
+
                 let isDuplicate = false;
                 if (!b.isInvalidBox) {
                   for (const existing of allBubbles) {
@@ -293,14 +441,14 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
                     const boxAArea = (b.box[3] - b.box[1]) * (b.box[2] - b.box[0]);
                     const boxBArea = (existing.box[3] - existing.box[1]) * (existing.box[2] - existing.box[0]);
                     const iou = interArea / (boxAArea + boxBArea - interArea);
-                    
+
                     if (iou > 0.4) {
                       isDuplicate = true;
                       break;
                     }
                   }
                 }
-                
+
                 if (!isDuplicate) {
                   allBubbles.push(b);
                 }
@@ -312,7 +460,7 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
               throw err;
             }
           }
-          
+
           if (i < slices.length - 1) {
             await new Promise(r => setTimeout(r, 1000));
           }
@@ -335,16 +483,18 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
         }
         allBubbles = filteredBubbles;
 
-        const manualBubbles = activeBubbles.filter(b => b.isManual);
+        const manualBubbles = getManualBubblesForPage(pageUrl);
         const finalBubbles = [...allBubbles, ...manualBubbles];
 
-        bubbleCacheRef.current.set(pageUrl, allBubbles);
-        
+        await renderAndCacheTranslation(
+          finalBubbles,
+          preparedUrl,
+          pageUrl,
+          pageIndex,
+        );
+        bubbleCacheRef.current.set(pageUrl, finalBubbles);
+
         if (activePageRef.current === pageUrl) {
-          setActiveBubbles(allBubbles);
-          applyTranslationOverlay(allBubbles, viewMode, pageIndex, setTranslationResult, (dataUrl) => {
-            translatedImageCacheRef.current.set(pageUrl, dataUrl);
-          }, textStyleRef);
           setTranslationResult(`✅ แปล 18+ สำเร็จ! (ได้ ${successCount}/6 ส่วน)`);
           setShowTranslate(false);
         }
@@ -358,20 +508,18 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
       });
 
       const data = await readTranslationResponse<{ text: string }>(res);
-      
+
       let parsed = data.text ? parseLLMJSON(data.text) : data;
-      
-      if (!parsed || !Array.isArray(parsed.bubbles) || parsed.bubbles.length === 0) { 
+
+      if (!parsed || !Array.isArray(parsed.bubbles) || parsed.bubbles.length === 0) {
         if (!isAutoRetry && !nsfwBypassMode && !forceNsfwBypass) {
           console.log(`[Auto-Retry] 0 bubbles found for page ${pageIndex + 1}. Retrying with enhanced single image...`);
           if (activePageRef.current === pageUrl) {
             setTranslationResult("⏳ ไม่พบข้อความ! กำลังปรับความคมชัดภาพและ Auto-Retry...");
           }
-          
+
           try {
-            const imgEl = new Image();
-            imgEl.src = pageUrl;
-            await new Promise(r => { imgEl.onload = r; });
+            const imgEl = await waitForImageReady(preparedUrl);
 
             const canvas = document.createElement("canvas");
             canvas.width = imgEl.naturalWidth;
@@ -429,20 +577,22 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
         }
       }
 
-      const manualBubbles = activeBubbles.filter(b => b.isManual);
+      const manualBubbles = getManualBubblesForPage(pageUrl);
       const finalBubbles = [...filteredParsed, ...manualBubbles];
 
+      await renderAndCacheTranslation(
+        finalBubbles,
+        preparedUrl,
+        pageUrl,
+        pageIndex,
+      );
       bubbleCacheRef.current.set(pageUrl, finalBubbles);
-      
+
       if (activePageRef.current === pageUrl) {
-        setActiveBubbles(finalBubbles);
-        applyTranslationOverlay(finalBubbles, viewMode, pageIndex, setTranslationResult, (dataUrl) => {
-          translatedImageCacheRef.current.set(pageUrl, dataUrl);
-        }, textStyleRef);
         setTranslationResult("✅ แปลสำเร็จ! ข้อความถูกวาดทับลงบนภาพแล้ว");
         setShowTranslate(false);
       }
-      
+
       return true;
     } catch (error: any) {
       if (activePageRef.current === pageUrl) {
@@ -452,122 +602,225 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
     }
   };
 
-  const handleTranslate = async (forceBypassCache: boolean = false) => {
-    if (pages.length === 0) return;
-    const requestedPageUrl = pages[currentPage];
-    
-    setIsTranslating(true);
-    if (nsfwBypassMode) {
-      setTranslationResult("กำลังหั่นภาพเป็น 6 ส่วน เพื่อส่งให้ AI แปลพร้อมกัน...");
-    } else {
-      setTranslationResult("กำลังประมวลผลด้วย AI (อาจใช้เวลา 15-40 วินาที)...");
-    }
+  const handleTranslate = async (
+    _forceBypassCache: boolean = false,
+  ): Promise<boolean> => {
+    if (
+      translationOperationLockRef.current ||
+      isTranslating ||
+      isTranslatingAll ||
+      pages.length === 0
+    ) return false;
+    translationOperationLockRef.current = true;
+    const pageUrl = pages[currentPage];
 
+    setIsTranslating(true);
     try {
-      await performTranslation(requestedPageUrl, currentPage);
-    } catch (error: any) {
-      // Error is already logged in performTranslation if active
+      setWorkflowPhase("cleaning");
+      setTranslationResult(
+        `กำลังคลีนหน้า ${currentPage + 1}/${pages.length}`,
+      );
+      const preparedUrl = await preparePageForTranslation(pageUrl, currentPage);
+      setWorkflowPhase("translating");
+      setTranslationResult(
+        `กำลังแปลหน้า ${currentPage + 1}/${pages.length}`,
+      );
+      return await performTranslation(
+        preparedUrl,
+        pageUrl,
+        currentPage,
+        nsfwBypassMode,
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "ดำเนินการไม่สำเร็จ";
+      setTranslationResult(`❌ Error: ${message}`);
+      return false;
     } finally {
+      translationOperationLockRef.current = false;
+      setWorkflowPhase(null);
       setIsTranslating(false);
       setTimeout(() => setTranslationResult(null), 4000);
     }
   };
 
   const handleTranslateAll = async () => {
-    setIsTranslatingAll(true);
-    cancelTranslateAllRef.current = false;
-    const batchStartTime = Date.now();
-    
-    const interruptibleDelay = async (ms: number) => {
-      const endTime = Date.now() + ms;
-      while (Date.now() < endTime) {
-        if (cancelTranslateAllRef.current) return;
-        await new Promise(r => setTimeout(r, 1000));
-      }
-    };
-    
-    for (let i = 0; i < pages.length; i++) {
-      if (cancelTranslateAllRef.current) break;
-      
-      // Skip if already translated (check cache)
-      if (translatedImageCacheRef.current.has(pages[i])) continue;
-      
-      setTranslateAllProgress({ current: i + 1, total: pages.length, status: "translating", message: `กำลังแปลหน้า ${i + 1}/${pages.length}`, startTime: batchStartTime });
-      
-      let success = false;
-      let retries = 0;
-      let forceNsfw = false;
-      
-      while (!success && retries < 3 && !cancelTranslateAllRef.current) {
+    if (
+      translationOperationLockRef.current ||
+      isTranslating ||
+      isTranslatingAll
+    ) return;
+    translationOperationLockRef.current = true;
+    try {
+      setIsTranslatingAll(true);
+      cancelTranslateAllRef.current = false;
+      const batchStartTime = Date.now();
+      const failures: BatchPageFailure[] = [];
+      let quotaFailureMessage: string | null = null;
+      setBatchFailures([]);
+
+      const interruptibleDelay = async (ms: number) => {
+        const endTime = Date.now() + ms;
+        while (Date.now() < endTime) {
+          if (cancelTranslateAllRef.current) return;
+          await new Promise(r => setTimeout(r, 1000));
+        }
+      };
+
+      for (let i = 0; i < pages.length; i++) {
+        if (cancelTranslateAllRef.current) break;
+        const pageUrl = pages[i];
+
+        // Skip if already translated (check cache)
+        if (translatedImageCacheRef.current.has(pages[i])) continue;
+
+        setTranslateAllProgress({
+          current: i + 1,
+          total: pages.length,
+          status: "cleaning",
+          message: `กำลังคลีนหน้า ${i + 1}/${pages.length}`,
+          startTime: batchStartTime,
+        });
+
+        let preparedUrl: string;
         try {
-          // Temporarily set translationResult so user sees progress
-          if (nsfwBypassMode || forceNsfw) setTranslationResult(`กำลังหั่นภาพเป็น 6 ส่วน (หน้า ${i + 1}) - รอบ ${retries + 1}/3`);
-          else setTranslationResult(`กำลังประมวลผลด้วย AI (หน้า ${i + 1}) - รอบ ${retries + 1}/3`);
-          
-          success = await performTranslation(pages[i], i, forceNsfw);
-          
-          if (!success) throw new Error("Translation failed");
-        } catch (err: any) {
-          const errMsg = err.message || "";
-          const retryDelay = getTranslationRetryDelay(err);
-          console.warn(`Error on page ${i + 1}, retry ${retries + 1}/3:`, errMsg);
+          preparedUrl = await preparePageForTranslation(pageUrl, i);
+        } catch (error) {
+          failures.push({
+            pageIndex: i,
+            pageUrl,
+            stage: "cleaning",
+            message: error instanceof Error ? error.message : "คลีนไม่สำเร็จ",
+          });
+          setBatchFailures([...failures]);
+          continue;
+        }
+        if (cancelTranslateAllRef.current) break;
 
-          if (retryDelay === null) {
-            setTranslationResult(`แปลไม่สำเร็จ: ${errMsg}`);
-            break;
+        setTranslateAllProgress({
+          current: i + 1,
+          total: pages.length,
+          status: "translating",
+          message: `กำลังแปลหน้า ${i + 1}/${pages.length}`,
+          startTime: batchStartTime,
+        });
+
+        let success = false;
+        let retries = 0;
+        let forceNsfw = false;
+        let lastTranslationError: unknown;
+
+        while (!success && retries < 3 && !cancelTranslateAllRef.current) {
+          try {
+            // Temporarily set translationResult so user sees progress
+            if (nsfwBypassMode || forceNsfw) setTranslationResult(`กำลังหั่นภาพเป็น 6 ส่วน (หน้า ${i + 1}) - รอบ ${retries + 1}/3`);
+            else setTranslationResult(`กำลังประมวลผลด้วย AI (หน้า ${i + 1}) - รอบ ${retries + 1}/3`);
+
+            success = await performTranslation(
+              preparedUrl,
+              pageUrl,
+              i,
+              forceNsfw,
+            );
+
+            if (!success) throw new Error("Translation failed");
+          } catch (err: any) {
+            lastTranslationError = err;
+            const errMsg = err.message || "";
+            const retryDelay = getTranslationRetryDelay(err);
+            console.warn(`Error on page ${i + 1}, retry ${retries + 1}/3:`, errMsg);
+
+            if (retryDelay === null) {
+              setTranslationResult(`แปลไม่สำเร็จ: ${errMsg}`);
+              break;
+            }
+            if (
+              err instanceof TranslationRequestError
+              && err.code === "GEMINI_QUOTA"
+            ) {
+              setTranslateAllProgress({ current: i + 1, total: pages.length, status: "waiting", message: `รอโควต้า API (60 วิ)... หน้า ${i + 1}/${pages.length}`, startTime: batchStartTime });
+              setTranslationResult(`API Limit Reached! รอ 60 วิ... (รอบ ${retries + 1}/3)`);
+            } else {
+              setTranslationResult(`แปลไม่ผ่าน รอ 5 วิเพื่อลองใหม่... (รอบ ${retries + 1}/3)`);
+            }
+            await interruptibleDelay(retryDelay);
+            retries++;
           }
-          if (
-            err instanceof TranslationRequestError
-            && err.code === "GEMINI_QUOTA"
-          ) {
-            setTranslateAllProgress({ current: i + 1, total: pages.length, status: "waiting", message: `รอโควต้า API (60 วิ)... หน้า ${i + 1}/${pages.length}`, startTime: batchStartTime });
-            setTranslationResult(`API Limit Reached! รอ 60 วิ... (รอบ ${retries + 1}/3)`);
-          } else {
-            setTranslationResult(`แปลไม่ผ่าน รอ 5 วิเพื่อลองใหม่... (รอบ ${retries + 1}/3)`);
+        }
+
+        if (!success && !cancelTranslateAllRef.current) {
+          failures.push({
+            pageIndex: i,
+            pageUrl,
+            stage: "translation",
+            message:
+              lastTranslationError instanceof Error
+                ? lastTranslationError.message
+                : "แปลไม่สำเร็จ",
+          });
+          setBatchFailures([...failures]);
+        }
+
+        if (
+          lastTranslationError instanceof TranslationRequestError
+          && lastTranslationError.code === "GEMINI_QUOTA"
+        ) {
+          quotaFailureMessage =
+            "❌ โควต้า API เต็ม กรุณารอให้โควต้ารีเซ็ตแล้วลองใหม่";
+          break;
+        }
+
+        if (!success) {
+          console.warn(`Skipping page ${i + 1} after 3 failed attempts.`);
+          if (retries >= 3 && translatedImageCacheRef.current.size === 0 && i > 0) {
+             // We could check if it's a persistent quota error, but if a page fails 3 times,
+             // maybe we shouldn't abort entirely unless we track the error.
           }
-          await interruptibleDelay(retryDelay);
-          retries++;
         }
-      }
-      
-      if (!success) {
-        console.warn(`Skipping page ${i + 1} after 3 failed attempts.`);
-        if (retries >= 3 && translatedImageCacheRef.current.size === 0 && i > 0) {
-           // We could check if it's a persistent quota error, but if a page fails 3 times,
-           // maybe we shouldn't abort entirely unless we track the error.
+
+        if (!success) {
+          console.warn(`Translation failed for page ${i + 1} after 3 attempts.`);
+          const lastMsg = translationResult || "";
+          if (lastMsg.includes("API Limit Reached") || lastMsg.includes("โควต้า")) {
+             setTranslationResult(`❌ โควต้า API เต็ม! กรุณารอรีเซ็ต (หากเป็นโควต้ารายวันจะรีเซ็ตตอน 14:00 น.)`);
+             break; // Abort Translate All
+          }
         }
-      }
-      
-      if (!success) {
-        console.warn(`Translation failed for page ${i + 1} after 3 attempts.`);
-        const lastMsg = translationResult || "";
-        if (lastMsg.includes("API Limit Reached") || lastMsg.includes("โควต้า")) {
-           setTranslationResult(`❌ โควต้า API เต็ม! กรุณารอรีเซ็ต (หากเป็นโควต้ารายวันจะรีเซ็ตตอน 14:00 น.)`);
-           break; // Abort Translate All
+
+        if (success && i < pages.length - 1 && !cancelTranslateAllRef.current) {
+          setTranslateAllProgress({ current: i + 1, total: pages.length, status: "cooldown", message: `พักโหลด 3 วิ... หน้า ${i + 1}/${pages.length}`, startTime: batchStartTime });
+          await interruptibleDelay(3000);
         }
       }
 
-      if (success && i < pages.length - 1 && !cancelTranslateAllRef.current) {
-        setTranslateAllProgress({ current: i + 1, total: pages.length, status: "cooldown", message: `พักโหลด 3 วิ... หน้า ${i + 1}/${pages.length}`, startTime: batchStartTime });
-        await interruptibleDelay(3000);
-      }
+      if (cancelTranslateAllRef.current) return;
+
+      const failedPages = failures.map(({ pageIndex }) => pageIndex + 1);
+      setTranslationResult(
+        quotaFailureMessage
+          ?? (failedPages.length === 0
+            ? "✅ แปลทั้งเล่มเสร็จแล้ว"
+            : `⚠️ แปลเสร็จ แต่หน้า ${failedPages.join(", ")} ต้องลองใหม่`),
+      );
+      setTimeout(() => setTranslationResult(null), 4000);
+    } finally {
+      translationOperationLockRef.current = false;
+      setIsTranslatingAll(false);
+      setTranslateAllProgress(null);
     }
-    
-    if (cancelTranslateAllRef.current) return;
-    
-    setIsTranslatingAll(false);
-    setTranslateAllProgress(null);
-    setTranslationResult("✅ แปลทั้งหมดเสร็จสิ้น!");
-    setTimeout(() => setTranslationResult(null), 4000);
   };
 
   const cancelTranslateAll = () => {
     cancelTranslateAllRef.current = true;
-    setIsTranslatingAll(false);
-    setTranslateAllProgress(null);
-    setTranslationResult("⏹ ยกเลิกการแปลทั้งหมด");
-    setTimeout(() => setTranslationResult(null), 4000);
+    setTranslationResult("⏹ กำลังยกเลิก...");
   };
+
+  const invalidatePageTranslation = useCallback((pageUrl: string) => {
+    bubbleCacheRef.current.delete(pageUrl);
+    translatedImageCacheRef.current.delete(pageUrl);
+    setCacheRevision((revision) => revision + 1);
+    if (activePageRef.current === pageUrl) setActiveBubbles([]);
+  }, []);
 
   return {
     targetLang, setTargetLang,
@@ -588,13 +841,16 @@ export function useTranslation({ currentPage, pages, viewMode }: UseTranslationP
     translatedImageCacheRef,
     bubbleCacheRef,
     textStyleRef,
-    userApiKey, 
+    userApiKey,
     setUserApiKey: (key: string) => {
       setUserApiKey(key);
       if (key) localStorage.setItem("gemini_api_key", key);
       else localStorage.removeItem("gemini_api_key");
     },
     restoreSavedSession,
-    clearSavedSession
+    clearSavedSession,
+    workflowPhase,
+    batchFailures,
+    invalidatePageTranslation,
   };
 }

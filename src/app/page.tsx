@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useTranslation } from "@/hooks/useTranslation";
 import { jsPDF } from "jspdf";
 import { Toaster } from "react-hot-toast";
@@ -27,6 +27,8 @@ export default function WorkspacePage() {
   const [cleaningLayer, setCleaningLayer] =
     useState<CleaningLayer>("original");
   const [isMaskEditorOpen, setIsMaskEditorOpen] = useState(false);
+  const uiOperationLockRef = useRef(false);
+  const [isUiOperationBusy, setIsUiOperationBusy] = useState(false);
 
   // Touch Swipe Gesture State for Mobile Reader
   const touchStartXRef = useRef<number | null>(null);
@@ -82,6 +84,7 @@ export default function WorkspacePage() {
 
   const pageUrls = useMemo(() => pages.map(p => p.url), [pages]);
   const {
+    cleanPage,
     cleanCurrentPage,
     retryRegion,
     currentResult: currentCleaningResult,
@@ -91,12 +94,46 @@ export default function WorkspacePage() {
   } = useCleaning({ pages: pageUrls, currentPage });
 
   const handleCleanCurrentPage = async () => {
+    if (
+      uiOperationLockRef.current ||
+      isTranslating ||
+      isTranslatingAll ||
+      cleaningProgress
+    ) return;
     const page = pages[currentPage];
     if (!page) return;
-    const response = await fetch(page.url);
-    await cleanCurrentPage(await response.blob());
-    setCleaningLayer("clean");
+
+    uiOperationLockRef.current = true;
+    setIsUiOperationBusy(true);
+    try {
+      const response = await fetch(page.url);
+      await cleanCurrentPage(await response.blob());
+      setCleaningLayer("clean");
+    } finally {
+      uiOperationLockRef.current = false;
+      setIsUiOperationBusy(false);
+    }
   };
+
+  const preparePageForTranslation = useCallback(
+    async (pageUrl: string, pageIndex: number) => {
+      const cachedResult = cleaningResultsByPage.get(pageUrl);
+      if (cachedResult) return cachedResult.cleanUrl;
+
+      const page = pages[pageIndex];
+      if (!page || page.url !== pageUrl) {
+        throw new Error("Page is no longer available for cleaning.");
+      }
+
+      const response = await fetch(pageUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to load page for cleaning (${response.status}).`);
+      }
+      const result = await cleanPage(pageUrl, await response.blob());
+      return result.cleanUrl;
+    },
+    [cleanPage, cleaningResultsByPage, pages],
+  );
 
   const {
     targetLang,
@@ -130,8 +167,47 @@ export default function WorkspacePage() {
   } = useTranslation({
     currentPage,
     pages: pageUrls,
-    viewMode: "single"
+    viewMode: "single",
+    preparePageForTranslation,
   });
+
+  const translationBusy = isTranslating || isTranslatingAll;
+  const operationBusy =
+    isUiOperationBusy || translationBusy || Boolean(cleaningProgress);
+
+  const handleTranslateCurrent = useCallback(async (): Promise<boolean> => {
+    if (
+      uiOperationLockRef.current ||
+      operationBusy ||
+      pages.length === 0
+    ) return false;
+
+    uiOperationLockRef.current = true;
+    setIsUiOperationBusy(true);
+    try {
+      return await handleTranslate();
+    } finally {
+      uiOperationLockRef.current = false;
+      setIsUiOperationBusy(false);
+    }
+  }, [handleTranslate, operationBusy, pages.length]);
+
+  const handleTranslateBook = useCallback(async (): Promise<void> => {
+    if (
+      uiOperationLockRef.current ||
+      operationBusy ||
+      pages.length === 0
+    ) return;
+
+    uiOperationLockRef.current = true;
+    setIsUiOperationBusy(true);
+    try {
+      await handleTranslateAll();
+    } finally {
+      uiOperationLockRef.current = false;
+      setIsUiOperationBusy(false);
+    }
+  }, [handleTranslateAll, operationBusy, pages.length]);
 
   const [savedSessionData, setSavedSessionData] = useState<{ pages: { url: string, name: string }[], currentPage: number } | null>(null);
 
@@ -148,11 +224,11 @@ export default function WorkspacePage() {
   const currentPageRef = useRef(currentPage);
   const pagesRef = useRef(pages);
   const showOriginalRef = useRef(showOriginal);
-  const isTranslatingRef = useRef(isTranslating);
+  const operationBusyRef = useRef(operationBusy);
   useEffect(() => { currentPageRef.current = currentPage; }, [currentPage]);
   useEffect(() => { pagesRef.current = pages; }, [pages]);
   useEffect(() => { showOriginalRef.current = showOriginal; }, [showOriginal]);
-  useEffect(() => { isTranslatingRef.current = isTranslating; }, [isTranslating]);
+  useEffect(() => { operationBusyRef.current = operationBusy; }, [operationBusy]);
 
   // Keyboard shortcuts + Undo/Redo state sync
   useEffect(() => {
@@ -197,8 +273,12 @@ export default function WorkspacePage() {
       }
       // T = Translate current page
       if (e.key === 't' || e.key === 'T') {
-        if (!isTranslatingRef.current && pagesRef.current.length > 0) {
-          handleTranslate();
+        if (
+          !uiOperationLockRef.current &&
+          !operationBusyRef.current &&
+          pagesRef.current.length > 0
+        ) {
+          void handleTranslateCurrent();
         }
       }
       // Space = Toggle Original/Translated
@@ -210,7 +290,7 @@ export default function WorkspacePage() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => { window.removeEventListener('keydown', handleKeyDown); unsub(); };
-  }, [handleTranslate]);
+  }, [handleTranslateCurrent]);
 
   // Clear undo stack when changing pages
   useEffect(() => { undoManager.clear(); }, [currentPage]);
@@ -702,8 +782,8 @@ export default function WorkspacePage() {
           {/* ── Group 3: Translate Actions ── */}
           <div className="flex items-center gap-1.5">
             <button 
-              onClick={() => handleTranslate()}
-              disabled={isTranslating || pages.length === 0}
+              onClick={() => void handleTranslateCurrent()}
+              disabled={operationBusy || pages.length === 0}
               className="flex-shrink-0 bg-primary text-primary-content hover:bg-primary-hover disabled:opacity-50 px-4 py-1.5 rounded-md text-sm font-semibold flex items-center gap-2 transition-all duration-150 shadow-sm hover:shadow-md"
             >
               {isTranslating ? (
@@ -756,8 +836,8 @@ export default function WorkspacePage() {
               </div>
             ) : (
               <button 
-                onClick={() => handleTranslateAll()}
-                disabled={isTranslating || pages.length === 0}
+                onClick={() => void handleTranslateBook()}
+                disabled={operationBusy || pages.length === 0}
                 className="flex-shrink-0 bg-gradient-to-r from-primary/20 to-primary/10 text-primary hover:from-primary/30 hover:to-primary/20 disabled:opacity-50 px-4 py-1.5 rounded-md text-sm font-semibold flex items-center gap-2 transition-all duration-150 border border-primary/20"
               >
                 <Sparkles className="w-4 h-4" />
@@ -812,8 +892,8 @@ export default function WorkspacePage() {
         {/* Mobile Header Controls */}
         <div className="flex xl:hidden items-center gap-2">
           <button 
-            onClick={() => handleTranslate()}
-            disabled={isTranslating || pages.length === 0}
+            onClick={() => void handleTranslateCurrent()}
+            disabled={operationBusy || pages.length === 0}
             className="bg-primary text-primary-content hover:bg-primary-hover disabled:opacity-50 disabled:hover:bg-primary px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150"
           >
             {isTranslating ? (
@@ -883,8 +963,8 @@ export default function WorkspacePage() {
                 </div>
               ) : (
                 <button 
-                  onClick={() => { handleTranslateAll(); setIsMobileMenuOpen(false); }}
-                  disabled={isTranslating || pages.length === 0}
+                  onClick={() => { void handleTranslateBook(); setIsMobileMenuOpen(false); }}
+                  disabled={operationBusy || pages.length === 0}
                   className="w-full bg-gradient-to-r from-primary/20 to-primary/10 text-primary hover:from-primary/30 hover:to-primary/20 disabled:opacity-50 px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-all duration-150 border border-primary/20"
                 >
                   <Sparkles className="w-4 h-4" />
@@ -1021,7 +1101,7 @@ export default function WorkspacePage() {
         {pages.length > 0 ? (
           <div className="w-full flex flex-col items-center flex-1 px-2 sm:px-4 py-4 sm:py-6">
             <CleaningToolbar
-              hasPage={pages.length > 0}
+              hasPage={pages.length > 0 && !operationBusy}
               hasResult={Boolean(currentCleaningResult)}
               layer={cleaningLayer}
               onClean={() => void handleCleanCurrentPage()}
