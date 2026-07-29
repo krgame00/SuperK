@@ -10,6 +10,7 @@ test("offers clean and layer controls without hiding the page workflow", () => {
     <CleaningToolbar
       hasPage
       hasResult
+      hasTranslated
       layer="clean"
       onClean={onClean}
       onEditMask={vi.fn()}
@@ -27,6 +28,7 @@ test("explains how to recover when the local cleaner is offline", () => {
     <CleaningToolbar
       hasPage
       hasResult={false}
+      hasTranslated={false}
       layer="original"
       onClean={vi.fn()}
       onEditMask={vi.fn()}

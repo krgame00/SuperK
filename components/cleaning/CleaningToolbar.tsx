@@ -3,28 +3,36 @@ import { Brush, Eraser } from "lucide-react";
 import type { CleaningHookError } from "@/hooks/useCleaning";
 import type { CleaningProgress } from "@/lib/cleaning/types";
 
-export type CleaningLayer = "original" | "clean" | "mask";
+export type WorkspaceLayer = "original" | "clean" | "translated" | "mask";
 
 interface CleaningToolbarProps {
   hasPage: boolean;
   hasResult: boolean;
-  layer: CleaningLayer;
+  hasTranslated: boolean;
+  layer: WorkspaceLayer;
   onClean: () => void;
   onEditMask: () => void;
-  onLayerChange: (layer: CleaningLayer) => void;
+  onLayerChange: (layer: WorkspaceLayer) => void;
   progress?: CleaningProgress;
   error?: CleaningHookError;
 }
 
-const layers: { value: CleaningLayer; label: string }[] = [
+const primaryLayers: Array<{
+  value: Exclude<WorkspaceLayer, "mask">;
+  label: string;
+}> = [
   { value: "original", label: "Original" },
   { value: "clean", label: "Clean" },
-  { value: "mask", label: "Mask" },
+  { value: "translated", label: "Translated" },
 ];
+
+const layerButtonClass =
+  "h-7 rounded px-2.5 text-xs font-medium text-muted transition-colors duration-150 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary aria-pressed:bg-surface-hover aria-pressed:text-foreground disabled:cursor-not-allowed disabled:opacity-30";
 
 export function CleaningToolbar({
   hasPage,
   hasResult,
+  hasTranslated,
   layer,
   onClean,
   onEditMask,
@@ -68,16 +76,20 @@ export function CleaningToolbar({
       <div className="flex items-center gap-2">
         <div
           className="inline-flex rounded-md bg-surface p-1"
-          aria-label="เลือกเลเยอร์ภาพ"
+          role="group"
+          aria-label="เลือกเลเยอร์ภาพหลัก"
         >
-          {layers.map((item) => (
+          {primaryLayers.map((item) => (
             <button
               key={item.value}
               type="button"
               onClick={() => onLayerChange(item.value)}
-              disabled={item.value !== "original" && !hasResult}
+              disabled={
+                (item.value === "clean" && !hasResult) ||
+                (item.value === "translated" && !hasTranslated)
+              }
               aria-pressed={layer === item.value}
-              className="h-7 rounded px-2.5 text-xs font-medium text-muted transition-colors duration-150 hover:text-foreground aria-pressed:bg-surface-hover aria-pressed:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
+              className={layerButtonClass}
             >
               {item.label}
             </button>
@@ -85,9 +97,18 @@ export function CleaningToolbar({
         </div>
         <button
           type="button"
+          onClick={() => onLayerChange("mask")}
+          disabled={!hasResult}
+          aria-pressed={layer === "mask"}
+          className={layerButtonClass}
+        >
+          Mask
+        </button>
+        <button
+          type="button"
           onClick={onEditMask}
           disabled={!hasResult}
-          className="inline-flex h-9 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-muted transition-colors hover:bg-surface hover:text-foreground disabled:opacity-30"
+          className="inline-flex h-9 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-muted transition-colors duration-150 hover:bg-surface hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-30"
         >
           <Brush className="h-4 w-4" aria-hidden="true" />
           แก้ Mask
