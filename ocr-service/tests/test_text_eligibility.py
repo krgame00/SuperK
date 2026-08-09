@@ -208,20 +208,50 @@ def test_qr_intersection_remains_preserved_on_comic_page() -> None:
 
 
 @pytest.mark.parametrize(
-    "role",
-    [PageRole.UI, PageRole.CREDITS, PageRole.UNKNOWN],
+    ("role", "reason"),
+    [
+        (PageRole.UI, ProtectionReason.UI_PAGE),
+        (PageRole.CREDITS, ProtectionReason.CREDIT_PAGE),
+        (PageRole.UNKNOWN, ProtectionReason.LOW_CONFIDENCE),
+    ],
 )
-def test_unprotected_text_is_attempted_on_every_page_role(
+def test_noncomic_page_roles_preserve_detected_text(
     role: PageRole,
+    reason: ProtectionReason,
 ) -> None:
     decision = _classify(
         _features(enclosure=1),
         page=_page(role),
     )
 
-    assert decision.text_role is TextRole.DIALOGUE
-    assert decision.action is AutomaticAction.CLEAN
-    assert decision.protection_reasons == []
+    assert decision.text_role is TextRole.PROTECTED
+    assert decision.action is AutomaticAction.PRESERVE
+    assert decision.protection_reasons == [reason]
+
+
+def test_small_unenclosed_comic_label_is_preserved() -> None:
+    image = np.full((100, 100, 3), 255, np.uint8)
+    mask = np.zeros((100, 100), np.uint8)
+    mask[30:34, 30:40] = 255
+    region = MaskRegion(
+        id="ui-label",
+        rect=PixelRect(x=30, y=30, width=10, height=4),
+        component_ids=(1,),
+        stroke_radius=1,
+    )
+
+    decision = classify_eligibility(
+        image,
+        mask,
+        region,
+        _page(PageRole.COMIC),
+        _protection(),
+        feature_extractor=_extractor(_features()),
+    )
+
+    assert decision.text_role is TextRole.PROTECTED
+    assert decision.action is AutomaticAction.PRESERVE
+    assert decision.protection_reasons == [ProtectionReason.LOW_CONFIDENCE]
 
 
 @pytest.mark.parametrize(

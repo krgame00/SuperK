@@ -12,12 +12,15 @@ from app.page_context import PageContext
 from app.protection import ProtectionResult
 from app.schemas import (
     AutomaticAction,
+    PageRole,
     ProtectionReason,
     TextRole,
 )
 
 NARRATION_THRESHOLD = 0.82
 SFX_THRESHOLD = 0.90
+UI_LABEL_MAX_AREA_FRACTION = 0.012
+UI_LABEL_MAX_HEIGHT_FRACTION = 0.08
 
 
 class EligibilityFeatures(BaseModel):
@@ -58,11 +61,32 @@ def classify_eligibility(
     if _intersects(region_mask, protection.protected_mask):
         reasons = _protection_reasons(protection)
         return _preserve(TextRole.PROTECTED, 1.0, reasons, features)
+
+    page_reason = {
+        PageRole.UI: ProtectionReason.UI_PAGE,
+        PageRole.CREDITS: ProtectionReason.CREDIT_PAGE,
+        PageRole.UNKNOWN: ProtectionReason.LOW_CONFIDENCE,
+    }.get(page.role)
+    if page_reason is not None:
+        return _preserve(
+            TextRole.PROTECTED,
+            page.confidence,
+            [page_reason],
+            features,
+        )
+
     if _intersects(region_mask, protection.review_mask):
         reasons = _protection_reasons(
             protection,
             fallback=ProtectionReason.MARGIN_MARK,
         )
+        if _looks_like_ui_label(region, image_rgb.shape, features):
+            return _preserve(
+                TextRole.PROTECTED,
+                1.0,
+                reasons,
+                features,
+            )
         return EligibilityDecision(
             text_role=TextRole.REVIEW,
             confidence=1.0,
@@ -105,6 +129,14 @@ def classify_eligibility(
         or features.stroke_irregularity >= 0.35
     ):
         return _sfx_decision(sfx_score, features)
+
+    if _looks_like_ui_label(region, image_rgb.shape, features):
+        return _preserve(
+            TextRole.PROTECTED,
+            float(np.clip(max(narration_score, sfx_score), 0, 1)),
+            [ProtectionReason.LOW_CONFIDENCE],
+            features,
+        )
 
     return EligibilityDecision(
         text_role=TextRole.REVIEW,
@@ -171,6 +203,32 @@ def extract_eligibility_features(
         artwork_edge_density=edge_density,
         stroke_irregularity=irregularity,
         margin_fraction=margin_fraction,
+    )
+
+
+def _looks_like_ui_label(
+    region: MaskRegion,
+    image_shape: tuple[int, ...],
+    features: EligibilityFeatures,
+) -> bool:
+    height, width = image_shape[:2]
+    rect = region.rect
+    area_fraction = (rect.width * rect.height) / max(width * height, 1)
+    height_fraction = rect.height / max(height, 1)
+    lacks_story_backing = (
+        features.enclosure_score < 0.55
+        and features.backing_uniformity < 0.55
+        and features.rectangular_backing < 0.55
+    )
+    lacks_sfx_shape = (
+        features.artwork_edge_density < 0.35
+        and features.stroke_irregularity < 0.35
+    )
+    return (
+        area_fraction <= UI_LABEL_MAX_AREA_FRACTION
+        and height_fraction <= UI_LABEL_MAX_HEIGHT_FRACTION
+        and lacks_story_backing
+        and lacks_sfx_shape
     )
 
 
