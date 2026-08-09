@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "pages": [
+    {
+      "relative_path_hash": "585d5f42335dd9ae9dc9574a32d84d022721b3991613eb7c9745a74e6bf7190d",
+      "sha256": "81e9c49b744b1f5b3960d5fb57a175328dc892491520a2d587c380764866b0da",
+      "width": 1125,
+      "height": 1600,
+      "protection_categories": ["credits", "qr"],
+      "review_label": "protected"
+    },
+    {
+      "relative_path_hash": "9ced7c36e617fff4f4a659bc13b404458b4b425d9a41bcc9bf51e1f14ea70d65",
+      "sha256": "c740f9461d64372ae1fd0ef1465faaa0634c9158c99dd464457ed6614c5b4286",
+      "width": 1280,
+      "height": 1280,
+      "protection_categories": ["watermark"],
+      "review_label": "protected"
+    },
+    {
+      "relative_path_hash": "9afe5892078e5f2d281543edc6840282a4fa62393b9045237d0a1c3dbb499425",
+      "sha256": "fc457bcdcb1a924353eb9443418ff987b6790d30fe60f4b76ca4896d17f4f8da",
+      "width": 1280,
+      "height": 1280,
+      "protection_categories": ["watermark"],
+      "review_label": "protected"
+    },
+    {
+      "relative_path_hash": "9bcf55d8e5d5ff84cb932d6028290d1d5ffa2b425773aa6a9ca31b09cde3699f",
+      "sha256": "0599cc6491900ea8dc72a41148d11ee53236eb6cf73170b906aab8385148d349",
+      "width": 1280,
+      "height": 876,
+      "protection_categories": ["watermark"],
+      "review_label": "protected"
+    },
+    {
+      "relative_path_hash": "384f64cf283be5b7f9849370b47aa0c7f06751ae4f04b5de906bc596b0506239",
+      "sha256": "9c7c662c3a505a086aef6e1c0084967a2dada8f243b9f54da5e1c5cc779a0937",
+      "width": 1280,
+      "height": 1785,
+      "protection_categories": ["ui"],
+      "review_label": "protected"
+    },
+    {
+      "relative_path_hash": "6e1959a7ffa85f049a3b57b37e1287baa453fd2bf4b9865a6b0585bd968019a8",
+      "sha256": "d05e8b887f4d01138b015586df45982342fbd83088a82007477168181584af84",
+      "width": 1280,
+      "height": 1785,
+      "protection_categories": ["ui"],
+      "review_label": "protected"
+    },
+    {
+      "relative_path_hash": "c063f97b89c2f55bcc815dee5ffa2451908e7d0fd98c3b4fed7be3c708d976d4",
+      "sha256": "a128538ae2fc09913f6a0c5bb140c969fc8ee7019975319a984c804fe5d10ae9",
+      "width": 1280,
+      "height": 1280,
+      "protection_categories": ["watermark"],
+      "review_label": "protected"
+    },
+    {
+      "relative_path_hash": "71e3ff91b58425283eb7668d5dc1b5567fc0e5621c27ea4c70e090f065c9a383",
+      "sha256": "933fc901ff98383bd205e1e93977cd9a6c0d3d31409d3513387ad174a62e8e60",
+      "width": 1280,
+      "height": 982,
+      "protection_categories": ["watermark"],
+      "review_label": "protected"
+    },
+    {
+      "relative_path_hash": "16435e374227a2c79122f5968ce5324dd27000e045b73ea188f067d4604e519a",
+      "sha256": "30f3b0bd91f1364c2b617f6fe7e57291747bdcc31987c0c26fba2bd4ecfb71ac",
+      "width": 1280,
+      "height": 1837,
+      "protection_categories": ["logo"],
+      "review_label": "protected"
+    },
+    {
+      "relative_path_hash": "bce677d57e3d98ac2b4706fee25bda6f1e5530b4e20e685b3d59817611c979ce",
+      "sha256": "bd1b85542f76391f2a812cd63dc925fbbcfcd8ad011c814afa2bb93c8bd21c56",
+      "width": 1280,
+      "height": 1140,
+      "protection_categories": ["watermark"],
+      "review_label": "protected"
+    }
+  ]
+}

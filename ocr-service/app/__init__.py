@@ -1,0 +1,1 @@
+"""Local manga cleaning service."""

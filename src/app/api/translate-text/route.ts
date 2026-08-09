@@ -1,5 +1,24 @@
 import { NextResponse } from "next/server";
 
+import {
+  GeminiRequestError,
+  requestGemini,
+} from "@/lib/server/geminiRequest";
+
+interface GeminiResponseData {
+  promptFeedback?: {
+    blockReason?: string;
+  };
+  candidates?: Array<{
+    finishReason?: string;
+    content?: {
+      parts?: Array<{
+        text?: string;
+      }>;
+    };
+  }>;
+}
+
 export async function POST(req: Request) {
   try {
     const { bubbles, targetLang, modelPreference } = await req.json();
@@ -12,10 +31,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ text: JSON.stringify({ bubbles: [] }) });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
+    const apiKeyRaw = process.env.GEMINI_API_KEY;
+    if (!apiKeyRaw) {
       return NextResponse.json({ error: "Server missing API Key. Please add GEMINI_API_KEY to .env" }, { status: 500 });
     }
+    const apiKeys = apiKeyRaw
+      .split(",")
+      .map((key) => key.trim())
+      .filter((key) => key.length > 0);
 
     const promptText = 
       `You are an expert manga translator. Translate the following JSON list of text blocks to ${targetLang || 'Thai'}.\n`+
@@ -61,41 +84,26 @@ export async function POST(req: Request) {
       MODELS = [modelPreference];
     }
 
-    let data = null;
-    let resOk = false;
-    let resStatus = 500;
-    let firstError = null;
-
-    for (const model of MODELS) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+    let data: GeminiResponseData;
+    try {
+      const result = await requestGemini<GeminiResponseData>({
+        apiKeys,
+        models: MODELS,
+        payload,
       });
-      data = await res.json();
-      resOk = res.ok;
-      resStatus = res.status;
-
-      if (resOk) break; // Success, exit loop
-      
-      const errorMsg = data?.error?.message || "Unknown error";
-      console.warn(`Model ${model} failed with status ${res.status}: ${errorMsg}`);
-      
-      if (!firstError) firstError = errorMsg;
-      
-      if (modelPreference && modelPreference !== "auto") {
-        break;
+      data = result.data;
+    } catch (error) {
+      if (error instanceof GeminiRequestError) {
+        return NextResponse.json(
+          {
+            error: error.message,
+            code: error.code,
+            retryable: error.retryable,
+          },
+          { status: error.status },
+        );
       }
-      
-      if (res.status === 400 || res.status === 403 || res.status === 429) {
-        break; 
-      }
-    }
-
-    if (!resOk) {
-      console.error("Gemini API Error after all fallbacks:", data);
-      return NextResponse.json({ error: firstError || "Failed to translate from Gemini after multiple attempts" }, { status: resStatus });
+      throw error;
     }
 
     if (data.promptFeedback?.blockReason) {
@@ -114,7 +122,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "AI ไม่สามารถอ่านข้อความนี้ได้" }, { status: 500 });
     }
 
-    let cleanText = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+    const cleanText = text.replace(/```json/gi, '').replace(/```/g, '').trim();
     return NextResponse.json({ text: cleanText });
 
   } catch (error) {
