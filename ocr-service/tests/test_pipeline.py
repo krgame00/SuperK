@@ -18,7 +18,11 @@ from app.schemas import (
     RegionStatus,
     TextRole,
 )
-from app.text_eligibility import EligibilityDecision, EligibilityFeatures
+from app.text_eligibility import (
+    EligibilityDecision,
+    EligibilityFeatures,
+    classify_eligibility,
+)
 
 
 class NoTextDetector:
@@ -423,3 +427,54 @@ def test_result_cache_round_trips_lossless_assets(tmp_path: Path) -> None:
     assert np.array_equal(loaded.mask, mask)
     assert np.array_equal(loaded.review_mask, review_mask)
     assert np.array_equal(loaded.protected_mask, protected_mask)
+
+
+def test_ui_page_regions_are_not_sent_to_cleaner() -> None:
+    source = np.full((32, 32, 3), 100, np.uint8)
+    mask = np.zeros((32, 32), np.uint8)
+    mask[8:16, 8:16] = 255
+    region = MaskRegion(
+        id="ui-1",
+        rect=PixelRect(x=8, y=8, width=8, height=8),
+        component_ids=(1,),
+        stroke_radius=2,
+    )
+
+    def ui_page(*_args) -> PageContext:
+        return PageContext(
+            role=PageRole.UI,
+            confidence=0.95,
+            features=PageFeatures(0.1, 0.1, 0.1, 0.9, 0),
+        )
+
+    class FailingCleaner:
+        def clean(self, *_args):
+            raise AssertionError("UI region reached cleaner")
+
+    pipeline = CleaningPipeline(
+        detector=NoTextDetector(),
+        refiner=lambda _source, _detection: RefinedMask(
+            mask,
+            [region],
+            np.zeros_like(mask),
+        ),
+        cleaners={
+            "flat": FailingCleaner(),
+            "gradient": FailingCleaner(),
+            "artwork": FailingCleaner(),
+        },
+        page_classifier=ui_page,
+        protection_detector=_empty_protection,
+        eligibility_classifier=classify_eligibility,
+    )
+
+    output = pipeline.run(source)
+
+    assert np.array_equal(output.clean_image, source)
+    assert not np.any(output.mask)
+    assert output.regions[0].status is RegionStatus.PRESERVED
+    assert output.regions[0].text_role is TextRole.PROTECTED
+    assert (
+        output.regions[0].automatic_action
+        is AutomaticAction.PRESERVE
+    )
