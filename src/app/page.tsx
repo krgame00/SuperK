@@ -125,7 +125,12 @@ export default function WorkspacePage() {
   const preparePageForTranslation = useCallback(
     async (pageUrl: string, pageIndex: number) => {
       const cachedResult = cleaningResultsByPage.get(pageUrl);
-      if (cachedResult) return cachedResult.cleanUrl;
+      if (cachedResult) {
+        return {
+          recognitionUrl: pageUrl,
+          backgroundUrl: cachedResult.cleanUrl,
+        };
+      }
 
       const page = pages[pageIndex];
       if (!page || page.url !== pageUrl) {
@@ -137,7 +142,10 @@ export default function WorkspacePage() {
         throw new Error(`Failed to load page for cleaning (${response.status}).`);
       }
       const result = await cleanPage(pageUrl, await response.blob());
-      return result.cleanUrl;
+      return {
+        recognitionUrl: pageUrl,
+        backgroundUrl: result.cleanUrl,
+      };
     },
     [cleanPage, cleaningResultsByPage, pages],
   );

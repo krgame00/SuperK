@@ -62,7 +62,7 @@ beforeEach(() => {
       onloadend: (() => void) | null = null;
 
       readAsDataURL() {
-        this.result = "data:image/png;base64,Y2xlYW4=";
+        this.result = "data:image/png;base64,b3JpZ2luYWw=";
         queueMicrotask(() => this.onloadend?.());
       }
     },
@@ -78,8 +78,8 @@ afterEach(() => {
 test("failed offscreen rendering leaves no bubbles to restore after navigation", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url === "blob:clean") {
-      return new Response(new Blob(["clean"], { type: "image/png" }), {
+    if (url === "blob:original") {
+      return new Response(new Blob(["original"], { type: "image/png" }), {
         status: 200,
       });
     }
@@ -92,7 +92,10 @@ test("failed offscreen rendering leaves no bubbles to restore after navigation",
     }
     throw new Error(`unexpected fetch: ${url}`);
   });
-  const preparePageForTranslation = vi.fn().mockResolvedValue("blob:clean");
+  const preparePageForTranslation = vi.fn().mockResolvedValue({
+    recognitionUrl: "blob:original",
+    backgroundUrl: "blob:clean",
+  });
   const { result, rerender } = renderHook(
     ({ currentPage }) =>
       useTranslation({

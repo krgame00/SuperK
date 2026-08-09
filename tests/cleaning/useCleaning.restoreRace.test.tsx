@@ -35,6 +35,10 @@ const cleaningResult = {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
+  vi.stubGlobal(
+    "createImageBitmap",
+    vi.fn().mockResolvedValue({ width: 8, height: 8, close: vi.fn() }),
+  );
   vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
     new Response(new Blob(["asset"], { type: "image/png" }), { status: 200 }),
   );
@@ -54,6 +58,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 

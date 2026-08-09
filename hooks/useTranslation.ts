@@ -6,6 +6,7 @@ import {
 } from "@/lib/translation/requestError";
 import { applyTranslationOverlay } from "@/lib/translationOverlay";
 import { saveProjectSession, loadProjectSession, clearProjectSession } from "@/lib/projectStore";
+import { resolveTranslationOutcome } from "@/lib/translationPipeline";
 
 const parseLLMJSON = (text: string) => {
   if (!text) return null;
@@ -41,6 +42,11 @@ export interface BatchPageFailure {
   message: string;
 }
 
+export interface PreparedTranslationPage {
+  recognitionUrl: string;
+  backgroundUrl: string;
+}
+
 interface UseTranslationProps {
   currentPage: number;
   pages: string[];
@@ -48,7 +54,7 @@ interface UseTranslationProps {
   preparePageForTranslation: (
     pageUrl: string,
     pageIndex: number,
-  ) => Promise<string>;
+  ) => Promise<PreparedTranslationPage>;
 }
 
 const waitForImageReady = (src: string): Promise<HTMLImageElement> =>
@@ -267,7 +273,7 @@ export function useTranslation({
   const renderAndCacheTranslation = useCallback(
     async (
       bubbles: any[],
-      preparedUrl: string,
+      backgroundUrl: string,
       pageUrl: string,
       pageIndex: number,
     ): Promise<void> => {
@@ -276,7 +282,7 @@ export function useTranslation({
       offscreenContainer.style.cssText =
         "position:fixed;left:-100000px;top:0;pointer-events:none;";
       const image = document.createElement("img");
-      image.src = preparedUrl;
+      image.src = backgroundUrl;
       offscreenContainer.appendChild(image);
       document.body.appendChild(offscreenContainer);
 
@@ -337,15 +343,42 @@ export function useTranslation({
     [viewMode],
   );
 
+  const cacheBackgroundOnly = useCallback(
+    async (backgroundUrl: string, pageUrl: string): Promise<void> => {
+      const response = await fetch(backgroundUrl);
+      if (!response.ok) {
+        throw new Error(`ไม่สามารถโหลดรูปภาพคลีนได้ (HTTP ${response.status})`);
+      }
+      const blob = await response.blob();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error("อ่านรูปภาพคลีนไม่สำเร็จ"));
+        reader.readAsDataURL(blob);
+      });
+
+      translatedImageCacheRef.current.set(pageUrl, dataUrl);
+      bubbleCacheRef.current.set(pageUrl, []);
+      setCacheRevision((revision) => revision + 1);
+      if (activePageRef.current === pageUrl) {
+        setActiveBubbles([]);
+        setTranslationResult("ไม่พบประโยคที่ต้องแปล");
+        setShowTranslate(false);
+      }
+    },
+    [],
+  );
+
   const performTranslation = async (
-    preparedUrl: string,
+    preparedPage: PreparedTranslationPage,
     pageUrl: string,
     pageIndex: number,
     forceNsfwBypass: boolean = false,
     isAutoRetry: boolean = false,
   ): Promise<boolean> => {
     try {
-      const resImg = await fetch(preparedUrl);
+      const { recognitionUrl, backgroundUrl } = preparedPage;
+      const resImg = await fetch(recognitionUrl);
       if (!resImg.ok) throw new Error(`ไม่สามารถโหลดรูปภาพได้ (HTTP ${resImg.status})`);
       const blob = await resImg.blob();
       const actualMimeType = blob.type && blob.type.startsWith('image/') ? blob.type : "image/jpeg";
@@ -356,7 +389,7 @@ export function useTranslation({
       });
 
       if (nsfwBypassMode || forceNsfwBypass) {
-        const imgEl = await waitForImageReady(preparedUrl);
+        const imgEl = await waitForImageReady(recognitionUrl);
 
         const slices = [];
         const rows = 3;
@@ -387,6 +420,7 @@ export function useTranslation({
 
         let allBubbles: any[] = [];
         let successCount = 0;
+        let validPayloadCount = 0;
 
         for (let i = 0; i < slices.length; i++) {
           const slice = slices[i];
@@ -400,8 +434,10 @@ export function useTranslation({
             const data = await readTranslationResponse<{ text: string }>(res);
 
             const parsed = parseLLMJSON(data.text);
-            if (parsed.bubbles) {
-              successCount++;
+            if (!parsed || !Array.isArray(parsed.bubbles)) {
+              throw new Error("Translation response malformed: bubbles array missing.");
+            }
+            if (parsed.bubbles.length > 0) {
               const { sx, sy, sWidth, sHeight } = slice;
 
               for (const b of parsed.bubbles) {
@@ -454,6 +490,8 @@ export function useTranslation({
                 }
               }
             }
+            validPayloadCount++;
+            successCount++;
           } catch (err: any) {
             console.warn(`Slice ${i + 1} failed:`, err);
             if (getTranslationRetryDelay(err) !== null) {
@@ -466,8 +504,8 @@ export function useTranslation({
           }
         }
 
-        if (allBubbles.length === 0) {
-          throw new Error(`แปลไม่สำเร็จ หรือโควต้าเต็ม (ผ่านการตรวจสอบ: ${successCount}/6 ชิ้น)`);
+        if (validPayloadCount === 0) {
+          throw new Error("Translation failed: no valid NSFW slice responses.");
         }
 
         // Filter out hallucinated repetitive SFX
@@ -483,16 +521,22 @@ export function useTranslation({
         }
         allBubbles = filteredBubbles;
 
-        const manualBubbles = getManualBubblesForPage(pageUrl);
-        const finalBubbles = [...allBubbles, ...manualBubbles];
+        const outcome = resolveTranslationOutcome(
+          allBubbles,
+          getManualBubblesForPage(pageUrl),
+        );
+        if (outcome.kind === "clean-only") {
+          await cacheBackgroundOnly(backgroundUrl, pageUrl);
+          return true;
+        }
 
         await renderAndCacheTranslation(
-          finalBubbles,
-          preparedUrl,
+          outcome.bubbles,
+          backgroundUrl,
           pageUrl,
           pageIndex,
         );
-        bubbleCacheRef.current.set(pageUrl, finalBubbles);
+        bubbleCacheRef.current.set(pageUrl, outcome.bubbles);
 
         if (activePageRef.current === pageUrl) {
           setTranslationResult(`✅ แปล 18+ สำเร็จ! (ได้ ${successCount}/6 ส่วน)`);
@@ -510,60 +554,58 @@ export function useTranslation({
       const data = await readTranslationResponse<{ text: string }>(res);
 
       let parsed = data.text ? parseLLMJSON(data.text) : data;
+      if (!parsed || !Array.isArray(parsed.bubbles)) {
+        throw new Error("Translation response malformed: bubbles array missing.");
+      }
 
-      if (!parsed || !Array.isArray(parsed.bubbles) || parsed.bubbles.length === 0) {
-        if (!isAutoRetry && !nsfwBypassMode && !forceNsfwBypass) {
-          console.log(`[Auto-Retry] 0 bubbles found for page ${pageIndex + 1}. Retrying with enhanced single image...`);
-          if (activePageRef.current === pageUrl) {
-            setTranslationResult("⏳ ไม่พบข้อความ! กำลังปรับความคมชัดภาพและ Auto-Retry...");
-          }
-
-          try {
-            const imgEl = await waitForImageReady(preparedUrl);
-
-            const canvas = document.createElement("canvas");
-            canvas.width = imgEl.naturalWidth;
-            canvas.height = imgEl.naturalHeight;
-            const ctx = canvas.getContext("2d")!;
-            ctx.filter = "contrast(1.35) brightness(1.05)";
-            ctx.drawImage(imgEl, 0, 0);
-            const enhancedBase64 = canvas.toDataURL("image/jpeg", 0.9).split(",")[1];
-
-            const retryRes = await fetch("/api/translate", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                imageBase64: enhancedBase64,
-                mimeType: "image/jpeg",
-                targetLang,
-                sourceLang,
-                modelPreference,
-                apiKey: userApiKey,
-                isRetry: true
-              })
-            });
-
-            const retryData =
-              await readTranslationResponse<{ text: string }>(retryRes);
-            if (retryData.text) {
-              const retryParsed = parseLLMJSON(retryData.text);
-              if (retryParsed && Array.isArray(retryParsed.bubbles) && retryParsed.bubbles.length > 0) {
-                parsed = retryParsed; // Success on retry!
-              } else {
-                throw new Error("ไม่พบข้อความในหน้านี้");
-              }
-            } else {
-              throw new Error("ไม่พบข้อความในหน้านี้");
-            }
-          } catch (retryErr) {
-            if (retryErr instanceof TranslationRequestError) {
-              throw retryErr;
-            }
-            throw new Error("ไม่พบข้อความในหน้านี้");
-          }
-        } else {
-          throw new Error("ไม่พบข้อความในหน้านี้");
+      if (
+        parsed.bubbles.length === 0
+        && !isAutoRetry
+        && !nsfwBypassMode
+        && !forceNsfwBypass
+      ) {
+        console.log(`[Auto-Retry] 0 bubbles found for page ${pageIndex + 1}. Retrying with enhanced single image...`);
+        if (activePageRef.current === pageUrl) {
+          setTranslationResult("⏳ ไม่พบข้อความ! กำลังปรับความคมชัดภาพและ Auto-Retry...");
         }
+
+        const imgEl = await waitForImageReady(recognitionUrl);
+        const canvas = document.createElement("canvas");
+        canvas.width = imgEl.naturalWidth;
+        canvas.height = imgEl.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          throw new Error("Translation failed: enhanced image canvas unavailable.");
+        }
+        ctx.filter = "contrast(1.35) brightness(1.05)";
+        ctx.drawImage(imgEl, 0, 0);
+        const enhancedBase64 = canvas.toDataURL("image/jpeg", 0.9).split(",")[1];
+        if (!enhancedBase64) {
+          throw new Error("Translation failed: enhanced image encoding failed.");
+        }
+
+        const retryRes = await fetch("/api/translate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            imageBase64: enhancedBase64,
+            mimeType: "image/jpeg",
+            targetLang,
+            sourceLang,
+            modelPreference,
+            apiKey: userApiKey,
+            isRetry: true
+          })
+        });
+        const retryData =
+          await readTranslationResponse<{ text: string }>(retryRes);
+        const retryParsed = retryData.text
+          ? parseLLMJSON(retryData.text)
+          : retryData;
+        if (!retryParsed || !Array.isArray(retryParsed.bubbles)) {
+          throw new Error("Translation retry response malformed: bubbles array missing.");
+        }
+        parsed = retryParsed;
       }
 
       // Filter out hallucinated repetitive SFX
@@ -577,16 +619,22 @@ export function useTranslation({
         }
       }
 
-      const manualBubbles = getManualBubblesForPage(pageUrl);
-      const finalBubbles = [...filteredParsed, ...manualBubbles];
+      const outcome = resolveTranslationOutcome(
+        filteredParsed,
+        getManualBubblesForPage(pageUrl),
+      );
+      if (outcome.kind === "clean-only") {
+        await cacheBackgroundOnly(backgroundUrl, pageUrl);
+        return true;
+      }
 
       await renderAndCacheTranslation(
-        finalBubbles,
-        preparedUrl,
+        outcome.bubbles,
+        backgroundUrl,
         pageUrl,
         pageIndex,
       );
-      bubbleCacheRef.current.set(pageUrl, finalBubbles);
+      bubbleCacheRef.current.set(pageUrl, outcome.bubbles);
 
       if (activePageRef.current === pageUrl) {
         setTranslationResult("✅ แปลสำเร็จ! ข้อความถูกวาดทับลงบนภาพแล้ว");
@@ -620,13 +668,13 @@ export function useTranslation({
       setTranslationResult(
         `กำลังคลีนหน้า ${currentPage + 1}/${pages.length}`,
       );
-      const preparedUrl = await preparePageForTranslation(pageUrl, currentPage);
+      const preparedPage = await preparePageForTranslation(pageUrl, currentPage);
       setWorkflowPhase("translating");
       setTranslationResult(
         `กำลังแปลหน้า ${currentPage + 1}/${pages.length}`,
       );
       return await performTranslation(
-        preparedUrl,
+        preparedPage,
         pageUrl,
         currentPage,
         nsfwBypassMode,
@@ -682,9 +730,9 @@ export function useTranslation({
           startTime: batchStartTime,
         });
 
-        let preparedUrl: string;
+        let preparedPage: PreparedTranslationPage;
         try {
-          preparedUrl = await preparePageForTranslation(pageUrl, i);
+          preparedPage = await preparePageForTranslation(pageUrl, i);
         } catch (error) {
           failures.push({
             pageIndex: i,
@@ -717,7 +765,7 @@ export function useTranslation({
             else setTranslationResult(`กำลังประมวลผลด้วย AI (หน้า ${i + 1}) - รอบ ${retries + 1}/3`);
 
             success = await performTranslation(
-              preparedUrl,
+              preparedPage,
               pageUrl,
               i,
               forceNsfw,

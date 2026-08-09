@@ -76,6 +76,10 @@ beforeEach(() => {
   vi.mocked(retryCleaningRegion).mockReset();
   vi.mocked(loadCleaningResultsMetadata).mockResolvedValue(new Map());
   vi.mocked(saveCleaningResultMetadata).mockResolvedValue();
+  vi.stubGlobal(
+    "createImageBitmap",
+    vi.fn().mockResolvedValue({ width: 8, height: 8, close: vi.fn() }),
+  );
   vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
     new Response(new Blob(["asset"], { type: "image/png" }), { status: 200 }),
   );
@@ -95,6 +99,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
@@ -230,6 +235,61 @@ test("cleanPage records and rethrows a cleaning failure", async () => {
     ).rejects.toThrow("offline");
   });
   expect(result.current.error?.recovery).toBe("start-local-service");
+});
+
+test("cleanPage fails when clean image dimensions cannot be validated", async () => {
+  vi.stubGlobal("createImageBitmap", undefined);
+  vi.mocked(createCleaningJob).mockResolvedValue(succeededJob);
+  vi.mocked(getCleaningResult).mockResolvedValue(cleaningResult);
+  const { result } = renderHook(() =>
+    useCleaning({ pages: ["blob:one"], currentPage: 0 }),
+  );
+
+  await act(async () => {
+    await expect(
+      result.current.cleanPage(
+        "blob:one",
+        new Blob(["png"], { type: "image/png" }),
+      ),
+    ).rejects.toThrow("cannot validate clean image dimensions");
+  });
+
+  expect(URL.createObjectURL).not.toHaveBeenCalled();
+  expect(saveCleaningResultMetadata).not.toHaveBeenCalled();
+  expect(result.current.resultsByPage.has("blob:one")).toBe(false);
+  expect(result.current.error).toEqual(
+    expect.objectContaining({ recovery: "retry" }),
+  );
+});
+
+test("cleanPage rejects a clean asset whose dimensions do not match the result", async () => {
+  const close = vi.fn();
+  vi.stubGlobal(
+    "createImageBitmap",
+    vi.fn().mockResolvedValue({ width: 7, height: 8, close }),
+  );
+  vi.mocked(createCleaningJob).mockResolvedValue(succeededJob);
+  vi.mocked(getCleaningResult).mockResolvedValue(cleaningResult);
+  const { result } = renderHook(() =>
+    useCleaning({ pages: ["blob:one"], currentPage: 0 }),
+  );
+
+  await act(async () => {
+    await expect(
+      result.current.cleanPage(
+        "blob:one",
+        new Blob(["png"], { type: "image/png" }),
+      ),
+    ).rejects.toThrow("dimensions must match");
+  });
+
+  expect(close).toHaveBeenCalledOnce();
+  expect(URL.createObjectURL).not.toHaveBeenCalled();
+  expect(saveCleaningResultMetadata).not.toHaveBeenCalled();
+  expect(result.current.resultsByPage.has("blob:one")).toBe(false);
+  expect(result.current.error).toEqual(
+    expect.objectContaining({ recovery: "retry" }),
+  );
 });
 
 test("retryRegion returns the updated cleaning result", async () => {

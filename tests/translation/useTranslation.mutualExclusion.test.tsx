@@ -69,7 +69,7 @@ function imageResponse() {
 function successResponse() {
   return Response.json({
     text: JSON.stringify({
-      bubbles: [{ box: [10, 20, 40, 80], t: "สวัสดี" }],
+      bubbles: [{ box: [10, 20, 40, 80], t: "translated" }],
     }),
   });
 }
@@ -93,15 +93,23 @@ afterEach(() => {
 });
 
 test("rejects a single-page translation while batch translation is running", async () => {
-  const firstPreparation = deferred<string>();
+  const firstPreparation = deferred<{
+    recognitionUrl: string;
+    backgroundUrl: string;
+  }>();
   const preparePageForTranslation = vi
     .fn()
     .mockImplementationOnce(() => firstPreparation.promise)
-    .mockResolvedValue("blob:clean");
+    .mockResolvedValue({
+      recognitionUrl: "blob:original",
+      backgroundUrl: "blob:clean",
+    });
   const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
     async (input) => {
       const url = String(input);
-      if (url === "blob:clean") return imageResponse();
+      if (url === "blob:original" || url === "blob:clean") {
+        return imageResponse();
+      }
       if (url === "/api/translate") return successResponse();
       throw new Error(`unexpected fetch: ${url}`);
     },
@@ -132,21 +140,32 @@ test("rejects a single-page translation while batch translation is running", asy
 
   await act(async () => {
     result.current.cancelTranslateAll();
-    firstPreparation.resolve("blob:clean");
+    firstPreparation.resolve({
+      recognitionUrl: "blob:original",
+      backgroundUrl: "blob:clean",
+    });
     await batchPromise;
   });
 });
 
 test("rejects batch translation while a single-page translation is running", async () => {
-  const firstPreparation = deferred<string>();
+  const firstPreparation = deferred<{
+    recognitionUrl: string;
+    backgroundUrl: string;
+  }>();
   const preparePageForTranslation = vi
     .fn()
     .mockImplementationOnce(() => firstPreparation.promise)
-    .mockResolvedValue("blob:clean");
+    .mockResolvedValue({
+      recognitionUrl: "blob:original",
+      backgroundUrl: "blob:clean",
+    });
   const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
     async (input) => {
       const url = String(input);
-      if (url === "blob:clean") return imageResponse();
+      if (url === "blob:original" || url === "blob:clean") {
+        return imageResponse();
+      }
       if (url === "/api/translate") return successResponse();
       throw new Error(`unexpected fetch: ${url}`);
     },
@@ -176,7 +195,10 @@ test("rejects batch translation while a single-page translation is running", asy
   expect(fetchSpy).not.toHaveBeenCalled();
 
   await act(async () => {
-    firstPreparation.resolve("blob:clean");
+    firstPreparation.resolve({
+      recognitionUrl: "blob:original",
+      backgroundUrl: "blob:clean",
+    });
     expect(await singlePromise).toBe(true);
   });
 });

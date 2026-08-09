@@ -19,6 +19,7 @@ import {
   loadCleaningResultsMetadata,
   saveCleaningResultMetadata,
 } from "@/lib/projectStore";
+import { assertMatchingImageDimensions } from "@/lib/translationPipeline";
 
 const POLL_INTERVAL_MS = 500;
 
@@ -120,6 +121,20 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
       }
       const [cleanBlob, maskBlob, reviewBlob, protectedBlob] =
         await Promise.all(responses.map((response) => response.blob()));
+      if (typeof createImageBitmap !== "function") {
+        throw new Error(
+          "Cleaning failed: cannot validate clean image dimensions in this browser.",
+        );
+      }
+      const bitmap = await createImageBitmap(cleanBlob);
+      try {
+        assertMatchingImageDimensions(
+          { width: result.width, height: result.height },
+          { width: bitmap.width, height: bitmap.height },
+        );
+      } finally {
+        bitmap.close();
+      }
       return {
         ...result,
         cleanUrl: URL.createObjectURL(cleanBlob),

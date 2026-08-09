@@ -85,17 +85,20 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-test("prepares clean pixels before translating", async () => {
+test("reads Original pixels and renders translated bubbles onto Clean", async () => {
   const pages = ["blob:original"];
   const order: string[] = [];
   const preparePageForTranslation = vi.fn(async () => {
     order.push("clean");
-    return "blob:clean";
+    return {
+      recognitionUrl: "blob:original",
+      backgroundUrl: "blob:clean",
+    };
   });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url === "blob:clean") {
-      order.push("load-clean");
+    if (url === "blob:original") {
+      order.push("load-original");
       return imageResponse();
     }
     if (url === "/api/translate") {
@@ -118,15 +121,23 @@ test("prepares clean pixels before translating", async () => {
     expect(await result.current.handleTranslate()).toBe(true);
   });
 
-  expect(order).toEqual(["clean", "load-clean", "translate"]);
+  expect(order).toEqual(["clean", "load-original", "translate"]);
+  const offscreenCall = vi
+    .mocked(applyTranslationOverlay)
+    .mock.calls.find((call) => call[1] === "offscreen");
+  expect(
+    offscreenCall?.[6]?.querySelector("img")?.getAttribute("src"),
+  ).toBe("blob:clean");
 });
-
 test("keeps translation caches keyed by the original URL", async () => {
   const pages = ["blob:original"];
-  const preparePageForTranslation = vi.fn().mockResolvedValue("blob:clean");
+  const preparePageForTranslation = vi.fn().mockResolvedValue({
+    recognitionUrl: "blob:original",
+    backgroundUrl: "blob:clean",
+  });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url === "blob:clean") return imageResponse();
+    if (url === "blob:original") return imageResponse();
     if (url === "/api/translate") return successResponse();
     throw new Error(`unexpected fetch: ${url}`);
   });
@@ -183,11 +194,14 @@ test("batch skips a cleaning failure and continues", async () => {
   const pages = ["blob:one", "blob:two", "blob:three"];
   const preparePageForTranslation = vi.fn(async (url: string) => {
     if (url === "blob:two") throw new Error("clean failed");
-    return `blob:clean-${url.split(":")[1]}`;
+    return {
+      recognitionUrl: url,
+      backgroundUrl: `blob:clean-${url.split(":")[1]}`,
+    };
   });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url.startsWith("blob:clean-")) return imageResponse();
+    if (pages.includes(url)) return imageResponse();
     if (url === "/api/translate") return successResponse();
     throw new Error(`unexpected fetch: ${url}`);
   });
@@ -220,11 +234,14 @@ test("batch skips a cleaning failure and continues", async () => {
 test("translation retry reuses one prepared URL", async () => {
   vi.useFakeTimers();
   const pages = ["blob:one"];
-  const preparePageForTranslation = vi.fn().mockResolvedValue("blob:clean");
+  const preparePageForTranslation = vi.fn().mockResolvedValue({
+    recognitionUrl: "blob:one",
+    backgroundUrl: "blob:clean",
+  });
   let apiCalls = 0;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url === "blob:clean") return imageResponse();
+    if (url === "blob:one") return imageResponse();
     if (url === "/api/translate") {
       apiCalls += 1;
       if (apiCalls === 1) {
@@ -271,12 +288,15 @@ test("cancellation during preparation prevents the next page", async () => {
   const preparePageForTranslation = vi.fn(
     async (_url: string, pageIndex: number) => {
       if (pageIndex === 0) cancelTranslateAll();
-      return `blob:clean-${pageIndex + 1}`;
+      return {
+        recognitionUrl: pages[pageIndex],
+        backgroundUrl: `blob:clean-${pageIndex + 1}`,
+      };
     },
   );
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url.startsWith("blob:clean-")) return imageResponse();
+    if (pages.includes(url)) return imageResponse();
     if (url === "/api/translate") return successResponse();
     throw new Error(`unexpected fetch: ${url}`);
   });
@@ -309,11 +329,14 @@ test("background batch renders final images by original URL and skips them later
   vi.useFakeTimers();
   const pages = ["blob:one", "blob:two"];
   const preparePageForTranslation = vi.fn(
-    async (_url: string, pageIndex: number) => `blob:clean-${pageIndex + 1}`,
+    async (url: string, pageIndex: number) => ({
+      recognitionUrl: url,
+      backgroundUrl: `blob:clean-${pageIndex + 1}`,
+    }),
   );
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url.startsWith("blob:clean-")) return imageResponse();
+    if (pages.includes(url)) return imageResponse();
     if (url === "/api/translate") return successResponse();
     throw new Error(`unexpected fetch: ${url}`);
   });
@@ -370,12 +393,15 @@ test("quota exhaustion aborts before preparing the next page", async () => {
   const preparePageForTranslation = vi.fn(
     async (_url: string, pageIndex: number) => {
       if (pageIndex === 1) throw new Error("page two must not prepare");
-      return "blob:clean-one";
+      return {
+        recognitionUrl: "blob:one",
+        backgroundUrl: "blob:clean-one",
+      };
     },
   );
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url === "blob:clean-one") return imageResponse();
+    if (url === "blob:one") return imageResponse();
     if (url === "/api/translate") {
       return Response.json(
         {
@@ -416,11 +442,14 @@ test("persists translated caches after an inactive batch page completes", async 
   vi.useFakeTimers();
   const pages = ["blob:one", "blob:two"];
   const preparePageForTranslation = vi.fn(
-    async (_url: string, pageIndex: number) => `blob:clean-${pageIndex + 1}`,
+    async (url: string, pageIndex: number) => ({
+      recognitionUrl: url,
+      backgroundUrl: `blob:clean-${pageIndex + 1}`,
+    }),
   );
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url.startsWith("blob:clean-")) return imageResponse();
+    if (pages.includes(url)) return imageResponse();
     if (url === "/api/translate") return successResponse();
     throw new Error(`unexpected fetch: ${url}`);
   });
@@ -486,17 +515,20 @@ test("persists translated caches after an inactive batch page completes", async 
 
 test("reports cleaning then translating phases for one page", async () => {
   const pages = ["blob:one"];
-  let resolvePreparation!: (url: string) => void;
+  let resolvePreparation!: (prepared: {
+    recognitionUrl: string;
+    backgroundUrl: string;
+  }) => void;
   let resolveImage!: (response: Response) => void;
   const preparePageForTranslation = vi.fn(
     () =>
-      new Promise<string>((resolve) => {
+      new Promise<{ recognitionUrl: string; backgroundUrl: string }>((resolve) => {
         resolvePreparation = resolve;
       }),
   );
   vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
     const url = String(input);
-    if (url === "blob:clean") {
+    if (url === "blob:one") {
       return new Promise<Response>((resolve) => {
         resolveImage = resolve;
       });
@@ -521,7 +553,10 @@ test("reports cleaning then translating phases for one page", async () => {
   expect(result.current.translationResult).toContain("กำลังคลีนหน้า 1/1");
 
   await act(async () => {
-    resolvePreparation("blob:clean");
+    resolvePreparation({
+      recognitionUrl: "blob:one",
+      backgroundUrl: "blob:clean",
+    });
     await Promise.resolve();
   });
   expect(result.current.workflowPhase).toBe("translating");
@@ -538,11 +573,14 @@ test("active and background pages cache from unique clean offscreen containers",
   vi.useFakeTimers();
   const pages = ["blob:one", "blob:two"];
   const preparePageForTranslation = vi.fn(
-    async (_url: string, pageIndex: number) => `blob:clean-${pageIndex + 1}`,
+    async (url: string, pageIndex: number) => ({
+      recognitionUrl: url,
+      backgroundUrl: `blob:clean-${pageIndex + 1}`,
+    }),
   );
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url.startsWith("blob:clean-")) return imageResponse();
+    if (pages.includes(url)) return imageResponse();
     if (url === "/api/translate") return successResponse();
     throw new Error(`unexpected fetch: ${url}`);
   });

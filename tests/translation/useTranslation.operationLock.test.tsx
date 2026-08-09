@@ -1,7 +1,10 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
-import { useTranslation } from "@/hooks/useTranslation";
+import {
+  useTranslation,
+  type PreparedTranslationPage,
+} from "@/hooks/useTranslation";
 
 vi.mock("@/lib/translationOverlay", () => ({
   applyTranslationOverlay: vi.fn(
@@ -33,6 +36,10 @@ vi.mock("@/lib/projectStore", () => ({
 }));
 
 const pages = ["blob:original"];
+const preparedPage: PreparedTranslationPage = {
+  recognitionUrl: "blob:original",
+  backgroundUrl: "blob:clean",
+};
 
 const storage = (() => {
   const values = new Map<string, string>();
@@ -69,7 +76,7 @@ function imageResponse() {
 function successResponse() {
   return Response.json({
     text: JSON.stringify({
-      bubbles: [{ box: [10, 20, 40, 80], t: "สวัสดี" }],
+      bubbles: [{ box: [10, 20, 40, 80], t: "เธชเธงเธฑเธชเธ”เธต" }],
     }),
   });
 }
@@ -77,14 +84,19 @@ function successResponse() {
 function installSuccessfulFetch() {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url === "blob:clean") return imageResponse();
+    if (url === "blob:original" || url === "blob:clean") {
+      return imageResponse();
+    }
     if (url === "/api/translate") return successResponse();
     throw new Error(`unexpected fetch: ${url}`);
   });
 }
 
 function renderTranslation(
-  preparePageForTranslation: (pageUrl: string, pageIndex: number) => Promise<string>,
+  preparePageForTranslation: (
+    pageUrl: string,
+    pageIndex: number,
+  ) => Promise<PreparedTranslationPage>,
 ) {
   return renderHook(() =>
     useTranslation({
@@ -115,7 +127,7 @@ afterEach(() => {
 });
 
 test("starts only single-page translation when single and batch are called in the same tick", async () => {
-  const preparation = deferred<string>();
+  const preparation = deferred<PreparedTranslationPage>();
   const preparePageForTranslation = vi.fn(() => preparation.promise);
   const fetchSpy = installSuccessfulFetch();
   const { result } = renderTranslation(preparePageForTranslation);
@@ -128,7 +140,7 @@ test("starts only single-page translation when single and batch are called in th
   });
 
   await act(async () => {
-    preparation.resolve("blob:clean");
+    preparation.resolve(preparedPage);
     await Promise.all([singlePromise, batchPromise]);
   });
 
@@ -139,7 +151,7 @@ test("starts only single-page translation when single and batch are called in th
 });
 
 test("starts only batch translation when batch and single are called in the same tick", async () => {
-  const preparation = deferred<string>();
+  const preparation = deferred<PreparedTranslationPage>();
   const preparePageForTranslation = vi.fn(() => preparation.promise);
   const fetchSpy = installSuccessfulFetch();
   const { result } = renderTranslation(preparePageForTranslation);
@@ -152,7 +164,7 @@ test("starts only batch translation when batch and single are called in the same
   });
 
   await act(async () => {
-    preparation.resolve("blob:clean");
+    preparation.resolve(preparedPage);
     await Promise.all([batchPromise, singlePromise]);
   });
 
@@ -163,11 +175,11 @@ test("starts only batch translation when batch and single are called in the same
 });
 
 test("keeps batch busy and blocks single translation until pending preparation settles after cancel", async () => {
-  const preparation = deferred<string>();
+  const preparation = deferred<PreparedTranslationPage>();
   const preparePageForTranslation = vi
     .fn()
     .mockImplementationOnce(() => preparation.promise)
-    .mockResolvedValue("blob:clean");
+    .mockResolvedValue(preparedPage);
   installSuccessfulFetch();
   const { result } = renderTranslation(preparePageForTranslation);
 
@@ -189,7 +201,7 @@ test("keeps batch busy and blocks single translation until pending preparation s
   const prepareCallsBeforeRelease = preparePageForTranslation.mock.calls.length;
 
   await act(async () => {
-    preparation.resolve("blob:clean");
+    preparation.resolve(preparedPage);
     await batchPromise;
   });
 

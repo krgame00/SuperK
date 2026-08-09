@@ -65,11 +65,14 @@ beforeEach(() => {
 });
 
 test("navigation restore is display-only and preserves the prepared translated cache", async () => {
-  const preparePageForTranslation = vi.fn().mockResolvedValue("blob:clean-one");
+  const preparePageForTranslation = vi.fn().mockResolvedValue({
+    recognitionUrl: "blob:one",
+    backgroundUrl: "blob:clean-one",
+  });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url === "blob:clean-one") {
-      return new Response(new Blob(["clean"], { type: "image/png" }), {
+    if (url === "blob:one") {
+      return new Response(new Blob(["original"], { type: "image/png" }), {
         status: 200,
       });
     }

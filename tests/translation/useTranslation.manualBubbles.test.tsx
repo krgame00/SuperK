@@ -116,7 +116,9 @@ test("NSFW translation publishes same-page manual bubbles to both render and bub
   const pages = ["blob:one"];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url === "blob:clean-one") return imageResponse();
+    if (url === "blob:one" || url === "blob:clean-one") {
+      return imageResponse();
+    }
     if (url === "/api/translate") return successResponse();
     throw new Error(`unexpected fetch: ${url}`);
   });
@@ -125,7 +127,10 @@ test("NSFW translation publishes same-page manual bubbles to both render and bub
       currentPage: 0,
       pages,
       viewMode: "single",
-      preparePageForTranslation: vi.fn().mockResolvedValue("blob:clean-one"),
+      preparePageForTranslation: vi.fn().mockResolvedValue({
+        recognitionUrl: "blob:one",
+        backgroundUrl: "blob:clean-one",
+      }),
     }),
   );
 
@@ -157,7 +162,12 @@ test("Translate All uses each background page cache instead of active-page manua
   const pages = ["blob:one", "blob:two"];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url === "blob:clean-one" || url === "blob:clean-two") {
+    if (
+      url === "blob:one" ||
+      url === "blob:two" ||
+      url === "blob:clean-one" ||
+      url === "blob:clean-two"
+    ) {
       return imageResponse();
     }
     if (url === "/api/translate") return successResponse();
@@ -168,9 +178,10 @@ test("Translate All uses each background page cache instead of active-page manua
       currentPage: 0,
       pages,
       viewMode: "single",
-      preparePageForTranslation: vi.fn(
-        async (_pageUrl, pageIndex) => `blob:clean-${pageIndex + 1 === 1 ? "one" : "two"}`,
-      ),
+      preparePageForTranslation: vi.fn(async (pageUrl, pageIndex) => ({
+        recognitionUrl: pageUrl,
+        backgroundUrl: `blob:clean-${pageIndex + 1 === 1 ? "one" : "two"}`,
+      })),
     }),
   );
 
