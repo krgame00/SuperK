@@ -429,7 +429,7 @@ def test_result_cache_round_trips_lossless_assets(tmp_path: Path) -> None:
     assert np.array_equal(loaded.protected_mask, protected_mask)
 
 
-def test_ui_page_regions_are_not_sent_to_cleaner() -> None:
+def test_ui_page_story_region_is_sent_to_cleaner() -> None:
     source = np.full((32, 32, 3), 100, np.uint8)
     mask = np.zeros((32, 32), np.uint8)
     mask[8:16, 8:16] = 255
@@ -447,10 +447,6 @@ def test_ui_page_regions_are_not_sent_to_cleaner() -> None:
             features=PageFeatures(0.1, 0.1, 0.1, 0.9, 0),
         )
 
-    class FailingCleaner:
-        def clean(self, *_args):
-            raise AssertionError("UI region reached cleaner")
-
     pipeline = CleaningPipeline(
         detector=NoTextDetector(),
         refiner=lambda _source, _detection: RefinedMask(
@@ -459,9 +455,9 @@ def test_ui_page_regions_are_not_sent_to_cleaner() -> None:
             np.zeros_like(mask),
         ),
         cleaners={
-            "flat": FailingCleaner(),
-            "gradient": FailingCleaner(),
-            "artwork": FailingCleaner(),
+            "flat": SolidCleaner(0),
+            "gradient": SolidCleaner(0),
+            "artwork": SolidCleaner(0),
         },
         page_classifier=ui_page,
         protection_detector=_empty_protection,
@@ -470,11 +466,10 @@ def test_ui_page_regions_are_not_sent_to_cleaner() -> None:
 
     output = pipeline.run(source)
 
-    assert np.array_equal(output.clean_image, source)
-    assert not np.any(output.mask)
-    assert output.regions[0].status is RegionStatus.PRESERVED
-    assert output.regions[0].text_role is TextRole.PROTECTED
-    assert (
-        output.regions[0].automatic_action
-        is AutomaticAction.PRESERVE
+    assert np.all(
+        output.clean_image[mask > 0] < source[mask > 0]
     )
+    assert np.array_equal(output.clean_image[mask == 0], source[mask == 0])
+    assert np.any(output.mask)
+    assert output.regions[0].text_role is TextRole.NARRATION
+    assert output.regions[0].automatic_action is AutomaticAction.CLEAN

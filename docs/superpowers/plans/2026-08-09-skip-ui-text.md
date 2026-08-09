@@ -10,6 +10,8 @@
 
 ## Global Constraints
 
+> **Live-validation correction:** `PageRole.UI` and `PageRole.UNKNOWN` must not blanket-preserve a page. Only credits are blanket-preserved; UI and unknown pages use per-region semantics so confident dialogue and narration are cleaned while small interface labels remain protected. This correction supersedes older UI-page bypass expectations below.
+
 - Preserve interface-like text that is not part of the story.
 - Continue cleaning and translating dialogue, thoughts, and narration, including narration without a speech bubble.
 - Preserve HUD elements, menus, button labels, status values, counters, watermarks, credits, and SFX.

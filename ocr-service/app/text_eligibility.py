@@ -63,9 +63,7 @@ def classify_eligibility(
         return _preserve(TextRole.PROTECTED, 1.0, reasons, features)
 
     page_reason = {
-        PageRole.UI: ProtectionReason.UI_PAGE,
         PageRole.CREDITS: ProtectionReason.CREDIT_PAGE,
-        PageRole.UNKNOWN: ProtectionReason.LOW_CONFIDENCE,
     }.get(page.role)
     if page_reason is not None:
         return _preserve(

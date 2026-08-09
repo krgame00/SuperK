@@ -19,7 +19,8 @@ The system must continue processing:
 
 ### Cleaning policy
 
-- Preserve every detected region on pages classified as `ui` or `credits`.
+- Preserve every detected region on pages classified as `credits`.
+- On `ui` and `unknown` pages, classify each region independently: clean confident dialogue and narration, while preserving small low-confidence interface labels.
 - Preserve `sfx` and protected regions as before.
 - On comic pages, continue cleaning confident `dialogue` and `narration` regions.
 - Do not automatically clean every low-confidence `review` region. Preserve review regions that look like small, isolated interface labels rather than sentence-bearing story text.
@@ -39,8 +40,8 @@ The mixed-page review rule should use existing geometric features and page-relat
 ### Data flow
 
 1. The cleaning service classifies the page and each detected region.
-2. UI/credit pages and interface-like review regions are preserved.
-3. Dialogue and narration regions are cleaned.
+2. Credit pages and interface-like review regions are preserved.
+3. Dialogue and narration regions are cleaned, including on pages classified as `ui` or `unknown`.
 4. Gemini examines the Original and returns only story-bearing text boxes.
 5. The client renders those boxes on the Clean background and caches by Original URL.
 
@@ -53,7 +54,8 @@ The mixed-page review rule should use existing geometric features and page-relat
 
 ## Testing
 
-- UI and credit pages remain pixel-identical after automatic cleaning.
+- Credit pages remain pixel-identical after automatic cleaning.
+- UI and unknown pages clean confident story text while preserving small interface labels.
 - A mixed comic/UI page preserves small scattered labels but cleans confident dialogue.
 - Standalone narration without a bubble is still cleaned and translated.
 - The translation prompt excludes UI/HUD/watermark text and no longer forces all floating/background text.

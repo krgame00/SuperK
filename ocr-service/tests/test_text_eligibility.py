@@ -207,29 +207,50 @@ def test_qr_intersection_remains_preserved_on_comic_page() -> None:
     assert decision.text_role is TextRole.PROTECTED
 
 
-@pytest.mark.parametrize(
-    ("role", "reason"),
-    [
-        (PageRole.UI, ProtectionReason.UI_PAGE),
-        (PageRole.CREDITS, ProtectionReason.CREDIT_PAGE),
-        (PageRole.UNKNOWN, ProtectionReason.LOW_CONFIDENCE),
-    ],
-)
-def test_noncomic_page_roles_preserve_detected_text(
+def test_credit_page_preserves_detected_text() -> None:
+    decision = _classify(
+        _features(enclosure=1),
+        page=_page(PageRole.CREDITS),
+    )
+
+    assert decision.text_role is TextRole.PROTECTED
+    assert decision.action is AutomaticAction.PRESERVE
+    assert decision.protection_reasons == [ProtectionReason.CREDIT_PAGE]
+
+
+@pytest.mark.parametrize("role", [PageRole.UI, PageRole.UNKNOWN])
+def test_confident_dialogue_is_cleaned_on_noncredit_pages(
     role: PageRole,
-    reason: ProtectionReason,
 ) -> None:
     decision = _classify(
         _features(enclosure=1),
         page=_page(role),
     )
 
-    assert decision.text_role is TextRole.PROTECTED
-    assert decision.action is AutomaticAction.PRESERVE
-    assert decision.protection_reasons == [reason]
+    assert decision.text_role is TextRole.DIALOGUE
+    assert decision.action is AutomaticAction.CLEAN
+    assert decision.protection_reasons == []
 
 
-def test_small_unenclosed_comic_label_is_preserved() -> None:
+@pytest.mark.parametrize("role", [PageRole.UI, PageRole.UNKNOWN])
+def test_confident_narration_is_cleaned_on_noncredit_pages(
+    role: PageRole,
+) -> None:
+    decision = _classify(
+        _features(uniformity=0.9, rectangular=0.9),
+        page=_page(role),
+    )
+
+    assert decision.text_role is TextRole.NARRATION
+    assert decision.action is AutomaticAction.CLEAN
+    assert decision.protection_reasons == []
+
+
+@pytest.mark.parametrize(
+    "role",
+    [PageRole.COMIC, PageRole.UI, PageRole.UNKNOWN],
+)
+def test_small_unenclosed_label_is_preserved(role: PageRole) -> None:
     image = np.full((100, 100, 3), 255, np.uint8)
     mask = np.zeros((100, 100), np.uint8)
     mask[30:34, 30:40] = 255
@@ -244,7 +265,7 @@ def test_small_unenclosed_comic_label_is_preserved() -> None:
         image,
         mask,
         region,
-        _page(PageRole.COMIC),
+        _page(role),
         _protection(),
         feature_extractor=_extractor(_features()),
     )
