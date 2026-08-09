@@ -115,3 +115,47 @@ test("text route returns 504 for Gemini timeout", async () => {
   });
   expect(body.error).not.toBe("Internal Server Error");
 });
+
+test("image prompt translates story text and excludes interface labels", async () => {
+  process.env.GEMINI_API_KEY = "server-key";
+  requestGeminiMock.mockResolvedValue({
+    data: {
+      candidates: [
+        {
+          content: { parts: [{ text: '{"bubbles":[]}' }] },
+        },
+      ],
+    },
+    keyIndex: 0,
+    model: "test-model",
+  });
+  const request = new Request("http://localhost/api/translate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      imageBase64: "valid-base64",
+      mimeType: "image/png",
+      targetLang: "Thai",
+    }),
+  });
+
+  const response = await translateImage(request);
+  expect(response.status).toBe(200);
+
+  const options = requestGeminiMock.mock.calls[0][0];
+  const payload = options.payload as {
+    contents: Array<{ parts: Array<{ text?: string }> }>;
+  };
+  const prompt = payload.contents[0].parts[0].text ?? "";
+
+  expect(prompt).toContain("dialogue, thoughts, and narration");
+  expect(prompt).toContain("IGNORE interface text");
+  expect(prompt).toContain("HUD");
+  expect(prompt).toContain("watermarks");
+  expect(prompt).toContain(
+    "Narration may appear without a speech bubble",
+  );
+  expect(prompt).not.toContain("MUST include ALL dialogue blocks");
+  expect(prompt).not.toContain("Force extraction");
+  expect(prompt).not.toContain("large red text");
+});

@@ -49,14 +49,15 @@ export async function POST(req: Request) {
       `- Arrange sentences beautifully according to native Thai idioms and phrasing (เรียบเรียงประโยคให้สละสลวยเหมือนคนไทยพูดกันในชีวิตจริง ไม่แปลตรงตัว).\n`+
       `- Do NOT use line breaks (\\n) in the translated text. Keep the text of each bubble on a single continuous line (ห้ามเว้นบรรทัดมั่ว ให้ต่อเป็นบรรทัดเดียวกัน).\n`+
       `- For Thai: Adapt pronouns (แก, ฉัน, นาย, ข้า, เอ็ง) and endings (ครับ, ค่ะ, วะ, เว้ย, สิ, นะ) based on character relationships and mood.\n`+
-      `- IGNORE all Sound Effects (SFX). Do NOT translate them. Only translate spoken dialogues, thoughts, and narration.\n`+
-      `- DO NOT hallucinate text on textures, leaves, clothing, shading, or backgrounds. If an area does not clearly contain readable text, ignore it completely.\n`+
+      `- Translate ONLY story-bearing dialogue, thoughts, and narration.\n`+
+      `- Narration may appear without a speech bubble; include it when it forms a readable story sentence or caption.\n`+
+      `- IGNORE interface text: HUD elements, menus, button labels, character or stat labels, counters, status values, credits, watermarks, and other small scattered labels.\n`+
+      `- IGNORE all Sound Effects (SFX). Do NOT translate them.\n`+
+      `- DO NOT hallucinate text on textures, leaves, clothing, shading, or backgrounds. If an area does not clearly contain readable story text, ignore it completely.\n`+
       `- Read order is usually Right-to-Left, Top-to-Bottom.\n`+
       `Output ONLY valid JSON, no markdown, no explanation.\n`+
       `Format: {"bubbles":[{"original_text": "text found in image", "t":"translated text in Thai","box":[ymin, xmin, ymax, xmax]}]}\n`+
       `box: bounding box coordinates in 0-1000 scale (ymin, xmin = top-left, ymax, xmax = bottom-right).\n`+
-      `IMPORTANT: The JSON key is 'bubbles', but you MUST include ALL dialogue blocks (including floating text, stylized red text, background text). Do NOT skip spoken text or thoughts.\n`+
-      `CRITICAL: Force extraction. You must first transcribe the text into 'original_text', then translate it into 't'. I will check if you missed the large red text on the left.\n`+
       `ALL translations in 't' MUST be in ${targetLang || 'Thai'}.\n`+
       `If no text found: {"bubbles":[]}`;
 
