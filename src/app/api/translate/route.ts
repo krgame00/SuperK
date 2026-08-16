@@ -117,6 +117,7 @@ export async function POST(req: Request) {
       MODELS = [modelPreference];
     }
 
+D
     let data: GeminiResponseData;
     try {
       const result = await requestGemini<GeminiResponseData>({
@@ -137,6 +138,7 @@ export async function POST(req: Request) {
           },
           { status: error.status },
         );
+
       }
       throw error;
     }
