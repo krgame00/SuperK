@@ -202,6 +202,33 @@
     </select>
   </div>
 
+  <div class="form-group">
+    <label for="cleanMode">โหมดลบข้อความ (Inpaint Mode)</label>
+    <select id="cleanMode">
+      <option value="auto" selected>⚡ Auto Hybrid (อัตโนมัติ - แนะนำ!)</option>
+      <option value="solid">⚪ Solid Clean (มังงะขาวดำ - ถมขาวเนียน 0ms ฟรี)</option>
+      <option value="inpaint">🎨 Smart Inpaint (เว็บตูนสี - สุ่มสีกลมกลืนฉากหลัง ฟรี)</option>
+      <option value="hf-lama">🦙 Hugging Face LaMa AI (ซ่อมฉากหลังสีเนียนกริบ ฟรี)</option>
+      <option value="stroke">✨ Text Stroke Only (ขอบขาวเนียนโปร่งใส)</option>
+    </select>
+  </div>
+
+  <div class="form-group">
+    <label for="hfToken">Hugging Face Token (เสริมสำหรับ LaMa AI)</label>
+    <input type="password" id="hfToken" placeholder="hf_..." />
+    <div style="font-size: 10px; color: var(--muted); margin-top: 4px;">
+      รับ Access Token ฟรีได้จาก <a href="https://huggingface.co/settings/tokens" target="_blank">Hugging Face Settings</a>
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label for="customInpaintUrl">Colab LaMa Server URL (ทางเลือกที่ 1)</label>
+    <input type="text" id="customInpaintUrl" placeholder="https://xxxx.ngrok-free.app/inpaint" />
+    <div style="font-size: 10px; color: var(--muted); margin-top: 4px;">
+      วาง URL ที่ได้จาก Google Colab เพื่อใช้ LaMa AI GPU ฟรี
+    </div>
+  </div>
+
   <button id="btnSave" class="btn-save">
     <span>💾 บันทึกการตั้งค่า</span>
   </button>

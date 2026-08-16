@@ -4,6 +4,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const apiKeyEl = document.getElementById('apiKey');
   const targetLangEl = document.getElementById('targetLang');
   const modelPreferenceEl = document.getElementById('modelPreference');
+  const cleanModeEl = document.getElementById('cleanMode');
+  const hfTokenEl = document.getElementById('hfToken');
+  const customInpaintUrlEl = document.getElementById('customInpaintUrl');
   const btnSave = document.getElementById('btnSave');
   const statusBadge = document.getElementById('statusBadge');
 
@@ -11,12 +14,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   const settings = await chrome.storage.sync.get({
     apiKey: '',
     targetLang: 'Thai',
-    modelPreference: 'gemini-3.5-flash-lite'
+    modelPreference: 'gemini-3.5-flash-lite',
+    cleanMode: 'auto',
+    hfToken: 'hf_<REMOVED>',
+    customInpaintUrl: ''
   });
 
   apiKeyEl.value = settings.apiKey;
   targetLangEl.value = settings.targetLang;
   modelPreferenceEl.value = settings.modelPreference;
+  cleanModeEl.value = settings.cleanMode;
+  if (hfTokenEl) hfTokenEl.value = settings.hfToken || 'hf_<REMOVED>';
+  if (customInpaintUrlEl) customInpaintUrlEl.value = settings.customInpaintUrl || '';
 
   updateStatus(settings.apiKey);
 
@@ -25,11 +34,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     const apiKey = apiKeyEl.value.trim();
     const targetLang = targetLangEl.value;
     const modelPreference = modelPreferenceEl.value;
+    const cleanMode = cleanModeEl.value;
+    const hfToken = hfTokenEl ? hfTokenEl.value.trim() : '';
+    const customInpaintUrl = customInpaintUrlEl ? customInpaintUrlEl.value.trim() : '';
 
     await chrome.storage.sync.set({
       apiKey,
       targetLang,
-      modelPreference
+      modelPreference,
+      cleanMode,
+      hfToken,
+      customInpaintUrl
     });
 
     updateStatus(apiKey);
