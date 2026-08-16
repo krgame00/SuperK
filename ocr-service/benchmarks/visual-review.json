@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "pages": [
+    {
+      "sha256": "585bd912697b835132efc6afbc336d38074235dcdc6f8ccf114bcf72c944e3bf",
+      "categories": ["dialogue"],
+      "decision": "pass",
+      "reason": "eligible dialogue marks are removed without visible line-art damage"
+    },
+    {
+      "sha256": "c1ef101701269af0c73fbf8e89f6e225058824c08d98aa31a069cb18638935a7",
+      "categories": ["dialogue"],
+      "decision": "pass",
+      "reason": "bubble fill stays smooth and preserves the original outline"
+    },
+    {
+      "sha256": "1929134de43af7d01ac5f76cfeaad3d5ca3b177d814f8fcd498bc9f30efa096d",
+      "categories": ["dialogue"],
+      "decision": "pass",
+      "reason": "three bubble interiors are clean with character art unchanged"
+    },
+    {
+      "sha256": "28002631d9adea3225d03a2449d609d66a56592369cc932653576fef6dac4d79",
+      "categories": ["narration"],
+      "decision": "pass",
+      "reason": "one high-confidence free-standing mark is removed and ambiguous marks remain"
+    },
+    {
+      "sha256": "9606a3482157e3cf2542e0a35b03cd1059b82685dadb30597638fc6fc3c2e968",
+      "categories": ["narration"],
+      "decision": "pass",
+      "reason": "isolated eligible text is removed without altering the surrounding color art"
+    },
+    {
+      "sha256": "cfb6100a9852d4dda6efb9f793286fd040999d646a3c3a68b51bf40aa3065b97",
+      "categories": ["narration"],
+      "decision": "pass",
+      "reason": "caption and bubble fills are clean with no rectangular spill into artwork"
+    },
+    {
+      "sha256": "8122cf9dbd4b13f01e39c13b9205c062bf9ce988d3e4aba15a860600c0f993e3",
+      "categories": ["sfx"],
+      "decision": "pass",
+      "reason": "high-confidence artwork text is removed without panel or character damage"
+    },
+    {
+      "sha256": "64bac74f3acb06a426a337db7358bbe64b79176174e95d2ce665c62412289f13",
+      "categories": ["sfx"],
+      "decision": "pass",
+      "reason": "eligible text repairs preserve dense surrounding line art"
+    },
+    {
+      "sha256": "4035c95cecbdfd4049d77c5a7bdd7d16caa2f40050884b3d0fa714def4e073c4",
+      "categories": ["sfx"],
+      "decision": "pass",
+      "reason": "dense SFX page shows only targeted changes and no patch artifacts"
+    },
+    {
+      "sha256": "81e9c49b744b1f5b3960d5fb57a175328dc892491520a2d587c380764866b0da",
+      "categories": ["protected-heavy"],
+      "decision": "pass",
+      "reason": "credit text and QR page remain pixel-identical"
+    },
+    {
+      "sha256": "9c7c662c3a505a086aef6e1c0084967a2dada8f243b9f54da5e1c5cc779a0937",
+      "categories": ["protected-heavy"],
+      "decision": "pass",
+      "reason": "full interface page remains pixel-identical with UI text protected"
+    },
+    {
+      "sha256": "c740f9461d64372ae1fd0ef1465faaa0634c9158c99dd464457ed6614c5b4286",
+      "categories": ["protected-heavy"],
+      "decision": "pass",
+      "reason": "watermark remains intact while unrelated eligible text is repaired"
+    }
+  ]
+}

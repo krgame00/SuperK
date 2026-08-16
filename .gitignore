@@ -21,6 +21,17 @@
 /build
 /.worktrees/
 
+# ocr-service venv & models
+/ocr-service/venv/
+/ocr-service/.venv/
+/ocr-service/models/*.onnx
+/ocr-service/models/*.ckpt
+/ocr-service/models/*.pt
+/ocr-service/.cache/
+/ocr-service/benchmark-results/
+__pycache__/
+*.py[cod]
+
 # misc
 .DS_Store
 *.pem
@@ -40,3 +51,16 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# OCR service (local PaddleOCR - heavy)
+/ocr-service/
+# Scratch / probe files
+patch-probe.tmp
+original_content.js.txt
+
+# Hermes plans
+/.hermes/
+# Probe scratch
+patch-probe.md
+# Nested project (moved to own repo)
+/video-translator-app/

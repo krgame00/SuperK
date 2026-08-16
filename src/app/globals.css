@@ -42,9 +42,9 @@ body {
   padding: 0;
 }
 
-/* Hide translation overlay when toggled to view original */
-.show-original .tl-canvas,
-.show-original .tl-overlay {
+/* Only the Translated workspace layer shows generated text overlays. */
+.hide-translation .tl-canvas,
+.hide-translation .tl-overlay {
   opacity: 0 !important;
   pointer-events: none !important;
   transition: opacity 0.2s ease;

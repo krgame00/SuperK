@@ -1,0 +1,306 @@
+{
+  "version": 1,
+  "seed": 20260727,
+  "pages": [
+    {
+      "relative_path_hash": "1c8419d424656c9eaf387949b66be22e8af31baba3f052cf3a2cbcc19d193d2a",
+      "sha256": "7ea096ef0d2f527e0dbe0f2a22c04670f3410d91425a0cec9461c86772db23b3",
+      "width": 1280,
+      "height": 1837,
+      "categories": [
+        "white-bubble"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "50f150e72b3a0117ca0f517560ef2a2f63714f4c30419d50538ea4b666b08f44",
+      "sha256": "d4277b4ef69561bdcbd20b9aa2761910d6c842a068f785edcc99ca9f24e563dd",
+      "width": 1280,
+      "height": 1807,
+      "categories": [
+        "colored-bubble"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "f5ebf60aefb020b1ce10147959b9f3e1914c64de8b448338d4c239641b63d463",
+      "sha256": "585bd912697b835132efc6afbc336d38074235dcdc6f8ccf114bcf72c944e3bf",
+      "width": 1280,
+      "height": 1920,
+      "categories": [
+        "vertical-japanese"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "169b8369e3a6fde77dac81680ee1a77bb4181cc37fc5f221281e2e9720dbff48",
+      "sha256": "9f55219fbb690a7c3536c25db5fd438cfaf839a77270836c38bda45b5440a989",
+      "width": 1280,
+      "height": 1791,
+      "categories": [
+        "outlined-or-colored-text"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "bf5d2c27c6c8ee2b6ec435623ace98a24677018ee3daaee4e5a9186e9059d400",
+      "sha256": "da99b73ac8a55f64cb3bbfa8e8ff85b57c902f93114ed31acd5575983c1bbb5c",
+      "width": 1280,
+      "height": 1791,
+      "categories": [
+        "artwork-sfx"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "88d49834697a4b436631fbd03bc4dd01547a19d841622783992620bd49189d34",
+      "sha256": "c1ef101701269af0c73fbf8e89f6e225058824c08d98aa31a069cb18638935a7",
+      "width": 1280,
+      "height": 1791,
+      "categories": [
+        "screentone"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "0808079abc93ce3609349f52cdaa9cb1cf171a87f1c291b7124b4fe259f570a5",
+      "sha256": "8e27ff6139d1132ad02e388df020dc2328366443957ddd8746281d31603b1614",
+      "width": 1254,
+      "height": 1771,
+      "categories": [
+        "complex-color"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "e5acedb70dbdb84ce55a6291fcbc9258233d84f978023803cf7417f4ed647239",
+      "sha256": "4035c95cecbdfd4049d77c5a7bdd7d16caa2f40050884b3d0fa714def4e073c4",
+      "width": 1280,
+      "height": 1791,
+      "categories": [
+        "dense-text"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "63022f2ccda95b0f35f8f78293146052d44f6f0ce9027e2c5b51445aca8f66a3",
+      "sha256": "9606a3482157e3cf2542e0a35b03cd1059b82685dadb30597638fc6fc3c2e968",
+      "width": 1280,
+      "height": 1807,
+      "categories": [
+        "text-free"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "e0baee2ba57d942b697f9274c0d8b349c7c139a76b2ba132871e0e8f6b9c717b",
+      "sha256": "28002631d9adea3225d03a2449d609d66a56592369cc932653576fef6dac4d79",
+      "width": 1280,
+      "height": 1837,
+      "categories": [
+        "screentone"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "da36f5a0e0be1c6ea751ebb48d6676cf59c57d882aebea5d1100a040d8cd7bf4",
+      "sha256": "c20a59792ebb707107324d975c943f9db55042c4ee3ebee408988177d75b9ee5",
+      "width": 1280,
+      "height": 1807,
+      "categories": [
+        "screentone"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "902299e343837ac9f80400d313dea361188a8e26a2f073cf6e12917a4ca9ae25",
+      "sha256": "05f1fd0a9d3ae126dc4007ad400f712614446ad2c8c7fbcb6767ba3e3084d9a7",
+      "width": 1280,
+      "height": 1807,
+      "categories": [
+        "screentone"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "9c043ad40faa0b0198d3c0ce55cba2a3e9a27aa11b336f21aadbd5c7eda414f1",
+      "sha256": "44276f06694dbfd15a50ac8dc563024d36fa4a953967fc7ff45c7161d0d92831",
+      "width": 1280,
+      "height": 1807,
+      "categories": [
+        "screentone"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "2becaea93b84d22a473428ae1f6a712cc2c163670fbf755e9d538e3af16ef522",
+      "sha256": "1929134de43af7d01ac5f76cfeaad3d5ca3b177d814f8fcd498bc9f30efa096d",
+      "width": 1280,
+      "height": 1813,
+      "categories": [
+        "screentone"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "b1ed44c3180bfaae11ffd3ba0678665b1e8980b4ec3fbb75a066c96f0584babb",
+      "sha256": "f9bd312e28ddb99a9beb2ada366dd18961c2976b665a2a658acb38821b45a272",
+      "width": 1280,
+      "height": 1837,
+      "categories": [
+        "screentone"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "1e97670b7ecd6a76bac78d4d3e2393a15ef755b54b897032dcf9b74f676edec3",
+      "sha256": "e2760a17e083086771f2f7761337d3f62589d862a0db26c2c7e92135b82b6c96",
+      "width": 1280,
+      "height": 1807,
+      "categories": [
+        "screentone"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "99b06894d06d3ad6b25f8ec7a7b459eafc9d2343b8b608f998974cccb3ab1ceb",
+      "sha256": "0e38ef328fbc57ab45f729b23c1b40c99e546eb6c11472772ea0dc8527aab27d",
+      "width": 1280,
+      "height": 1837,
+      "categories": [
+        "screentone"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "88f776c169db52fc8eaae71ac42cbc5fea9583d12b372a4cd824996787a52548",
+      "sha256": "37ed3bb9050fddcf7890dd956da5a9fa3e49c46f26e289b20f069e463cc3e68c",
+      "width": 1280,
+      "height": 1807,
+      "categories": [
+        "screentone"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "dbdfcfcd3a487ba03f68d7be84245bae695fe942e3373c29f6b659caa3deb802",
+      "sha256": "b1eb44520512d2f9ec25884919c5ec8fb1ea05497ae4c52881646c37e66ddfd4",
+      "width": 1254,
+      "height": 1771,
+      "categories": [
+        "screentone"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "901982fc14c4cd13ca2d1a23cc92756477f4442fad6a900bb2b129ce7cebb3da",
+      "sha256": "8122cf9dbd4b13f01e39c13b9205c062bf9ce988d3e4aba15a860600c0f993e3",
+      "width": 1254,
+      "height": 1771,
+      "categories": [
+        "screentone"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "d860d932075d3183938584d35339852de7d0ee518319eb0bd3136753b523d0e8",
+      "sha256": "32584b871c89370b1fd297b8cd4cec5cd9fa373d08fca82ffe8db3567b1374e6",
+      "width": 1254,
+      "height": 1771,
+      "categories": [
+        "screentone"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "86064acd6d96a59ae6335ca676c4fc440d81c9fb6b5469d5b6dfa80451882b54",
+      "sha256": "64bac74f3acb06a426a337db7358bbe64b79176174e95d2ce665c62412289f13",
+      "width": 1280,
+      "height": 1807,
+      "categories": [
+        "screentone"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "41448951dc69aaf99b912def30e41a80df366b26fa335f0cbba6b21c88c9aff1",
+      "sha256": "cfb6100a9852d4dda6efb9f793286fd040999d646a3c3a68b51bf40aa3065b97",
+      "width": 1280,
+      "height": 1807,
+      "categories": [
+        "screentone"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "e3830bfc5c86bb81e5708635c4b633f1521a10fe7eef3bcc64fd9dad6946622f",
+      "sha256": "a0b90fb20f03c54bcf013265b29fcd4763775d919a7e1874205646dd0ea4ce57",
+      "width": 1280,
+      "height": 1920,
+      "categories": [
+        "screentone"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "d6bff754f14f3466c83d4d533d317f264032f11735442627ebcc8530e72c2e04",
+      "sha256": "e47797a60f166dd1bed64ddeb90eb1bf23696f4bfe30c0c35eb1a095484a1439",
+      "width": 1280,
+      "height": 1837,
+      "categories": [
+        "screentone"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "1b976a9c6d18b81dfdd7a05a17d2ed73b54e6ba5a15bf44119052e81742bd205",
+      "sha256": "baffa4d2928ad83cb52fb5030691bbdf50a14e196d5ec0114c47082d2b485ff8",
+      "width": 1280,
+      "height": 1920,
+      "categories": [
+        "screentone"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "6071ec289adbcdf5379d94c49afac73c00217337369c6196427aaac23fc37eac",
+      "sha256": "748e3bc948be002994fea2537671e74edbee99e4bafff044c4fc77096f9f0d20",
+      "width": 1254,
+      "height": 1771,
+      "categories": [
+        "screentone"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "9ff0f64a8ceac1c2f5712177ccfa48a000a603eaf153f05b92af1f0a500c204e",
+      "sha256": "62946071e533f90d0093949001bc82d24679c533b74dcda6f004c15b92ec4550",
+      "width": 1280,
+      "height": 1807,
+      "categories": [
+        "screentone"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "c42bacf6519b6566f67b78cb9622192a8125322a69b68b17cbb8cd1543a18990",
+      "sha256": "8c8179d0ea07f6e6e3a9c2c61f2e74f770f9f6c0e0d9dfab98409cc7b9c25612",
+      "width": 1280,
+      "height": 1791,
+      "categories": [
+        "screentone"
+      ],
+      "review_label": "original_comic"
+    },
+    {
+      "relative_path_hash": "5248af34d12a18448b3c9aff64735be2c7eb09d6fdcd745c09515116b85999ff",
+      "sha256": "0f42a5893c3c670ff3605fec63fde6e7b76eae204a7c711dd568d8d45cb809c2",
+      "width": 1280,
+      "height": 1807,
+      "categories": [
+        "screentone"
+      ],
+      "review_label": "original_comic"
+    }
+  ]
+}

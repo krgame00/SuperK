@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://superk.local/schemas/cleaning-benchmark-manifest.json",
+  "title": "SuperK cleaning benchmark manifest",
+  "type": "object",
+  "required": ["version", "seed", "pages"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "seed": { "type": "integer" },
+    "pages": {
+      "type": "array",
+      "minItems": 30,
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "required": [
+          "relative_path_hash",
+          "sha256",
+          "width",
+          "height",
+          "categories",
+          "review_label"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "relative_path_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "width": { "type": "integer", "minimum": 1 },
+          "height": { "type": "integer", "minimum": 1 },
+          "review_label": { "const": "original_comic" },
+          "categories": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "white-bubble",
+                "colored-bubble",
+                "vertical-japanese",
+                "outlined-or-colored-text",
+                "artwork-sfx",
+                "screentone",
+                "complex-color",
+                "dense-text",
+                "text-free"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

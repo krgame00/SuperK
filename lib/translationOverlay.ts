@@ -1,13 +1,19 @@
 
 import { undoManager } from './undoManager';
 
-export const downloadTranslatedImage = (viewMode: "single" | "scroll" | "offscreen", currentPage: number, defaultFilename = "translated.png", returnDataUrl = false) => {
-  let container;
-  if (viewMode === "offscreen") {
+export const downloadTranslatedImage = (
+  viewMode: "single" | "scroll" | "offscreen",
+  currentPage: number,
+  defaultFilename = "translated.png",
+  returnDataUrl = false,
+  containerOverride?: Element,
+) => {
+  let container: Element | null | undefined = containerOverride;
+  if (!container && viewMode === "offscreen") {
     container = document.getElementById("offscreen-container");
-  } else if (viewMode === "scroll") {
+  } else if (!container && viewMode === "scroll") {
     container = document.querySelector(`#spage-${currentPage}`);
-  } else {
+  } else if (!container) {
     container = document.getElementById("pageContainer");
   }
   if (!container) return null;
@@ -24,13 +30,7 @@ export const downloadTranslatedImage = (viewMode: "single" | "scroll" | "offscre
   const ctx = exportCanvas.getContext("2d");
   if (!ctx) return null;
 
-  // Check for inpainted background first
-  const inpaintedBg = container.querySelector("#inpainted-bg") as HTMLCanvasElement;
-  if (inpaintedBg) {
-    ctx.drawImage(inpaintedBg, 0, 0, iw, ih);
-  } else {
-    ctx.drawImage(img, 0, 0, iw, ih);
-  }
+  ctx.drawImage(img, 0, 0, iw, ih);
 
   const wrappers = container.querySelectorAll(".tl-canvas > div");
   wrappers.forEach((wrapper: any) => {
@@ -73,14 +73,15 @@ export const applyTranslationOverlay = async (
   currentPage: number,
   setTranslationResult: (msg: string | null) => void,
   onComplete?: (dataUrl: string) => void,
-  textStyleRef?: React.MutableRefObject<any>
+  textStyleRef?: React.MutableRefObject<any>,
+  containerOverride?: Element,
 ) => {
-  let container;
-  if (viewMode === "offscreen") {
+  let container: Element | null | undefined = containerOverride;
+  if (!container && viewMode === "offscreen") {
     container = document.getElementById("offscreen-container");
-  } else if (viewMode === "scroll") {
+  } else if (!container && viewMode === "scroll") {
     container = document.querySelector(`#spage-${currentPage}`);
-  } else {
+  } else if (!container) {
     container = document.getElementById("pageContainer");
   }
   
@@ -105,202 +106,6 @@ export const applyTranslationOverlay = async (
     const tlContainer = document.createElement("div");
     tlContainer.className = "tl-canvas";
     tlContainer.style.cssText = `position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:5;`;
-
-    let inpaintingFailed = false;
-
-    try {
-      setTranslationResult("⏳ Loading OpenCV in background...");
-      
-      const MAX_DIM = 4096;
-      let scale = 1;
-      if (iw > MAX_DIM || ih > MAX_DIM) {
-        scale = Math.min(MAX_DIM / iw, MAX_DIM / ih);
-      }
-      const sw = Math.floor(iw * scale);
-      const sh = Math.floor(ih * scale);
-
-      const maskCanvas = document.createElement('canvas');
-      maskCanvas.width = sw; maskCanvas.height = sh;
-      const mctx = maskCanvas.getContext('2d')!;
-      mctx.fillStyle = 'black';
-      mctx.fillRect(0, 0, sw, sh);
-
-      mctx.fillStyle = 'white';
-      
-      const rois: {x: number, y: number, w: number, h: number}[] = [];
-      
-      let fallbackY = 10;
-      
-      real.forEach(b => {
-        let rawX = 50, rawY = 50, rawW = 22, rawH = 10;
-        let isInvalidBox = b.isInvalidBox === true;
-
-        if (Array.isArray(b.box) && b.box.length === 4) {
-          const [ymin, xmin, ymax, xmax] = b.box;
-          rawX = (xmin + xmax) / 2 / 10;
-          rawY = (ymin + ymax) / 2 / 10;
-          rawW = Math.abs(xmax - xmin) / 10;
-          rawH = Math.abs(ymax - ymin) / 10;
-          
-          // Detect hallucinated full-screen boxes or zero-size boxes
-          // Only flag if box covers >= 85% of both width and height (e.g. full-page summary [0,0,1000,1000])
-          if ((rawW >= 85 && rawH >= 85) || (rawW === 0 && rawH === 0)) {
-            isInvalidBox = true;
-          }
-        } else {
-          isInvalidBox = true;
-        }
-
-        if (isInvalidBox) {
-          // Keep rawX/rawY from real box if available, otherwise stack near top margin instead of dead center (rawX=50)
-          if (Array.isArray(b.box) && b.box.length === 4 && (b.box[1] !== 0 || b.box[3] !== 1000)) {
-            rawX = (b.box[1] + b.box[3]) / 2 / 10;
-            rawY = (b.box[0] + b.box[2]) / 2 / 10;
-          } else {
-            rawX = 50;
-            rawY = fallbackY;
-            fallbackY = (fallbackY + 15 > 85) ? 8 : fallbackY + 12;
-          }
-          rawW = 30;
-          rawH = 15;
-          b.isInvalidBox = true; // Flag for renderBubble to draw a background
-        } else {
-          // Normalize legacy fields if needed
-          if (rawX > 100 || rawY > 100 || rawW > 100 || rawH > 100) {
-            rawX = rawX / 10; rawY = rawY / 10; rawW = rawW / 10; rawH = rawH / 10;
-          }
-        }
-
-        const cx = (Math.max(0, Math.min(rawX, 100)) / 100) * iw;
-        const cy = (Math.max(0, Math.min(rawY, 100)) / 100) * ih;
-        let bw = (Math.max(12, Math.min(rawW, 60)) / 100) * iw;
-        let bh = (Math.max(6, Math.min(rawH, 45)) / 100) * ih;
-        
-        // Shrink mask area by 5% from each edge to avoid bleeding into surrounding artwork
-        const shrink = 0.95;
-        const maskBw = bw * shrink;
-        const maskBh = bh * shrink;
-        
-        const pad = 0;
-        const rx = Math.max(0, Math.round((cx - maskBw/2) * scale));
-        const ry = Math.max(0, Math.round((cy - maskBh/2) * scale));
-        const rw = Math.min(sw - rx, Math.round(maskBw * scale));
-        const rh = Math.min(sh - ry, Math.round(maskBh * scale));
-        
-        if (!isInvalidBox && rw > 0 && rh > 0) {
-          rois.push({x: rx, y: ry, w: rw, h: rh});
-          // Mark only text-like pixels (bright/white) inside the box instead of solid rectangle
-          // This preserves character faces, hair, and artwork behind floating text
-          b._maskRect = { rx, ry, rw, rh };
-        }
-      });
-
-      const srcCanvas = document.createElement('canvas');
-      srcCanvas.width = sw; srcCanvas.height = sh;
-      const sctx = srcCanvas.getContext('2d')!;
-      sctx.drawImage(img, 0, 0, sw, sh);
-
-      const srcData = sctx.getImageData(0, 0, sw, sh);
-      
-      // Smart per-pixel mask: only mark text-like pixels (bright/high-contrast) inside each bubble box
-      // This preserves character artwork, faces, and hair that overlap with text regions
-      real.forEach(b => {
-        if (!b._maskRect) return;
-        const { rx, ry, rw, rh } = b._maskRect;
-        
-        // First pass: compute average brightness of the box to determine text color
-        let totalBrightness = 0;
-        let pixelCount = 0;
-        for (let py = ry; py < ry + rh && py < sh; py++) {
-          for (let px = rx; px < rx + rw && px < sw; px++) {
-            const idx = (py * sw + px) * 4;
-            const brightness = (srcData.data[idx] * 0.299 + srcData.data[idx+1] * 0.587 + srcData.data[idx+2] * 0.114);
-            totalBrightness += brightness;
-            pixelCount++;
-          }
-        }
-        const avgBrightness = pixelCount > 0 ? totalBrightness / pixelCount : 128;
-        
-        // Determine if text is light-on-dark or dark-on-light
-        const isLightText = avgBrightness < 140;
-        
-        // Threshold: mask pixels that look like text
-        // For light text on dark bg: mask bright pixels (brightness > 180)
-        // For dark text on light bg: mask dark pixels (brightness < 80)
-        const brightThresh = isLightText ? 175 : 80;
-        
-        for (let py = ry; py < ry + rh && py < sh; py++) {
-          for (let px = rx; px < rx + rw && px < sw; px++) {
-            const idx = (py * sw + px) * 4;
-            const r = srcData.data[idx], g = srcData.data[idx+1], b2 = srcData.data[idx+2];
-            const brightness = r * 0.299 + g * 0.587 + b2 * 0.114;
-            
-            let isText = false;
-            if (isLightText) {
-              // Light text: mask bright pixels + near-white pixels  
-              isText = brightness > brightThresh;
-            } else {
-              // Dark text: mask dark pixels
-              isText = brightness < brightThresh;
-            }
-            
-            if (isText) {
-              const mIdx = (py * sw + px) * 4;
-              mctx.fillRect(px, py, 1, 1);
-            }
-          }
-        }
-      });
-      
-      const maskData = mctx.getImageData(0, 0, sw, sh);
-      
-      setTranslationResult("⏳ Cleaning original text (Inpainting in background)...");
-
-      const worker = new Worker('/cv.worker.js');
-      
-      const inpaintedBuffer = await new Promise<Uint8ClampedArray>((resolve, reject) => {
-         worker.onmessage = (e) => {
-            if (e.data.success) {
-               resolve(e.data.outData);
-            } else {
-               reject(new Error(e.data.error || "Worker failed"));
-            }
-            worker.terminate();
-         };
-         worker.onerror = (e) => {
-            reject(new Error("Worker error: " + e.message));
-            worker.terminate();
-         };
-         
-         setTimeout(() => {
-            reject(new Error("OpenCV Worker timeout"));
-            worker.terminate();
-         }, 30000);
-         
-         worker.postMessage({ srcData, maskData, sw, sh, rois });
-      });
-
-      const outImageData = new ImageData(inpaintedBuffer as any, sw, sh);
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = sw;
-      tempCanvas.height = sh;
-      const tctx = tempCanvas.getContext('2d')!;
-      tctx.putImageData(outImageData, 0, 0);
-      
-      const inpaintedCanvas = document.createElement('canvas');
-      inpaintedCanvas.id = "inpainted-bg";
-      inpaintedCanvas.className = "inpainted-bg";
-      inpaintedCanvas.width = iw;
-      inpaintedCanvas.height = ih;
-      const ictx = inpaintedCanvas.getContext('2d')!;
-      ictx.drawImage(tempCanvas, 0, 0, iw, ih);
-      
-      inpaintedCanvas.style.cssText = `position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1;`;
-      tlContainer.appendChild(inpaintedCanvas);
-    } catch(err) {
-      console.warn("OpenCV inpainting failed or timed out. Falling back to solid bubbles.", err);
-      inpaintingFailed = true;
-    }
 
     setTranslationResult("✨ วางข้อความแปลเสร็จเรียบร้อย!");
 
@@ -474,7 +279,7 @@ export const applyTranslationOverlay = async (
         const fgColor = ts.textColor;
         const outlineColor = ts.textOutline;
         
-        if (inpaintingFailed || b.isInvalidBox) {
+        if (b.isInvalidBox) {
            ctx.save();
            ctx.beginPath();
            ctx.roundRect(-pad, -pad, currentBw + pad * 2, currentBh + pad * 2, r);
@@ -792,7 +597,13 @@ export const applyTranslationOverlay = async (
 
     if (onComplete) {
       setTimeout(() => {
-        const url = downloadTranslatedImage(viewMode, currentPage, "", true);
+        const url = downloadTranslatedImage(
+          viewMode,
+          currentPage,
+          "",
+          true,
+          container,
+        );
         if (url) onComplete(url);
       }, 100);
     }

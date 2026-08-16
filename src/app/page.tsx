@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useTranslation } from "@/hooks/useTranslation";
 import { jsPDF } from "jspdf";
 import { Toaster } from "react-hot-toast";
@@ -8,15 +8,30 @@ import { downloadTranslatedImage, applyTranslationOverlay } from "@/lib/translat
 import { Upload, ChevronLeft, ChevronRight, Wand2, Download, Archive, Flame, Eye, EyeOff, Undo2, Redo2, Trash2, GalleryVertical, RectangleHorizontal, Menu, X, ChevronUp, ChevronDown, Maximize2, Minimize2, Settings, FileArchive, BookOpen, FileText, Sparkles } from "lucide-react";
 import { undoManager } from "@/lib/undoManager";
 import JSZip from "jszip";
+import { useCleaning } from "@/hooks/useCleaning";
+import {
+  CleaningToolbar,
+  type WorkspaceLayer,
+} from "@/components/cleaning/CleaningToolbar";
+import { MaskEditor } from "@/components/cleaning/MaskEditor";
+import { MaskLegend } from "@/components/cleaning/MaskLegend";
+import type {
+  CleanerOverride,
+  ManualRegionAction,
+} from "@/lib/cleaning/types";
 
 export default function WorkspacePage() {
   const [pages, setPages] = useState<{url: string, name: string}[]>([]);
   const [currentPage, setCurrentPage] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
-  const [showOriginal, setShowOriginal] = useState(false);
+  const [workspaceLayer, setWorkspaceLayer] =
+    useState<WorkspaceLayer>("original");
   const [viewLayout, setViewLayout] = useState<'single' | 'scroll'>('single');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isThumbnailsCollapsed, setIsThumbnailsCollapsed] = useState(false);
+  const [isMaskEditorOpen, setIsMaskEditorOpen] = useState(false);
+  const uiOperationLockRef = useRef(false);
+  const [isUiOperationBusy, setIsUiOperationBusy] = useState(false);
 
   // Touch Swipe Gesture State for Mobile Reader
   const touchStartXRef = useRef<number | null>(null);
@@ -71,6 +86,69 @@ export default function WorkspacePage() {
   const [canRedo, setCanRedo] = useState(false);
 
   const pageUrls = useMemo(() => pages.map(p => p.url), [pages]);
+  const {
+    cleanPage,
+    cleanCurrentPage,
+    retryRegion,
+    currentResult: currentCleaningResult,
+    progress: cleaningProgress,
+    error: cleaningError,
+    resultsByPage: cleaningResultsByPage,
+  } = useCleaning({ pages: pageUrls, currentPage });
+
+  const handleCleanCurrentPage = async () => {
+    if (
+      uiOperationLockRef.current ||
+      isTranslating ||
+      isTranslatingAll ||
+      cleaningProgress
+    ) return;
+    const page = pages[currentPage];
+    if (!page) return;
+
+    uiOperationLockRef.current = true;
+    setIsUiOperationBusy(true);
+    try {
+      const response = await fetch(page.url);
+      if (!response.ok) {
+        throw new Error(`Failed to load page for cleaning (${response.status}).`);
+      }
+      await cleanCurrentPage(await response.blob());
+      invalidatePageTranslation(page.url);
+      setWorkspaceLayer("clean");
+    } finally {
+      uiOperationLockRef.current = false;
+      setIsUiOperationBusy(false);
+    }
+  };
+
+  const preparePageForTranslation = useCallback(
+    async (pageUrl: string, pageIndex: number) => {
+      const cachedResult = cleaningResultsByPage.get(pageUrl);
+      if (cachedResult) {
+        return {
+          recognitionUrl: pageUrl,
+          backgroundUrl: cachedResult.cleanUrl,
+        };
+      }
+
+      const page = pages[pageIndex];
+      if (!page || page.url !== pageUrl) {
+        throw new Error("Page is no longer available for cleaning.");
+      }
+
+      const response = await fetch(pageUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to load page for cleaning (${response.status}).`);
+      }
+      const result = await cleanPage(pageUrl, await response.blob());
+      return {
+        recognitionUrl: pageUrl,
+        backgroundUrl: result.cleanUrl,
+      };
+    },
+    [cleanPage, cleaningResultsByPage, pages],
+  );
 
   const {
     targetLang,
@@ -100,12 +178,86 @@ export default function WorkspacePage() {
     textStyle,
     setTextStyle,
     restoreSavedSession,
-    clearSavedSession
+    clearSavedSession,
+    workflowPhase,
+    invalidatePageTranslation,
   } = useTranslation({
     currentPage,
     pages: pageUrls,
-    viewMode: "single"
+    viewMode: "single",
+    preparePageForTranslation,
   });
+
+  const currentPageUrl = pages[currentPage]?.url;
+  const hasCurrentTranslation = Boolean(
+    currentPageUrl &&
+      (activeBubbles.length > 0 ||
+        translatedImageCacheRef.current.has(currentPageUrl)),
+  );
+  const toggleOriginalTranslated = useCallback(() => {
+    setWorkspaceLayer((currentLayer) =>
+      currentLayer === "original" && hasCurrentTranslation
+        ? "translated"
+        : "original",
+    );
+  }, [hasCurrentTranslation]);
+
+  const translationBusy = isTranslating || isTranslatingAll;
+  const operationBusy =
+    isUiOperationBusy || translationBusy || Boolean(cleaningProgress);
+  const workflowMessage = translateAllProgress?.message ?? translationResult;
+
+  const handleTranslateCurrent = useCallback(async (): Promise<boolean> => {
+    if (
+      uiOperationLockRef.current ||
+      operationBusy ||
+      pages.length === 0
+    ) return false;
+
+    uiOperationLockRef.current = true;
+    setIsUiOperationBusy(true);
+    try {
+      const translated = await handleTranslate();
+      if (translated) setWorkspaceLayer("translated");
+      return translated;
+    } finally {
+      uiOperationLockRef.current = false;
+      setIsUiOperationBusy(false);
+    }
+  }, [handleTranslate, operationBusy, pages.length]);
+
+  const handleTranslateBook = useCallback(async (): Promise<void> => {
+    if (
+      uiOperationLockRef.current ||
+      operationBusy ||
+      pages.length === 0
+    ) return;
+
+    uiOperationLockRef.current = true;
+    setIsUiOperationBusy(true);
+    try {
+      setWorkspaceLayer("translated");
+      await handleTranslateAll();
+    } finally {
+      uiOperationLockRef.current = false;
+      setIsUiOperationBusy(false);
+    }
+  }, [handleTranslateAll, operationBusy, pages.length]);
+
+  const handleRetryRegion = async (
+    regionId: string,
+    mask: Blob,
+    cleaner: CleanerOverride,
+    action: ManualRegionAction,
+  ) => {
+    const result = await retryRegion(regionId, mask, cleaner, action);
+    const page = pages[currentPage];
+    if (page) {
+      invalidatePageTranslation(page.url);
+      setWorkspaceLayer("clean");
+    }
+    return result;
+  };
 
   const [savedSessionData, setSavedSessionData] = useState<{ pages: { url: string, name: string }[], currentPage: number } | null>(null);
 
@@ -121,12 +273,10 @@ export default function WorkspacePage() {
   // Keyboard shortcuts refs (to access latest state from event listener closure)
   const currentPageRef = useRef(currentPage);
   const pagesRef = useRef(pages);
-  const showOriginalRef = useRef(showOriginal);
-  const isTranslatingRef = useRef(isTranslating);
+  const operationBusyRef = useRef(operationBusy);
   useEffect(() => { currentPageRef.current = currentPage; }, [currentPage]);
   useEffect(() => { pagesRef.current = pages; }, [pages]);
-  useEffect(() => { showOriginalRef.current = showOriginal; }, [showOriginal]);
-  useEffect(() => { isTranslatingRef.current = isTranslating; }, [isTranslating]);
+  useEffect(() => { operationBusyRef.current = operationBusy; }, [operationBusy]);
 
   // Keyboard shortcuts + Undo/Redo state sync
   useEffect(() => {
@@ -171,20 +321,24 @@ export default function WorkspacePage() {
       }
       // T = Translate current page
       if (e.key === 't' || e.key === 'T') {
-        if (!isTranslatingRef.current && pagesRef.current.length > 0) {
-          handleTranslate();
+        if (
+          !uiOperationLockRef.current &&
+          !operationBusyRef.current &&
+          pagesRef.current.length > 0
+        ) {
+          void handleTranslateCurrent();
         }
       }
       // Space = Toggle Original/Translated
       if (e.key === ' ') {
         e.preventDefault();
-        setShowOriginal(prev => !prev);
+        toggleOriginalTranslated();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => { window.removeEventListener('keydown', handleKeyDown); unsub(); };
-  }, [handleTranslate]);
+  }, [handleTranslateCurrent, toggleOriginalTranslated]);
 
   // Clear undo stack when changing pages
   useEffect(() => { undoManager.clear(); }, [currentPage]);
@@ -194,7 +348,11 @@ export default function WorkspacePage() {
     setIsZipping(true);
 
     const getExportDataUrl = async (pageUrl: string, index: number): Promise<string> => {
-      if (index === currentPage && !showOriginal && activeBubbles.length > 0) {
+      if (
+        index === currentPage &&
+        workspaceLayer === "translated" &&
+        activeBubbles.length > 0
+      ) {
         const currentDataUrl = downloadTranslatedImage("single", index, "", true);
         if (currentDataUrl) return currentDataUrl;
       } 
@@ -241,7 +399,8 @@ export default function WorkspacePage() {
             clearTimeout(timeout);
             resolve(pageUrl);
           };
-          offscreenImg.src = pageUrl;
+          offscreenImg.src =
+            cleaningResultsByPage.get(pageUrl)?.cleanUrl ?? pageUrl;
         });
       }
       return pageUrl;
@@ -628,12 +787,12 @@ export default function WorkspacePage() {
             <div className="w-px h-5 bg-surface-hover mx-0.5" />
 
             <button
-              onClick={() => setShowOriginal(!showOriginal)}
-              disabled={activeBubbles.length === 0}
-              className={`px-2.5 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 transition-all duration-150 ${showOriginal ? 'text-primary bg-primary/10' : 'text-muted hover:text-foreground hover:bg-surface-hover'} disabled:opacity-30`}
-              title={showOriginal ? 'แสดงคำแปล' : 'ดูต้นฉบับ'}
+              onClick={toggleOriginalTranslated}
+              disabled={!hasCurrentTranslation}
+              className={`px-2.5 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 transition-all duration-150 ${workspaceLayer === "original" ? 'text-muted hover:text-foreground hover:bg-surface-hover' : 'text-primary bg-primary/10'} disabled:opacity-30`}
+              title={workspaceLayer === "original" ? 'แสดงคำแปล' : 'ดูต้นฉบับ'}
             >
-              {showOriginal ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              {workspaceLayer === "original" ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
             </button>
 
             <button
@@ -675,14 +834,14 @@ export default function WorkspacePage() {
           {/* ── Group 3: Translate Actions ── */}
           <div className="flex items-center gap-1.5">
             <button 
-              onClick={() => handleTranslate()}
-              disabled={isTranslating || pages.length === 0}
+              onClick={() => void handleTranslateCurrent()}
+              disabled={operationBusy || pages.length === 0}
               className="flex-shrink-0 bg-primary text-primary-content hover:bg-primary-hover disabled:opacity-50 px-4 py-1.5 rounded-md text-sm font-semibold flex items-center gap-2 transition-all duration-150 shadow-sm hover:shadow-md"
             >
               {isTranslating ? (
                 <span className="flex items-center gap-2">
                   <span className="animate-spin h-3 w-3 border-2 border-primary-content border-t-transparent rounded-full"></span>
-                  <span>กำลังแปล...</span>
+                  <span>{workflowPhase === "cleaning" ? "กำลังคลีน..." : "กำลังแปล..."}</span>
                 </span>
               ) : (
                 <span className="flex items-center gap-2">
@@ -698,7 +857,7 @@ export default function WorkspacePage() {
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-primary font-semibold flex items-center gap-1.5">
                       <span className="animate-spin h-3 w-3 border-2 border-primary border-t-transparent rounded-full"></span>
-                      {translateAllProgress ? `${translateAllProgress.current}/${translateAllProgress.total}` : 'เตรียม...'}
+                      {translateAllProgress?.message ?? 'เตรียม...'}
                     </span>
                     {translateAllProgress && (
                       <span className="text-muted font-medium">
@@ -729,8 +888,8 @@ export default function WorkspacePage() {
               </div>
             ) : (
               <button 
-                onClick={() => handleTranslateAll()}
-                disabled={isTranslating || pages.length === 0}
+                onClick={() => void handleTranslateBook()}
+                disabled={operationBusy || pages.length === 0}
                 className="flex-shrink-0 bg-gradient-to-r from-primary/20 to-primary/10 text-primary hover:from-primary/30 hover:to-primary/20 disabled:opacity-50 px-4 py-1.5 rounded-md text-sm font-semibold flex items-center gap-2 transition-all duration-150 border border-primary/20"
               >
                 <Sparkles className="w-4 h-4" />
@@ -749,7 +908,7 @@ export default function WorkspacePage() {
                 const filename = `SuperK_Page_${String(currentPage + 1).padStart(3, '0')}_${baseName}.${extension}`;
                 downloadTranslatedImage("single", currentPage, filename);
               }}
-              disabled={activeBubbles.length === 0 || showOriginal}
+              disabled={activeBubbles.length === 0 || workspaceLayer !== "translated"}
               className="text-foreground disabled:opacity-40 px-2.5 py-1.5 text-sm font-medium flex items-center gap-1.5 border-r border-surface-hover/60 hover:bg-surface-hover transition-all"
               title="ดาวน์โหลดหน้านี้"
             >
@@ -785,8 +944,8 @@ export default function WorkspacePage() {
         {/* Mobile Header Controls */}
         <div className="flex xl:hidden items-center gap-2">
           <button 
-            onClick={() => handleTranslate()}
-            disabled={isTranslating || pages.length === 0}
+            onClick={() => void handleTranslateCurrent()}
+            disabled={operationBusy || pages.length === 0}
             className="bg-primary text-primary-content hover:bg-primary-hover disabled:opacity-50 disabled:hover:bg-primary px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150"
           >
             {isTranslating ? (
@@ -826,7 +985,7 @@ export default function WorkspacePage() {
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-primary font-semibold flex items-center gap-1.5">
                       <span className="animate-spin h-3 w-3 border-2 border-primary border-t-transparent rounded-full"></span>
-                      {translateAllProgress ? `หน้า ${translateAllProgress.current}/${translateAllProgress.total}` : 'กำลังเตรียม...'}
+                      {translateAllProgress?.message ?? 'กำลังเตรียม...'}
                     </span>
                     {translateAllProgress && (
                       <span className="text-muted font-bold">
@@ -856,8 +1015,8 @@ export default function WorkspacePage() {
                 </div>
               ) : (
                 <button 
-                  onClick={() => { handleTranslateAll(); setIsMobileMenuOpen(false); }}
-                  disabled={isTranslating || pages.length === 0}
+                  onClick={() => { void handleTranslateBook(); setIsMobileMenuOpen(false); }}
+                  disabled={operationBusy || pages.length === 0}
                   className="w-full bg-gradient-to-r from-primary/20 to-primary/10 text-primary hover:from-primary/30 hover:to-primary/20 disabled:opacity-50 px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-all duration-150 border border-primary/20"
                 >
                   <Sparkles className="w-4 h-4" />
@@ -880,12 +1039,12 @@ export default function WorkspacePage() {
                 </button>
 
                 <button
-                  onClick={() => { setShowOriginal(!showOriginal); setIsMobileMenuOpen(false); }}
-                  disabled={activeBubbles.length === 0}
-                  className={`p-2.5 rounded-lg text-xs font-medium flex flex-col items-center justify-center gap-1.5 transition-all duration-150 border ${showOriginal ? 'text-primary bg-primary/10 border-primary/20' : 'bg-surface text-foreground border-transparent'}`}
+                  onClick={() => { toggleOriginalTranslated(); setIsMobileMenuOpen(false); }}
+                  disabled={!hasCurrentTranslation}
+                  className={`p-2.5 rounded-lg text-xs font-medium flex flex-col items-center justify-center gap-1.5 transition-all duration-150 border ${workspaceLayer === "original" ? 'bg-surface text-foreground border-transparent' : 'text-primary bg-primary/10 border-primary/20'}`}
                 >
-                  {showOriginal ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                  <span>{showOriginal ? 'แสดงคำแปล' : 'ดูต้นฉบับ'}</span>
+                  {workspaceLayer === "original" ? <Eye className="w-5 h-5" /> : <EyeOff className="w-5 h-5" />}
+                  <span>{workspaceLayer === "original" ? 'แสดงคำแปล' : 'ดูต้นฉบับ'}</span>
                 </button>
               </div>
             </div>
@@ -949,7 +1108,7 @@ export default function WorkspacePage() {
                   downloadTranslatedImage("single", currentPage, filename);
                   setIsMobileMenuOpen(false);
                 }}
-                disabled={activeBubbles.length === 0 || showOriginal}
+                disabled={activeBubbles.length === 0 || workspaceLayer !== "translated"}
                 className="w-full bg-surface text-foreground disabled:opacity-40 p-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2 mb-2 border border-transparent"
               >
                 <Download className="w-4 h-4" /> บันทึกหน้านี้
@@ -985,21 +1144,39 @@ export default function WorkspacePage() {
 
       {/* Main Workspace */}
       <main className={`flex-1 w-full mt-16 flex flex-col items-center transition-opacity duration-300 ${isDragging ? 'opacity-50' : 'opacity-100'} ${pages.length > 0 ? 'mb-24 sm:mb-28' : ''}`}>
-        {translationResult && (
+        {workflowMessage && (
           <div className="fixed top-20 z-40 bg-surface/80 backdrop-blur-sm border border-surface-hover text-foreground px-4 py-1.5 rounded-full text-sm shadow-sm animate-in fade-in slide-in-from-top-2 duration-300">
-            {translationResult}
+            {workflowMessage}
           </div>
         )}
 
         {pages.length > 0 ? (
           <div className="w-full flex flex-col items-center flex-1 px-2 sm:px-4 py-4 sm:py-6">
-            
+            <CleaningToolbar
+              hasPage={pages.length > 0 && !operationBusy}
+              hasResult={Boolean(currentCleaningResult)}
+              hasTranslated={hasCurrentTranslation}
+              layer={workspaceLayer}
+              onClean={() => void handleCleanCurrentPage()}
+              onEditMask={() => setIsMaskEditorOpen(true)}
+              onLayerChange={setWorkspaceLayer}
+              progress={cleaningProgress}
+              error={cleaningError}
+            />
+
             <div className="relative w-full flex justify-center items-center flex-1 min-h-[60vh]">
               {viewLayout === 'scroll' ? (
                 <div className="flex flex-col items-center gap-0 w-full max-w-3xl sm:max-w-4xl lg:max-w-5xl pb-32">
                   {pages.map((p, idx) => {
                     const isTranslated = translatedImageCacheRef.current.has(p.url);
-                    const imgSrc = (showOriginal || !isTranslated) ? p.url : translatedImageCacheRef.current.get(p.url)!;
+                    const cleanedSrc =
+                      cleaningResultsByPage.get(p.url)?.cleanUrl ?? p.url;
+                    const imgSrc =
+                      workspaceLayer === "original"
+                        ? p.url
+                        : workspaceLayer === "translated" && isTranslated
+                          ? translatedImageCacheRef.current.get(p.url)!
+                          : cleanedSrc;
                     return (
                       <div 
                         key={idx} 
@@ -1026,7 +1203,7 @@ export default function WorkspacePage() {
                 <div 
                   onTouchStart={handleTouchStart}
                   onTouchEnd={handleTouchEnd}
-                  className={`relative w-full max-w-full sm:max-w-3xl md:max-w-4xl lg:max-w-5xl xl:max-w-6xl flex justify-center items-center ${showOriginal ? 'show-original' : ''}`}
+                  className={`relative w-full max-w-full sm:max-w-3xl md:max-w-4xl lg:max-w-5xl xl:max-w-6xl flex justify-center items-center ${workspaceLayer === "translated" ? "" : "hide-translation"}`}
                 >
                   {/* Left Arrow Floating Button */}
                   {currentPage > 0 && (
@@ -1062,7 +1239,12 @@ export default function WorkspacePage() {
                       </div>
                     ) : (
                       <img 
-                        src={pages[currentPage].url} 
+                        src={
+                          workspaceLayer === "original"
+                            ? pages[currentPage].url
+                            : currentCleaningResult?.cleanUrl ??
+                              pages[currentPage].url
+                        }
                         alt={pages[currentPage].name} 
                         title={pages[currentPage].name}
                         onError={() => {
@@ -1070,6 +1252,48 @@ export default function WorkspacePage() {
                         }}
                         className="max-w-full max-h-[calc(100vh-160px)] sm:max-h-[calc(100vh-180px)] w-auto h-auto object-contain drop-shadow-sm select-none block"
                       />
+                    )}
+                    {workspaceLayer === "mask" && currentCleaningResult && (
+                      <>
+                        {[
+                          {
+                            url: currentCleaningResult.maskUrl,
+                            color: "rgba(255, 55, 80, .58)",
+                            label: "Eligible cleaning mask",
+                          },
+                          {
+                            url: currentCleaningResult.reviewMaskUrl,
+                            color: "rgba(255, 190, 40, .58)",
+                            label: "Review mask",
+                          },
+                          {
+                            url: currentCleaningResult.protectedMaskUrl,
+                            color: "rgba(45, 145, 255, .58)",
+                            label: "Protected mask",
+                          },
+                        ].map((maskLayer) => (
+                          <span
+                            key={maskLayer.label}
+                            role="img"
+                            aria-label={maskLayer.label}
+                            className="pointer-events-none absolute inset-0 mix-blend-screen"
+                            style={{
+                              backgroundColor: maskLayer.color,
+                              maskImage: `url(${maskLayer.url})`,
+                              WebkitMaskImage: `url(${maskLayer.url})`,
+                              maskPosition: "center",
+                              WebkitMaskPosition: "center",
+                              maskRepeat: "no-repeat",
+                              WebkitMaskRepeat: "no-repeat",
+                              maskSize: "100% 100%",
+                              WebkitMaskSize: "100% 100%",
+                            }}
+                          />
+                        ))}
+                        <MaskLegend
+                          regions={currentCleaningResult.regions}
+                        />
+                      </>
                     )}
                   </div>
 
@@ -1301,6 +1525,15 @@ export default function WorkspacePage() {
             )}
           </div>
         </div>
+      )}
+      {isMaskEditorOpen && currentCleaningResult && pages[currentPage] && (
+        <MaskEditor
+          sourceUrl={currentCleaningResult.cleanUrl}
+          maskUrl={currentCleaningResult.maskUrl}
+          regions={currentCleaningResult.regions}
+          onClose={() => setIsMaskEditorOpen(false)}
+          onRetry={handleRetryRegion}
+        />
       )}
     </div>
   );
