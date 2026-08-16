@@ -39,7 +39,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       sourceLang: "auto",
       modelPreference: "gemini-3.5-flash-lite",
       cleanMode: "auto",
-      hfToken: "hf_<REMOVED>"
+      hfToken: ""
     });
 
     try {

@@ -16,7 +16,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     targetLang: 'Thai',
     modelPreference: 'gemini-3.5-flash-lite',
     cleanMode: 'auto',
-    hfToken: 'hf_<REMOVED>',
+    hfToken: '',
     customInpaintUrl: ''
   });
 
@@ -24,7 +24,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   targetLangEl.value = settings.targetLang;
   modelPreferenceEl.value = settings.modelPreference;
   cleanModeEl.value = settings.cleanMode;
-  if (hfTokenEl) hfTokenEl.value = settings.hfToken || 'hf_<REMOVED>';
+  if (hfTokenEl) hfTokenEl.value = settings.hfToken || '';
   if (customInpaintUrlEl) customInpaintUrlEl.value = settings.customInpaintUrl || '';
 
   updateStatus(settings.apiKey);
