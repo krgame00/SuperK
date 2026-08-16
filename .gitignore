@@ -57,3 +57,10 @@ next-env.d.ts
 # Scratch / probe files
 patch-probe.tmp
 original_content.js.txt
+
+# Hermes plans
+/.hermes/
+# Probe scratch
+patch-probe.md
+# Nested project (moved to own repo)
+/video-translator-app/
