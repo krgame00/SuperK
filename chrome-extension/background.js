@@ -37,7 +37,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       apiKey: "",
       targetLang: "Thai",
       sourceLang: "auto",
-      modelPreference: "gemini-3.5-flash-lite"
+      modelPreference: "gemini-3.5-flash-lite",
+      cleanMode: "auto",
+      hfToken: ""
     });
 
     try {
@@ -47,12 +49,32 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       // 2. Call Gemini API
       const result = await translateImageWithGemini(base64Data, settings);
 
-      // 3. Send results to content script to overlay
+      let inpaintedImage = null;
+
+      // 3. Optional Colab / Hugging Face LaMa AI Inpaint
+      if (settings.customInpaintUrl && result.bubbles?.length > 0) {
+        try {
+          console.log("[SuperK] Requesting Colab LaMa AI Server Inpaint:", settings.customInpaintUrl);
+          inpaintedImage = await callColabInpaintServer(base64Data, result.bubbles, settings.customInpaintUrl);
+        } catch (colabErr) {
+          console.warn("[SuperK] Colab LaMa Inpaint failed, falling back:", colabErr);
+        }
+      } else if (settings.cleanMode === "hf-lama" && settings.hfToken && result.bubbles?.length > 0) {
+        try {
+          console.log("[SuperK] Requesting Hugging Face LaMa AI Inpaint...");
+          inpaintedImage = await callHuggingFaceInpaint(base64Data, result.bubbles, settings.hfToken);
+        } catch (hfErr) {
+          console.warn("[SuperK] HF LaMa Inpaint failed, falling back to Auto Hybrid:", hfErr);
+        }
+      }
+
+      // 4. Send results to content script to overlay
       chrome.tabs.sendMessage(tab.id, {
         action: "TRANSLATION_SUCCESS",
         imageUrl: imageUrl,
         bubbles: result.bubbles,
-        targetLang: settings.targetLang
+        targetLang: settings.targetLang,
+        inpaintedImage: inpaintedImage
       });
 
     } catch (err) {
@@ -88,12 +110,16 @@ async function translateImageWithGemini(base64Data, settings) {
     throw new Error("กรุณาใส่ Gemini API Key ในเมนู Extension ก่อนใช้งานครับ!");
   }
 
-  const prompt = `You are an expert manga translator. Detect all speech bubbles, text boxes, and floating text in this image. Translate to ${settings.targetLang || 'Thai'}.
+  const prompt = `You are an expert manga and webtoon translator. Detect all speech bubbles, text boxes, captions, and floating text in this image. Translate to ${settings.targetLang || 'Thai'}.
+CRITICAL RULES FOR BOUNDING BOXES:
+1. For multiline paragraphs, captions, or full text overlays, merge all lines into ONE SINGLE bounding box covering the entire text block [ymin, xmin, ymax, xmax]. Do NOT split multiline paragraphs into separate single-line boxes!
+2. Ensure the bounding box tightly bounds the entire text block including top, bottom, left, and right margins.
+
 Output ONLY valid JSON matching this schema:
 {
   "bubbles": [
     {
-      "original_text": "text in image",
+      "original_text": "full text in image",
       "t": "translated text in ${settings.targetLang || 'Thai'}",
       "box": [ymin, xmin, ymax, xmax]
     }
@@ -180,4 +206,84 @@ Notes:
   }
 
   throw new Error(`การแปลล้มเหลว: ${lastError}`);
+}
+
+// Helper: Call Hugging Face Inpaint API
+async function callHuggingFaceInpaint(base64Data, bubbles, hfToken) {
+  const token = hfToken.trim();
+  if (!token) return null;
+
+  const response = await fetch("https://api-inference.huggingface.co/models/Sanster/lama-cleaner-lamacleaner-lama", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      inputs: `data:image/png;base64,${base64Data}`
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`HF API returned HTTP ${response.status}`);
+  }
+
+  const blob = await response.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+// Helper: Call Colab LaMa Inpaint Server
+async function callColabInpaintServer(base64Data, bubbles, colabUrl) {
+  let url = colabUrl.trim();
+  if (!url) return null;
+  if (!url.endsWith('/inpaint')) {
+    url = url.replace(/\/+$/, '') + '/inpaint';
+  }
+
+  const formData = new FormData();
+  const imgBlob = base64ToBlob(base64Data, 'image/png');
+  formData.append('image', imgBlob, 'image.png');
+  const boxes = bubbles ? bubbles.map(b => b.box) : [];
+  formData.append('boxes', JSON.stringify(boxes));
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Bypass-Tunnel-Remainder': 'true',
+      'ngrok-skip-browser-warning': 'true'
+    },
+    body: formData
+  });
+
+  if (!res.ok) {
+    throw new Error(`Colab server returned HTTP ${res.status}`);
+  }
+
+  const blob = await res.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+function base64ToBlob(base64, mimeType) {
+  const byteChars = atob(base64);
+  const byteArrays = [];
+  for (let offset = 0; offset < byteChars.length; offset += 512) {
+    const slice = byteChars.slice(offset, offset + 512);
+    const byteNumbers = new Array(slice.length);
+    for (let i = 0; i < slice.length; i++) {
+      byteNumbers[i] = slice.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    byteArrays.push(byteArray);
+  }
+  return new Blob(byteArrays, { type: mimeType });
 }
