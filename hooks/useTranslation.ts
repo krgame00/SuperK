@@ -7,31 +7,7 @@ import {
 import { applyTranslationOverlay } from "@/lib/translationOverlay";
 import { saveProjectSession, loadProjectSession, clearProjectSession } from "@/lib/projectStore";
 import { resolveTranslationOutcome } from "@/lib/translationPipeline";
-
-const parseLLMJSON = (text: string) => {
-  if (!text) return null;
-  try {
-    const clean = text.replace(/```json/gi, "").replace(/```/g, "").trim();
-    return JSON.parse(clean);
-  } catch (e) {
-    try {
-       let clean = text.replace(/```json/gi, "").replace(/```/g, "").trim();
-       // Fix trailing commas
-       clean = clean.replace(/,\s*([\]}])/g, '$1');
-
-       if (!clean.endsWith("}")) {
-          const lastBrace = clean.lastIndexOf("}");
-          if (lastBrace !== -1) {
-             clean = clean.substring(0, lastBrace + 1) + "]}";
-             return JSON.parse(clean);
-          }
-       }
-       return JSON.parse(clean);
-    } catch (e2) {
-       return null;
-    }
-  }
-};
+import { parseLLMJSON } from "@/lib/parseLLMJSON";
 
 export type TranslationWorkflowPhase = "cleaning" | "translating";
 
