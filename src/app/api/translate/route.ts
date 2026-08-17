@@ -124,6 +124,11 @@ export async function POST(req: Request) {
         models: MODELS,
         payload,
         initialKeyIndex: globalKeyIndex,
+        // Multi-part image pages (6 tiles + text) routinely take >30s on
+        // Gemini; raise the per-attempt cap so slow-but-healthy responses
+        // don't get aborted as timeouts.
+        attemptTimeoutMs: 60_000,
+        totalBudgetMs: 180_000,
       });
       data = result.data;
       globalKeyIndex = result.keyIndex;

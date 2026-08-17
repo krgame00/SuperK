@@ -9,6 +9,8 @@ import numpy as np
 import onnxruntime as ort
 from numpy.typing import NDArray
 
+from app.ort_utils import preferred_providers
+
 from app.model_store import ModelStore
 from app.schemas import PixelRect
 
@@ -61,7 +63,7 @@ class TextDetector:
         session = ort.InferenceSession(
             str(model_store.ensure("ctd-onnx")),
             sess_options=options,
-            providers=["CPUExecutionProvider"],
+            providers=preferred_providers(),
         )
         self._set_session(cast("_Session", session), input_size)
 
@@ -153,8 +155,8 @@ def restore_mask(
 # manga-image-translator CTD postprocessing.
 def non_max_suppression(
     prediction: NDArray[np.float32],
-    confidence_threshold: float = 0.1,
-    iou_threshold: float = 0.1,
+    confidence_threshold: float = 0.3,
+    iou_threshold: float = 0.4,
     max_detections: int = 300,
 ) -> list[NDArray[np.float32]]:
     if prediction.ndim != 3 or prediction.shape[2] < 6:

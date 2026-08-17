@@ -12,6 +12,7 @@ from numpy.typing import NDArray
 from app.detector import RgbImage
 from app.mask_refiner import BinaryMask, MaskRegion
 from app.model_store import ModelStore
+from app.ort_utils import preferred_providers
 
 
 @dataclass(frozen=True)
@@ -70,7 +71,7 @@ class AotCleaner:
         session = ort.InferenceSession(
             str(model_store.ensure("aot-onnx")),
             sess_options=options,
-            providers=["CPUExecutionProvider"],
+            providers=preferred_providers(),
         )
         self.session = cast("_Session", session)
 

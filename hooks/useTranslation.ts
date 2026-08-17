@@ -421,6 +421,11 @@ export function useTranslation({
                   b.box = [0, 0, 1000, 1000];
                   b.isInvalidBox = true;
                 } else if ((b.box[3] - b.box[1] >= 950 && b.box[2] - b.box[0] >= 950) || (b.box[3] === b.box[1] && b.box[2] === b.box[0])) {
+                  // Invalid box: shrink to a centered 20% patch so it can't
+                  // white-out the whole page; the invalid marker still shows.
+                  const cx = (b.box[1] + b.box[3]) / 2;
+                  const cy = (b.box[0] + b.box[2]) / 2;
+                  b.box = [cy - 100, cx - 100, cy + 100, cx + 100];
                   b.isInvalidBox = true;
                 }
 
@@ -440,24 +445,38 @@ export function useTranslation({
                 b.box[3] = Math.round((global_xmax_px / imgEl.naturalWidth) * 1000);
 
                 let isDuplicate = false;
-                if (!b.isInvalidBox) {
-                  for (const existing of allBubbles) {
-                    if (existing.isInvalidBox) continue;
-                    const xA = Math.max(b.box[1], existing.box[1]);
-                    const yA = Math.max(b.box[0], existing.box[0]);
-                    const xB = Math.min(b.box[3], existing.box[3]);
-                    const yB = Math.min(b.box[2], existing.box[2]);
-                    const interWidth = Math.max(0, xB - xA);
-                    const interHeight = Math.max(0, yB - yA);
-                    const interArea = interWidth * interHeight;
-                    const boxAArea = (b.box[3] - b.box[1]) * (b.box[2] - b.box[0]);
-                    const boxBArea = (existing.box[3] - existing.box[1]) * (existing.box[2] - existing.box[0]);
-                    const iou = interArea / (boxAArea + boxBArea - interArea);
+                // Dedupe against ALL bubbles (invalid boxes too) to stop
+                // overlapping white patches stacking on the same spot.
+                for (const existing of allBubbles) {
+                  const xA = Math.max(b.box[1], existing.box[1]);
+                  const yA = Math.max(b.box[0], existing.box[0]);
+                  const xB = Math.min(b.box[3], existing.box[3]);
+                  const yB = Math.min(b.box[2], existing.box[2]);
+                  const interWidth = Math.max(0, xB - xA);
+                  const interHeight = Math.max(0, yB - yA);
+                  const interArea = interWidth * interHeight;
+                  const boxAArea = (b.box[3] - b.box[1]) * (b.box[2] - b.box[0]);
+                  const boxBArea = (existing.box[3] - existing.box[1]) * (existing.box[2] - existing.box[0]);
+                  const iou = interArea / (boxAArea + boxBArea - interArea);
 
-                    if (iou > 0.4) {
-                      isDuplicate = true;
-                      break;
-                    }
+                  // Containment: if either box covers ≥80% of the other, they
+                  // are the same bubble. 60% was too aggressive — adjacent
+                  // speech balloons that touch each other were wrongly merged.
+                  const bInExisting = boxBArea > 0 && interArea / boxBArea >= 0.8;
+                  const existingInB = boxAArea > 0 && interArea / boxAArea >= 0.8;
+
+                  // Centroid distance: only merge when centers are very close
+                  // (≤5% of the page). 120/1000 merged distinct adjacent
+                  // bubbles that sit side by side.
+                  const bCx = (b.box[1] + b.box[3]) / 2;
+                  const bCy = (b.box[0] + b.box[2]) / 2;
+                  const eCx = (existing.box[1] + existing.box[3]) / 2;
+                  const eCy = (existing.box[0] + existing.box[2]) / 2;
+                  const dist = Math.hypot(bCx - eCx, bCy - eCy);
+
+                  if (iou > 0.7 || bInExisting || existingInB || dist < 50) {
+                    isDuplicate = true;
+                    break;
                   }
                 }
 
@@ -521,17 +540,34 @@ export function useTranslation({
         return true;
       }
 
-      const res = await fetch("/api/translate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageBase64: base64, mimeType: actualMimeType, targetLang, sourceLang, modelPreference, apiKey: userApiKey })
-      });
+      let res: Response;
+      try {
+        res = await fetch("/api/translate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ imageBase64: base64, mimeType: actualMimeType, targetLang, sourceLang, modelPreference, apiKey: userApiKey })
+        });
+      } catch (err) {
+        // Network-level failure ("Failed to fetch"): transient, retryable.
+        throw new TranslationRequestError(
+          "Network error: ลองใหม่อีกครั้ง",
+          0,
+          "NETWORK",
+          true,
+        );
+      }
 
       const data = await readTranslationResponse<{ text: string }>(res);
-
       let parsed = data.text ? parseLLMJSON(data.text) : data;
-      if (!parsed || !Array.isArray(parsed.bubbles)) {
-        throw new Error("Translation response malformed: bubbles array missing.");
+      // Gemini sometimes returns a valid JSON object that omits "bubbles"
+      // (e.g. an explanatory reply or an empty-scan response). Treat that as
+      // "no text found" instead of a hard failure so the page can fall
+      // through to clean-only / auto-retry handling below.
+      if (!parsed || typeof parsed !== "object") {
+        throw new Error("Translation response malformed: invalid JSON.");
+      }
+      if (!Array.isArray(parsed.bubbles)) {
+        parsed = { ...parsed, bubbles: [] };
       }
 
       if (

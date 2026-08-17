@@ -155,13 +155,26 @@ export const applyTranslationOverlay = async (
         b.isInvalidBox = true;
       }
 
-      const tx = Math.max(0, Math.min(rawX, 100));
-      const ty = Math.max(0, Math.min(rawY, 100));
+      let tx = Math.max(0, Math.min(rawX, 100));
+      let ty = Math.max(0, Math.min(rawY, 100));
       let tw = rawW;
       let th = rawH;
 
-      tw = Math.max(3, Math.min(tw, 85)); 
-      th = Math.max(2, Math.min(th, 85));  
+      // Clamp bubble inside the page (2% margin) so long/offset boxes never
+      // overflow the panel edge. Collapses left when the box would exceed.
+      const margin = 2;
+      let maxTw = 100 - tx - margin;
+      let maxTh = 100 - ty - margin;
+      if (maxTw < margin) {
+        tx = Math.max(0, 100 - tw - margin);
+        maxTw = 100 - tx - margin;
+      }
+      if (maxTh < margin) {
+        ty = Math.max(0, 100 - th - margin);
+        maxTh = 100 - ty - margin;
+      }
+      tw = Math.max(3, Math.min(tw, maxTw));
+      th = Math.max(2, Math.min(th, maxTh));
 
       const cx = (tx / 100) * iw;
       const cy = (ty / 100) * ih;
@@ -241,16 +254,27 @@ export const applyTranslationOverlay = async (
           return finalRes;
         };
 
-        let fs = Math.max(14, Math.min(28, currentBh * 0.45)) * ts.fontSizeMultiplier;
+        let fs = Math.max(20, Math.min(38, currentBh * 0.5)) * ts.fontSizeMultiplier;
         let lines2: string[] = [];
-        for (; fs >= 14; fs--) {
+        for (; fs >= 20; fs--) {
           lines2 = wrap(fs);
           if (lines2.length * (fs * 1.3) <= maxH) break;
         }
 
         const requiredH = lines2.length * (fs * 1.3);
         if (requiredH > currentBh) {
-           currentBh = requiredH; 
+           currentBh = requiredH;
+        }
+
+        // Re-clamp after text height expansion: the wrapper may have grown
+        // past the bottom/right edge. Pull it back inside the image.
+        const maxTop = (ih - currentBh);
+        if (currentBy > maxTop) {
+          currentBy = Math.max(0, maxTop);
+        }
+        const maxLeft = (iw - currentBw);
+        if (currentBx > maxLeft) {
+          currentBx = Math.max(0, maxLeft);
         }
 
         wrapper.style.left = `${(currentBx / iw) * 100}%`;
@@ -283,7 +307,7 @@ export const applyTranslationOverlay = async (
            ctx.save();
            ctx.beginPath();
            ctx.roundRect(-pad, -pad, currentBw + pad * 2, currentBh + pad * 2, r);
-           ctx.fillStyle = b.isInvalidBox ? "rgba(255, 255, 255, 0.9)" : "white";
+           ctx.fillStyle = b.isInvalidBox ? "rgba(255, 255, 255, 0.75)" : "white";
            ctx.fill();
            ctx.strokeStyle = "rgba(0,0,0,0.15)";
            ctx.lineWidth = 2;

@@ -67,8 +67,12 @@ export const saveProjectSession = async (data: {
       updatedAt: Date.now(),
     };
 
+    // Strip values that IndexedDB cannot structured-clone (File/Blob/
+    // ImageData/circular refs) so a single bad entry can't nuke the save.
+    const sanitized = JSON.parse(JSON.stringify(sessionData));
+
     await new Promise<void>((resolve, reject) => {
-      const req = store.put(sessionData);
+      const req = store.put(sanitized);
       req.onsuccess = () => resolve();
       req.onerror = () => reject(req.error);
     });

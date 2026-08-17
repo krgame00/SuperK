@@ -21,6 +21,17 @@ import type {
 } from "@/lib/cleaning/types";
 
 export default function WorkspacePage() {
+  // data: URL (base64) → Blob, so we can build stable object URLs instead of
+  // embedding multi-MB base64 strings directly in <img src>.
+  function dataUrlToBlob(dataUrl: string): Blob {
+    const [header, payload] = dataUrl.split(",");
+    const mime = header.match(/data:([^;]+)/)?.[1] || "image/png";
+    const binary = atob(payload);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return new Blob([bytes], { type: mime });
+  }
+
   const [pages, setPages] = useState<{url: string, name: string}[]>([]);
   const [currentPage, setCurrentPage] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -1171,11 +1182,19 @@ export default function WorkspacePage() {
                     const isTranslated = translatedImageCacheRef.current.has(p.url);
                     const cleanedSrc =
                       cleaningResultsByPage.get(p.url)?.cleanUrl ?? p.url;
+                    const cachedTranslated = translatedImageCacheRef.current.get(p.url);
+                    // Convert cached data URL to a blob URL for display: data
+                    // URLs this large (multi-MB base64) are slow to decode and
+                    // can fail silently, showing a broken image.
+                    const translatedBlobUrl =
+                      cachedTranslated?.startsWith("data:")
+                        ? URL.createObjectURL(dataUrlToBlob(cachedTranslated))
+                        : cachedTranslated;
                     const imgSrc =
                       workspaceLayer === "original"
                         ? p.url
                         : workspaceLayer === "translated" && isTranslated
-                          ? translatedImageCacheRef.current.get(p.url)!
+                          ? translatedBlobUrl ?? cleanedSrc
                           : cleanedSrc;
                     return (
                       <div 

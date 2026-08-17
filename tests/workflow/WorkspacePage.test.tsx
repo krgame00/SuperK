@@ -314,7 +314,7 @@ describe("workspace clean-then-translate integration", () => {
     fireEvent.click(
       within(toolbar()).getByRole("button", { name: "Layer translated" }),
     );
-    expect(scrollImage().getAttribute("src")).toBe(TRANSLATED_URL);
+    expect(scrollImage().getAttribute("src")).toMatch(/^blob:/);
   });
 
   test("Space and eye toggle between original and translated", async () => {
