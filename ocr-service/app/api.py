@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
 
 from app.cleaners.aot import AotCleaner
+from app.cleaners.anime_lama import AnimeLamaCleaner, CleanerUnavailable
 from app.cleaners.flat import FlatCleaner, GradientCleaner
 from app.detector import TextDetector
 from app.jobs import JobStore, Pipeline, PipelineFactory
@@ -190,14 +191,21 @@ def _default_pipeline_factory(settings: Settings) -> Callable[[], Pipeline]:
         )
         detector = TextDetector(model_store)
         aot = AotCleaner(model_store)
+        try:
+            anime_lama = AnimeLamaCleaner.from_model_store(model_store)
+        except CleanerUnavailable:
+            anime_lama = None
+        cleaners: dict = {
+            CleanerRoute.FLAT: FlatCleaner(),
+            CleanerRoute.GRADIENT: GradientCleaner(),
+            CleanerRoute.ARTWORK: aot,
+            "aot": aot,
+        }
+        if anime_lama is not None:
+            cleaners["anime-lama"] = anime_lama
         return CleaningPipeline(
             detector=detector,
-            cleaners={
-                CleanerRoute.FLAT: FlatCleaner(),
-                CleanerRoute.GRADIENT: GradientCleaner(),
-                CleanerRoute.ARTWORK: aot,
-                "aot": aot,
-            },
+            cleaners=cleaners,
             residual_probe=CompositeResidualProbe(detector),
         )
 

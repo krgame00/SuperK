@@ -266,8 +266,24 @@ export const applyTranslationOverlay = async (
            currentBh = requiredH;
         }
 
-        // Re-clamp after text height expansion: the wrapper may have grown
-        // past the bottom/right edge. Pull it back inside the image.
+        // If even at minimum font (20px) text still overflows bubble height,
+        // iteratively expand bubble width (up to 3x) until it fits.
+        if (fs <= 20 && requiredH > maxH) {
+          for (let expand = 1; expand <= 5; expand++) {
+            currentBw *= 1.25;
+            maxW = currentBw;
+            lines2 = wrap(fs);
+            const newRequiredH = lines2.length * (fs * 1.3);
+            if (newRequiredH <= maxH || currentBw >= bw * 3) {
+              currentBh = newRequiredH;
+              break;
+            }
+            currentBh = newRequiredH;
+          }
+        }
+
+        // Re-clamp after text height expansion (and optional width expansion):
+        // the wrapper may have grown past the bottom/right edge.
         const maxTop = (ih - currentBh);
         if (currentBy > maxTop) {
           currentBy = Math.max(0, maxTop);
