@@ -1,4 +1,4 @@
-interface TranslationErrorBody {
+﻿interface TranslationErrorBody {
   error?: string;
   code?: string;
   retryable?: boolean;
@@ -39,12 +39,21 @@ export async function readTranslationResponse<T>(
   return data as T;
 }
 
-export function getTranslationRetryDelay(error: unknown): number | null {
+export function getTranslationRetryDelay(
+  error: unknown,
+  attempt: number = 0,
+): number | null {
   if (
     !(error instanceof TranslationRequestError)
     || !error.retryable
   ) {
     return null;
   }
-  return error.code === "GEMINI_QUOTA" ? 60_000 : 5_000;
+  if (error.code === "GEMINI_QUOTA") {
+    return 60_000;
+  }
+  if (error.code === "GEMINI_TIMEOUT") {
+    return 5_000;
+  }
+  return Math.min(30_000, 2000 * Math.pow(2, attempt));
 }

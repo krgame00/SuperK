@@ -1,8 +1,9 @@
-import { describe, expect, test, vi } from "vitest";
+﻿import { describe, expect, test, vi } from "vitest";
 
 import {
   GeminiRequestError,
   requestGemini,
+  requestOpenAICompatible,
 } from "@/lib/server/geminiRequest";
 
 const successBody = {
@@ -159,5 +160,39 @@ describe("requestGemini", () => {
       status: 504,
     });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("requestOpenAICompatible", () => {
+  const openAiSuccessBody = {
+    choices: [
+      {
+        message: {
+          content: '{"bubbles":[]}',
+        },
+        finish_reason: "stop",
+      },
+    ],
+  };
+
+  test("retries on 429 rate limit and succeeds on recovery", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({ error: { message: "Rate limit exceeded" } }, 429),
+      )
+      .mockResolvedValueOnce(jsonResponse(openAiSuccessBody));
+
+    const result = await requestOpenAICompatible({
+      baseUrl: "http://localhost:20128/v1",
+      apiKey: "test-key",
+      model: "11asd",
+      payload: { messages: [] },
+      fetchImpl,
+      sleep: async () => undefined,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(result.data).toEqual(openAiSuccessBody);
   });
 });

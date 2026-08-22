@@ -48,7 +48,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
     value: CleaningProgress;
   }>();
   const [error, setError] = useState<CleaningHookError>();
-  const tokenRef = useRef(0);
+  const pageTokensRef = useRef<Map<string, number>>(new Map());
   const currentPageUrl = pages[currentPage];
   const pageUrlRef = useRef(currentPageUrl);
   const pagesRef = useRef(pages);
@@ -65,12 +65,15 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
   }, [resultsByPage]);
 
   const cancelPolling = useCallback(() => {
-    tokenRef.current += 1;
+    for (const [url, t] of pageTokensRef.current.entries()) {
+      pageTokensRef.current.set(url, t + 1);
+    }
     setProgressState(undefined);
   }, []);
 
   useEffect(() => {
     const pageChanged = pageUrlRef.current !== currentPageUrl;
+    const oldUrl = pageUrlRef.current;
     pageUrlRef.current = currentPageUrl;
     const activeRequest = activeRequestRef.current;
     if (
@@ -78,7 +81,9 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
       (!pagesRef.current.includes(activeRequest.pageUrl) ||
         (cancelOnPageChangeRef.current && pageChanged))
     ) {
-      tokenRef.current += 1;
+      if (oldUrl) {
+        pageTokensRef.current.set(oldUrl, (pageTokensRef.current.get(oldUrl) ?? 0) + 1);
+      }
       setProgressState((previous) =>
         previous?.pageUrl === activeRequest.pageUrl ? undefined : previous,
       );
@@ -120,10 +125,19 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
         );
       }
       const [cleanBlob, maskBlob, reviewBlob, protectedBlob] =
-        await Promise.all(responses.map((response) => response.blob()));
-      if (typeof createImageBitmap !== "function") {
-        throw new Error(
-          "Cleaning failed: cannot validate clean image dimensions in this browser.",
+        await Promise.all(
+          responses.map((response) => response.blob()),
+        );
+      if (
+        cleanBlob.size === 0 ||
+        maskBlob.size === 0 ||
+        reviewBlob.size === 0 ||
+        protectedBlob.size === 0
+      ) {
+        throw new CleaningClientError(
+          500,
+          "Saved cleaning assets are empty.",
+          "Clean this page again.",
         );
       }
       const bitmap = await createImageBitmap(cleanBlob);
@@ -156,7 +170,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
       while (job.status === "queued" || job.status === "running") {
         await delay(POLL_INTERVAL_MS);
         if (
-          token !== tokenRef.current ||
+          token !== pageTokensRef.current.get(pageUrl) ||
           !pagesRef.current.includes(pageUrl)
         ) {
           throw new PollingCancelled();
@@ -181,7 +195,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
       const result = await getCleaningResult(job.jobId);
       const hydrated = await hydrateResult(result);
       if (
-        token !== tokenRef.current ||
+        token !== pageTokensRef.current.get(pageUrl) ||
         !pagesRef.current.includes(pageUrl)
       ) {
         revokeResult(hydrated);
@@ -195,7 +209,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
         regions: result.regions,
         updatedAt: Date.now(),
       });
-      setProgressState(undefined);
+      setProgressState((previous) => (previous?.pageUrl === pageUrl ? undefined : previous));
       return hydrated;
     },
     [hydrateResult, replaceResult, revokeResult],
@@ -230,12 +244,15 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
     async (
       pageUrl: string,
       source: Blob,
+      force: boolean = false,
     ): Promise<PageCleaningResult> => {
       setError(undefined);
-      const cached = resultsRef.current.get(pageUrl);
-      if (cached) return cached;
-      const token = tokenRef.current + 1;
-      tokenRef.current = token;
+      if (!force) {
+        const cached = resultsRef.current.get(pageUrl);
+        if (cached) return cached;
+      }
+      const token = (pageTokensRef.current.get(pageUrl) ?? 0) + 1;
+      pageTokensRef.current.set(pageUrl, token);
       activeRequestRef.current = { token, pageUrl };
       try {
         const job = await createCleaningJob(source);
@@ -244,7 +261,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
         handleFailure(caught);
         throw caught;
       } finally {
-        if (activeRequestRef.current?.token === token) {
+        if (activeRequestRef.current?.token === token && activeRequestRef.current?.pageUrl === pageUrl) {
           activeRequestRef.current = undefined;
         }
       }
@@ -253,12 +270,13 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
   );
 
   const cleanCurrentPage = useCallback(
-    async (source: Blob): Promise<void> => {
+    async (source: Blob, force: boolean = true): Promise<void> => {
       const pageUrl = pageUrlRef.current;
-      if (!pageUrl || resultsRef.current.has(pageUrl)) return;
+      if (!pageUrl) return;
+      if (!force && resultsRef.current.has(pageUrl)) return;
       cancelOnPageChangeRef.current = true;
       try {
-        await cleanPage(pageUrl, source);
+        await cleanPage(pageUrl, source, force);
       } catch {
         // CleaningToolbar renders the structured hook error.
       } finally {
@@ -280,8 +298,8 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
         ? resultsRef.current.get(pageUrl)
         : undefined;
       if (!pageUrl || !current) return;
-      const token = tokenRef.current + 1;
-      tokenRef.current = token;
+      const token = (pageTokensRef.current.get(pageUrl) ?? 0) + 1;
+      pageTokensRef.current.set(pageUrl, token);
       activeRequestRef.current = { token, pageUrl };
       cancelOnPageChangeRef.current = true;
       setError(undefined);
@@ -298,7 +316,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
         handleFailure(caught);
       } finally {
         cancelOnPageChangeRef.current = false;
-        if (activeRequestRef.current?.token === token) {
+        if (activeRequestRef.current?.token === token && activeRequestRef.current?.pageUrl === pageUrl) {
           activeRequestRef.current = undefined;
         }
       }
@@ -369,11 +387,36 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
 
   useEffect(
     () => () => {
-      tokenRef.current += 1;
+      for (const [url, t] of pageTokensRef.current.entries()) {
+        pageTokensRef.current.set(url, t + 1);
+      }
       for (const result of resultsRef.current.values()) revokeResult(result);
     },
     [revokeResult],
   );
+
+  // Background Pre-fetch Pipeline for Next Page (currentPage + 1)
+  useEffect(() => {
+    if (pages.length <= 1) return;
+    const nextPageIndex = currentPage + 1;
+    if (nextPageIndex >= pages.length) return;
+    const nextPageUrl = pages[nextPageIndex];
+    if (!nextPageUrl || resultsByPage.has(nextPageUrl)) return;
+
+    const timer = setTimeout(async () => {
+      if (activeRequestRef.current) return;
+      try {
+        const sourceBlob = await dataUrlOrFetchToBlob(nextPageUrl);
+        if (sourceBlob && !resultsRef.current.has(nextPageUrl)) {
+          await cleanPage(nextPageUrl, sourceBlob, false);
+        }
+      } catch (err) {
+        console.debug("Background prefetch skipped or idle:", err);
+      }
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [currentPage, pages, resultsByPage, cleanPage]);
 
   const currentResult = useMemo(
     () => (currentPageUrl ? resultsByPage.get(currentPageUrl) : undefined),
@@ -398,4 +441,21 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function dataUrlOrFetchToBlob(url: string): Promise<Blob | null> {
+  try {
+    if (url.startsWith("data:")) {
+      const [header, payload] = url.split(",");
+      const mime = header.match(/data:([^;]+)/)?.[1] || "image/png";
+      const binary = atob(payload);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+      return new Blob([bytes], { type: mime });
+    }
+    const res = await fetch(url);
+    return await res.blob();
+  } catch {
+    return null;
+  }
 }

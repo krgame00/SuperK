@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+﻿import { useState, useRef, useEffect, useCallback } from "react";
 import {
   getTranslationRetryDelay,
   readTranslationResponse,
@@ -8,6 +8,7 @@ import { applyTranslationOverlay } from "@/lib/translationOverlay";
 import { saveProjectSession, loadProjectSession, clearProjectSession } from "@/lib/projectStore";
 import { resolveTranslationOutcome } from "@/lib/translationPipeline";
 import { parseLLMJSON } from "@/lib/parseLLMJSON";
+import { normalizeTranslationPayload } from "@/lib/thaiSpellcheck";
 
 export type TranslationWorkflowPhase = "cleaning" | "translating";
 
@@ -409,10 +410,11 @@ export function useTranslation({
             });
             const data = await readTranslationResponse<{ text: string }>(res);
 
-            const parsed = parseLLMJSON(data.text);
+            let parsed = parseLLMJSON(data.text);
             if (!parsed || !Array.isArray(parsed.bubbles)) {
               throw new Error("Translation response malformed: bubbles array missing.");
             }
+            parsed = normalizeTranslationPayload(parsed);
             if (parsed.bubbles.length > 0) {
               const { sx, sy, sWidth, sHeight } = slice;
 
@@ -569,6 +571,7 @@ export function useTranslation({
       if (!Array.isArray(parsed.bubbles)) {
         parsed = { ...parsed, bubbles: [] };
       }
+      parsed = normalizeTranslationPayload(parsed);
 
       if (
         parsed.bubbles.length === 0
@@ -617,7 +620,7 @@ export function useTranslation({
         if (!retryParsed || !Array.isArray(retryParsed.bubbles)) {
           throw new Error("Translation retry response malformed: bubbles array missing.");
         }
-        parsed = retryParsed;
+        parsed = normalizeTranslationPayload(retryParsed);
       }
 
       // Filter out hallucinated repetitive SFX
@@ -704,7 +707,7 @@ export function useTranslation({
     }
   };
 
-  const handleTranslateAll = async () => {
+  const handleTranslateAll = async (targetIndices?: number[]) => {
     if (
       translationOperationLockRef.current ||
       isTranslating ||
@@ -717,26 +720,42 @@ export function useTranslation({
       const batchStartTime = Date.now();
       const failures: BatchPageFailure[] = [];
       let quotaFailureMessage: string | null = null;
-      setBatchFailures([]);
+
+      const isTargetedRetry = Array.isArray(targetIndices) && targetIndices.length > 0;
+      const indicesToProcess = isTargetedRetry
+        ? targetIndices.filter((idx) => idx >= 0 && idx < pages.length)
+        : pages.map((_, idx) => idx);
+
+      if (isTargetedRetry) {
+        setBatchFailures((prev) =>
+          prev.filter((f) => !targetIndices.includes(f.pageIndex)),
+        );
+      } else {
+        setBatchFailures([]);
+      }
 
       const interruptibleDelay = async (ms: number) => {
+        if (typeof process !== "undefined" && process.env.NODE_ENV === "test") {
+          return;
+        }
         const endTime = Date.now() + ms;
         while (Date.now() < endTime) {
           if (cancelTranslateAllRef.current) return;
-          await new Promise(r => setTimeout(r, 1000));
+          await new Promise((r) => setTimeout(r, Math.min(200, ms)));
         }
       };
 
-      for (let i = 0; i < pages.length; i++) {
+      for (let step = 0; step < indicesToProcess.length; step++) {
         if (cancelTranslateAllRef.current) break;
+        const i = indicesToProcess[step];
         const pageUrl = pages[i];
 
-        // Skip if already translated (check cache)
-        if (translatedImageCacheRef.current.has(pages[i])) continue;
+        // Skip if already translated (check cache) - only for full batch, not targeted retry
+        if (!isTargetedRetry && translatedImageCacheRef.current.has(pageUrl)) continue;
 
         setTranslateAllProgress({
-          current: i + 1,
-          total: pages.length,
+          current: step + 1,
+          total: indicesToProcess.length,
           status: "cleaning",
           message: `กำลังคลีนหน้า ${i + 1}/${pages.length}`,
           startTime: batchStartTime,
@@ -746,20 +765,24 @@ export function useTranslation({
         try {
           preparedPage = await preparePageForTranslation(pageUrl, i);
         } catch (error) {
-          failures.push({
+          const failureItem: BatchPageFailure = {
             pageIndex: i,
             pageUrl,
             stage: "cleaning",
             message: error instanceof Error ? error.message : "คลีนไม่สำเร็จ",
+          };
+          failures.push(failureItem);
+          setBatchFailures((prev) => {
+            const next = prev.filter((f) => f.pageIndex !== i);
+            return [...next, failureItem];
           });
-          setBatchFailures([...failures]);
           continue;
         }
         if (cancelTranslateAllRef.current) break;
 
         setTranslateAllProgress({
-          current: i + 1,
-          total: pages.length,
+          current: step + 1,
+          total: indicesToProcess.length,
           status: "translating",
           message: `กำลังแปลหน้า ${i + 1}/${pages.length}`,
           startTime: batchStartTime,
@@ -772,9 +795,15 @@ export function useTranslation({
 
         while (!success && retries < 3 && !cancelTranslateAllRef.current) {
           try {
-            // Temporarily set translationResult so user sees progress
-            if (nsfwBypassMode || forceNsfw) setTranslationResult(`กำลังหั่นภาพเป็น 6 ส่วน (หน้า ${i + 1}) - รอบ ${retries + 1}/3`);
-            else setTranslationResult(`กำลังประมวลผลด้วย AI (หน้า ${i + 1}) - รอบ ${retries + 1}/3`);
+            if (nsfwBypassMode || forceNsfw) {
+              setTranslationResult(
+                `กำลังหั่นภาพเป็น 6 ส่วน (หน้า ${i + 1}) - รอบ ${retries + 1}/3`,
+              );
+            } else {
+              setTranslationResult(
+                `กำลังประมวลผลด้วย AI (หน้า ${i + 1}) - รอบ ${retries + 1}/3`,
+              );
+            }
 
             success = await performTranslation(
               preparedPage,
@@ -787,21 +816,35 @@ export function useTranslation({
           } catch (err: any) {
             lastTranslationError = err;
             const errMsg = err.message || "";
-            const retryDelay = getTranslationRetryDelay(err);
-            console.warn(`Error on page ${i + 1}, retry ${retries + 1}/3:`, errMsg);
+            const retryDelay = getTranslationRetryDelay(err, retries) ?? (retries === 0 ? 3000 : 6000);
+            console.warn(
+              `Error on page ${i + 1}, retry ${retries + 1}/3:`,
+              errMsg,
+            );
 
             if (retryDelay === null) {
               setTranslationResult(`แปลไม่สำเร็จ: ${errMsg}`);
               break;
             }
+            const waitSec = Math.round(retryDelay / 1000);
             if (
               err instanceof TranslationRequestError
               && err.code === "GEMINI_QUOTA"
             ) {
-              setTranslateAllProgress({ current: i + 1, total: pages.length, status: "waiting", message: `รอโควต้า API (60 วิ)... หน้า ${i + 1}/${pages.length}`, startTime: batchStartTime });
-              setTranslationResult(`API Limit Reached! รอ 60 วิ... (รอบ ${retries + 1}/3)`);
+              setTranslateAllProgress({
+                current: step + 1,
+                total: indicesToProcess.length,
+                status: "waiting",
+                message: `รอโควต้า API (${waitSec} วิ)... หน้า ${i + 1}/${pages.length}`,
+                startTime: batchStartTime,
+              });
+              setTranslationResult(
+                `API Rate Limit! รอ ${waitSec} วิ... (รอบ ${retries + 1}/3)`,
+              );
             } else {
-              setTranslationResult(`แปลไม่ผ่าน รอ 5 วิเพื่อลองใหม่... (รอบ ${retries + 1}/3)`);
+              setTranslationResult(
+                `แปลไม่ผ่าน รอ ${waitSec} วิเพื่อลองใหม่... (รอบ ${retries + 1}/3)`,
+              );
             }
             await interruptibleDelay(retryDelay);
             retries++;
@@ -809,7 +852,7 @@ export function useTranslation({
         }
 
         if (!success && !cancelTranslateAllRef.current) {
-          failures.push({
+          const failureItem: BatchPageFailure = {
             pageIndex: i,
             pageUrl,
             stage: "translation",
@@ -817,8 +860,12 @@ export function useTranslation({
               lastTranslationError instanceof Error
                 ? lastTranslationError.message
                 : "แปลไม่สำเร็จ",
+          };
+          failures.push(failureItem);
+          setBatchFailures((prev) => {
+            const next = prev.filter((f) => f.pageIndex !== i);
+            return [...next, failureItem];
           });
-          setBatchFailures([...failures]);
         }
 
         if (
@@ -830,26 +877,15 @@ export function useTranslation({
           break;
         }
 
-        if (!success) {
-          console.warn(`Skipping page ${i + 1} after 3 failed attempts.`);
-          if (retries >= 3 && translatedImageCacheRef.current.size === 0 && i > 0) {
-             // We could check if it's a persistent quota error, but if a page fails 3 times,
-             // maybe we shouldn't abort entirely unless we track the error.
-          }
-        }
-
-        if (!success) {
-          console.warn(`Translation failed for page ${i + 1} after 3 attempts.`);
-          const lastMsg = translationResult || "";
-          if (lastMsg.includes("API Limit Reached") || lastMsg.includes("โควต้า")) {
-             setTranslationResult(`❌ โควต้า API เต็ม! กรุณารอรีเซ็ต (หากเป็นโควต้ารายวันจะรีเซ็ตตอน 14:00 น.)`);
-             break; // Abort Translate All
-          }
-        }
-
-        if (success && i < pages.length - 1 && !cancelTranslateAllRef.current) {
-          setTranslateAllProgress({ current: i + 1, total: pages.length, status: "cooldown", message: `พักโหลด 3 วิ... หน้า ${i + 1}/${pages.length}`, startTime: batchStartTime });
-          await interruptibleDelay(3000);
+        if (success && step < indicesToProcess.length - 1 && !cancelTranslateAllRef.current) {
+          setTranslateAllProgress({
+            current: step + 1,
+            total: indicesToProcess.length,
+            status: "cooldown",
+            message: `พักโหลด 2 วิ... หน้า ${i + 1}/${pages.length}`,
+            startTime: batchStartTime,
+          });
+          await interruptibleDelay(2000);
         }
       }
 
@@ -859,7 +895,7 @@ export function useTranslation({
       setTranslationResult(
         quotaFailureMessage
           ?? (failedPages.length === 0
-            ? "✅ แปลทั้งเล่มเสร็จแล้ว"
+            ? "✅ แปลเสร็จเรียบร้อยแล้ว"
             : `⚠️ แปลเสร็จ แต่หน้า ${failedPages.join(", ")} ต้องลองใหม่`),
       );
       setTimeout(() => setTranslationResult(null), 4000);
@@ -870,6 +906,11 @@ export function useTranslation({
     }
   };
 
+  const retryFailedPages = useCallback(async () => {
+    if (batchFailures.length === 0) return;
+    const failedIndices = batchFailures.map((f) => f.pageIndex);
+    await handleTranslateAll(failedIndices);
+  }, [batchFailures]);
   const cancelTranslateAll = () => {
     cancelTranslateAllRef.current = true;
     setTranslationResult("⏹ กำลังยกเลิก...");
@@ -911,6 +952,7 @@ export function useTranslation({
     clearSavedSession,
     workflowPhase,
     batchFailures,
+    retryFailedPages,
     invalidatePageTranslation,
   };
 }

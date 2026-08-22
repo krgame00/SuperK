@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol, Self, cast
@@ -9,10 +10,12 @@ import numpy as np
 import onnxruntime as ort
 from numpy.typing import NDArray
 
-from app.ort_utils import preferred_providers
+from app.ort_utils import create_inference_session, preferred_providers
 
 from app.model_store import ModelStore
 from app.schemas import PixelRect
+
+LOGGER = logging.getLogger(__name__)
 
 FloatMask = NDArray[np.float32]
 RgbImage = NDArray[np.uint8]
@@ -58,13 +61,7 @@ class _Session(Protocol):
 
 class TextDetector:
     def __init__(self, model_store: ModelStore, input_size: int = 1024) -> None:
-        options = ort.SessionOptions()
-        options.enable_cpu_mem_arena = False
-        session = ort.InferenceSession(
-            str(model_store.ensure("ctd-onnx")),
-            sess_options=options,
-            providers=preferred_providers(),
-        )
+        session = create_inference_session(model_store.ensure("ctd-onnx"))
         self._set_session(cast("_Session", session), input_size)
 
     @classmethod
@@ -155,7 +152,7 @@ def restore_mask(
 # manga-image-translator CTD postprocessing.
 def non_max_suppression(
     prediction: NDArray[np.float32],
-    confidence_threshold: float = 0.3,
+    confidence_threshold: float = 0.2,
     iou_threshold: float = 0.4,
     max_detections: int = 300,
 ) -> list[NDArray[np.float32]]:
@@ -192,6 +189,44 @@ def non_max_suppression(
     return output
 
 
+def _xywh_to_xyxy(xywh: NDArray[np.float32]) -> NDArray[np.float32]:
+    x, y, w, h = xywh.T
+    x1 = x - w / 2
+    y1 = y - h / 2
+    x2 = x + w / 2
+    y2 = y + h / 2
+    return np.column_stack((x1, y1, x2, y2))
+
+
+def _greedy_nms(
+    boxes: NDArray[np.float32],
+    scores: NDArray[np.float32],
+    iou_threshold: float,
+) -> NDArray[np.intp]:
+    if boxes.size == 0:
+        return np.array([], dtype=np.intp)
+    x1 = boxes[:, 0]
+    y1 = boxes[:, 1]
+    x2 = boxes[:, 2]
+    y2 = boxes[:, 3]
+    areas = (x2 - x1) * (y2 - y1)
+    order = scores.argsort()[::-1]
+    keep = []
+    while order.size > 0:
+        i = order[0]
+        keep.append(i)
+        xx1 = np.maximum(x1[i], x1[order[1:]])
+        yy1 = np.maximum(y1[i], y1[order[1:]])
+        xx2 = np.minimum(x2[i], x2[order[1:]])
+        yy2 = np.minimum(y2[i], y2[order[1:]])
+        w = np.maximum(0.0, xx2 - xx1)
+        h = np.maximum(0.0, yy2 - yy1)
+        inter = w * h
+        iou = inter / (areas[i] + areas[order[1:]] - inter)
+        order = order[1:][iou <= iou_threshold]
+    return np.array(keep, dtype=np.intp)
+
+
 def decode_yolo_blocks(
     detections: NDArray[np.float32],
     transform: LetterboxTransform,
@@ -212,48 +247,146 @@ def decode_yolo_blocks(
             DetectedBlock(
                 rect=PixelRect(x=x1, y=y1, width=x2 - x1, height=y2 - y1),
                 confidence=float(row[4]),
-            ),
+            )
         )
-    return sorted(blocks, key=lambda block: block.rect.y + block.rect.height / 2)
+    return blocks
 
 
-def _xywh_to_xyxy(boxes: NDArray[np.float32]) -> NDArray[np.float32]:
-    converted = boxes.copy()
-    converted[:, 0] = boxes[:, 0] - boxes[:, 2] / 2
-    converted[:, 1] = boxes[:, 1] - boxes[:, 3] / 2
-    converted[:, 2] = boxes[:, 0] + boxes[:, 2] / 2
-    converted[:, 3] = boxes[:, 1] + boxes[:, 3] / 2
-    return converted
+def _extract_strokes_from_crop(crop: RgbImage) -> np.ndarray:
+    if crop.size == 0:
+        return np.zeros((0, 0), dtype=np.uint8)
+    gray_crop = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
+    border = np.concatenate([gray_crop[0, :], gray_crop[-1, :], gray_crop[:, 0], gray_crop[:, -1]])
+    bg_val = float(np.median(border))
+    if bg_val > 160:
+        core = (gray_crop < bg_val - 25).astype(np.uint8) * 255
+        dil = cv2.dilate(core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)), iterations=1)
+    elif bg_val < 100:
+        core = (gray_crop > 150).astype(np.uint8) * 255
+        dil = cv2.dilate(core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (23, 23)), iterations=1)
+    else:
+        diff = np.abs(gray_crop.astype(float) - bg_val)
+        r = crop[:, :, 0].astype(float)
+        g = crop[:, :, 1].astype(float)
+        b = crop[:, :, 2].astype(float)
+        color_diff = np.maximum(0, r - (g + b) / 2.0)
+        total_diff = np.maximum(diff, color_diff * 1.2)
+        core = (total_diff > 25).astype(np.uint8) * 255
+        dil = cv2.dilate(core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)), iterations=1)
+    return dil
 
 
-def _greedy_nms(
-    boxes: NDArray[np.float32],
-    scores: NDArray[np.float32],
-    iou_threshold: float,
-) -> NDArray[np.int64]:
-    if boxes.size == 0:
-        return np.empty(0, dtype=np.int64)
+class HybridTextDetector:
+    def __init__(
+        self,
+        ctd_detector: TextDetector,
+        paddle_engine: object | None = None,
+        enable_color_sweep: bool = True,
+    ) -> None:
+        self.ctd_detector = ctd_detector
+        self.paddle_engine = paddle_engine
+        self.enable_color_sweep = enable_color_sweep
 
-    areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
-    order = scores.argsort()[::-1]
-    kept: list[int] = []
-    while order.size:
-        current = int(order[0])
-        kept.append(current)
-        if order.size == 1:
-            break
-        rest = order[1:]
-        x1 = np.maximum(boxes[current, 0], boxes[rest, 0])
-        y1 = np.maximum(boxes[current, 1], boxes[rest, 1])
-        x2 = np.minimum(boxes[current, 2], boxes[rest, 2])
-        y2 = np.minimum(boxes[current, 3], boxes[rest, 3])
-        intersection = np.maximum(0, x2 - x1) * np.maximum(0, y2 - y1)
-        union = areas[current] + areas[rest] - intersection
-        iou = np.divide(
-            intersection,
-            union,
-            out=np.zeros_like(intersection),
-            where=union > 0,
+    @classmethod
+    def from_model_store(
+        cls,
+        model_store: ModelStore,
+        input_size: int = 1024,
+        enable_paddle: bool = True,
+    ) -> Self:
+        ctd = TextDetector(model_store, input_size=input_size)
+        paddle = None
+        if enable_paddle:
+            try:
+                from paddleocr import PaddleOCR
+                paddle = PaddleOCR(use_gpu=False, use_angle_cls=True, lang="en", show_log=False)
+            except Exception:
+                paddle = None
+        return cls(ctd_detector=ctd, paddle_engine=paddle)
+
+    def detect(self, image_rgb: RgbImage) -> DetectionResult:
+        if image_rgb.ndim != 3 or image_rgb.shape[2] != 3:
+            raise ValueError(f"expected HxWx3 RGB image, got {image_rgb.shape}")
+
+        ctd_res = self.ctd_detector.detect(image_rgb)
+        h, w = image_rgb.shape[:2]
+        
+        combined_prob = np.zeros((h, w), dtype=np.float32)
+        combined_blocks = list(ctd_res.blocks)
+
+        # Process all CTD blocks to extract precise character strokes
+        for b in ctd_res.blocks:
+            pad = 6
+            bx1 = max(0, b.rect.x - pad)
+            by1 = max(0, b.rect.y - pad)
+            bx2 = min(w, b.rect.x + b.rect.width + pad)
+            by2 = min(h, b.rect.y + b.rect.height + pad)
+            crop = image_rgb[by1:by2, bx1:bx2]
+            if crop.size > 0:
+                dil = _extract_strokes_from_crop(crop)
+                combined_prob[by1:by2, bx1:bx2] = np.maximum(
+                    combined_prob[by1:by2, bx1:bx2],
+                    (dil > 0).astype(np.float32) * 0.95,
+                )
+
+        # PaddleOCR multi-angle text line recognition
+        if self.paddle_engine is not None:
+            try:
+                paddle_res = self.paddle_engine.ocr(image_rgb, cls=True)
+                if paddle_res and paddle_res[0]:
+                    for line in paddle_res[0]:
+                        box, (text, conf) = line
+                        pts = np.array(box, dtype=np.int32)
+                        bx, by, bw, bh = cv2.boundingRect(pts)
+                        pad = 8
+                        bx1 = max(0, bx - pad)
+                        by1 = max(0, by - pad)
+                        bx2 = min(w, bx + bw + pad)
+                        by2 = min(h, by + bh + pad)
+                        
+                        crop = image_rgb[by1:by2, bx1:bx2]
+                        if crop.size > 0:
+                            dil = _extract_strokes_from_crop(crop)
+                            if np.count_nonzero(dil) >= 3:
+                                combined_prob[by1:by2, bx1:bx2] = np.maximum(
+                                    combined_prob[by1:by2, bx1:bx2],
+                                    (dil > 0).astype(np.float32) * 0.95,
+                                )
+
+                        combined_blocks.append(
+                            DetectedBlock(
+                                rect=PixelRect(x=bx1, y=by1, width=bx2 - bx1, height=by2 - by1),
+                                confidence=float(conf),
+                            )
+                        )
+            except Exception:
+                LOGGER.debug("PaddleOCR text detection failed", exc_info=True)
+
+        # Fallback: if stroke extraction produced an empty mask for a high-confidence CTD block, fallback to CTD prob
+        for b in ctd_res.blocks:
+            bx1 = max(0, b.rect.x)
+            by1 = max(0, b.rect.y)
+            bx2 = min(w, bx1 + b.rect.width)
+            by2 = min(h, by1 + b.rect.height)
+            if np.count_nonzero(combined_prob[by1:by2, bx1:bx2]) < 5 and b.confidence >= 0.5:
+                combined_prob[by1:by2, bx1:bx2] = np.maximum(
+                    combined_prob[by1:by2, bx1:bx2],
+                    ctd_res.mask_probability[by1:by2, bx1:bx2],
+                )
+
+        if combined_blocks:
+            block_support = np.zeros((h, w), dtype=bool)
+            for b in combined_blocks:
+                margin = 24
+                bx1 = max(0, b.rect.x - margin)
+                by1 = max(0, b.rect.y - margin)
+                bx2 = min(w, b.rect.x + b.rect.width + margin)
+                by2 = min(h, b.rect.y + b.rect.height + margin)
+                block_support[by1:by2, bx1:bx2] = True
+            combined_prob[~block_support] = 0.0
+
+        return DetectionResult(
+            mask_probability=combined_prob,
+            blocks=combined_blocks,
+            scale=ctd_res.scale,
         )
-        order = rest[iou <= iou_threshold]
-    return np.asarray(kept, dtype=np.int64)

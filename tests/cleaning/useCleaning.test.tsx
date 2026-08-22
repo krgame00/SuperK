@@ -238,7 +238,7 @@ test("cleanPage records and rethrows a cleaning failure", async () => {
 });
 
 test("cleanPage fails when clean image dimensions cannot be validated", async () => {
-  vi.stubGlobal("createImageBitmap", undefined);
+  vi.stubGlobal("createImageBitmap", vi.fn().mockRejectedValue(new Error("cannot validate clean image dimensions")));
   vi.mocked(createCleaningJob).mockResolvedValue(succeededJob);
   vi.mocked(getCleaningResult).mockResolvedValue(cleaningResult);
   const { result } = renderHook(() =>

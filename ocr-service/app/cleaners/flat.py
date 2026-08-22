@@ -26,10 +26,21 @@ class FlatCleaner:
             repair = _fit_color_plane(image_rgb, ring)
         else:
             lab = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2LAB)
-            median = np.median(lab[ring], axis=0).astype(np.uint8)
-            repair_lab = np.empty_like(lab)
+            ring_pixels = lab[ring]
+            median = np.median(ring_pixels, axis=0).astype(np.float32)
+            repair_lab = np.empty_like(lab, dtype=np.float32)
             repair_lab[:] = median
-            repair = cv2.cvtColor(repair_lab, cv2.COLOR_LAB2RGB)
+
+            # Analyze texture / screentone noise in the surrounding ring
+            ring_l = ring_pixels[:, 0].astype(np.float32)
+            std_l = float(np.std(ring_l))
+            if std_l > 1.5:
+                # Synthesize micro-texture matching surrounding screentone/paper grain
+                rng = np.random.default_rng(hash(region.id) & 0xFFFFFFFF)
+                noise = rng.normal(0, min(std_l * 0.75, 8.0), size=lab.shape[:2])
+                repair_lab[..., 0] = np.clip(repair_lab[..., 0] + noise, 0, 255)
+
+            repair = cv2.cvtColor(repair_lab.astype(np.uint8), cv2.COLOR_LAB2RGB)
         result[support] = repair[support]
         return result
 
@@ -47,9 +58,11 @@ class GradientCleaner:
             return result
 
         binary = support.astype(np.uint8) * 255
+        # Test both Telea and Navier-Stokes inpainting candidates
         candidates = [
-            cv2.inpaint(image_rgb, binary, radius, cv2.INPAINT_TELEA)
+            cv2.inpaint(image_rgb, binary, radius, method)
             for radius in (2, 3, 5)
+            for method in (cv2.INPAINT_TELEA, cv2.INPAINT_NS)
         ]
         repaired = min(
             candidates,

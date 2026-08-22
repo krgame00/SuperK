@@ -22,10 +22,13 @@ class QrScanner(Protocol):
 class OpenCvQrScanner:
     def detect(self, image_rgb: RgbImage) -> list[np.ndarray]:
         detector = cv2.QRCodeDetector()
-        found, points = detector.detect(image_rgb)
-        if not found or points is None:
+        try:
+            decoded_info, points, _ = detector.detectAndDecode(image_rgb)
+            if not decoded_info or points is None:
+                return []
+            return [np.asarray(points, dtype=np.int32).reshape(-1, 2)]
+        except Exception:
             return []
-        return [np.asarray(points, dtype=np.int32).reshape(-1, 2)]
 
 
 @dataclass(frozen=True)

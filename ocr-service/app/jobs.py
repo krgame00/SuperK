@@ -55,6 +55,7 @@ class JobState:
     id: str
     filename: str
     source_bytes: bytes
+    parent_id: str | None = None
     status: JobStatus = JobStatus.QUEUED
     stage: JobStage = JobStage.QUEUED
     completed_regions: int = 0
@@ -106,6 +107,9 @@ class JobStore:
         self._jobs: dict[str, JobState] = {}
         self._jobs_lock = threading.RLock()
         self._pipeline_instance: Pipeline | None = None
+        if self.cache_dir.exists():
+            for tmp in self.cache_dir.glob(".*.tmp"):
+                shutil.rmtree(tmp, ignore_errors=True)
 
     def submit(self, source_bytes: bytes, filename: str) -> str:
         job_id = uuid.uuid4().hex
@@ -131,18 +135,15 @@ class JobStore:
         if parent is None:
             raise KeyError(parent_id)
         with parent.lock:
-            if (
-                parent.status is not JobStatus.SUCCEEDED
-                or parent.output is None
-            ):
+            if parent.status is not JobStatus.SUCCEEDED or parent.asset_dir is None:
                 raise RuntimeError("parent job is not complete")
-            source_bytes = parent.source_bytes
             filename = parent.filename
         job_id = uuid.uuid4().hex
         job = JobState(
             id=job_id,
             filename=filename,
-            source_bytes=source_bytes,
+            source_bytes=b"",
+            parent_id=parent_id,
         )
         with self._jobs_lock:
             self._jobs[job_id] = job
@@ -195,6 +196,15 @@ class JobStore:
         except Exception:
             LOGGER.exception("cleaning job %s failed", job.id)
             self._fail(job)
+        finally:
+            import gc
+            gc.collect()
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
 
     def _run_retry(
         self,
@@ -211,9 +221,17 @@ class JobStore:
             job.started_at = perf_counter()
         try:
             with parent.lock:
-                if parent.output is None:
-                    raise RuntimeError("parent output is unavailable")
-                parent_output = parent.output
+                if parent.asset_dir is None or not parent.asset_dir.exists():
+                    raise RuntimeError("parent assets are unavailable")
+                parent_output = PipelineOutput(
+                    source_image=_decode_rgb((parent.asset_dir / "source.png").read_bytes()),
+                    clean_image=_decode_rgb((parent.asset_dir / "clean.png").read_bytes()),
+                    mask=_decode_mask((parent.asset_dir / "mask.png").read_bytes()),
+                    review_mask=_decode_mask((parent.asset_dir / "review-mask.png").read_bytes()),
+                    protected_mask=_decode_mask((parent.asset_dir / "protected-mask.png").read_bytes()),
+                    regions=parent.result.regions if parent.result else [],
+                    timings_ms=parent.result.timings_ms if parent.result else {},
+                )
             mask = _decode_mask(mask_bytes)
             if mask.shape != parent_output.mask.shape:
                 raise ValueError("retry mask dimensions do not match the image")
@@ -226,6 +244,15 @@ class JobStore:
         except Exception:
             LOGGER.exception("retry job %s failed", job.id)
             self._fail(job)
+        finally:
+            import gc
+            gc.collect()
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
 
     def _complete(
         self,
@@ -241,9 +268,14 @@ class JobStore:
         )
         asset_dir = self._write_assets(job.id, output)
         height, width = image_shape
+        if job.source_bytes:
+            source_hash = hashlib.sha256(job.source_bytes).hexdigest()
+        else:
+            source_hash = hashlib.sha256(output.source_image.tobytes()).hexdigest()
+
         result = CleaningResult(
             job_id=job.id,
-            source_hash=hashlib.sha256(job.source_bytes).hexdigest(),
+            source_hash=source_hash,
             width=width,
             height=height,
             clean_asset=f"/v1/jobs/{job.id}/assets/clean.png",
@@ -259,12 +291,29 @@ class JobStore:
         )
         with job.lock:
             job.asset_dir = asset_dir
-            job.output = output
+            job.output = None  # Evict full numpy array to free RAM
             job.result = result
+            job.source_bytes = b""
             job.status = JobStatus.SUCCEEDED
             job.stage = JobStage.COMPLETE
             job.elapsed_ms = job._current_elapsed_ms()
             job.started_at = None
+
+        with self._jobs_lock:
+            if len(self._jobs) > 15:
+                # Protect parent jobs referenced by currently queued or running retries
+                active_parents = {
+                    j.parent_id for j in self._jobs.values()
+                    if j.parent_id and j.status in (JobStatus.QUEUED, JobStatus.RUNNING)
+                }
+                candidates = [
+                    oid for oid in list(self._jobs.keys())[:-15]
+                    if oid not in active_parents
+                ]
+                for oid in candidates:
+                    old_job = self._jobs.pop(oid, None)
+                    if old_job and old_job.asset_dir and old_job.asset_dir.exists():
+                        shutil.rmtree(old_job.asset_dir, ignore_errors=True)
 
     @staticmethod
     def _fail(job: JobState) -> None:
@@ -292,6 +341,7 @@ class JobStore:
         temporary = target.parent / f".{job_id}.{uuid.uuid4().hex}.tmp"
         temporary.mkdir()
         try:
+            Image.fromarray(output.source_image).save(temporary / "source.png")
             Image.fromarray(output.clean_image).save(temporary / "clean.png")
             Image.fromarray(output.mask).save(temporary / "mask.png")
             Image.fromarray(output.review_mask).save(

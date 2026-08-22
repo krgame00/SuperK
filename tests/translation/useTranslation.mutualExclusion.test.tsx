@@ -24,6 +24,10 @@ vi.mock("@/lib/translationOverlay", () => ({
       );
     },
   ),
+  clearPageAdjustments: vi.fn(),
+  clearAllAdjustments: vi.fn(),
+  readOverlayAdjustments: vi.fn(() => ({})),
+  bubbleKeyOf: vi.fn(() => "mock-key"),
 }));
 
 vi.mock("@/lib/projectStore", () => ({

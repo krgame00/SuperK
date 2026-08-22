@@ -5,7 +5,7 @@ import { useTranslation } from "@/hooks/useTranslation";
 import { jsPDF } from "jspdf";
 import { Toaster } from "react-hot-toast";
 import { downloadTranslatedImage, applyTranslationOverlay } from "@/lib/translationOverlay";
-import { Upload, ChevronLeft, ChevronRight, Wand2, Download, Archive, Flame, Eye, EyeOff, Undo2, Redo2, Trash2, GalleryVertical, RectangleHorizontal, Menu, X, ChevronUp, ChevronDown, Maximize2, Minimize2, Settings, FileArchive, BookOpen, FileText, Sparkles } from "lucide-react";
+import { Upload, ChevronLeft, ChevronRight, Wand2, Download, Archive, Flame, Eye, EyeOff, Undo2, Redo2, Trash2, GalleryVertical, RectangleHorizontal, Menu, X, ChevronUp, ChevronDown, Maximize2, Minimize2, Settings, FileArchive, BookOpen, FileText, Sparkles, RotateCcw } from "lucide-react";
 import { undoManager } from "@/lib/undoManager";
 import JSZip from "jszip";
 import { useCleaning } from "@/hooks/useCleaning";
@@ -191,6 +191,8 @@ export default function WorkspacePage() {
     restoreSavedSession,
     clearSavedSession,
     workflowPhase,
+    batchFailures,
+    retryFailedPages,
     invalidatePageTranslation,
   } = useTranslation({
     currentPage,
@@ -354,7 +356,7 @@ export default function WorkspacePage() {
   // Clear undo stack when changing pages
   useEffect(() => { undoManager.clear(); }, [currentPage]);
 
-  const handleDownloadAll = async (format: "zip" | "cbz" | "pdf" = "zip") => {
+  const handleDownloadAll = async (format: "zip" | "cbz" | "pdf" | "strip" = "zip") => {
     if (pages.length === 0) return;
     setIsZipping(true);
 
@@ -416,6 +418,92 @@ export default function WorkspacePage() {
       }
       return pageUrl;
     };
+    
+    if (format === "strip") {
+      try {
+        setTranslationResult(`⏳ กำลังโหลดและรวมภาพแบบ Webtoon Strip...`);
+        const loadedImages: HTMLImageElement[] = [];
+        const targetWidth = 1200;
+
+        for (let i = 0; i < pages.length; i++) {
+          try {
+            const dataUrl = await getExportDataUrl(pages[i].url, i);
+            if (!dataUrl) continue;
+            const img = new Image();
+            img.src = dataUrl;
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(() => resolve(), 3000);
+              img.onload = () => { clearTimeout(timer); resolve(); };
+              img.onerror = () => { clearTimeout(timer); resolve(); };
+            });
+            if (img.naturalWidth && img.naturalHeight) {
+              loadedImages.push(img);
+            }
+          } catch (err) {
+            console.warn(`Error loading page ${i + 1} for long strip`, err);
+          }
+        }
+
+        if (loadedImages.length === 0) {
+          setTranslationResult(`❌ ไม่พบรูปภาพที่สมบูรณ์สำหรับสร้าง Webtoon Strip`);
+          setTimeout(() => setTranslationResult(null), 3000);
+          return;
+        }
+
+        const MAX_STRIP_HEIGHT = 14000;
+        let currentChunk: { img: HTMLImageElement; height: number }[] = [];
+        let currentHeight = 0;
+        let chunkIndex = 1;
+
+        const exportChunk = (chunk: { img: HTMLImageElement; height: number }[], index: number, isMulti: boolean) => {
+          const totalH = chunk.reduce((sum, item) => sum + item.height, 0);
+          const stripCanvas = document.createElement("canvas");
+          stripCanvas.width = targetWidth;
+          stripCanvas.height = totalH;
+          const ctx = stripCanvas.getContext("2d");
+          if (!ctx) return;
+
+          let yOffset = 0;
+          for (const item of chunk) {
+            ctx.drawImage(item.img, 0, yOffset, targetWidth, item.height);
+            yOffset += item.height;
+          }
+
+          const stripDataUrl = stripCanvas.toDataURL("image/jpeg", 0.92);
+          const link = document.createElement("a");
+          link.href = stripDataUrl;
+          link.download = isMulti 
+            ? `SuperK_Webtoon_Strip_Part${String(index).padStart(2, '0')}.jpg` 
+            : `SuperK_Webtoon_LongStrip.jpg`;
+          link.click();
+        };
+
+        for (const img of loadedImages) {
+          const scaledHeight = Math.round((targetWidth / img.naturalWidth) * img.naturalHeight);
+          if (currentHeight + scaledHeight > MAX_STRIP_HEIGHT && currentChunk.length > 0) {
+            exportChunk(currentChunk, chunkIndex++, true);
+            currentChunk = [];
+            currentHeight = 0;
+          }
+          currentChunk.push({ img, height: scaledHeight });
+          currentHeight += scaledHeight;
+        }
+
+        if (currentChunk.length > 0) {
+          exportChunk(currentChunk, chunkIndex, chunkIndex > 1);
+        }
+
+        setTranslationResult(`✅ ดาวน์โหลด Webtoon Strip สำเร็จ! (${loadedImages.length} หน้า)`);
+        setTimeout(() => setTranslationResult(null), 3000);
+      } catch (e) {
+        console.error("Failed to generate long strip", e);
+        setTranslationResult(`❌ เกิดข้อผิดพลาดในการรวมภาพ Webtoon Strip`);
+        setTimeout(() => setTranslationResult(null), 3000);
+      } finally {
+        setIsZipping(false);
+      }
+      return;
+    }
     
     if (format === "pdf") {
       try {
@@ -844,6 +932,17 @@ export default function WorkspacePage() {
           
           {/* ── Group 3: Translate Actions ── */}
           <div className="flex items-center gap-1.5">
+            {batchFailures.length > 0 && !isTranslatingAll && !isTranslating && (
+              <button
+                onClick={() => void retryFailedPages()}
+                disabled={operationBusy || pages.length === 0}
+                className="flex-shrink-0 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 border border-amber-500/30 px-3 py-1.5 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm animate-pulse cursor-pointer"
+                title="ลองใหม่เฉพาะหน้าที่แปลไม่สำเร็จ"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>ลองใหม่ {batchFailures.length} หน้าที่พลาด</span>
+              </button>
+            )}
             <button 
               onClick={() => void handleTranslateCurrent()}
               disabled={operationBusy || pages.length === 0}
@@ -924,6 +1023,14 @@ export default function WorkspacePage() {
               title="ดาวน์โหลดหน้านี้"
             >
               <Download className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => handleDownloadAll("strip")}
+              disabled={isZipping || pages.length === 0}
+              className="text-foreground disabled:opacity-40 px-2.5 py-1.5 text-sm flex items-center gap-1 border-r border-surface-hover/60 hover:bg-surface-hover transition-all"
+              title="ดาวน์โหลดทั้งหมดเป็น Webtoon Long Strip"
+            >
+              {isZipping ? <span className="animate-spin h-3.5 w-3.5 border-2 border-foreground border-t-transparent rounded-full"></span> : <><GalleryVertical className="w-3.5 h-3.5 text-muted" /><span className="text-xs font-bold">Strip</span></>}
             </button>
             <button
               onClick={() => handleDownloadAll("zip")}
@@ -1124,7 +1231,14 @@ export default function WorkspacePage() {
               >
                 <Download className="w-4 h-4" /> บันทึกหน้านี้
               </button>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-4 gap-2">
+                <button
+                  onClick={() => { handleDownloadAll("strip"); setIsMobileMenuOpen(false); }}
+                  disabled={isZipping || pages.length === 0}
+                  className="bg-surface text-foreground disabled:opacity-40 p-2 rounded-lg text-xs font-bold flex flex-col items-center justify-center gap-1 border border-transparent"
+                >
+                  {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <><GalleryVertical className="w-4 h-4 text-muted" /><span>Strip</span></>}
+                </button>
                 <button
                   onClick={() => { handleDownloadAll("zip"); setIsMobileMenuOpen(false); }}
                   disabled={isZipping || pages.length === 0}

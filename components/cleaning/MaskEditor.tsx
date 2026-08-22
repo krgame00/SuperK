@@ -194,7 +194,7 @@ export function MaskEditor({
 
         <footer className="flex flex-col gap-3 border-t border-surface-hover px-3 py-3 sm:flex-row sm:items-end sm:justify-between">
           <div className="flex flex-wrap items-center gap-2">
-            {(["paint", "erase"] as const).map((item) => (
+            {(["paint", "erase", "restore"] as const).map((item) => (
               <button
                 key={item}
                 type="button"
@@ -202,7 +202,7 @@ export function MaskEditor({
                 aria-pressed={mode === item}
                 className="h-8 rounded-md bg-surface px-3 text-xs text-muted aria-pressed:bg-primary aria-pressed:text-primary-content"
               >
-                {item === "paint" ? "เพิ่ม Mask" : "ลบ Mask"}
+                {item === "paint" ? "เพิ่ม Mask" : item === "erase" ? "ลบ Mask" : "กู้ภาพเดิม (Restore)"}
               </button>
             ))}
             <label className="flex items-center gap-2 text-xs text-muted">

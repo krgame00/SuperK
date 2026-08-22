@@ -12,8 +12,9 @@ from PIL import Image, UnidentifiedImageError
 
 from app.cleaners.aot import AotCleaner
 from app.cleaners.anime_lama import AnimeLamaCleaner, CleanerUnavailable
+from app.cleaners.lama_large import LamaLargeCleaner
 from app.cleaners.flat import FlatCleaner, GradientCleaner
-from app.detector import TextDetector
+from app.detector import HybridTextDetector, TextDetector
 from app.jobs import JobStore, Pipeline, PipelineFactory
 from app.model_store import ModelStore
 from app.pipeline import CleaningPipeline
@@ -28,7 +29,7 @@ from app.settings import Settings
 
 SUPPORTED_MEDIA_TYPES = {"image/png", "image/jpeg", "image/webp"}
 SUPPORTED_FORMATS = {"PNG", "JPEG", "WEBP"}
-RETRY_CLEANERS = {"auto", "flat", "opencv", "aot", "anime-lama"}
+RETRY_CLEANERS = {"auto", "flat", "opencv", "aot", "anime-lama", "lama-large"}
 
 
 def create_app(
@@ -88,6 +89,7 @@ def create_app(
     @app.get("/v1/jobs/{job_id}/assets/{asset_name}")
     def get_asset(job_id: str, asset_name: str) -> FileResponse:
         if asset_name not in {
+            "source.png",
             "clean.png",
             "mask.png",
             "review-mask.png",
@@ -185,24 +187,45 @@ def _job_or_404(store: JobStore, job_id: str):
 def _default_pipeline_factory(settings: Settings) -> Callable[[], Pipeline]:
     def build() -> Pipeline:
         service_root = Path(__file__).resolve().parents[1]
+        model_dir = (
+            settings.model_dir
+            if settings.model_dir.is_absolute()
+            else (service_root / settings.model_dir)
+        )
         model_store = ModelStore.from_manifest(
-            settings.model_dir,
+            model_dir,
             service_root / "models" / "manifest.json",
         )
-        detector = TextDetector(model_store)
-        aot = AotCleaner(model_store)
+        detector = HybridTextDetector.from_model_store(model_store)
+        lama_large = None
         try:
-            anime_lama = AnimeLamaCleaner.from_model_store(model_store)
-        except CleanerUnavailable:
-            anime_lama = None
-        cleaners: dict = {
-            CleanerRoute.FLAT: FlatCleaner(),
-            CleanerRoute.GRADIENT: GradientCleaner(),
-            CleanerRoute.ARTWORK: aot,
-            "aot": aot,
-        }
-        if anime_lama is not None:
-            cleaners["anime-lama"] = anime_lama
+            lama_large = LamaLargeCleaner.from_model_store(model_store)
+        except Exception:
+            lama_large = None
+
+        if lama_large is not None:
+            cleaners: dict = {
+                CleanerRoute.FLAT: lama_large,
+                CleanerRoute.GRADIENT: lama_large,
+                CleanerRoute.ARTWORK: lama_large,
+                "lama-large": lama_large,
+            }
+        else:
+            try:
+                anime_lama = AnimeLamaCleaner.from_model_store(model_store)
+            except CleanerUnavailable:
+                anime_lama = None
+            aot = AotCleaner(model_store)
+            primary_artwork = anime_lama or aot
+            cleaners = {
+                CleanerRoute.FLAT: FlatCleaner(),
+                CleanerRoute.GRADIENT: GradientCleaner(),
+                CleanerRoute.ARTWORK: primary_artwork,
+                "aot": aot,
+            }
+            if anime_lama is not None:
+                cleaners["anime-lama"] = anime_lama
+
         return CleaningPipeline(
             detector=detector,
             cleaners=cleaners,

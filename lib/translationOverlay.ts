@@ -1,5 +1,50 @@
-
 import { undoManager } from './undoManager';
+
+const ADJ_KEY = "superk:overlay-adjustments";
+
+export interface OverlayAdjustment {
+  bx: number;
+  by: number;
+  bw: number;
+  bh: number;
+  iw: number;
+  ih: number;
+}
+
+export const readOverlayAdjustments = (): Record<string, Record<string, OverlayAdjustment>> => {
+  if (typeof window === "undefined" || !window.localStorage) return {};
+  try {
+    return JSON.parse(localStorage.getItem(ADJ_KEY) || "{}");
+  } catch {
+    return {};
+  }
+};
+
+export const saveOverlayAdjustments = (adjustments: Record<string, Record<string, OverlayAdjustment>>): void => {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    localStorage.setItem(ADJ_KEY, JSON.stringify(adjustments));
+  } catch {}
+};
+
+export const clearPageAdjustments = (pageIndex: number): void => {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    const all = readOverlayAdjustments();
+    const pageKey = `page-${pageIndex}`;
+    if (all[pageKey]) {
+      delete all[pageKey];
+      localStorage.setItem(ADJ_KEY, JSON.stringify(all));
+    }
+  } catch {}
+};
+
+export const clearAllAdjustments = (): void => {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    localStorage.removeItem(ADJ_KEY);
+  } catch {}
+};
 
 export const downloadTranslatedImage = (
   viewMode: "single" | "scroll" | "offscreen",
@@ -67,6 +112,94 @@ export const downloadTranslatedImage = (
   return dataUrl;
 };
 
+export const wrapTextForBubble = (
+  text: string,
+  maxW: number,
+  maxH: number,
+  fs: number,
+  fontFamily: string,
+  isOval: boolean = true
+): string[] => {
+  if (!text || !text.trim()) return [];
+  
+  let wds: string[] = [];
+  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+    const segmenter = new Intl.Segmenter('th', { granularity: 'word' });
+    wds = Array.from(segmenter.segment(text)).map(s => s.segment);
+  } else {
+    wds = text.split(/\s+/);
+  }
+
+  let measureFn: (str: string) => number;
+  const tempCanvas = typeof document !== 'undefined' ? document.createElement("canvas") : null;
+  const tempCtx = tempCanvas ? tempCanvas.getContext("2d") : null;
+  if (tempCtx) {
+    tempCtx.font = `bold ${fs}px ${fontFamily}`;
+    measureFn = (str: string) => tempCtx.measureText(str).width;
+  } else {
+    measureFn = (str: string) => str.length * (fs * 0.6);
+  }
+
+  const lineH = fs * 1.45;
+  const estimatedLineCount = Math.max(1, Math.round(maxH / lineH));
+
+  const getLineMaxW = (lineIndex: number, totalLines: number): number => {
+    if (!isOval || totalLines <= 1) return maxW;
+    const yCenter = (lineIndex + 0.5) / totalLines;
+    const v = (yCenter - 0.5) * 2;
+    const chordRatio = Math.sqrt(Math.max(0.2, 1 - v * v));
+    return Math.max(fs * 2.5, maxW * chordRatio * 0.95);
+  };
+
+  let bestLines: string[] = [];
+
+  for (let tryLines = Math.max(1, estimatedLineCount - 1); tryLines <= estimatedLineCount + 2; tryLines++) {
+    const lines: string[] = [];
+    let cur = "";
+    let lineIdx = 0;
+
+    for (const w of wds) {
+      const allowedW = getLineMaxW(lineIdx, tryLines);
+      const test = cur ? (cur + w) : w;
+      if (measureFn(test) > allowedW && cur) {
+        lines.push(cur);
+        cur = w.trimStart();
+        lineIdx++;
+      } else {
+        cur = test;
+      }
+    }
+    if (cur) lines.push(cur);
+
+    const splitLines: string[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      const ln = lines[i];
+      const allowedW = getLineMaxW(i, lines.length);
+      if (measureFn(ln) > allowedW) {
+        let c2 = "";
+        for (const c of [...ln]) {
+          if (measureFn(c2 + c) > allowedW && c2) {
+            splitLines.push(c2);
+            c2 = c;
+          } else {
+            c2 += c;
+          }
+        }
+        if (c2) splitLines.push(c2);
+      } else {
+        splitLines.push(ln);
+      }
+    }
+
+    bestLines = splitLines;
+    if (splitLines.length * lineH <= maxH * 1.15) {
+      break;
+    }
+  }
+
+  return bestLines;
+};
+
 export const applyTranslationOverlay = async (
   bubbles: any[],
   viewMode: "single" | "scroll" | "offscreen",
@@ -103,6 +236,10 @@ export const applyTranslationOverlay = async (
     const ih = img.naturalHeight || img.offsetHeight;
     if (!iw || !ih) { setTimeout(paint, 100); return; }
 
+    // Load saved adjustments for this page
+    const pageKey = `page-${currentPage}`;
+    const savedAdj = readOverlayAdjustments()[pageKey] || {};
+
     const tlContainer = document.createElement("div");
     tlContainer.className = "tl-canvas";
     tlContainer.style.cssText = `position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:5;`;
@@ -112,7 +249,6 @@ export const applyTranslationOverlay = async (
     let fallbackY2 = 10;
     real.forEach(b => {
       let rawX = 50, rawY = 50, rawW = 22, rawH = 10;
-      
       let isInvalidBox = b.isInvalidBox === true;
 
       if (Array.isArray(b.box) && b.box.length === 4) {
@@ -121,7 +257,7 @@ export const applyTranslationOverlay = async (
         rawY = (ymin + ymax) / 2 / 10;
         rawW = Math.abs(xmax - xmin) / 10;
         rawH = Math.abs(ymax - ymin) / 10;
-        
+      
         if ((rawW >= 85 && rawH >= 85) || (rawW === 0 && rawH === 0)) {
           isInvalidBox = true;
         }
@@ -140,7 +276,7 @@ export const applyTranslationOverlay = async (
           rawH = rawH / 10;
         }
       }
-      
+
       if (isInvalidBox) {
         if (Array.isArray(b.box) && b.box.length === 4 && (b.box[1] !== 0 || b.box[3] !== 1000)) {
           rawX = (b.box[1] + b.box[3]) / 2 / 10;
@@ -155,41 +291,55 @@ export const applyTranslationOverlay = async (
         b.isInvalidBox = true;
       }
 
-      let tx = Math.max(0, Math.min(rawX, 100));
-      let ty = Math.max(0, Math.min(rawY, 100));
-      let tw = rawW;
-      let th = rawH;
-
-      // Clamp bubble inside the page (2% margin) so long/offset boxes never
-      // overflow the panel edge. Collapses left when the box would exceed.
-      const margin = 2;
-      let maxTw = 100 - tx - margin;
-      let maxTh = 100 - ty - margin;
-      if (maxTw < margin) {
-        tx = Math.max(0, 100 - tw - margin);
-        maxTw = 100 - tx - margin;
-      }
-      if (maxTh < margin) {
-        ty = Math.max(0, 100 - th - margin);
-        maxTh = 100 - ty - margin;
-      }
-      tw = Math.max(3, Math.min(tw, maxTw));
-      th = Math.max(2, Math.min(th, maxTh));
-
-      const cx = (tx / 100) * iw;
-      const cy = (ty / 100) * ih;
-      const bw = (tw / 100) * iw;
-      const bh = (th / 100) * ih;
-      
       if (!(b.t || b.translated || "").trim()) return;
 
-      const bx = cx - bw / 2;
-      const by = cy - bh / 2;
+      // Unique identifier for this bubble
+      const boxKey = b.id !== undefined
+        ? `id-${b.id}`
+        : Array.isArray(b.box) && b.box.length === 4 
+          ? b.box.map(Math.round).join(",") 
+          : `text-${(b.t || b.translated || "").slice(0, 20)}-${rawX.toFixed(1)}-${rawY.toFixed(1)}`;
 
-      let currentBx = bx;
-      let currentBy = by;
-      let currentBw = bw;
-      let currentBh = bh;
+      const adj = savedAdj[boxKey];
+
+      let currentBx: number;
+      let currentBy: number;
+      let currentBw: number;
+      let currentBh: number;
+
+      if (adj && typeof adj.bx === "number" && typeof adj.by === "number") {
+        const baseIw = adj.iw || iw;
+        const baseIh = adj.ih || ih;
+        currentBx = (adj.bx / baseIw) * iw;
+        currentBy = (adj.by / baseIh) * ih;
+        currentBw = (adj.bw / baseIw) * iw;
+        currentBh = (adj.bh / baseIh) * ih;
+        b.__resized = true;
+      } else {
+        const cx = (rawX / 100) * iw;
+        const cy = (rawY / 100) * ih;
+        const bw = (rawW / 100) * iw;
+        const bh = (rawH / 100) * ih;
+        currentBx = cx - bw / 2;
+        currentBy = cy - bh / 2;
+        currentBw = bw;
+        currentBh = bh;
+      }
+
+      // Save current position/size to localStorage
+      const saveAdjustment = () => {
+        const all = readOverlayAdjustments();
+        if (!all[pageKey]) all[pageKey] = {};
+        all[pageKey][boxKey] = {
+          bx: currentBx,
+          by: currentBy,
+          bw: currentBw,
+          bh: currentBh,
+          iw,
+          ih,
+        };
+        saveOverlayAdjustments(all);
+      };
 
       const wrapper = document.createElement("div");
       wrapper.style.cssText = `position:absolute; left:${currentBx}px; top:${currentBy}px; width:${currentBw}px; height:${currentBh}px; pointer-events:auto; cursor:move; transition: opacity 0.2s; z-index:10;`;
@@ -213,68 +363,35 @@ export const applyTranslationOverlay = async (
         const text = (b.t || b.translated || "").trim();
         let maxW = currentBw;
         let maxH = currentBh;
+        const hasUserSize = b.__resized === true;
+        const isOvalBubble = !b.isInvalidBox;
 
-        const wrap = (fs: number) => {
-          const tempCanvas = document.createElement("canvas");
-          const tempCtx = tempCanvas.getContext("2d")!;
-          tempCtx.font = `bold ${fs}px ${ts.fontFamily}`;
-          let wds: string[] = [];
-          if (typeof Intl !== 'undefined' && Intl.Segmenter) {
-            const segmenter = new Intl.Segmenter('th', { granularity: 'word' });
-            wds = Array.from(segmenter.segment(text)).map(s => s.segment);
-          } else {
-            wds = text.split(/\s+/);
-          }
-
-          const res: string[] = [];
-          let cur = "";
-          for (const w of wds) {
-            const test = cur + w;
-            if (tempCtx.measureText(test).width > maxW && cur) { 
-              res.push(cur); 
-              cur = w.trimStart(); 
-            }
-            else cur = test;
-          }
-          if (cur) res.push(cur);
-          
-          const finalRes: string[] = [];
-          for (const ln of res) {
-            if (tempCtx.measureText(ln).width > maxW) {
-              let c2 = "";
-              for (const c of [...ln]) {
-                if (tempCtx.measureText(c2 + c).width > maxW) { finalRes.push(c2); c2 = c; }
-                else c2 += c;
-              }
-              if (c2) finalRes.push(c2);
-            } else {
-              finalRes.push(ln);
-            }
-          }
-          return finalRes;
+        const wrap = (fontSize: number) => {
+          return wrapTextForBubble(text, maxW, maxH, fontSize, ts.fontFamily, isOvalBubble);
         };
 
-        let fs = Math.max(20, Math.min(38, currentBh * 0.5)) * ts.fontSizeMultiplier;
+        let fs = Math.max(14, Math.min(48, Math.round(currentBh * 0.35 * (ts.fontSizeMultiplier || 1.0))));
         let lines2: string[] = [];
-        for (; fs >= 20; fs--) {
+        let requiredH = 0;
+
+        for (let size = fs; size >= 12; size -= 2) {
+          fs = size;
           lines2 = wrap(fs);
-          if (lines2.length * (fs * 1.3) <= maxH) break;
+          requiredH = lines2.length * (fs * 1.45);
+          if (requiredH <= maxH) break;
         }
 
-        const requiredH = lines2.length * (fs * 1.3);
-        if (requiredH > currentBh) {
+        if (requiredH > currentBh && !hasUserSize) {
            currentBh = requiredH;
         }
 
-        // If even at minimum font (20px) text still overflows bubble height,
-        // iteratively expand bubble width (up to 3x) until it fits.
-        if (fs <= 20 && requiredH > maxH) {
+        if (fs <= 20 && requiredH > maxH && !hasUserSize) {
           for (let expand = 1; expand <= 5; expand++) {
             currentBw *= 1.25;
             maxW = currentBw;
             lines2 = wrap(fs);
-            const newRequiredH = lines2.length * (fs * 1.3);
-            if (newRequiredH <= maxH || currentBw >= bw * 3) {
+            const newRequiredH = lines2.length * (fs * 1.45);
+            if (newRequiredH <= maxH || currentBw >= (rawW / 100 * iw) * 3) {
               currentBh = newRequiredH;
               break;
             }
@@ -282,8 +399,6 @@ export const applyTranslationOverlay = async (
           }
         }
 
-        // Re-clamp after text height expansion (and optional width expansion):
-        // the wrapper may have grown past the bottom/right edge.
         const maxTop = (ih - currentBh);
         if (currentBy > maxTop) {
           currentBy = Math.max(0, maxTop);
@@ -298,7 +413,6 @@ export const applyTranslationOverlay = async (
         wrapper.style.width = `${(currentBw / iw) * 100}%`;
         wrapper.style.height = `${(currentBh / ih) * 100}%`;
 
-        // Scale up pad if image is huge so bubble edges look right (baseline 12px for a 800px image width)
         const pad = Math.max(6, Math.round((iw / 800) * 8));
         const r = Math.max(8, Math.round((iw / 800) * 10));
         const bubbleW = currentBw + pad * 2 + r;
@@ -334,7 +448,7 @@ export const applyTranslationOverlay = async (
         ctx.font = `bold ${fs}px ${ts.fontFamily}`;
         ctx.textAlign = "center";
         ctx.textBaseline = "alphabetic";
-        const lineH = fs * 1.3;
+        const lineH = fs * 1.45;
         const totalTH = lines2.length * lineH;
         const startY = currentBh / 2 - totalTH / 2 + lineH * 0.8;
 
@@ -352,31 +466,31 @@ export const applyTranslationOverlay = async (
 
       wrapper.addEventListener('dblclick', (e) => {
         e.stopPropagation();
-        if (wrapper.querySelector('textarea')) return;
+        const existing = wrapper.querySelector('textarea');
+        if (existing) return;
 
         const oldText = (b.t || b.translated || "").trim();
-
         const textarea = document.createElement("textarea");
-        textarea.value = (b.t || b.translated || "").trim();
+        textarea.value = oldText;
         textarea.style.cssText = `
           position: absolute;
-          inset: -10px;
-          width: calc(100% + 20px);
-          height: calc(100% + 20px);
-          z-index: 30;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(255, 255, 255, 0.95);
+          color: #000;
+          border: 2px solid #3b82f6;
+          border-radius: 6px;
+          padding: 4px 6px;
+          font-family: inherit;
+          font-size: 13px;
+          line-height: 1.3;
           resize: none;
+          z-index: 50;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.25);
           outline: none;
-          border: 2px solid #10B981;
-          border-radius: 8px;
-          background: rgba(255,255,255,0.95);
-          color: #111;
-          font-family: Itim, sans-serif;
-          font-size: 16px;
-          padding: 8px;
-          text-align: center;
-          box-shadow: 0 4px 15px rgba(0,0,0,0.3);
         `;
-        
+
         wrapper.appendChild(textarea);
         textarea.focus();
         textarea.select();
@@ -446,6 +560,7 @@ export const applyTranslationOverlay = async (
               redo: () => { currentBx = newX; currentBy = newY; renderBubble(); },
             });
           }
+          saveAdjustment();
         }
       });
 
@@ -514,7 +629,8 @@ export const applyTranslationOverlay = async (
             handle.releasePointerCapture(e.pointerId);
             handle.style.opacity = "0";
             wrapper.style.zIndex = "10";
-            // Push undo for resize
+            b.__resized = true;
+            saveAdjustment();
             const oX = rInitBx, oY = rInitBy, oW = rInitBw, oH = rInitBh;
             const nX = currentBx, nY = currentBy, nW = currentBw, nH = currentBh;
             if (Math.abs(oW - nW) > 1 || Math.abs(oH - nH) > 1) {
@@ -587,7 +703,6 @@ export const applyTranslationOverlay = async (
 
       wrapper.appendChild(deleteBtn);
 
-      // Edit button (top-left, symmetric with delete button)
       const editBtn = document.createElement("button");
       editBtn.className = "edit-btn";
       editBtn.title = "ดับเบิลคลิกเพื่อแก้ไข";
@@ -623,7 +738,6 @@ export const applyTranslationOverlay = async (
       editBtn.onpointerdown = (e) => { e.stopPropagation(); };
       editBtn.onclick = (e) => {
         e.stopPropagation();
-        // Trigger the same dblclick edit logic
         wrapper.dispatchEvent(new MouseEvent('dblclick', { bubbles: false }));
       };
 

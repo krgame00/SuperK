@@ -16,5 +16,11 @@
     "sha256": "479d3afdcb7ed2fd944ed4ebcc39ca45b33491f0f2e43eb1000bd623cfb41823",
     "filename": "anime-manga-big-lama.pt",
     "license": "MIT"
+  },
+  "lama-large": {
+    "url": "https://huggingface.co/dreMaz/AnimeMangaInpainting/resolve/main/lama_large_512px.ckpt",
+    "sha256": "11d30fbb3000fb2eceae318b75d9ced9229d99ae990a7f8b3ac35c8d31f2c935",
+    "filename": "lama_large_512px.ckpt",
+    "license": "GPL-3.0"
   }
 }

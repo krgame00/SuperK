@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field
 from app.detector import RgbImage
 from app.mask_refiner import BinaryMask, MaskRegion
 from app.schemas import CleanerRoute
+from app.cleaners.anime_lama import AnimeLamaCleaner
+from app.cleaners.lama_large import LamaLargeCleaner
 
 
 class RegionFeatures(BaseModel):
@@ -22,15 +24,31 @@ class RouteDecision(BaseModel):
     route: CleanerRoute
     confidence: float = Field(ge=0, le=1)
     features: RegionFeatures
+    preferred_cleaner: str | None = None
 
 
 def route_region(
     image_rgb: RgbImage,
     mask: BinaryMask,
     region: MaskRegion,
+    cleaners: dict | None = None,
 ) -> RouteDecision:
     features = extract_region_features(image_rgb, mask, region)
-    if features.lab_variance < 18 and features.edge_density < 0.08:
+    
+    # Complex backgrounds (high variance + high edge density) -> LAMA large
+    # (if available in cleaners dict)
+    use_lama = (
+        cleaners is not None
+        and "lama-large" in cleaners
+        and features.lab_variance > 45
+        and features.edge_density > 0.25
+    )
+    preferred_cleaner = None
+    if use_lama:
+        route = CleanerRoute.ARTWORK
+        confidence = 0.9
+        preferred_cleaner = "lama-large"
+    elif features.lab_variance < 18 and features.edge_density < 0.08:
         route = CleanerRoute.FLAT
         boundary_distance = max(
             features.lab_variance / 18,
@@ -61,6 +79,7 @@ def route_region(
         route=route,
         confidence=float(np.clip(confidence, 0, 1)),
         features=features,
+        preferred_cleaner=preferred_cleaner,
     )
 
 

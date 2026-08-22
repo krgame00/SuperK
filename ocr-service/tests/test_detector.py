@@ -128,3 +128,34 @@ def test_ctd_model_returns_source_sized_mask() -> None:
     assert 0.0 <= float(result.mask_probability.min())
     assert float(result.mask_probability.max()) <= 1.0
     assert result.blocks
+
+
+def test_hybrid_detector_combines_masks() -> None:
+    from app.detector import HybridTextDetector, DetectionResult, LetterboxTransform
+
+    class DummyCTD:
+        def detect(self, img):
+            h, w = img.shape[:2]
+            return DetectionResult(
+                mask_probability=np.zeros((h, w), dtype=np.float32),
+                blocks=[],
+                scale=LetterboxTransform(w, h, 1024, 1.0, 0, 0),
+            )
+
+    class DummyPaddle:
+        def ocr(self, img, cls=True):
+            # Return a detected text line at [20, 20] to [40, 40]
+            return [[
+                [[[20.0, 20.0], [40.0, 20.0], [40.0, 40.0], [20.0, 40.0]], ("TEST", 0.99)]
+            ]]
+
+    image = np.full((100, 100, 3), 255, dtype=np.uint8)
+    image[25:35, 25:35] = 0  # Black text inside bounding box
+
+    detector = HybridTextDetector(DummyCTD(), paddle_engine=DummyPaddle())
+    res = detector.detect(image)
+    assert res.mask_probability.shape == (100, 100)
+    assert len(res.blocks) == 1
+    assert np.any(res.mask_probability[20:40, 20:40] > 0.5)
+
+

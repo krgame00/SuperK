@@ -14,7 +14,7 @@ BinaryMask = NDArray[np.uint8]
 
 @dataclass(frozen=True)
 class MaskRefinementConfig:
-    threshold: float = 0.45
+    threshold: float = 0.35
     minimum_component_area: int | None = None
 
 
@@ -36,10 +36,11 @@ class RefinedMask:
 def build_protected_edges(
     image_rgb: RgbImage,
     probability: NDArray[np.float32],
+    edge_lock_threshold: float = 0.20,
 ) -> BinaryMask:
     luminance = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
     edges = cv2.Canny(luminance, 80, 160)
-    edges[probability >= 0.8] = 0
+    edges[probability >= edge_lock_threshold] = 0
     return edges
 
 
@@ -50,7 +51,7 @@ def constrained_dilate(
 ) -> BinaryMask:
     grown = np.where(seed > 0, 255, 0).astype(np.uint8)
     blocked = protected_edges > 0
-    kernel = np.ones((3, 3), dtype=np.uint8)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     for _ in range(max(0, radius)):
         next_mask = cv2.dilate(grown, kernel, iterations=1)
         next_mask[blocked] = 0
@@ -61,7 +62,7 @@ def constrained_dilate(
 def refine_probability_mask(
     probability: NDArray[np.float32],
     protected_edges: BinaryMask,
-    threshold: float = 0.45,
+    threshold: float = 0.35,
     minimum_component_area: int | None = None,
 ) -> RefinedMask:
     if probability.shape != protected_edges.shape:
@@ -80,12 +81,20 @@ def refine_probability_mask(
     combined = np.zeros_like(seed, dtype=np.uint8)
     component_masks: dict[int, BinaryMask] = {}
     radii: dict[int, int] = {}
+    erode_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     for component_id in range(1, count):
         if int(stats[component_id, cv2.CC_STAT_AREA]) < minimum_area:
             continue
         component = np.where(labels == component_id, 255, 0).astype(np.uint8)
         radius = _estimate_stroke_radius(component)
-        grown = constrained_dilate(component, protected_edges, radius)
+        box_w = stats[component_id, cv2.CC_STAT_WIDTH]
+        box_h = stats[component_id, cv2.CC_STAT_HEIGHT]
+        multiplier = 1.8 if box_w > box_h * 2 else 1.4
+        dilation_radius = max(radius, round(radius * multiplier))
+        grown = constrained_dilate(component, protected_edges, dilation_radius)
+        eroded = cv2.erode(grown, erode_kernel, iterations=1)
+        grown = np.maximum(eroded, component)
+        grown[protected_edges > 0] = 0
         combined = np.maximum(combined, grown)
         component_masks[component_id] = grown
         radii[component_id] = radius
@@ -122,7 +131,7 @@ def _estimate_stroke_radius(component: BinaryMask) -> int:
     if positive.size == 0:
         return 2
     half_stroke = float(np.percentile(positive, 75))
-    return min(4, max(2, round(half_stroke)))
+    return min(6, max(2, round(half_stroke)))
 
 
 def _group_regions(

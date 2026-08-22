@@ -173,7 +173,7 @@ class CleaningPipeline:
             _progress(progress_callback, JobStage.CLEANING, index, total)
             refined_region_mask = _region_mask(refined.mask, region)
             region_mask = _region_mask(eligible, region)
-            route = route_region(image_rgb, refined_region_mask, region)
+            route = route_region(image_rgb, refined_region_mask, region, self.cleaners)
             eligibility = decisions[region.id]
             if (
                 eligibility.action is AutomaticAction.PRESERVE
@@ -193,6 +193,8 @@ class CleaningPipeline:
                 )
                 continue
             cleaner = self.cleaners.get(route.route.value)
+            if route.preferred_cleaner and route.preferred_cleaner in self.cleaners:
+                cleaner = self.cleaners[route.preferred_cleaner]
             if cleaner is None:
                 raise RuntimeError(f"no cleaner configured for {route.route.value}")
 
@@ -224,7 +226,9 @@ class CleaningPipeline:
                     cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
                 )
                 retry_mask[protection.protected_mask > 0] = 0
-                retry_repaired = cleaner.clean(before, retry_mask, region)
+                # Use LAMA Large for second pass if available (ensemble effect)
+                fallback_cleaner = self.cleaners.get("lama-large") or cleaner
+                retry_repaired = fallback_cleaner.clean(before, retry_mask, region)
                 candidate, support = compose(before, retry_repaired, retry_mask)
                 _restore_protected(
                     image_rgb,
@@ -326,11 +330,20 @@ class CleaningPipeline:
         verify_ms = 0
         items: list[_BatchItem] = []
         total = len(refined.regions)
+
+        # Global neural inpainting pass with full image context
+        full_lama = self.cleaners.get("lama-large")
+        full_clean = None
+        if full_lama is not None and hasattr(full_lama, "clean_full_image") and np.any(eligible):
+            stage_started = perf_counter()
+            full_clean = full_lama.clean_full_image(image_rgb, eligible)
+            clean_ms += _elapsed_ms(stage_started)
+
         for index, region in enumerate(refined.regions):
             _progress(progress_callback, JobStage.CLEANING, index, total)
             refined_region_mask = _region_mask(refined.mask, region)
             region_mask = _region_mask(eligible, region)
-            route = route_region(image_rgb, refined_region_mask, region)
+            route = route_region(image_rgb, refined_region_mask, region, self.cleaners)
             eligibility = decisions[region.id]
             if (
                 eligibility.action is AutomaticAction.PRESERVE
@@ -338,12 +351,17 @@ class CleaningPipeline:
             ):
                 continue
             cleaner = self.cleaners.get(route.route.value)
+            if route.preferred_cleaner and route.preferred_cleaner in self.cleaners:
+                cleaner = self.cleaners[route.preferred_cleaner]
             if cleaner is None:
                 raise RuntimeError(f"no cleaner configured for {route.route.value}")
 
             before = clean_image.copy()
             stage_started = perf_counter()
-            repaired = cleaner.clean(before, region_mask, region)
+            if full_clean is not None:
+                repaired = full_clean
+            else:
+                repaired = cleaner.clean(before, region_mask, region)
             candidate, support = compose(before, repaired, region_mask)
             _restore_protected(
                 image_rgb,
@@ -461,7 +479,7 @@ class CleaningPipeline:
             if region.id in cleaned_ids:
                 continue
             refined_region_mask = _region_mask(refined.mask, region)
-            route = route_region(image_rgb, refined_region_mask, region)
+            route = route_region(image_rgb, refined_region_mask, region, self.cleaners)
             records.append(
                 _record(
                     region,
@@ -479,6 +497,8 @@ class CleaningPipeline:
         }
         records.sort(key=lambda record: record_order[record.id])
         _progress(progress_callback, JobStage.COMPLETE, total, total)
+
+
         return PipelineOutput(
             source_image=image_rgb.copy(),
             clean_image=clean_image,

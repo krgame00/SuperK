@@ -9,7 +9,7 @@ def compose(
     original: RgbImage,
     repaired: RgbImage,
     mask: BinaryMask,
-    feather_radius: int = 2,
+    feather_radius: int = 1,
 ) -> tuple[RgbImage, BinaryMask]:
     if original.shape != repaired.shape or original.shape[:2] != mask.shape:
         raise ValueError("original, repaired, and mask dimensions must match")

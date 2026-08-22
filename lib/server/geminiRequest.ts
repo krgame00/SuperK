@@ -1,4 +1,4 @@
-export type GeminiErrorCode =
+﻿export type GeminiErrorCode =
   | "GEMINI_TIMEOUT"
   | "GEMINI_QUOTA"
   | "GEMINI_UPSTREAM";
@@ -87,14 +87,15 @@ export async function requestGemini<T = unknown>(
   const startedAt = now();
   let firstHttpError: GeminiRequestError | undefined;
   let sawTransportFailure = false;
+  let retryAttempt = 0;
 
   for (const model of models) {
     let keyOffset = 0;
 
     keyLoop: while (keyOffset < apiKeys.length) {
       const keyIndex =
-        ((initialKeyIndex + keyOffset) % apiKeys.length + apiKeys.length)
-        % apiKeys.length;
+        ((initialKeyIndex + keyOffset) % apiKeys.length + apiKeys.length) %
+        apiKeys.length;
       const apiKey = apiKeys[keyIndex];
       let serverRetry = 0;
 
@@ -192,4 +193,134 @@ export async function requestGemini<T = unknown>(
     );
   }
   throw upstreamError("Gemini request could not be completed", 502);
+}
+
+/**
+ * Call an OpenAI-compatible endpoint (e.g., 9router at http://localhost:20128/v1)
+ * with vision support. Expects the payload in OpenAI chat completions format.
+ */
+export interface OpenAICompatibleOptions {
+  baseUrl: string;           // e.g. http://localhost:20128/v1
+  apiKey: string;            // 9router API key from DB
+  model: string;             // model name (e.g. "11asd" combo)
+  payload: {
+    messages: Array<{
+      role: string;
+      content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
+    }>;
+    max_tokens?: number;
+    temperature?: number;
+    [key: string]: unknown;
+  };
+  attemptTimeoutMs?: number;
+  totalBudgetMs?: number;
+  fetchImpl?: typeof fetch;
+  now?: () => number;
+  sleep?: (milliseconds: number) => Promise<void>;
+}
+
+export async function requestOpenAICompatible<T = unknown>(
+  options: OpenAICompatibleOptions,
+): Promise<{ data: T; model: string }> {
+  const {
+    baseUrl,
+    apiKey,
+    model,
+    payload,
+    attemptTimeoutMs = 60_000,
+    totalBudgetMs = 180_000,
+    fetchImpl = globalThis.fetch,
+    now = Date.now,
+    sleep = defaultSleep,
+  } = options;
+  const startedAt = now();
+
+  const url = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${apiKey}`,
+  };
+
+  let firstHttpError: GeminiRequestError | undefined;
+  let sawTransportFailure = false;
+  let retryAttempt = 0;
+
+  while (now() - startedAt < totalBudgetMs) {
+    const remaining = totalBudgetMs - (now() - startedAt);
+    if (remaining <= 0) {
+      throw new GeminiRequestError(
+        TIMEOUT_MESSAGE,
+        "GEMINI_TIMEOUT",
+        504,
+        true,
+      );
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(),
+      Math.min(attemptTimeoutMs, remaining),
+    );
+    let response: Response;
+
+    try {
+      response = await fetchImpl(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ ...payload, model }),
+        signal: controller.signal,
+        cache: "no-store",
+      });
+    } catch {
+      sawTransportFailure = true;
+      break;
+    } finally {
+      clearTimeout(timer);
+    }
+
+    let data: unknown;
+    try {
+      data = await response.json();
+    } catch {
+      data = {
+        error: {
+          message: `OpenAI-compatible returned invalid JSON (${response.status})`,
+        },
+      };
+    }
+
+    if (response.ok) {
+      return { data: data as T, model };
+    }
+
+    const error = upstreamError(
+      upstreamMessage(data, response.status),
+      response.status,
+    );
+    firstHttpError ??= error;
+
+    // Retry on 429 (Rate Limit / Quota) and 5xx (Server Busy / Bad Gateway) with Exponential Backoff
+    if (response.status === 429 || response.status >= 500) {
+      retryAttempt++;
+      if (retryAttempt <= 3) {
+        const delayMs = response.status === 429
+          ? Math.min(2000 * Math.pow(2, retryAttempt - 1), 8000)
+          : 1000 * retryAttempt;
+        await sleep(delayMs);
+        continue;
+      }
+    }
+    break;
+  }
+
+  if (firstHttpError) throw firstHttpError;
+  if (sawTransportFailure) {
+    throw new GeminiRequestError(
+      TIMEOUT_MESSAGE,
+      "GEMINI_TIMEOUT",
+      504,
+      true,
+    );
+  }
+  throw upstreamError("OpenAI-compatible request could not be completed", 502);
 }

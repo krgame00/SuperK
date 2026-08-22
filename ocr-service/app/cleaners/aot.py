@@ -12,7 +12,7 @@ from numpy.typing import NDArray
 from app.detector import RgbImage
 from app.mask_refiner import BinaryMask, MaskRegion
 from app.model_store import ModelStore
-from app.ort_utils import preferred_providers
+from app.ort_utils import create_inference_session, preferred_providers
 
 
 @dataclass(frozen=True)
@@ -65,14 +65,7 @@ def restore_aot_output(
 
 class AotCleaner:
     def __init__(self, model_store: ModelStore) -> None:
-        options = ort.SessionOptions()
-        options.enable_cpu_mem_arena = False
-        options.intra_op_num_threads = min(6, os.cpu_count() or 1)
-        session = ort.InferenceSession(
-            str(model_store.ensure("aot-onnx")),
-            sess_options=options,
-            providers=preferred_providers(),
-        )
+        session = create_inference_session(model_store.ensure("aot-onnx"))
         self.session = cast("_Session", session)
 
     @classmethod

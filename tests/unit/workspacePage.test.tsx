@@ -43,6 +43,8 @@ vi.mock("@/hooks/useTranslation", () => ({
     restoreSavedSession: vi.fn(async () => null),
     clearSavedSession: vi.fn(),
     workflowPhase: null,
+    batchFailures: [],
+    retryFailedPages: vi.fn(),
     invalidatePageTranslation: vi.fn(),
   }),
 }));

@@ -21,6 +21,10 @@ NARRATION_THRESHOLD = 0.82
 SFX_THRESHOLD = 0.90
 UI_LABEL_MAX_AREA_FRACTION = 0.012
 UI_LABEL_MAX_HEIGHT_FRACTION = 0.08
+DIALOGUE_ENCLOSURE_THRESHOLD = 0.72
+STORY_BACKING_THRESHOLD = 0.55
+SFX_FEATURE_THRESHOLD = 0.35
+BACKING_STD_NORMALIZER = 96.0
 
 
 class EligibilityFeatures(BaseModel):
@@ -93,7 +97,7 @@ def classify_eligibility(
             features=features,
         )
 
-    if features.enclosure_score >= 0.72:
+    if features.enclosure_score >= DIALOGUE_ENCLOSURE_THRESHOLD:
         return EligibilityDecision(
             text_role=TextRole.DIALOGUE,
             confidence=features.enclosure_score,
@@ -108,8 +112,8 @@ def classify_eligibility(
         + 0.45 * features.rectangular_backing,
     )
     if (
-        features.backing_uniformity >= 0.55
-        or features.rectangular_backing >= 0.55
+        features.backing_uniformity >= STORY_BACKING_THRESHOLD
+        or features.rectangular_backing >= STORY_BACKING_THRESHOLD
     ):
         return _threshold_decision(
             TextRole.NARRATION,
@@ -123,8 +127,8 @@ def classify_eligibility(
         + 0.60 * features.stroke_irregularity
     )
     if (
-        features.artwork_edge_density >= 0.35
-        or features.stroke_irregularity >= 0.35
+        features.artwork_edge_density >= SFX_FEATURE_THRESHOLD
+        or features.stroke_irregularity >= SFX_FEATURE_THRESHOLD
     ):
         return _sfx_decision(sfx_score, features)
 
@@ -161,7 +165,7 @@ def extract_eligibility_features(
     mask_crop = region_mask[y1:y2, x1:x2] > 0
     backing = gray[~mask_crop]
     uniformity = (
-        float(np.clip(1.0 - np.std(backing) / 96.0, 0, 1))
+        float(np.clip(1.0 - np.std(backing) / BACKING_STD_NORMALIZER, 0, 1))
         if backing.size
         else 0.0
     )
@@ -214,13 +218,13 @@ def _looks_like_ui_label(
     area_fraction = (rect.width * rect.height) / max(width * height, 1)
     height_fraction = rect.height / max(height, 1)
     lacks_story_backing = (
-        features.enclosure_score < 0.55
-        and features.backing_uniformity < 0.55
-        and features.rectangular_backing < 0.55
+        features.enclosure_score < STORY_BACKING_THRESHOLD
+        and features.backing_uniformity < STORY_BACKING_THRESHOLD
+        and features.rectangular_backing < STORY_BACKING_THRESHOLD
     )
     lacks_sfx_shape = (
-        features.artwork_edge_density < 0.35
-        and features.stroke_irregularity < 0.35
+        features.artwork_edge_density < SFX_FEATURE_THRESHOLD
+        and features.stroke_irregularity < SFX_FEATURE_THRESHOLD
     )
     return (
         area_fraction <= UI_LABEL_MAX_AREA_FRACTION
@@ -252,7 +256,11 @@ def _sfx_decision(
     confidence: float,
     features: EligibilityFeatures,
 ) -> EligibilityDecision:
-    if confidence >= SFX_THRESHOLD:
+    if (
+        confidence >= SFX_THRESHOLD
+        and features.enclosure_score < 0.50
+        and features.backing_uniformity < 0.55
+    ):
         return EligibilityDecision(
             text_role=TextRole.SFX,
             confidence=confidence,

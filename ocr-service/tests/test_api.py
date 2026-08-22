@@ -178,6 +178,13 @@ def test_region_retry_creates_derived_job_without_overwriting_parent(
         ).json()["job_id"]
         parent = _wait_for_terminal(client, parent_id)
         assert parent["status"] == "succeeded"
+        parent_job_state = app.state.job_store.get(parent_id)
+        assert parent_job_state.output is None  # Verify RAM eviction
+        assert parent_job_state.source_bytes == b""  # Verify bytes eviction
+
+        source_asset = client.get(f"/v1/jobs/{parent_id}/assets/source.png")
+        assert source_asset.status_code == 200
+
         original_asset = client.get(
             f"/v1/jobs/{parent_id}/assets/clean.png",
         ).content

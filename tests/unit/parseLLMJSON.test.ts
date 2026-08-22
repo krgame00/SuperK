@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+﻿import { describe, it, expect } from "vitest";
 import { parseLLMJSON } from "@/lib/parseLLMJSON";
 
 describe("parseLLMJSON", () => {
@@ -10,6 +10,16 @@ describe("parseLLMJSON", () => {
   it("strips ```json markdown fences", () => {
     const result = parseLLMJSON('```json\n{"bubbles":[{"t":"เฮ้"}]}\n```');
     expect(result.bubbles[0].t).toBe("เฮ้");
+  });
+
+  it("handles preamble commentary before markdown fences", () => {
+    const result = parseLLMJSON('Image solid green. No text in image. JSON return empty.\n\n```json\n{\n  "bubbles": []\n}\n```');
+    expect(result).toEqual({ bubbles: [] });
+  });
+
+  it("handles conversational preamble before raw JSON", () => {
+    const result = parseLLMJSON('Here is the translation:\n{\n  "bubbles": [{"t":"สวัสดี"}]\n}\nHope this helps!');
+    expect(result.bubbles[0].t).toBe("สวัสดี");
   });
 
   it("strips plain ``` fences", () => {

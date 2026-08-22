@@ -29,6 +29,10 @@
 /ocr-service/models/*.pt
 /ocr-service/.cache/
 /ocr-service/benchmark-results/
+/models/
+*.onnx
+*.ckpt
+*.pt
 __pycache__/
 *.py[cod]
 
