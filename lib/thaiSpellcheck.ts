@@ -130,12 +130,19 @@ export function normalizeTranslationPayload<T extends { bubbles?: unknown[] }>(p
   if (Array.isArray(payload.bubbles)) {
     return {
       ...payload,
-      bubbles: payload.bubbles.map((b: unknown) => ({
-        ...(typeof b === "object" && b !== null ? b : {}),
-        t: typeof (b as { t?: unknown })?.t === "string"
-          ? normalizeThaiText((b as { t: string }).t)
-          : (b as { t?: unknown })?.t,
-      })),
+      bubbles: payload.bubbles.map((b: unknown) => {
+        // Malformed elements (null / primitives) must hard-fail the
+        // translation so callers fall into retry/error handling instead of
+        // rendering an empty ghost bubble.
+        if (typeof b !== "object" || b === null) {
+          throw new Error("Malformed bubble element in translation response");
+        }
+        const entry = b as { t?: unknown };
+        return {
+          ...entry,
+          t: typeof entry.t === "string" ? normalizeThaiText(entry.t) : entry.t,
+        };
+      }),
     };
   }
 
