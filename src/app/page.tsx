@@ -1320,6 +1320,7 @@ export default function WorkspacePage() {
                         }}
                         title="Click to edit this page"
                       >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img 
                           src={imgSrc} 
                           alt={`Page ${idx + 1}`} 
@@ -1371,13 +1372,15 @@ export default function WorkspacePage() {
                         </button>
                       </div>
                     ) : (
-                      <img 
-                        src={
-                          workspaceLayer === "original"
-                            ? pages[currentPage].url
-                            : currentCleaningResult?.cleanUrl ??
-                              pages[currentPage].url
-                        }
+                      <>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={
+                            workspaceLayer === "original"
+                              ? pages[currentPage].url
+                              : currentCleaningResult?.cleanUrl ??
+                                pages[currentPage].url
+                          }
                         alt={pages[currentPage].name} 
                         title={pages[currentPage].name}
                         onError={() => {
@@ -1385,6 +1388,7 @@ export default function WorkspacePage() {
                         }}
                         className="max-w-full max-h-[calc(100vh-160px)] sm:max-h-[calc(100vh-180px)] w-auto h-auto object-contain drop-shadow-sm select-none block"
                       />
+                      </>
                     )}
                     {workspaceLayer === "mask" && currentCleaningResult && (
                       <>
@@ -1451,6 +1455,7 @@ export default function WorkspacePage() {
 
             {/* Hidden container for offscreen rendering */}
             <div id="offscreen-container" className="fixed top-0 left-0 w-full max-w-4xl opacity-0 pointer-events-none -z-50" style={{ visibility: 'hidden' }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img id="offscreen-image" alt="offscreen" className="max-w-full h-auto" crossOrigin="anonymous" />
             </div>
             
@@ -1600,6 +1605,7 @@ export default function WorkspacePage() {
                   }`}
                   title={`${page.name} — drag to reorder`}
                 >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={page.url}
                     alt={page.name}

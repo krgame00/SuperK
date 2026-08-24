@@ -12,6 +12,13 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Additional ignores:
+    "node_modules/**",
+    "ocr-service/**",
+    "video-translator-app/**",
+    "chrome-extension/**",
+    ".agents/**",
+    ".worktrees/**",
   ]),
 ]);
 
