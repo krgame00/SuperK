@@ -1,6 +1,7 @@
 // IndexedDB helper for Manga Translator project state persistence
 
 import type { CleaningRegion } from "./cleaning/types";
+import type { TranslatedBubble } from "./translationOverlay";
 
 const DB_NAME = "SuperKMangaTranslatorDB";
 const DB_VERSION = 2;
@@ -19,7 +20,7 @@ interface SessionData {
   id: string;
   pages: { url: string; name: string }[];
   currentPage: number;
-  bubbleCache: [string, unknown[]][];
+  bubbleCache: [string, TranslatedBubble[]][];
   translatedImageCache: [string, string][];
   updatedAt: number;
 }
@@ -50,7 +51,7 @@ const openDB = (): Promise<IDBDatabase> => {
 export const saveProjectSession = async (data: {
   pages: { url: string; name: string }[];
   currentPage: number;
-  bubbleCache: Map<string, unknown[]>;
+  bubbleCache: Map<string, TranslatedBubble[]>;
   translatedImageCache: Map<string, string>;
 }): Promise<void> => {
   try {
@@ -84,7 +85,7 @@ export const saveProjectSession = async (data: {
 export const loadProjectSession = async (): Promise<{
   pages: { url: string; name: string }[];
   currentPage: number;
-  bubbleCache: Map<string, unknown[]>;
+  bubbleCache: Map<string, TranslatedBubble[]>;
   translatedImageCache: Map<string, string>;
   updatedAt: number;
 } | null> => {

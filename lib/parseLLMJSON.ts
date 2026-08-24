@@ -3,7 +3,7 @@
  * trailing commas, truncated closing braces, or trailing garbage text.
  * Returns the parsed object, or null when nothing parses.
  */
-export function parseLLMJSON(text: string): any {
+export function parseLLMJSON(text: string): unknown {
   if (!text) return null;
 
   // 1. Try markdown code block extraction first: ```json ... ``` or ``` ... ```
@@ -28,7 +28,7 @@ export function parseLLMJSON(text: string): any {
   return tryParseCandidates(base);
 }
 
-function tryParseCandidates(raw: string): any {
+function tryParseCandidates(raw: string): unknown {
   if (!raw) return null;
   const noTrailingCommas = raw.replace(/,\s*([\]}])/g, "$1");
 

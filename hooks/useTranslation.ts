@@ -5,6 +5,7 @@ import {
   TranslationRequestError,
 } from "@/lib/translation/requestError";
 import { applyTranslationOverlay } from "@/lib/translationOverlay";
+import type { TranslatedBubble, OverlayTextStyle } from "@/lib/translationOverlay";
 import { saveProjectSession, loadProjectSession, clearProjectSession } from "@/lib/projectStore";
 import { resolveTranslationOutcome } from "@/lib/translationPipeline";
 import { parseLLMJSON } from "@/lib/parseLLMJSON";
@@ -101,7 +102,7 @@ export function useTranslation({
   const [isTranslating, setIsTranslating] = useState(false);
   const [translationResult, setTranslationResult] = useState<string | null>(null);
   const [showTranslate, setShowTranslate] = useState(false);
-  const [activeBubbles, setActiveBubbles] = useState<any[]>([]);
+  const [activeBubbles, setActiveBubbles] = useState<TranslatedBubble[]>([]);
   const [cacheRevision, setCacheRevision] = useState(0);
 
   useEffect(() => {
@@ -126,11 +127,11 @@ export function useTranslation({
   }, []);
 
   // Per-page bubble cache, keyed by image data URL so it survives reordering
-  const bubbleCacheRef = useRef<Map<string, any[]>>(new Map());
+  const bubbleCacheRef = useRef<Map<string, TranslatedBubble[]>>(new Map());
   // Per-page final translated image dataUrl cache
   const translatedImageCacheRef = useRef<Map<string, string>>(new Map());
 
-  const getManualBubblesForPage = (pageUrl: string): any[] => {
+  const getManualBubblesForPage = (pageUrl: string): TranslatedBubble[] => {
     const cachedBubbles = bubbleCacheRef.current.get(pageUrl);
     if (cachedBubbles) {
       return cachedBubbles.filter((bubble) => bubble.isManual);
@@ -210,7 +211,7 @@ export function useTranslation({
         return;
       }
 
-      const newBubbles = parsed.bubbles.map((b: any) => {
+      const newBubbles = parsed.bubbles.map((b: TranslatedBubble) => {
         if (!b.box || b.box.length !== 4) return b;
         const cropYminPx = (b.box[0] / 1000) * cropBox.h;
         const cropXminPx = (b.box[1] / 1000) * cropBox.w;
@@ -239,8 +240,8 @@ export function useTranslation({
         setTranslationResult("✅ แปลเฉพาะจุดสำเร็จ!");
       }
 
-    } catch (error: any) {
-      setTranslationResult("❌ Error: " + error.message);
+    } catch (error: unknown) {
+      setTranslationResult("❌ Error: " + (error instanceof Error ? error.message : String(error)));
     } finally {
       setIsTranslating(false);
       setTimeout(() => setTranslationResult(null), 4000);
@@ -249,7 +250,7 @@ export function useTranslation({
 
   const renderAndCacheTranslation = useCallback(
     async (
-      bubbles: any[],
+      bubbles: TranslatedBubble[],
       backgroundUrl: string,
       pageUrl: string,
       pageIndex: number,
@@ -395,7 +396,7 @@ export function useTranslation({
           }
         }
 
-        let allBubbles: any[] = [];
+        let allBubbles: TranslatedBubble[] = [];
         let successCount = 0;
         let validPayloadCount = 0;
 
@@ -410,15 +411,18 @@ export function useTranslation({
             });
             const data = await readTranslationResponse<{ text: string }>(res);
 
-            let parsed = parseLLMJSON(data.text);
+            let parsed = parseLLMJSON(data.text) as
+              | { bubbles?: TranslatedBubble[] }
+              | null;
             if (!parsed || !Array.isArray(parsed.bubbles)) {
               throw new Error("Translation response malformed: bubbles array missing.");
             }
             parsed = normalizeTranslationPayload(parsed);
-            if (parsed.bubbles.length > 0) {
+            const sliceBubbles = parsed.bubbles ?? [];
+            if (sliceBubbles.length > 0) {
               const { sx, sy, sWidth, sHeight } = slice;
 
-              for (const b of parsed.bubbles) {
+              for (const b of sliceBubbles) {
                 if (!b.box || b.box.length !== 4) {
                   b.box = [0, 0, 1000, 1000];
                   b.isInvalidBox = true;
@@ -450,6 +454,7 @@ export function useTranslation({
                 // Dedupe against ALL bubbles (invalid boxes too) to stop
                 // overlapping white patches stacking on the same spot.
                 for (const existing of allBubbles) {
+                  if (!existing.box || existing.box.length < 4) continue;
                   const xA = Math.max(b.box[1], existing.box[1]);
                   const yA = Math.max(b.box[0], existing.box[0]);
                   const xB = Math.min(b.box[3], existing.box[3]);
@@ -489,7 +494,7 @@ export function useTranslation({
             }
             validPayloadCount++;
             successCount++;
-          } catch (err: any) {
+          } catch (err: unknown) {
             console.warn(`Slice ${i + 1} failed:`, err);
             if (getTranslationRetryDelay(err) !== null) {
               throw err;
@@ -560,7 +565,9 @@ export function useTranslation({
       }
 
       const data = await readTranslationResponse<{ text: string }>(res);
-      let parsed = data.text ? parseLLMJSON(data.text) : data;
+      let parsed = (data.text ? parseLLMJSON(data.text) : data) as
+        | ({ bubbles?: unknown[] } & Record<string, unknown>)
+        | null;
       // Gemini sometimes returns a valid JSON object that omits "bubbles"
       // (e.g. an explanatory reply or an empty-scan response). Treat that as
       // "no text found" instead of a hard failure so the page can fall
@@ -569,12 +576,14 @@ export function useTranslation({
         throw new Error("Translation response malformed: invalid JSON.");
       }
       if (!Array.isArray(parsed.bubbles)) {
-        parsed = { ...parsed, bubbles: [] };
+        parsed = { ...parsed, bubbles: [] as TranslatedBubble[] };
       }
-      parsed = normalizeTranslationPayload(parsed);
+      const typedParsed = parsed as { bubbles?: TranslatedBubble[] } & Record<string, unknown>;
+      const normalized = normalizeTranslationPayload(typedParsed);
+      const pageBubbles: TranslatedBubble[] = normalized.bubbles ?? [];
 
       if (
-        parsed.bubbles.length === 0
+        pageBubbles.length === 0
         && !isAutoRetry
         && !nsfwBypassMode
         && !forceNsfwBypass
@@ -614,9 +623,9 @@ export function useTranslation({
         });
         const retryData =
           await readTranslationResponse<{ text: string }>(retryRes);
-        const retryParsed = retryData.text
+        const retryParsed = (retryData.text
           ? parseLLMJSON(retryData.text)
-          : retryData;
+          : retryData) as { bubbles?: unknown[] } | null;
         if (!retryParsed || !Array.isArray(retryParsed.bubbles)) {
           throw new Error("Translation retry response malformed: bubbles array missing.");
         }
@@ -625,8 +634,8 @@ export function useTranslation({
 
       // Filter out hallucinated repetitive SFX
       const textCount: Record<string, number> = {};
-      const filteredParsed = [];
-      for (const b of parsed.bubbles) {
+      const filteredParsed: TranslatedBubble[] = [];
+      for (const b of pageBubbles) {
         const text = (b.t || "").trim();
         textCount[text] = (textCount[text] || 0) + 1;
         if (textCount[text] <= 3) {
@@ -657,9 +666,9 @@ export function useTranslation({
       }
 
       return true;
-    } catch (error: any) {
+    } catch (error: unknown) {
       if (activePageRef.current === pageUrl) {
-        setTranslationResult("❌ Error: " + error.message);
+        setTranslationResult("❌ Error: " + (error instanceof Error ? error.message : String(error)));
       }
       throw error; // Rethrow so the caller can handle 429
     }
@@ -790,7 +799,7 @@ export function useTranslation({
 
         let success = false;
         let retries = 0;
-        let forceNsfw = false;
+        const forceNsfw = false;
         let lastTranslationError: unknown;
 
         while (!success && retries < 3 && !cancelTranslateAllRef.current) {
@@ -813,9 +822,9 @@ export function useTranslation({
             );
 
             if (!success) throw new Error("Translation failed");
-          } catch (err: any) {
+          } catch (err: unknown) {
             lastTranslationError = err;
-            const errMsg = err.message || "";
+            const errMsg = err instanceof Error ? err.message : String(err);
             const retryDelay = getTranslationRetryDelay(err, retries) ?? (retries === 0 ? 3000 : 6000);
             console.warn(
               `Error on page ${i + 1}, retry ${retries + 1}/3:`,
@@ -939,6 +948,7 @@ export function useTranslation({
     cancelTranslateAll,
     translateCrop,
     activeBubbles, setActiveBubbles,
+    cacheRevision,
     translatedImageCacheRef,
     bubbleCacheRef,
     textStyleRef,

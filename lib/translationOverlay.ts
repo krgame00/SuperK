@@ -2,6 +2,34 @@ import { undoManager } from './undoManager';
 
 const ADJ_KEY = "superk:overlay-adjustments";
 
+/** A translated bubble produced by the LLM / manual editor.
+ *  Loose by design: carries optional rendering metadata added at runtime. */
+export interface TranslatedBubble {
+  t?: string;
+  translated?: string;
+  original_text?: string;
+  /** bounding box [ymin, xmin, ymax, xmax] in 0-1000 scale */
+  box?: number[];
+  isManual?: boolean;
+  isInvalidBox?: boolean;
+  /** runtime flag set once the user has manually resized a bubble */
+  __resized?: boolean;
+  /** runtime flag set once the user has deleted a bubble */
+  deleted?: boolean;
+  /** redraw callback attached to overlay bubbles */
+  render?: () => void;
+  [key: string]: unknown;
+}
+
+/** Style options for the translation text overlay. */
+export interface OverlayTextStyle {
+  fontFamily?: string;
+  fontSizeMultiplier?: number;
+  textColor?: string;
+  textOutline?: string;
+  [key: string]: unknown;
+}
+
 export interface OverlayAdjustment {
   bx: number;
   by: number;
@@ -78,7 +106,8 @@ export const downloadTranslatedImage = (
   ctx.drawImage(img, 0, 0, iw, ih);
 
   const wrappers = container.querySelectorAll(".tl-canvas > div");
-  wrappers.forEach((wrapper: any) => {
+  wrappers.forEach((wrapperEl) => {
+    const wrapper = wrapperEl as HTMLElement;
     const leftPercent = parseFloat(wrapper.style.left) || 0;
     const topPercent = parseFloat(wrapper.style.top) || 0;
     const widthPercent = parseFloat(wrapper.style.width) || 0;
@@ -201,12 +230,12 @@ export const wrapTextForBubble = (
 };
 
 export const applyTranslationOverlay = async (
-  bubbles: any[],
+  bubbles: TranslatedBubble[],
   viewMode: "single" | "scroll" | "offscreen",
   currentPage: number,
   setTranslationResult: (msg: string | null) => void,
   onComplete?: (dataUrl: string) => void,
-  textStyleRef?: React.MutableRefObject<any>,
+  textStyleRef?: React.MutableRefObject<OverlayTextStyle>,
   containerOverride?: Element,
 ) => {
   let container: Element | null | undefined = containerOverride;
@@ -224,7 +253,7 @@ export const applyTranslationOverlay = async (
   const img = container.querySelector("img");
   if (!img) return;
 
-  const real = bubbles.filter(b => b && !b.deleted && (b.t || b.translated) && (b.t || b.translated).trim());
+  const real = bubbles.filter(b => b && !b.deleted && (b.t || b.translated) && (b.t ?? b.translated ?? "").trim());
   if (real.length === 0) {
     setTranslationResult("❌ ไม่พบข้อความที่แปลได้ในหน้านี้");
     return;
@@ -362,12 +391,12 @@ export const applyTranslationOverlay = async (
 
         const text = (b.t || b.translated || "").trim();
         let maxW = currentBw;
-        let maxH = currentBh;
+        const maxH = currentBh;
         const hasUserSize = b.__resized === true;
         const isOvalBubble = !b.isInvalidBox;
 
         const wrap = (fontSize: number) => {
-          return wrapTextForBubble(text, maxW, maxH, fontSize, ts.fontFamily, isOvalBubble);
+          return wrapTextForBubble(text, maxW, maxH, fontSize, ts.fontFamily ?? "Itim, sans-serif", isOvalBubble);
         };
 
         let fs = Math.max(14, Math.min(48, Math.round(currentBh * 0.35 * (ts.fontSizeMultiplier || 1.0))));
@@ -431,7 +460,7 @@ export const applyTranslationOverlay = async (
         ctx.translate(pad + r/2, pad + r/2);
 
         const fgColor = ts.textColor;
-        const outlineColor = ts.textOutline;
+        const outlineColor = ts.textOutline ?? "#FFFFFF";
         
         if (b.isInvalidBox) {
            ctx.save();
@@ -458,7 +487,7 @@ export const applyTranslationOverlay = async (
         ctx.strokeStyle = outlineColor;
         lines2.forEach((ln, i) => ctx.strokeText(ln, currentBw/2, startY + i * lineH, maxW));
 
-        ctx.fillStyle = fgColor;
+        ctx.fillStyle = fgColor ?? "#000000";
         lines2.forEach((ln, i) => ctx.fillText(ln, currentBw/2, startY + i * lineH, maxW));
       };
 

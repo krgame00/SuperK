@@ -105,6 +105,7 @@ export default function WorkspacePage() {
     progress: cleaningProgress,
     error: cleaningError,
     resultsByPage: cleaningResultsByPage,
+    cacheRevision: cleaningCacheRevision,
   } = useCleaning({ pages: pageUrls, currentPage });
 
   const handleCleanCurrentPage = async () => {
@@ -194,6 +195,7 @@ export default function WorkspacePage() {
     batchFailures,
     retryFailedPages,
     invalidatePageTranslation,
+    cacheRevision: translationCacheRevision,
   } = useTranslation({
     currentPage,
     pages: pageUrls,
@@ -205,7 +207,8 @@ export default function WorkspacePage() {
   const hasCurrentTranslation = Boolean(
     currentPageUrl &&
       (activeBubbles.length > 0 ||
-        translatedImageCacheRef.current.has(currentPageUrl)),
+        translationCacheRevision >= 0 /* reactive cache revision */) &&
+      translatedImageCacheRef.current.has(currentPageUrl),
   );
   const toggleOriginalTranslated = useCallback(() => {
     setWorkspaceLayer((currentLayer) =>
@@ -650,7 +653,13 @@ export default function WorkspacePage() {
             const ctx = canvas.getContext("2d");
             if (!ctx) continue;
             
-            await page.render({ canvasContext: ctx, viewport } as any).promise;
+            // pdfjs RenderParameters requires canvas ctx type from its own DOM
+            // lib; our ctx is structurally identical so cast through unknown.
+            const renderParams = {
+              canvasContext: ctx,
+              viewport,
+            } as unknown as Parameters<typeof page.render>[0];
+            await page.render(renderParams).promise;
             const base64 = canvas.toDataURL("image/jpeg", 0.95);
             newPages.push({ url: base64, name: `${file.name.replace('.pdf', '')}_page${i}.jpg` });
           }
@@ -853,7 +862,7 @@ export default function WorkspacePage() {
                   />
                   <p className="text-[10px] text-muted mt-1 leading-relaxed">
                     By default, the app uses a shared key with limits (5 req/min). 
-                    To avoid "Quota exceeded" errors (especially in 18+ mode), enter your own free Gemini API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-primary hover:underline">Google AI Studio</a>.
+                    To avoid &quot;Quota exceeded&quot; errors (especially in 18+ mode), enter your own free Gemini API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-primary hover:underline">Google AI Studio</a>.
                   </p>
                 </div>
 
@@ -1293,6 +1302,10 @@ export default function WorkspacePage() {
               {viewLayout === 'scroll' ? (
                 <div className="flex flex-col items-center gap-0 w-full max-w-3xl sm:max-w-4xl lg:max-w-5xl pb-32">
                   {pages.map((p, idx) => {
+                    // read cache refs inside map; cleaningCacheRevision keeps
+                    // this render reactive to ref mutations
+                    void cleaningCacheRevision;
+                    void translationCacheRevision;
                     const isTranslated = translatedImageCacheRef.current.has(p.url);
                     const cleanedSrc =
                       cleaningResultsByPage.get(p.url)?.cleanUrl ?? p.url;

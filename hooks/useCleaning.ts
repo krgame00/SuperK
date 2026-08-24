@@ -43,6 +43,8 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
   const [resultsByPage, setResultsByPage] = useState<
     Map<string, PageCleaningResult>
   >(new Map());
+  /** increments whenever results change; lets consumers read resultsRef reactively */
+  const [cacheRevision, setCacheRevision] = useState(0);
   const [progressState, setProgressState] = useState<{
     pageUrl: string;
     value: CleaningProgress;
@@ -105,6 +107,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
       updated.set(pageUrl, next);
       resultsRef.current = updated;
       setResultsByPage(updated);
+      setCacheRevision((revision) => revision + 1);
     },
     [revokeResult],
   );
@@ -383,6 +386,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
     if (!removed) return;
     resultsRef.current = retained;
     setResultsByPage(retained);
+    setCacheRevision((revision) => revision + 1);
   }, [pages, revokeResult]);
 
   useEffect(
@@ -436,6 +440,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
     progress,
     error,
     resultsByPage,
+    cacheRevision,
   };
 }
 

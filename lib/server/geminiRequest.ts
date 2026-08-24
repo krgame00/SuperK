@@ -87,7 +87,6 @@ export async function requestGemini<T = unknown>(
   const startedAt = now();
   let firstHttpError: GeminiRequestError | undefined;
   let sawTransportFailure = false;
-  let retryAttempt = 0;
 
   for (const model of models) {
     let keyOffset = 0;

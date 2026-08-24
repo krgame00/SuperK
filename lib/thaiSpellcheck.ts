@@ -124,15 +124,17 @@ export function normalizeThaiText(text: string): string {
 /**
  * Normalize and spell-check all bubble texts in a parsed translation object.
  */
-export function normalizeTranslationPayload<T extends { bubbles?: any[] }>(payload: T): T {
+export function normalizeTranslationPayload<T extends { bubbles?: unknown[] }>(payload: T): T {
   if (!payload || typeof payload !== "object") return payload;
 
   if (Array.isArray(payload.bubbles)) {
     return {
       ...payload,
-      bubbles: payload.bubbles.map((b: any) => ({
-        ...b,
-        t: typeof b.t === "string" ? normalizeThaiText(b.t) : b.t,
+      bubbles: payload.bubbles.map((b: unknown) => ({
+        ...(typeof b === "object" && b !== null ? b : {}),
+        t: typeof (b as { t?: unknown })?.t === "string"
+          ? normalizeThaiText((b as { t: string }).t)
+          : (b as { t?: unknown })?.t,
       })),
     };
   }
