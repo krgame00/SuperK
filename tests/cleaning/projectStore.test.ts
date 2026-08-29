@@ -3,7 +3,6 @@ import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it, test } from "vitest";
 
 import {
-  clearAssets,
   clearProjectSession,
   dataUrlToBlob,
   deleteAsset,

@@ -13,13 +13,13 @@
   },
   "anime-lama": {
     "url": "https://huggingface.co/df1412/anime-big-lama/resolve/main/anime-manga-big-lama.pt",
-    "sha256": "479d3afdcb7ed2fd944ed4ebcc39ca45b33491f0f2e43eb1000bd623cfb41823",
+    "sha256": "f08d2ec49c4c487cc1288be339af5987bb466c552379ba7acb45a0a9551d5c19",
     "filename": "anime-manga-big-lama.pt",
     "license": "MIT"
   },
   "lama-large": {
     "url": "https://huggingface.co/dreMaz/AnimeMangaInpainting/resolve/main/lama_large_512px.ckpt",
-    "sha256": "11d30fbb3000fb2eceae318b75d9ced9229d99ae990a7f8b3ac35c8d31f2c935",
+    "sha256": "e844f6ed153814dae1bc64235efe87d43e4710123b81d091bab753103c0cca11",
     "filename": "lama_large_512px.ckpt",
     "license": "GPL-3.0"
   }

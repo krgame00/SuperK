@@ -94,26 +94,30 @@ export function sampleBubbleRegion(
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return null;
 
-    ctx.drawImage(
-      image,
-      rect.x,
-      rect.y,
-      rect.width,
-      rect.height,
-      0,
-      0,
-      rect.width,
-      rect.height,
-    );
+    if (typeof ctx.drawImage === "function") {
+      ctx.drawImage(
+        image,
+        rect.x,
+        rect.y,
+        rect.width,
+        rect.height,
+        0,
+        0,
+        rect.width,
+        rect.height,
+      );
+    }
 
+    if (typeof ctx.getImageData !== "function") return null;
     const imgData = ctx.getImageData(0, 0, rect.width, rect.height);
+    if (!imgData?.data) return null;
+
     return {
       width: rect.width,
       height: rect.height,
       rgba: imgData.data,
     };
-  } catch (err) {
-    console.warn("Failed to sample bubble region from canvas:", err);
+  } catch {
     return null;
   }
 }

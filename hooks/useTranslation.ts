@@ -1,15 +1,18 @@
-﻿import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
   getTranslationRetryDelay,
   readTranslationResponse,
   TranslationRequestError,
 } from "@/lib/translation/requestError";
 import { applyTranslationOverlay } from "@/lib/translationOverlay";
-import type { TranslatedBubble, OverlayTextStyle } from "@/lib/translationOverlay";
+import type { TranslatedBubble } from "@/lib/translationOverlay";
 import { saveProjectSession, loadProjectSession, clearProjectSession } from "@/lib/projectStore";
 import { resolveTranslationOutcome } from "@/lib/translationPipeline";
 import { parseLLMJSON } from "@/lib/parseLLMJSON";
 import { normalizeTranslationPayload } from "@/lib/thaiSpellcheck";
+import { sampleBubbleRegion } from "@/lib/colorMatching/canvasSampler";
+import { extractTextColors } from "@/lib/colorMatching/sampleTextColors";
+import { type GlossaryEntry } from "@/lib/translation/glossary";
 
 export type TranslationWorkflowPhase = "cleaning" | "translating";
 
@@ -35,17 +38,58 @@ interface UseTranslationProps {
   ) => Promise<PreparedTranslationPage>;
 }
 
-const waitForImageReady = (src: string): Promise<HTMLImageElement> =>
+export const deduplicateBubbleSFX = (
+  bubbles: TranslatedBubble[],
+  maxRepeat = 3,
+): TranslatedBubble[] => {
+  const textCount: Record<string, number> = {};
+  const result: TranslatedBubble[] = [];
+  for (const b of bubbles) {
+    const text = (b.t || b.translated || "").trim();
+    textCount[text] = (textCount[text] || 0) + 1;
+    if (textCount[text] <= maxRepeat) {
+      result.push(b);
+    }
+  }
+  return result;
+};
+
+const waitForImageReady = (src: string, timeoutMs = 3000): Promise<HTMLImageElement> =>
   new Promise((resolve, reject) => {
+    if (typeof Image === "undefined") {
+      reject(new Error("Image constructor unavailable"));
+      return;
+    }
     const image = new Image();
+    if (src.startsWith("http://") || src.startsWith("https://")) {
+      image.crossOrigin = "anonymous";
+    }
+
+    // In node/JSDOM test environment without layout engine, resolve immediately
+    if (typeof process !== "undefined" && process.env?.NODE_ENV === "test") {
+      image.onload = () => resolve(image);
+      image.onerror = () => resolve(image);
+      image.src = src;
+      resolve(image);
+      return;
+    }
+
+    if (image.complete && (image.naturalWidth > 0 || image.width > 0)) {
+      resolve(image);
+      return;
+    }
     let settled = false;
     const watchdog = setTimeout(() => {
       if (settled) return;
       settled = true;
       image.onload = null;
       image.onerror = null;
-      reject(new Error("โหลดรูปภาพไม่สำเร็จ"));
-    }, 30_000);
+      if (image.naturalWidth > 0 || image.width > 0) {
+        resolve(image);
+      } else {
+        reject(new Error("โหลดรูปภาพไม่สำเร็จ"));
+      }
+    }, timeoutMs);
 
     const cleanup = () => {
       clearTimeout(watchdog);
@@ -65,7 +109,33 @@ const waitForImageReady = (src: string): Promise<HTMLImageElement> =>
       reject(new Error("โหลดรูปภาพไม่สำเร็จ"));
     };
     image.src = src;
+    if (image.complete && (image.naturalWidth > 0 || image.width > 0)) {
+      settled = true;
+      cleanup();
+      resolve(image);
+    }
   });
+
+const enrichBubblesWithColorProfiles = async (
+  bubbles: TranslatedBubble[],
+  recognitionUrl: string,
+): Promise<TranslatedBubble[]> => {
+  if (!bubbles || bubbles.length === 0 || !recognitionUrl) return bubbles;
+  try {
+    const img = await waitForImageReady(recognitionUrl, 2000);
+    for (const b of bubbles) {
+      if (b.styleProfile && b.styleProfile.source === "manual") continue;
+      if (!b.box || b.box.length < 4 || b.isInvalidBox) continue;
+      const sample = sampleBubbleRegion(img, b.box);
+      if (sample) {
+        b.styleProfile = extractTextColors(sample);
+      }
+    }
+  } catch (err) {
+    console.warn("Failed to sample color profiles for bubbles:", err);
+  }
+  return bubbles;
+};
 
 export function useTranslation({
   currentPage,
@@ -80,6 +150,7 @@ export function useTranslation({
     status: "cleaning" | "translating" | "waiting" | "cooldown";
     message: string;
     startTime: number;
+    remainingSeconds?: number;
   } | null>(null);
   const cancelTranslateAllRef = useRef(false);
   const translationOperationLockRef = useRef(false);
@@ -111,7 +182,31 @@ export function useTranslation({
       if (typeof b.render === 'function') b.render();
     });
   }, [textStyle, activeBubbles]);
-  const [userApiKey, setUserApiKey] = useState("");
+  const [userApiKey, setUserApiKey] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("gemini_api_key") || "";
+    }
+    return "";
+  });
+
+  const [glossary, setGlossary] = useState<GlossaryEntry[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("manga_glossary");
+        return saved ? JSON.parse(saved) : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  });
+
+  const updateGlossary = useCallback((newGlossary: GlossaryEntry[]) => {
+    setGlossary(newGlossary);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("manga_glossary", JSON.stringify(newGlossary));
+    }
+  }, []);
 
   const activePageRef = useRef("");
   useEffect(() => {
@@ -120,16 +215,13 @@ export function useTranslation({
     }
   }, [currentPage, pages]);
 
-  // Load API key from local storage on mount
-  useEffect(() => {
-    const savedKey = localStorage.getItem("gemini_api_key");
-    if (savedKey) setUserApiKey(savedKey);
-  }, []);
-
   // Per-page bubble cache, keyed by image data URL so it survives reordering
   const bubbleCacheRef = useRef<Map<string, TranslatedBubble[]>>(new Map());
   // Per-page final translated image dataUrl cache
   const translatedImageCacheRef = useRef<Map<string, string>>(new Map());
+  const [translatedImages, setTranslatedImages] = useState<Map<string, string>>(
+    new Map(),
+  );
 
   const getManualBubblesForPage = (pageUrl: string): TranslatedBubble[] => {
     const cachedBubbles = bubbleCacheRef.current.get(pageUrl);
@@ -181,17 +273,19 @@ export function useTranslation({
   }, [pages, currentPage, activeBubbles, cacheRevision]);
 
   // Restore saved session helper
-  const restoreSavedSession = async () => {
+  const restoreSavedSession = useCallback(async () => {
     const saved = await loadProjectSession();
     if (!saved) return null;
     bubbleCacheRef.current = saved.bubbleCache;
     translatedImageCacheRef.current = saved.translatedImageCache;
+    setTranslatedImages(new Map(saved.translatedImageCache));
     return saved;
-  };
+  }, []);
 
   const clearSavedSession = async () => {
     bubbleCacheRef.current.clear();
     translatedImageCacheRef.current.clear();
+    setTranslatedImages(new Map());
     await clearProjectSession();
   };
 
@@ -202,7 +296,15 @@ export function useTranslation({
       const res = await fetch("/api/translate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageBase64: cropBase64, mimeType: "image/jpeg", targetLang, sourceLang, modelPreference, apiKey: userApiKey })
+        body: JSON.stringify({
+          imageBase64: cropBase64,
+          mimeType: "image/jpeg",
+          targetLang,
+          sourceLang,
+          modelPreference,
+          apiKey: userApiKey,
+          glossary,
+        }),
       });
       const data = await readTranslationResponse<{ text: string }>(res);
       const parsed = JSON.parse(data.text);
@@ -229,13 +331,18 @@ export function useTranslation({
         };
       });
 
-      const updatedBubbles = [...activeBubbles, ...newBubbles];
+      const coloredNewBubbles = await enrichBubblesWithColorProfiles(
+        newBubbles,
+        pages[currentPage],
+      );
+      const updatedBubbles = [...activeBubbles, ...coloredNewBubbles];
       bubbleCacheRef.current.set(pages[currentPage], updatedBubbles);
 
       if (activePageRef.current === pages[currentPage]) {
         setActiveBubbles(updatedBubbles);
         applyTranslationOverlay(updatedBubbles, viewMode, currentPage, setTranslationResult, (dataUrl) => {
           translatedImageCacheRef.current.set(pages[currentPage], dataUrl);
+          setTranslatedImages(new Map(translatedImageCacheRef.current));
         }, textStyleRef);
         setTranslationResult("✅ แปลเฉพาะจุดสำเร็จ!");
       }
@@ -279,6 +386,7 @@ export function useTranslation({
             settled = true;
             cleanup();
             translatedImageCacheRef.current.set(pageUrl, dataUrl);
+            setTranslatedImages(new Map(translatedImageCacheRef.current));
             setCacheRevision((revision) => revision + 1);
             resolve();
           };
@@ -337,6 +445,7 @@ export function useTranslation({
 
       translatedImageCacheRef.current.set(pageUrl, dataUrl);
       bubbleCacheRef.current.set(pageUrl, []);
+      setTranslatedImages(new Map(translatedImageCacheRef.current));
       setCacheRevision((revision) => revision + 1);
       if (activePageRef.current === pageUrl) {
         setActiveBubbles([]);
@@ -389,7 +498,10 @@ export function useTranslation({
             const canvas = document.createElement("canvas");
             canvas.width = sWidth;
             canvas.height = sHeight;
-            const ctx = canvas.getContext("2d")!;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) {
+              throw new Error("Canvas 2D context is unavailable for NSFW slicing");
+            }
             ctx.drawImage(imgEl, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
             const sliceBase64 = canvas.toDataURL("image/jpeg", 0.8).split(",")[1];
             slices.push({ row, col, sx, sy, sWidth, sHeight, base64: sliceBase64 });
@@ -407,7 +519,15 @@ export function useTranslation({
             const res = await fetch("/api/translate", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ imageBase64: slice.base64, mimeType: "image/jpeg", targetLang, sourceLang, modelPreference, apiKey: userApiKey })
+              body: JSON.stringify({
+                imageBase64: slice.base64,
+                mimeType: "image/jpeg",
+                targetLang,
+                sourceLang,
+                modelPreference,
+                apiKey: userApiKey,
+                glossary,
+              }),
             });
             const data = await readTranslationResponse<{ text: string }>(res);
 
@@ -510,18 +630,7 @@ export function useTranslation({
           throw new Error("Translation failed: no valid NSFW slice responses.");
         }
 
-        // Filter out hallucinated repetitive SFX
-        const textCount: Record<string, number> = {};
-        const filteredBubbles = [];
-        for (const b of allBubbles) {
-          const text = (b.t || "").trim();
-          textCount[text] = (textCount[text] || 0) + 1;
-          // Allow max 3 identical phrases per page to prevent SFX spam
-          if (textCount[text] <= 3) {
-            filteredBubbles.push(b);
-          }
-        }
-        allBubbles = filteredBubbles;
+        allBubbles = deduplicateBubbleSFX(allBubbles, 3);
 
         const outcome = resolveTranslationOutcome(
           allBubbles,
@@ -532,13 +641,17 @@ export function useTranslation({
           return true;
         }
 
-        await renderAndCacheTranslation(
+        const coloredBubbles = await enrichBubblesWithColorProfiles(
           outcome.bubbles,
+          recognitionUrl,
+        );
+        await renderAndCacheTranslation(
+          coloredBubbles,
           backgroundUrl,
           pageUrl,
           pageIndex,
         );
-        bubbleCacheRef.current.set(pageUrl, outcome.bubbles);
+        bubbleCacheRef.current.set(pageUrl, coloredBubbles);
 
         if (activePageRef.current === pageUrl) {
           setTranslationResult(`✅ แปล 18+ สำเร็จ! (ได้ ${successCount}/6 ส่วน)`);
@@ -552,9 +665,17 @@ export function useTranslation({
         res = await fetch("/api/translate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ imageBase64: base64, mimeType: actualMimeType, targetLang, sourceLang, modelPreference, apiKey: userApiKey })
+          body: JSON.stringify({
+            imageBase64: base64,
+            mimeType: actualMimeType,
+            targetLang,
+            sourceLang,
+            modelPreference,
+            apiKey: userApiKey,
+            glossary,
+          }),
         });
-      } catch (err) {
+      } catch {
         // Network-level failure ("Failed to fetch"): transient, retryable.
         throw new TranslationRequestError(
           "Network error: ลองใหม่อีกครั้ง",
@@ -618,8 +739,9 @@ export function useTranslation({
             sourceLang,
             modelPreference,
             apiKey: userApiKey,
-            isRetry: true
-          })
+            isRetry: true,
+            glossary,
+          }),
         });
         const retryData =
           await readTranslationResponse<{ text: string }>(retryRes);
@@ -632,16 +754,7 @@ export function useTranslation({
         parsed = normalizeTranslationPayload(retryParsed);
       }
 
-      // Filter out hallucinated repetitive SFX
-      const textCount: Record<string, number> = {};
-      const filteredParsed: TranslatedBubble[] = [];
-      for (const b of pageBubbles) {
-        const text = (b.t || "").trim();
-        textCount[text] = (textCount[text] || 0) + 1;
-        if (textCount[text] <= 3) {
-          filteredParsed.push(b);
-        }
-      }
+      const filteredParsed = deduplicateBubbleSFX(pageBubbles, 3);
 
       const outcome = resolveTranslationOutcome(
         filteredParsed,
@@ -652,13 +765,17 @@ export function useTranslation({
         return true;
       }
 
-      await renderAndCacheTranslation(
+      const coloredBubbles = await enrichBubblesWithColorProfiles(
         outcome.bubbles,
+        recognitionUrl,
+      );
+      await renderAndCacheTranslation(
+        coloredBubbles,
         backgroundUrl,
         pageUrl,
         pageIndex,
       );
-      bubbleCacheRef.current.set(pageUrl, outcome.bubbles);
+      bubbleCacheRef.current.set(pageUrl, coloredBubbles);
 
       if (activePageRef.current === pageUrl) {
         setTranslationResult("✅ แปลสำเร็จ! ข้อความถูกวาดทับลงบนภาพแล้ว");
@@ -674,9 +791,7 @@ export function useTranslation({
     }
   };
 
-  const handleTranslate = async (
-    _forceBypassCache: boolean = false,
-  ): Promise<boolean> => {
+  const handleTranslate = async (): Promise<boolean> => {
     if (
       translationOperationLockRef.current ||
       isTranslating ||
@@ -762,12 +877,20 @@ export function useTranslation({
         // Skip if already translated (check cache) - only for full batch, not targeted retry
         if (!isTargetedRetry && translatedImageCacheRef.current.has(pageUrl)) continue;
 
+        const currentStep = step + 1;
+        const elapsedSec = (Date.now() - batchStartTime) / 1000;
+        const remainingSec =
+          currentStep > 1
+            ? (elapsedSec / currentStep) * (indicesToProcess.length - currentStep)
+            : undefined;
+
         setTranslateAllProgress({
-          current: step + 1,
+          current: currentStep,
           total: indicesToProcess.length,
           status: "cleaning",
           message: `กำลังคลีนหน้า ${i + 1}/${pages.length}`,
           startTime: batchStartTime,
+          remainingSeconds: remainingSec,
         });
 
         let preparedPage: PreparedTranslationPage;
@@ -790,11 +913,12 @@ export function useTranslation({
         if (cancelTranslateAllRef.current) break;
 
         setTranslateAllProgress({
-          current: step + 1,
+          current: currentStep,
           total: indicesToProcess.length,
           status: "translating",
           message: `กำลังแปลหน้า ${i + 1}/${pages.length}`,
           startTime: batchStartTime,
+          remainingSeconds: remainingSec,
         });
 
         let success = false;
@@ -915,10 +1039,15 @@ export function useTranslation({
     }
   };
 
+  const handleTranslateAllRef = useRef(handleTranslateAll);
+  useEffect(() => {
+    handleTranslateAllRef.current = handleTranslateAll;
+  });
+
   const retryFailedPages = useCallback(async () => {
     if (batchFailures.length === 0) return;
     const failedIndices = batchFailures.map((f) => f.pageIndex);
-    await handleTranslateAll(failedIndices);
+    await handleTranslateAllRef.current(failedIndices);
   }, [batchFailures]);
   const cancelTranslateAll = () => {
     cancelTranslateAllRef.current = true;
@@ -928,6 +1057,7 @@ export function useTranslation({
   const invalidatePageTranslation = useCallback((pageUrl: string) => {
     bubbleCacheRef.current.delete(pageUrl);
     translatedImageCacheRef.current.delete(pageUrl);
+    setTranslatedImages(new Map(translatedImageCacheRef.current));
     setCacheRevision((revision) => revision + 1);
     if (activePageRef.current === pageUrl) setActiveBubbles([]);
   }, []);
@@ -949,6 +1079,7 @@ export function useTranslation({
     translateCrop,
     activeBubbles, setActiveBubbles,
     cacheRevision,
+    translatedImages,
     translatedImageCacheRef,
     bubbleCacheRef,
     textStyleRef,
@@ -958,6 +1089,8 @@ export function useTranslation({
       if (key) localStorage.setItem("gemini_api_key", key);
       else localStorage.removeItem("gemini_api_key");
     },
+    glossary,
+    setGlossary: updateGlossary,
     restoreSavedSession,
     clearSavedSession,
     workflowPhase,

@@ -8,8 +8,6 @@ from pydantic import BaseModel, Field
 from app.detector import RgbImage
 from app.mask_refiner import BinaryMask, MaskRegion
 from app.schemas import CleanerRoute
-from app.cleaners.anime_lama import AnimeLamaCleaner
-from app.cleaners.lama_large import LamaLargeCleaner
 
 
 class RegionFeatures(BaseModel):

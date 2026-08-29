@@ -32,6 +32,60 @@ interface ColorBucket {
   b: number;
   chroma: number;
   count: number;
+  centerScore: number;
+}
+
+export interface ColorCluster {
+  r: number;
+  g: number;
+  b: number;
+  chroma: number;
+  count: number;
+  centerScore: number;
+}
+
+export function clusterBuckets(
+  buckets: ColorBucket[],
+  threshold = 38,
+): ColorCluster[] {
+  const clusters: ColorCluster[] = [];
+
+  // Sort buckets by centerScore descending so dominant core centers lead the clusters
+  const sorted = [...buckets].sort((a, b) => b.centerScore - a.centerScore);
+
+  for (const b of sorted) {
+    let matched: ColorCluster | null = null;
+    let minDist = Infinity;
+
+    for (const c of clusters) {
+      const dist = colorDistance(b.r, b.g, b.b, c.r, c.g, c.b);
+      if (dist <= threshold && dist < minDist) {
+        minDist = dist;
+        matched = c;
+      }
+    }
+
+    if (matched) {
+      const totalCount = matched.count + b.count;
+      matched.r = (matched.r * matched.count + b.r * b.count) / totalCount;
+      matched.g = (matched.g * matched.count + b.g * b.count) / totalCount;
+      matched.b = (matched.b * matched.count + b.b * b.count) / totalCount;
+      matched.chroma = Math.max(matched.chroma, b.chroma);
+      matched.count += b.count;
+      matched.centerScore += b.centerScore;
+    } else {
+      clusters.push({
+        r: b.r,
+        g: b.g,
+        b: b.b,
+        chroma: b.chroma,
+        count: b.count,
+        centerScore: b.centerScore,
+      });
+    }
+  }
+
+  return clusters;
 }
 
 export interface ExtractColorOptions {
@@ -50,9 +104,9 @@ export function extractTextColors(
     return createDefaultStyleProfile("global");
   }
 
-  const bgTolerance = options.backgroundTolerance ?? 35;
+  const bgTolerance = options.backgroundTolerance ?? 30;
 
-  // 1. Build Global Histogram across all pixels
+  // 1. Build Global Histogram across all pixels with center weighting
   const allBuckets = new Map<string, ColorBucket>();
   let bgRSum = 0;
   let bgGSum = 0;
@@ -75,6 +129,11 @@ export function extractTextColors(
       const qb = Math.floor(b / 16) * 16 + 8;
       const key = `${qr},${qg},${qb}`;
 
+      const nx = (x - width / 2) / Math.max(1, width / 2);
+      const ny = (y - height / 2) / Math.max(1, height / 2);
+      const distFromCenter = Math.sqrt(nx * nx + ny * ny);
+      const centerWeight = distFromCenter <= 0.6 ? 2.5 : 1.0;
+
       const existing = allBuckets.get(key);
       if (existing) {
         existing.r = (existing.r * existing.count + r) / (existing.count + 1);
@@ -82,8 +141,9 @@ export function extractTextColors(
         existing.b = (existing.b * existing.count + b) / (existing.count + 1);
         existing.chroma = Math.max(existing.chroma, chroma);
         existing.count++;
+        existing.centerScore += centerWeight;
       } else {
-        allBuckets.set(key, { r, g, b, chroma, count: 1 });
+        allBuckets.set(key, { r, g, b, chroma, count: 1, centerScore: centerWeight });
       }
 
       // Sample outer perimeter for background estimation
@@ -98,7 +158,7 @@ export function extractTextColors(
 
   // Determine Background Color (most frequent cluster or border average)
   const sortedAll = Array.from(allBuckets.values()).sort((a, b) => b.count - a.count);
-  const mostFrequent = sortedAll[0] ?? { r: 255, g: 255, b: 255, chroma: 0, count: 0 };
+  const mostFrequent = sortedAll[0] ?? { r: 255, g: 255, b: 255, chroma: 0, count: 0, centerScore: 0 };
 
   const bgR = mostFrequent.count > totalPixels * 0.3
     ? mostFrequent.r
@@ -123,7 +183,7 @@ export function extractTextColors(
   }
 
   const fgRatio = totalFgCount / totalPixels;
-  if (totalFgCount < 4 || fgRatio < 0.015) {
+  if (totalFgCount < 4 || fgRatio < 0.01) {
     return {
       fill: "#000000",
       outline: "#ffffff",
@@ -133,30 +193,54 @@ export function extractTextColors(
     };
   }
 
-  // 3. Priority Detection for Chromatic Text (Pink, Blue, Red, Cyan, Yellow, etc.)
-  const chromaticBuckets = foregroundBuckets
-    .filter((b) => b.chroma >= 25 && b.count >= Math.max(3, totalFgCount * 0.08))
-    .sort((a, b) => b.count - a.count);
+  // 3. Cluster foreground buckets to aggregate anti-aliased subpixels
+  const fgClusters = clusterBuckets(foregroundBuckets, 38);
 
-  if (chromaticBuckets.length > 0) {
-    const dominantChromatic = chromaticBuckets[0];
+  // 4. Priority Detection for Chromatic Text (Pink, Blue, Red, Cyan, Yellow, etc.)
+  const chromaticClusters = fgClusters
+    .filter((c) => c.chroma >= 20 && c.count >= Math.max(3, totalFgCount * 0.04))
+    .sort((a, b) => b.centerScore - a.centerScore);
+
+  if (chromaticClusters.length > 0) {
+    const dominantChromatic = chromaticClusters[0];
     const fillHex = rgbToHex(dominantChromatic.r, dominantChromatic.g, dominantChromatic.b);
 
-    // If text is bright/vibrant, use white or dark outline based on contrast
-    const luminance = 0.299 * dominantChromatic.r + 0.587 * dominantChromatic.g + 0.114 * dominantChromatic.b;
-    const outlineHex = bgR > 180 ? "#ffffff" : luminance < 128 ? "#ffffff" : "#000000";
+    // Look for secondary foreground/outline cluster (e.g., cyan/white/dark outline around pink text)
+    let outlineHex = "";
+    let outlineConfidence = 0.85;
+
+    for (const candidate of fgClusters) {
+      const distToDominant = colorDistance(
+        candidate.r,
+        candidate.g,
+        candidate.b,
+        dominantChromatic.r,
+        dominantChromatic.g,
+        dominantChromatic.b,
+      );
+      if (distToDominant > 40 && candidate.count >= Math.max(3, totalFgCount * 0.04)) {
+        outlineHex = rgbToHex(candidate.r, candidate.g, candidate.b);
+        outlineConfidence = 0.90;
+        break;
+      }
+    }
+
+    if (!outlineHex) {
+      const luminance = 0.299 * dominantChromatic.r + 0.587 * dominantChromatic.g + 0.114 * dominantChromatic.b;
+      outlineHex = bgR > 180 ? "#ffffff" : luminance < 128 ? "#ffffff" : "#000000";
+    }
 
     return {
       fill: fillHex,
       outline: outlineHex,
       fillConfidence: 0.95,
-      outlineConfidence: 0.85,
+      outlineConfidence,
       source: "auto",
     };
   }
 
-  // 4. Monochrome / Dominant Foreground Selection
-  const sortedFg = foregroundBuckets.sort((a, b) => b.count - a.count);
+  // 5. Monochrome / Dominant Foreground Selection
+  const sortedFg = fgClusters.sort((a, b) => b.centerScore - a.centerScore);
   const primary = sortedFg[0];
   const primaryFillHex = rgbToHex(primary.r, primary.g, primary.b);
 
@@ -173,7 +257,7 @@ export function extractTextColors(
       primary.g,
       primary.b,
     );
-    if (distToPrimary > 45 && candidate.count >= totalFgCount * 0.1) {
+    if (distToPrimary > 40 && candidate.count >= Math.max(3, totalFgCount * 0.05)) {
       outlineHex = rgbToHex(candidate.r, candidate.g, candidate.b);
       outlineConfidence = 0.85;
       break;

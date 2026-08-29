@@ -79,6 +79,24 @@ describe("sampleTextColors color extraction engine", () => {
     expect(profile.fillConfidence).toBeGreaterThan(0.75);
   });
 
+  it("extracts pink text with cyan outline on dark/red background", () => {
+    // Background: Dark red (100, 20, 20), Cyan outline (0, 220, 255), Pink text (255, 50, 150)
+    const sample = createSyntheticRegion(30, 30, (x, y) => {
+      // Background
+      if (x < 5 || x > 25 || y < 5 || y > 25) return [100, 20, 20, 255];
+      // Cyan Outline ring
+      if (x < 9 || x > 21 || y < 9 || y > 21) return [0, 220, 255, 255];
+      // Pink text
+      return [255, 50, 150, 255];
+    });
+
+    const profile = extractTextColors(sample);
+    expect(profile.fill).toBe("#ff3296");
+    expect(profile.outline).toBe("#00dcff");
+    expect(profile.fillConfidence).toBeGreaterThan(0.85);
+    expect(profile.source).toBe("auto");
+  });
+
   it("handles low-contrast / empty sample safely with global fallback", () => {
     const emptySample = createSyntheticRegion(10, 10, () => [255, 255, 255, 255]);
     const profile = extractTextColors(emptySample);

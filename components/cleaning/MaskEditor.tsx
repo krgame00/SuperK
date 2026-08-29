@@ -59,6 +59,10 @@ export function MaskEditor({
     x: 0,
     y: 0,
   });
+  const [canvasSize, setCanvasSize] = useState<{ width: number; height: number }>({
+    width: 0,
+    height: 0,
+  });
   const [isCanvasFocused, setIsCanvasFocused] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
 
@@ -86,6 +90,10 @@ export function MaskEditor({
       const canvas = canvasRef.current;
       canvas.width = maskImage.naturalWidth;
       canvas.height = maskImage.naturalHeight;
+      setCanvasSize({
+        width: maskImage.naturalWidth,
+        height: maskImage.naturalHeight,
+      });
       setBrushPoint({
         x: Math.round(maskImage.naturalWidth / 2),
         y: Math.round(maskImage.naturalHeight / 2),
@@ -339,14 +347,14 @@ export function MaskEditor({
               onPointerUp={finishStroke}
               onPointerCancel={finishStroke}
             />
-            {isCanvasFocused && canvasRef.current && (
+            {isCanvasFocused && canvasSize.width > 0 && (
               <div
                 aria-hidden="true"
                 className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-primary ring-1 ring-white/75 transition-[left,top,width,height] duration-75 motion-reduce:transition-none"
                 style={{
-                  left: `${(brushPoint.x / (canvasRef.current.width || 1)) * 100}%`,
-                  top: `${(brushPoint.y / (canvasRef.current.height || 1)) * 100}%`,
-                  width: `${((radius * 2) / (canvasRef.current.width || 1)) * 100}%`,
+                  left: `${(brushPoint.x / canvasSize.width) * 100}%`,
+                  top: `${(brushPoint.y / canvasSize.height) * 100}%`,
+                  width: `${((radius * 2) / canvasSize.width) * 100}%`,
                   aspectRatio: "1/1",
                 }}
               />

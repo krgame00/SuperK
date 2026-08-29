@@ -194,6 +194,7 @@ beforeEach(() => {
       },
     ],
     setActiveBubbles: vi.fn(),
+    translatedImages: new Map([[ORIGINAL_URL, TRANSLATED_URL]]),
     translatedImageCacheRef: {
       current: new Map([[ORIGINAL_URL, TRANSLATED_URL]]),
     },

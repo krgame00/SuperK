@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  generateComicInfoXml,
   generatePageFilename,
   generateStripFilename,
   sanitizeExportFilename,
@@ -42,5 +43,19 @@ describe("generateStripFilename", () => {
 
   it("returns numbered strip part when multiple chunks", () => {
     expect(generateStripFilename(2, 4)).toBe("SuperK_Webtoon_Strip_Part02.jpg");
+  });
+});
+
+describe("generateComicInfoXml", () => {
+  it("generates valid ComicInfo XML with manga metadata and RTL direction", () => {
+    const xml = generateComicInfoXml({
+      title: "One Piece Ch.1000",
+      pageCount: 20,
+      languageISO: "th",
+    });
+    expect(xml).toContain("<Title>One Piece Ch.1000</Title>");
+    expect(xml).toContain("<PageCount>20</PageCount>");
+    expect(xml).toContain("<LanguageISO>th</LanguageISO>");
+    expect(xml).toContain("<Manga>YesAndRightToLeft</Manga>");
   });
 });

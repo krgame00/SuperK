@@ -46,3 +46,35 @@ export function generateStripFilename(
   }
   return `SuperK_Webtoon_Strip_Part${String(chunkIndex).padStart(2, "0")}.jpg`;
 }
+
+export interface ComicInfoMetadata {
+  title?: string;
+  series?: string;
+  number?: string;
+  summary?: string;
+  writer?: string;
+  penciller?: string;
+  translator?: string;
+  pageCount?: number;
+  languageISO?: string;
+}
+
+export function generateComicInfoXml(meta: ComicInfoMetadata = {}): string {
+  const title = meta.title || "Manga";
+  const series = meta.series || title;
+  const translator = meta.translator || "SuperK Manga Translator";
+  const languageISO = meta.languageISO || "th";
+  const pageCount = meta.pageCount || 1;
+
+  return `<?xml version="1.0" encoding="utf-8"?>
+<ComicInfo xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <Title>${title}</Title>
+  <Series>${series}</Series>
+  <Number>${meta.number || "1"}</Number>
+  <Summary>${meta.summary || "Translated with SuperK Manga Translator"}</Summary>
+  <Translator>${translator}</Translator>
+  <PageCount>${pageCount}</PageCount>
+  <LanguageISO>${languageISO}</LanguageISO>
+  <Manga>YesAndRightToLeft</Manga>
+</ComicInfo>`;
+}

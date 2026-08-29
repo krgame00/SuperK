@@ -187,7 +187,38 @@ class JobStore:
 
     def get(self, job_id: str) -> JobState | None:
         with self._jobs_lock:
-            return self._jobs.get(job_id)
+            job = self._jobs.get(job_id)
+            if job is not None:
+                return job
+            return self._restore_job_from_disk(job_id)
+
+    def _restore_job_from_disk(self, job_id: str) -> JobState | None:
+        job_dir = self.cache_dir / job_id
+        result_file = job_dir / "result.json"
+        if not result_file.is_file():
+            return None
+        try:
+            import json
+            result_data = json.loads(result_file.read_text(encoding="utf-8"))
+            result = CleaningResult.model_validate(result_data)
+            if result.job_id != job_id:
+                return None
+            for asset in ["source.png", "clean.png", "mask.png", "review-mask.png", "protected-mask.png"]:
+                if not (job_dir / asset).is_file():
+                    return None
+            job = JobState(
+                id=job_id,
+                filename="restored.png",
+                source_bytes=b"",
+                status=JobStatus.SUCCEEDED,
+                stage=JobStage.COMPLETE,
+                result=result,
+                asset_dir=job_dir,
+            )
+            self._jobs[job_id] = job
+            return job
+        except Exception:
+            return None
 
     def shutdown(self) -> None:
         self.executor.shutdown(wait=True, cancel_futures=False)
@@ -302,6 +333,11 @@ class JobStore:
             regions=output.regions,
             timings_ms=output.timings_ms,
         )
+        try:
+            (asset_dir / "result.json").write_text(result.model_dump_json(), encoding="utf-8")
+        except Exception:
+            LOGGER.exception("failed to persist result.json for job %s", job.id)
+
         with job.lock:
             job.asset_dir = asset_dir
             job.output = None  # Evict full numpy array to free RAM
@@ -312,21 +348,7 @@ class JobStore:
             job.elapsed_ms = job._current_elapsed_ms()
             job.started_at = None
 
-        with self._jobs_lock:
-            if len(self._jobs) > 15:
-                # Protect parent jobs referenced by currently queued or running retries
-                active_parents = {
-                    j.parent_id for j in self._jobs.values()
-                    if j.parent_id and j.status in (JobStatus.QUEUED, JobStatus.RUNNING)
-                }
-                candidates = [
-                    oid for oid in list(self._jobs.keys())[:-15]
-                    if oid not in active_parents
-                ]
-                for oid in candidates:
-                    old_job = self._jobs.pop(oid, None)
-                    if old_job and old_job.asset_dir and old_job.asset_dir.exists():
-                        shutil.rmtree(old_job.asset_dir, ignore_errors=True)
+
 
     @staticmethod
     def _fail(job: JobState) -> None:
@@ -363,7 +385,14 @@ class JobStore:
             Image.fromarray(output.protected_mask).save(
                 temporary / "protected-mask.png",
             )
-            temporary.replace(target)
+            if target.exists():
+                shutil.rmtree(target, ignore_errors=True)
+            try:
+                temporary.replace(target)
+            except OSError:
+                if target.exists():
+                    shutil.rmtree(target, ignore_errors=True)
+                shutil.move(str(temporary), str(target))
         except Exception:
             shutil.rmtree(temporary, ignore_errors=True)
             raise

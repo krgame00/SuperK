@@ -175,7 +175,7 @@ def test_restore_rejects_job_id_mismatch(tmp_path: Path) -> None:
 
         result = CleaningResult(
             job_id=json_id,
-            source_hash="hash",
+            source_hash="0" * 64,
             width=8,
             height=8,
             clean_asset=f"/v1/jobs/{json_id}/assets/clean.png",
@@ -203,7 +203,7 @@ def test_restore_rejects_missing_assets(tmp_path: Path) -> None:
 
         result = CleaningResult(
             job_id=fake_id,
-            source_hash="hash",
+            source_hash="0" * 64,
             width=8,
             height=8,
             clean_asset=f"/v1/jobs/{fake_id}/assets/clean.png",
@@ -246,7 +246,7 @@ def test_more_than_15_jobs_not_deleted(tmp_path: Path) -> None:
 
         # Wait for all to complete
         for jid in job_ids:
-            job = _wait_for_job(store, jid)
+            job = _wait_for_job(store, jid, timeout=15.0)
             assert job.status == JobStatus.SUCCEEDED
 
         # Assert the very first job is still present in memory and on disk!

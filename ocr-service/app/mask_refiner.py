@@ -89,8 +89,8 @@ def refine_probability_mask(
         radius = _estimate_stroke_radius(component)
         box_w = stats[component_id, cv2.CC_STAT_WIDTH]
         box_h = stats[component_id, cv2.CC_STAT_HEIGHT]
-        multiplier = 1.8 if box_w > box_h * 2 else 1.4
-        dilation_radius = max(radius, round(radius * multiplier))
+        orientation_bonus = 1 if box_w > box_h * 2 else 0
+        dilation_radius = min(4, max(1, radius + orientation_bonus))
         grown = constrained_dilate(component, protected_edges, dilation_radius)
         eroded = cv2.erode(grown, erode_kernel, iterations=1)
         grown = np.maximum(eroded, component)

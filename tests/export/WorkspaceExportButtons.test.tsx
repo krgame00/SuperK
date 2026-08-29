@@ -1,10 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  WorkspaceExportButtons,
-  type WorkspaceExportButtonsProps,
-} from "@/components/workspace/WorkspaceExportButtons";
+import { WorkspaceExportButtons } from "@/components/workspace/WorkspaceExportButtons";
 
 describe("WorkspaceExportButtons", () => {
   it("renders all 5 export buttons with accessible names", () => {

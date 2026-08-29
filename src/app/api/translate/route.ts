@@ -9,6 +9,10 @@ import {
   type TranslationPolicy,
   buildPolicyDirectives,
 } from "@/lib/translationPolicy";
+import {
+  type GlossaryEntry,
+  buildGlossaryDirectives,
+} from "@/lib/translation/glossary";
 
 let globalKeyIndex = 0;
 
@@ -27,6 +31,53 @@ interface GeminiResponseData {
       }>;
     };
   }>;
+}
+
+export function buildTranslationPrompt({
+  targetLang,
+  sourceLang,
+  isRetry,
+  context,
+  policy,
+  glossary,
+}: {
+  targetLang?: string;
+  sourceLang?: string;
+  isRetry?: boolean;
+  context?: string;
+  policy?: Partial<TranslationPolicy>;
+  glossary?: GlossaryEntry[];
+}): string {
+  const sourceHint =
+    sourceLang && sourceLang !== "auto"
+      ? `The source language is ${sourceLang}. `
+      : "";
+
+  const retryDirective = isRetry
+    ? `\nCRITICAL RETRY ATTEMPT: The previous OCR attempt detected 0 text bubbles. Re-examine the image with high precision. Pay close attention to faint, handwritten, small, stylized, red, or vertical text inside bubbles or floating text. Do NOT skip any dialogue.\n`
+    : "";
+
+  const contextDirective = context
+    ? `\nCONTEXT (translations from previous pages of this same manga):\n${context}\n\nCONSISTENCY RULES:\n- Use the exact same character names, pronouns (แก/ฉัน/นาย/ข้า/เอ็ง), and tone of address already established in the context above. Do NOT change them.\n- Keep speech patterns and slang consistent with earlier pages.\n- If a character is referred to by a name in context, keep using that name.\n- Context is ONLY for consistency reference: translate THIS page fresh; do not copy dialogue.\n`
+    : "";
+
+  const glossaryDirective = buildGlossaryDirectives(glossary);
+  const policyRules = buildPolicyDirectives(policy);
+
+  return (
+    `You are an expert manga translator. ${sourceHint}Translate this manga page to ${targetLang || "Thai"}.${retryDirective}${contextDirective}${glossaryDirective}\n` +
+    `- Use highly natural, conversational flow appropriate for comic books. Avoid rigid word-for-word translation.\n` +
+    `- Arrange sentences beautifully according to native Thai idioms and phrasing (เรียบเรียงประโยคให้สละสลวยเหมือนคนไทยพูดกันในชีวิตจริง ไม่แปลตรงตัว).\n` +
+    `- Do NOT use line breaks (\\n) in the translated text. Keep the text of each bubble on a single continuous line (ห้ามเว้นบรรทัดมั่ว ให้ต่อเป็นบรรทัดเดียวกัน).\n` +
+    `- For Thai: Adapt pronouns (แก, ฉัน, นาย, ข้า, เอ็ง) and endings (ครับ, ค่ะ, วะ, เว้ย, สิ, นะ) based on character relationships and mood.\n` +
+    `${policyRules}\n` +
+    `- Read order is usually Right-to-Left, Top-to-Bottom.\n` +
+    `Output ONLY valid JSON, no markdown, no explanation.\n` +
+    `Format: {"bubbles":[{"original_text": "text found in image", "t":"translated text in Thai","box":[ymin, xmin, ymax, xmax]}]}\n` +
+    `box: bounding box coordinates in 0-1000 scale (ymin, xmin = top-left, ymax, xmax = bottom-right).\n` +
+    `ALL translations in 't' MUST be in ${targetLang || "Thai"}.\n` +
+    `If no text found: {"bubbles":[]}`
+  );
 }
 
 export async function POST(req: Request) {
@@ -52,6 +103,7 @@ export async function POST(req: Request) {
       isRetry,
       context,
       policy,
+      glossary,
     } = await req.json();
 
     if (!imageBase64) {
@@ -87,6 +139,7 @@ export async function POST(req: Request) {
           isRetry,
           context,
           policy,
+          glossary,
           translateBaseUrl,
           translateApiKey,
         });
@@ -122,34 +175,14 @@ export async function POST(req: Request) {
       .map((k: string) => k.trim())
       .filter((k: string) => k.length > 0);
 
-    const sourceHint =
-      sourceLang && sourceLang !== "auto"
-        ? `The source language is ${sourceLang}. `
-        : "";
-
-    const retryDirective = isRetry
-      ? `\nCRITICAL RETRY ATTEMPT: The previous OCR attempt detected 0 text bubbles. Re-examine the image with high precision. Pay close attention to faint, handwritten, small, stylized, red, or vertical text inside bubbles or floating text. Do NOT skip any dialogue.\n`
-      : "";
-
-    const contextDirective = context
-      ? `\nCONTEXT (translations from previous pages of this same manga):\n${context}\n\nCONSISTENCY RULES:\n- Use the exact same character names, pronouns (แก/ฉัน/นาย/ข้า/เอ็ง), and tone of address already established in the context above. Do NOT change them.\n- Keep speech patterns and slang consistent with earlier pages.\n- If a character is referred to by a name in context, keep using that name.\n- Context is ONLY for consistency reference: translate THIS page fresh; do not copy dialogue.\n`
-      : "";
-
-    const policyRules = buildPolicyDirectives(policy);
-
-    const promptText =
-      `You are an expert manga translator. ${sourceHint}Translate this manga page to ${targetLang || "Thai"}.${retryDirective}${contextDirective}\n` +
-      `- Use highly natural, conversational flow appropriate for comic books. Avoid rigid word-for-word translation.\n` +
-      `- Arrange sentences beautifully according to native Thai idioms and phrasing (เรียบเรียงประโยคให้สละสลวยเหมือนคนไทยพูดกันในชีวิตจริง ไม่แปลตรงตัว).\n` +
-      `- Do NOT use line breaks (\\n) in the translated text. Keep the text of each bubble on a single continuous line (ห้ามเว้นบรรทัดมั่ว ให้ต่อเป็นบรรทัดเดียวกัน).\n` +
-      `- For Thai: Adapt pronouns (แก, ฉัน, นาย, ข้า, เอ็ง) and endings (ครับ, ค่ะ, วะ, เว้ย, สิ, นะ) based on character relationships and mood.\n` +
-      `${policyRules}\n` +
-      `- Read order is usually Right-to-Left, Top-to-Bottom.\n` +
-      `Output ONLY valid JSON, no markdown, no explanation.\n` +
-      `Format: {"bubbles":[{"original_text": "text found in image", "t":"translated text in Thai","box":[ymin, xmin, ymax, xmax]}]}\n` +
-      `box: bounding box coordinates in 0-1000 scale (ymin, xmin = top-left, ymax, xmax = bottom-right).\n` +
-      `ALL translations in 't' MUST be in ${targetLang || "Thai"}.\n` +
-      `If no text found: {"bubbles":[]}`;
+    const promptText = buildTranslationPrompt({
+      targetLang,
+      sourceLang,
+      isRetry,
+      context,
+      policy,
+      glossary,
+    });
 
     const payload = {
       contents: [
@@ -210,12 +243,18 @@ export async function POST(req: Request) {
     }
 
     let data: GeminiResponseData;
+    const initialKey =
+      apiKeys.length > 1
+        ? (globalKeyIndex + Math.floor(Math.random() * apiKeys.length)) %
+          apiKeys.length
+        : 0;
+
     try {
       const result = await requestGemini<GeminiResponseData>({
         apiKeys,
         models: MODELS,
         payload,
-        initialKeyIndex: globalKeyIndex,
+        initialKeyIndex: initialKey,
         attemptTimeoutMs: 60_000,
         totalBudgetMs: 180_000,
       });
@@ -287,6 +326,7 @@ async function handleOpenAICompatible({
   isRetry,
   context,
   policy,
+  glossary,
   translateBaseUrl,
   translateApiKey,
 }: {
@@ -297,37 +337,18 @@ async function handleOpenAICompatible({
   isRetry: boolean;
   context: string | undefined;
   policy?: Partial<TranslationPolicy>;
+  glossary?: GlossaryEntry[];
   translateBaseUrl: string;
   translateApiKey: string;
 }) {
-  const sourceHint =
-    sourceLang && sourceLang !== "auto"
-      ? `The source language is ${sourceLang}. `
-      : "";
-
-  const retryDirective = isRetry
-    ? `\nCRITICAL RETRY ATTEMPT: The previous OCR attempt detected 0 text bubbles. Re-examine the image with high precision. Pay close attention to faint, handwritten, small, stylized, red, or vertical text inside bubbles or floating text. Do NOT skip any dialogue.\n`
-    : "";
-
-  const contextDirective = context
-    ? `\nCONTEXT (translations from previous pages of this same manga):\n${context}\n\nCONSISTENCY RULES:\n- Use the exact same character names, pronouns (แก/ฉัน/นาย/ข้า/เอ็ง), and tone of address already established in the context above. Do NOT change them.\n- Keep speech patterns and slang consistent with earlier pages.\n- If a character is referred to by a name in context, keep using that name.\n- Context is ONLY for consistency reference: translate THIS page fresh; do not copy dialogue.\n`
-    : "";
-
-  const policyRules = buildPolicyDirectives(policy);
-
-  const promptText =
-    `You are an expert manga translator. ${sourceHint}Translate this manga page to ${targetLang || "Thai"}.${retryDirective}${contextDirective}\n` +
-    `- Use highly natural, conversational flow appropriate for comic books. Avoid rigid word-for-word translation.\n` +
-    `- Arrange sentences beautifully according to native Thai idioms and phrasing (เรียบเรียงประโยคให้สละสลวยเหมือนคนไทยพูดกันในชีวิตจริง ไม่แปลตรงตัว).\n` +
-    `- Do NOT use line breaks (\\n) in the translated text. Keep the text of each bubble on a single continuous line (ห้ามเว้นบรรทัดมั่ว ให้ต่อเป็นบรรทัดเดียวกัน).\n` +
-    `- For Thai: Adapt pronouns (แก, ฉัน, นาย, ข้า, เอ็ง) and endings (ครับ, ค่ะ, วะ, เว้ย, สิ, นะ) based on character relationships and mood.\n` +
-    `${policyRules}\n` +
-    `- Read order is usually Right-to-Left, Top-to-Bottom.\n` +
-    `Output ONLY valid JSON, no markdown, no explanation.\n` +
-    `Format: {"bubbles":[{"original_text": "text found in image", "t":"translated text in Thai","box":[ymin, xmin, ymax, xmax]}]}\n` +
-    `box: bounding box coordinates in 0-1000 scale (ymin, xmin = top-left, ymax, xmax = bottom-right).\n` +
-    `ALL translations in 't' MUST be in ${targetLang || "Thai"}.\n` +
-    `If no text found: {"bubbles":[]}`;
+  const promptText = buildTranslationPrompt({
+    targetLang,
+    sourceLang,
+    isRetry,
+    context,
+    policy,
+    glossary,
+  });
 
   // OpenAI-compatible payload with vision (image_url with data URI)
   const payload = {

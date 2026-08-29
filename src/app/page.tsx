@@ -4,8 +4,12 @@ import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useTranslation } from "@/hooks/useTranslation";
 import { jsPDF } from "jspdf";
 import { Toaster } from "react-hot-toast";
-import { downloadTranslatedImage, applyTranslationOverlay } from "@/lib/translationOverlay";
-import { Upload, ChevronLeft, ChevronRight, Wand2, Download, Archive, Flame, Eye, EyeOff, Undo2, Redo2, Trash2, GalleryVertical, RectangleHorizontal, Menu, X, ChevronUp, ChevronDown, Maximize2, Minimize2, Settings, FileArchive, BookOpen, FileText, Sparkles, RotateCcw } from "lucide-react";
+import {
+  downloadTranslatedImage,
+  applyTranslationOverlay,
+  type TranslatedBubble,
+} from "@/lib/translationOverlay";
+import { Upload, Wand2, Download, Flame, Eye, EyeOff, Undo2, Redo2, GalleryVertical, RectangleHorizontal, Menu, X, Settings, FileArchive, BookOpen, FileText, Sparkles, RotateCcw } from "lucide-react";
 import { undoManager } from "@/lib/undoManager";
 import JSZip from "jszip";
 import { useCleaning } from "@/hooks/useCleaning";
@@ -14,34 +18,21 @@ import {
   type WorkspaceLayer,
 } from "@/components/cleaning/CleaningToolbar";
 import { MaskEditor } from "@/components/cleaning/MaskEditor";
-import { MaskLegend } from "@/components/cleaning/MaskLegend";
-import { PageFilmstrip, type WorkspacePageItem } from "@/components/workspace/PageFilmstrip";
-import { SettingsModal } from "@/components/workspace/SettingsModal";
-import { StudioToolbar, type StudioTool } from "@/components/editing/StudioToolbar";
-import { TextPropertiesPanel } from "@/components/editing/TextPropertiesPanel";
-import { TextLayerCanvas } from "@/components/editing/TextLayerCanvas";
-import { WarpPanel } from "@/components/editing/WarpPanel";
-import { OcrAreaTool } from "@/components/editing/OcrAreaTool";
-import { FindReplaceDialog } from "@/components/editing/FindReplaceDialog";
-import { KeyboardShortcutsDialog } from "@/components/editing/KeyboardShortcutsDialog";
-import { useTextLayers } from "@/hooks/useTextLayers";
-
 import type {
   CleanerOverride,
   ManualRegionAction,
 } from "@/lib/cleaning/types";
+import { PageViewer } from "@/components/workspace/PageViewer";
+import { PageFilmstrip } from "@/components/workspace/PageFilmstrip";
+import { SettingsModal } from "@/components/workspace/SettingsModal";
+import { generateComicInfoXml } from "@/lib/export/exportManager";
+import {
+  FindReplaceDialog,
+  type ReplaceOptions,
+} from "@/components/editing/FindReplaceDialog";
+import { KeyboardShortcutsDialog } from "@/components/editing/KeyboardShortcutsDialog";
 
 export default function WorkspacePage() {
-  // data: URL (base64) → Blob, so we can build stable object URLs instead of
-  // embedding multi-MB base64 strings directly in <img src>.
-  function dataUrlToBlob(dataUrl: string): Blob {
-    const [header, payload] = dataUrl.split(",");
-    const mime = header.match(/data:([^;]+)/)?.[1] || "image/png";
-    const binary = atob(payload);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-    return new Blob([bytes], { type: mime });
-  }
 
   const [pages, setPages] = useState<{url: string, name: string}[]>([]);
   const [currentPage, setCurrentPage] = useState(0);
@@ -54,71 +45,12 @@ export default function WorkspacePage() {
   const [isMaskEditorOpen, setIsMaskEditorOpen] = useState(false);
   const uiOperationLockRef = useRef(false);
   const [isUiOperationBusy, setIsUiOperationBusy] = useState(false);
-  const [activeStudioTool, setActiveStudioTool] = useState<StudioTool>("select");
-  const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
-  const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
-  const [policy, setPolicy] = useState<{ sfx: "ignore" | "preserve" | "translate" }>({ sfx: "translate" });
-  const {
-    document: editingDoc,
-    layers: textLayers,
-    selectedLayer,
-    selectLayer: selectTextLayer,
-    addLayer: addTextLayer,
-    updateLayer: updateTextLayer,
-    deleteLayer: deleteTextLayer,
-    duplicateLayer: duplicateTextLayer,
-  } = useTextLayers({ pageId: pages[currentPage]?.url || "" });
-  const selectedTextId = editingDoc.selectedLayerId;
-
-
-  // Touch Swipe Gesture State for Mobile Reader
-  const touchStartXRef = useRef<number | null>(null);
-  const touchStartYRef = useRef<number | null>(null);
-
-  const handleTouchStart = (e: React.TouchEvent) => {
-    touchStartXRef.current = e.touches[0].clientX;
-    touchStartYRef.current = e.touches[0].clientY;
-  };
-
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    if (touchStartXRef.current === null || touchStartYRef.current === null) return;
-    const diffX = touchStartXRef.current - e.changedTouches[0].clientX;
-    const diffY = touchStartYRef.current - e.changedTouches[0].clientY;
-
-    if (Math.abs(diffX) > 40 && Math.abs(diffX) > Math.abs(diffY) * 1.2) {
-      if (diffX > 0 && currentPage < pages.length - 1) {
-        setCurrentPage(prev => prev + 1);
-      } else if (diffX < 0 && currentPage > 0) {
-        setCurrentPage(prev => prev - 1);
-      }
-    }
-    touchStartXRef.current = null;
-    touchStartYRef.current = null;
-  };
-
-  const thumbnailContainerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const container = thumbnailContainerRef.current;
-    if (!container) return;
-
-    const handleWheel = (e: WheelEvent) => {
-      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
-        e.preventDefault();
-        container.scrollLeft += e.deltaY;
-      }
-    };
-
-    container.addEventListener('wheel', handleWheel, { passive: false });
-    return () => container.removeEventListener('wheel', handleWheel);
-  }, [pages.length]);
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-  const [dragPosition, setDragPosition] = useState<'left' | 'right' | null>(null);
   const [brokenPages, setBrokenPages] = useState<Set<string>>(new Set());
   
   // Settings Modal State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
+  const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -132,7 +64,6 @@ export default function WorkspacePage() {
     progress: cleaningProgress,
     error: cleaningError,
     resultsByPage: cleaningResultsByPage,
-    cacheRevision: cleaningCacheRevision,
   } = useCleaning({ pages: pageUrls, currentPage });
 
   const handleCleanCurrentPage = async () => {
@@ -190,8 +121,6 @@ export default function WorkspacePage() {
   );
 
   const {
-    targetLang,
-    setTargetLang,
     isTranslating,
     translationResult,
     setTranslationResult,
@@ -202,16 +131,19 @@ export default function WorkspacePage() {
     cancelTranslateAll,
     activeBubbles,
     setActiveBubbles,
-    translateCrop,
     nsfwBypassMode,
     setNsfwBypassMode,
+    translatedImages,
     translatedImageCacheRef,
     bubbleCacheRef,
     textStyleRef,
     userApiKey,
     setUserApiKey,
+    glossary,
+    setGlossary,
     modelPreference,
     setModelPreference,
+    targetLang,
     sourceLang,
     setSourceLang,
     textStyle,
@@ -231,11 +163,12 @@ export default function WorkspacePage() {
   });
 
   const currentPageUrl = pages[currentPage]?.url;
+  const translatedImagesMap = translatedImages;
   const hasCurrentTranslation = Boolean(
     currentPageUrl &&
       (activeBubbles.length > 0 ||
         translationCacheRevision >= 0 /* reactive cache revision */) &&
-      translatedImageCacheRef.current.has(currentPageUrl),
+      (translatedImagesMap?.has(currentPageUrl) ?? false),
   );
   const toggleOriginalTranslated = useCallback(() => {
     setWorkspaceLayer((currentLayer) =>
@@ -311,7 +244,7 @@ export default function WorkspacePage() {
         setSavedSessionData({ pages: saved.pages, currentPage: saved.currentPage });
       }
     });
-  }, []);
+  }, [restoreSavedSession]);
 
   // Keyboard shortcuts refs (to access latest state from event listener closure)
   const currentPageRef = useRef(currentPage);
@@ -346,6 +279,18 @@ export default function WorkspacePage() {
         e.preventDefault();
         const label = undoManager.redo();
         if (label) import('react-hot-toast').then(m => m.default(`↪️ Redo: ${label}`, { duration: 1500 }));
+        return;
+      }
+      // Find & Replace: Ctrl+F
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setIsFindReplaceOpen(true);
+        return;
+      }
+      // Shortcuts Help: ?
+      if (e.key === '?' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        setIsShortcutsOpen(true);
         return;
       }
 
@@ -385,6 +330,69 @@ export default function WorkspacePage() {
 
   // Clear undo stack when changing pages
   useEffect(() => { undoManager.clear(); }, [currentPage]);
+
+  const handleFindReplace = ({
+    find,
+    replace,
+    scope,
+    caseSensitive,
+  }: ReplaceOptions) => {
+    if (!find) return;
+    let count = 0;
+
+    const regex = new RegExp(
+      find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+      caseSensitive ? "g" : "gi",
+    );
+
+    const applyReplace = (b: TranslatedBubble) => {
+      const text =
+        typeof b.t === "string"
+          ? b.t
+          : typeof b.translated === "string"
+            ? b.translated
+            : "";
+      if (text && regex.test(text)) {
+        const newText = text.replace(regex, replace);
+        b.t = newText;
+        if (typeof b.translated === "string") b.translated = newText;
+        count++;
+        return true;
+      }
+      return false;
+    };
+
+    if (scope === "this-page") {
+      setActiveBubbles((prev) => {
+        return prev.map((b) => {
+          const clone = { ...b };
+          applyReplace(clone);
+          return clone;
+        });
+      });
+      const currentUrl = pages[currentPage]?.url;
+      if (currentUrl) invalidatePageTranslation(currentUrl);
+    } else {
+      bubbleCacheRef.current.forEach((bubbles, pageUrl) => {
+        let changed = false;
+        bubbles.forEach((b) => {
+          if (applyReplace(b)) changed = true;
+        });
+        if (changed) invalidatePageTranslation(pageUrl);
+      });
+      setActiveBubbles((prev) => {
+        return prev.map((b) => {
+          const clone = { ...b };
+          applyReplace(clone);
+          return clone;
+        });
+      });
+    }
+
+    import("react-hot-toast").then((m) =>
+      m.default(`🔄 แทนที่ข้อความสำเร็จ ${count} จุด`, { duration: 2000 }),
+    );
+  };
 
   const handleDownloadAll = async (format: "zip" | "cbz" | "pdf" | "strip" = "zip") => {
     if (pages.length === 0) return;
@@ -615,6 +623,15 @@ export default function WorkspacePage() {
     
     try {
       if (zipAddedCount > 0) {
+        if (format === "cbz") {
+          const xml = generateComicInfoXml({
+            title: pages[0]?.name?.replace(/\.[^/.]+$/, "") || "Manga Translation",
+            pageCount: zipAddedCount,
+            languageISO: targetLang === "Thai" ? "th" : "en",
+          });
+          zip.file("ComicInfo.xml", xml);
+        }
+
         setTranslationResult(`⏳ กำลังสร้างไฟล์ ${format.toUpperCase()}...`);
         const content = await zip.generateAsync({ type: "blob" });
         const link = document.createElement("a");
@@ -1017,13 +1034,13 @@ export default function WorkspacePage() {
                       style={{ width: translateAllProgress ? `${(translateAllProgress.current / translateAllProgress.total) * 100}%` : '0%' }}
                     />
                   </div>
-                  {translateAllProgress && translateAllProgress.current > 1 && (() => {
-                    const elapsed = (Date.now() - translateAllProgress.startTime) / 1000;
-                    const avgPerPage = elapsed / translateAllProgress.current;
-                    const remaining = avgPerPage * (translateAllProgress.total - translateAllProgress.current);
-                    if (remaining < 60) return <span className="text-[10px] text-muted">เหลือ ~{Math.ceil(remaining)} วิ</span>;
-                    return <span className="text-[10px] text-muted">เหลือ ~{Math.ceil(remaining / 60)} นาที</span>;
-                  })()}
+                  {translateAllProgress && translateAllProgress.current > 1 && typeof translateAllProgress.remainingSeconds === 'number' && (
+                    <span className="text-[10px] text-muted">
+                      {translateAllProgress.remainingSeconds < 60
+                        ? `เหลือ ~${Math.ceil(translateAllProgress.remainingSeconds)} วิ`
+                        : `เหลือ ~${Math.ceil(translateAllProgress.remainingSeconds / 60)} นาที`}
+                    </span>
+                  )}
                 </div>
                 <button 
                   onClick={cancelTranslateAll} 
@@ -1093,6 +1110,14 @@ export default function WorkspacePage() {
               {isZipping ? <span className="animate-spin h-3.5 w-3.5 border-2 border-foreground border-t-transparent rounded-full"></span> : <><FileText className="w-3.5 h-3.5 text-muted" /><span className="text-xs font-bold">PDF</span></>}
             </button>
           </div>
+
+          <button
+            onClick={() => setIsSettingsOpen(true)}
+            className="p-2 rounded-lg bg-surface/50 border border-surface-hover/50 text-muted hover:text-foreground hover:bg-surface-hover transition-all"
+            title="Settings (API Key, ฟอนต์, Glossary)"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
         </div>
 
         {/* Mobile Header Controls */}
@@ -1153,13 +1178,13 @@ export default function WorkspacePage() {
                       style={{ width: translateAllProgress ? `${(translateAllProgress.current / translateAllProgress.total) * 100}%` : '0%' }}
                     />
                   </div>
-                  {translateAllProgress && translateAllProgress.current > 1 && (() => {
-                    const elapsed = (Date.now() - translateAllProgress.startTime) / 1000;
-                    const avgPerPage = elapsed / translateAllProgress.current;
-                    const remaining = avgPerPage * (translateAllProgress.total - translateAllProgress.current);
-                    if (remaining < 60) return <span className="text-[10px] text-muted">เหลืออีก ~{Math.ceil(remaining)} วินาที</span>;
-                    return <span className="text-[10px] text-muted">เหลืออีก ~{Math.ceil(remaining / 60)} นาที</span>;
-                  })()}
+                  {translateAllProgress && translateAllProgress.current > 1 && typeof translateAllProgress.remainingSeconds === 'number' && (
+                    <span className="text-[10px] text-muted">
+                      {translateAllProgress.remainingSeconds < 60
+                        ? `เหลืออีก ~${Math.ceil(translateAllProgress.remainingSeconds)} วินาที`
+                        : `เหลืออีก ~${Math.ceil(translateAllProgress.remainingSeconds / 60)} นาที`}
+                    </span>
+                  )}
                   <button 
                     onClick={cancelTranslateAll} 
                     className="w-full bg-red-500/15 text-red-400 hover:bg-red-500/25 px-4 py-2 rounded-md text-sm font-semibold flex justify-center items-center gap-2 transition-all"
@@ -1325,173 +1350,30 @@ export default function WorkspacePage() {
               error={cleaningError}
             />
 
-            <div className="relative w-full flex justify-center items-center flex-1 min-h-[60vh]">
-              {viewLayout === 'scroll' ? (
-                <div className="flex flex-col items-center gap-0 w-full max-w-3xl sm:max-w-4xl lg:max-w-5xl pb-32">
-                  {pages.map((p, idx) => {
-                    // read cache refs inside map; cleaningCacheRevision keeps
-                    // this render reactive to ref mutations
-                    void cleaningCacheRevision;
-                    void translationCacheRevision;
-                    const isTranslated = translatedImageCacheRef.current.has(p.url);
-                    const cleanedSrc =
-                      cleaningResultsByPage.get(p.url)?.cleanUrl ?? p.url;
-                    const cachedTranslated = translatedImageCacheRef.current.get(p.url);
-                    // Convert cached data URL to a blob URL for display: data
-                    // URLs this large (multi-MB base64) are slow to decode and
-                    // can fail silently, showing a broken image.
-                    const translatedBlobUrl =
-                      cachedTranslated?.startsWith("data:")
-                        ? URL.createObjectURL(dataUrlToBlob(cachedTranslated))
-                        : cachedTranslated;
-                    const imgSrc =
-                      workspaceLayer === "original"
-                        ? p.url
-                        : workspaceLayer === "translated" && isTranslated
-                          ? translatedBlobUrl ?? cleanedSrc
-                          : cleanedSrc;
-                    return (
-                      <div 
-                        key={idx} 
-                        className="w-full relative cursor-pointer hover:opacity-95 transition-opacity"
-                        onClick={() => {
-                          setCurrentPage(idx);
-                          setViewLayout('single');
-                        }}
-                        title="Click to edit this page"
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img 
-                          src={imgSrc} 
-                          alt={`Page ${idx + 1}`} 
-                          className="w-full h-auto object-contain block m-0 p-0"
-                        />
-                        <div className="absolute top-2 left-2 bg-black/70 text-white text-xs px-2.5 py-1 rounded-md opacity-0 hover:opacity-100 pointer-events-none transition-opacity">
-                          {idx + 1} / {pages.length}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div 
-                  onTouchStart={handleTouchStart}
-                  onTouchEnd={handleTouchEnd}
-                  className={`relative w-full max-w-full sm:max-w-3xl md:max-w-4xl lg:max-w-5xl xl:max-w-6xl flex justify-center items-center ${workspaceLayer === "translated" ? "" : "hide-translation"}`}
-                >
-                  {/* Left Arrow Floating Button */}
-                  {currentPage > 0 && (
-                    <button
-                      onClick={() => setCurrentPage(prev => prev - 1)}
-                      className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 bg-background/80 hover:bg-surface text-foreground p-2 rounded-full shadow-lg border border-surface-hover z-30 transition-all opacity-80 hover:opacity-100 hover:scale-110 active:scale-95"
-                      title="Previous Page (Left Arrow)"
-                    >
-                      <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" />
-                    </button>
-                  )}
-
-                  {/* Inner container that hugs the image tightly */}
-                  <div key={currentPage} id="pageContainer" className="relative inline-flex justify-center items-center">
-                    {brokenPages.has(pages[currentPage].url) ? (
-                      <div className="flex flex-col items-center justify-center p-8 bg-surface/40 border border-red-500/30 rounded-xl text-center gap-3 my-8">
-                        <div className="text-red-400 font-medium text-base">⚠️ รูปภาพนี้เสีย หรือโหลดไม่สมบูรณ์ ({pages[currentPage].name})</div>
-                        <p className="text-muted text-xs max-w-sm">รูปนี้อาจมาจากไฟล์ทอร์เรนต์ที่โหลดไม่ครบ 100% ทำให้ไม่สามารถแสดงผลได้</p>
-                        <button
-                          onClick={() => {
-                            setPages(prev => {
-                              const newPages = prev.filter((_, idx) => idx !== currentPage);
-                              if (newPages.length === 0) setCurrentPage(0);
-                              else if (currentPage >= newPages.length) setCurrentPage(newPages.length - 1);
-                              return newPages;
-                            });
-                            import('react-hot-toast').then(m => m.default("ลบรูปพังออกแล้ว", { duration: 1500 }));
-                          }}
-                          className="bg-red-500/20 text-red-400 hover:bg-red-500/30 px-4 py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer"
-                        >
-                          🗑️ ลบรูปพังนี้ออก
-                        </button>
-                      </div>
-                    ) : (
-                      <>
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={
-                            workspaceLayer === "original"
-                              ? pages[currentPage].url
-                              : currentCleaningResult?.cleanUrl ??
-                                pages[currentPage].url
-                          }
-                        alt={pages[currentPage].name} 
-                        title={pages[currentPage].name}
-                        onError={() => {
-                          setBrokenPages(prev => new Set(prev).add(pages[currentPage].url));
-                        }}
-                        className="max-w-full max-h-[calc(100vh-160px)] sm:max-h-[calc(100vh-180px)] w-auto h-auto object-contain drop-shadow-sm select-none block"
-                      />
-                      </>
-                    )}
-                    {workspaceLayer === "mask" && currentCleaningResult && (
-                      <>
-                        {[
-                          {
-                            url: currentCleaningResult.maskUrl,
-                            color: "rgba(255, 55, 80, .58)",
-                            label: "Eligible cleaning mask",
-                          },
-                          {
-                            url: currentCleaningResult.reviewMaskUrl,
-                            color: "rgba(255, 190, 40, .58)",
-                            label: "Review mask",
-                          },
-                          {
-                            url: currentCleaningResult.protectedMaskUrl,
-                            color: "rgba(45, 145, 255, .58)",
-                            label: "Protected mask",
-                          },
-                        ].map((maskLayer) => (
-                          <span
-                            key={maskLayer.label}
-                            role="img"
-                            aria-label={maskLayer.label}
-                            className="pointer-events-none absolute inset-0 mix-blend-screen"
-                            style={{
-                              backgroundColor: maskLayer.color,
-                              maskImage: `url(${maskLayer.url})`,
-                              WebkitMaskImage: `url(${maskLayer.url})`,
-                              maskPosition: "center",
-                              WebkitMaskPosition: "center",
-                              maskRepeat: "no-repeat",
-                              WebkitMaskRepeat: "no-repeat",
-                              maskSize: "100% 100%",
-                              WebkitMaskSize: "100% 100%",
-                            }}
-                          />
-                        ))}
-                        <MaskLegend
-                          regions={currentCleaningResult.regions}
-                        />
-                      </>
-                    )}
-                  </div>
-
-                  {/* Right Arrow Floating Button */}
-                  {currentPage < pages.length - 1 && (
-                    <button
-                      onClick={() => setCurrentPage(prev => prev + 1)}
-                      className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 bg-background/80 hover:bg-surface text-foreground p-2 rounded-full shadow-lg border border-surface-hover z-30 transition-all opacity-80 hover:opacity-100 hover:scale-110 active:scale-95"
-                      title="Next Page (Right Arrow)"
-                    >
-                      <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6" />
-                    </button>
-                  )}
-
-                  {/* Floating Page Badge */}
-                  <div className="absolute bottom-2 bg-background/80 backdrop-blur-xs text-foreground text-xs px-3 py-1 rounded-full border border-surface-hover shadow-sm pointer-events-none z-30">
-                    {currentPage + 1} / {pages.length}
-                  </div>
-                </div>
-              )}
-            </div>
+            <PageViewer
+              pages={pages}
+              currentPage={currentPage}
+              viewLayout={viewLayout}
+              workspaceLayer={workspaceLayer}
+              currentCleaningResult={currentCleaningResult}
+              cleaningResultsByPage={cleaningResultsByPage}
+              translatedImagesMap={translatedImagesMap}
+              brokenPages={brokenPages}
+              onPageChange={setCurrentPage}
+              onViewLayoutChange={setViewLayout}
+              onRemovePage={(idx) => {
+                setPages((prev) => {
+                  const newPages = prev.filter((_, i) => i !== idx);
+                  if (newPages.length === 0) setCurrentPage(0);
+                  else if (currentPage >= newPages.length) setCurrentPage(newPages.length - 1);
+                  return newPages;
+                });
+                import("react-hot-toast").then((m) => m.default("ลบรูปพังออกแล้ว", { duration: 1500 }));
+              }}
+              onImageError={(url) => {
+                setBrokenPages((prev) => new Set(prev).add(url));
+              }}
+            />
 
             {/* Hidden container for offscreen rendering */}
             <div id="offscreen-container" className="fixed top-0 left-0 w-full max-w-4xl opacity-0 pointer-events-none -z-50" style={{ visibility: 'hidden' }}>
@@ -1520,10 +1402,13 @@ export default function WorkspacePage() {
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <button
-                    onClick={() => {
-                      setPages(savedSessionData.pages);
-                      setCurrentPage(savedSessionData.currentPage || 0);
-                      setSavedSessionData(null);
+                    onClick={async () => {
+                      const restored = await restoreSavedSession();
+                      if (restored && restored.pages.length > 0) {
+                        setPages(restored.pages);
+                        setCurrentPage(restored.currentPage || 0);
+                        setSavedSessionData(null);
+                      }
                       import('react-hot-toast').then(m => m.default("ดึงค่างานเดิมกลับมาเรียบร้อย!", { duration: 2000 }));
                     }}
                     className="bg-primary text-primary-content hover:bg-primary-hover px-3.5 py-1.5 rounded-md text-xs font-semibold shadow-sm transition-colors cursor-pointer"
@@ -1558,21 +1443,16 @@ export default function WorkspacePage() {
         )}
       </main>
 
-            {/* Bottom Filmstrip Component */}
+      {/* Bottom Thumbnail Strip */}
       <PageFilmstrip
         pages={pages}
         currentPage={currentPage}
-        isCollapsed={isThumbnailsCollapsed}
-        onToggleCollapse={() => setIsThumbnailsCollapsed(prev => !prev)}
         onSelectPage={setCurrentPage}
         onDeletePage={(i) => {
           setPages((prev) => {
-            const target = prev[i];
-            if (target?.url?.startsWith("blob:")) URL.revokeObjectURL(target.url);
             const newPages = prev.filter((_, idx) => idx !== i);
             if (newPages.length === 0) setCurrentPage(0);
-            else if (currentPage >= newPages.length)
-              setCurrentPage(newPages.length - 1);
+            else if (currentPage >= newPages.length) setCurrentPage(newPages.length - 1);
             else if (currentPage > i) setCurrentPage(currentPage - 1);
             return newPages;
           });
@@ -1580,134 +1460,13 @@ export default function WorkspacePage() {
         onReorderPages={setPages}
         onAddImages={handleImageUpload}
         onClearAll={() => {
-          pages.forEach((p) => {
-            if (p.url?.startsWith("blob:")) URL.revokeObjectURL(p.url);
-          });
           setPages([]);
           setCurrentPage(0);
           clearSavedSession();
         }}
+        isCollapsed={isThumbnailsCollapsed}
+        onToggleCollapse={() => setIsThumbnailsCollapsed(!isThumbnailsCollapsed)}
       />
-
-      {/* Root Modals & Floating Overlays */}
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        sourceLang={sourceLang}
-        onSourceLangChange={setSourceLang}
-        textStyle={textStyle}
-        onTextStyleChange={(style) =>
-          setTextStyle((prev) => {
-            const next = typeof style === "function" ? style(prev) : style;
-            return {
-              fontFamily: next.fontFamily,
-              fontSizeMultiplier: next.fontSizeMultiplier,
-              textColor: next.textColor ?? prev.textColor,
-              textOutline: next.textOutline ?? prev.textOutline,
-            };
-          })
-        }
-        modelPreference={modelPreference}
-        onModelPreferenceChange={setModelPreference}
-        userApiKey={userApiKey}
-        onUserApiKeyChange={setUserApiKey}
-        policy={policy}
-        onPolicyChange={setPolicy}
-      />
-
-      {/* Studio Left Toolbar */}
-      {pages.length > 0 && (
-        <StudioToolbar
-          activeTool={activeStudioTool}
-          onSelectTool={setActiveStudioTool}
-          onAddText={() => {
-            addTextLayer();
-            setWorkspaceLayer("translated");
-          }}
-          onOpenFindReplace={() => setIsFindReplaceOpen(true)}
-          onOpenShortcuts={() => setIsShortcutsOpen(true)}
-          onEditMask={() => setIsMaskEditorOpen(true)}
-          disabled={operationBusy || isZipping}
-        />
-      )}
-
-      {/* Studio Right Floating Text Properties Panel */}
-      {selectedLayer && (
-        <div className="fixed right-4 top-20 z-40 max-h-[calc(100vh-100px)] overflow-y-auto shadow-2xl">
-          <TextPropertiesPanel
-            layer={selectedLayer}
-            onChange={(updates) => updateTextLayer(selectedLayer.id, updates)}
-            onDelete={deleteTextLayer}
-            onDuplicate={duplicateTextLayer}
-          />
-        </div>
-      )}
-
-      {/* Studio Right Floating Warp Panel */}
-      {activeStudioTool === "warp" && (
-        <div className="fixed right-4 top-20 z-40 shadow-2xl">
-          <WarpPanel
-            warp={selectedLayer?.warp}
-            onChange={(updates) => {
-              if (selectedLayer) {
-                updateTextLayer(selectedLayer.id, {
-                  warp: { ...selectedLayer.warp, ...updates } as typeof selectedLayer.warp,
-                });
-              }
-            }}
-            onReset={() => {
-              if (selectedLayer) {
-                updateTextLayer(selectedLayer.id, {
-                  warp: { effect: "none", bend: 0, horizontal: 0, vertical: 0 },
-                });
-              }
-            }}
-          />
-        </div>
-      )}
-
-      {/* Targeted OCR Area Selection Tool */}
-      <OcrAreaTool
-        active={activeStudioTool === "ocr"}
-        onDetectRegion={async (rect) => {
-          addTextLayer({
-            x: rect.x,
-            y: rect.y,
-            width: rect.width,
-            height: rect.height,
-            text: "ตรวจจับข้อความ...",
-          });
-          import('react-hot-toast').then(m => m.default.success("ครอบพื้นที่ข้อความ"));
-          setActiveStudioTool("select");
-        }}
-        onClose={() => setActiveStudioTool("select")}
-      />
-
-      {/* Global Find & Replace Dialog */}
-      <FindReplaceDialog
-        isOpen={isFindReplaceOpen}
-        onClose={() => setIsFindReplaceOpen(false)}
-        onReplace={({ find, replace }) => {
-          if (!find) return;
-          let count = 0;
-          for (const layer of textLayers) {
-            if (layer.text.includes(find)) {
-              updateTextLayer(layer.id, {
-                text: layer.text.replaceAll(find, replace),
-              });
-              count++;
-            }
-          }
-          import('react-hot-toast').then(m => m.default.success(`แทนที่ ${count} จุด`));
-        }}
-      />
-
-      {/* Keyboard Shortcuts Dialog */}
-      <KeyboardShortcutsDialog
-        isOpen={isShortcutsOpen}
-        onClose={() => setIsShortcutsOpen(false)}
-      />
-
       {isMaskEditorOpen && currentCleaningResult && pages[currentPage] && (
         <MaskEditor
           sourceUrl={currentCleaningResult.cleanUrl}
@@ -1717,6 +1476,32 @@ export default function WorkspacePage() {
           onRetry={handleRetryRegion}
         />
       )}
+
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        sourceLang={sourceLang}
+        onSourceLangChange={setSourceLang}
+        textStyle={textStyle}
+        onTextStyleChange={setTextStyle}
+        modelPreference={modelPreference}
+        onModelPreferenceChange={setModelPreference}
+        userApiKey={userApiKey}
+        onUserApiKeyChange={setUserApiKey}
+        glossary={glossary}
+        onGlossaryChange={setGlossary}
+      />
+
+      <FindReplaceDialog
+        isOpen={isFindReplaceOpen}
+        onClose={() => setIsFindReplaceOpen(false)}
+        onReplace={handleFindReplace}
+      />
+
+      <KeyboardShortcutsDialog
+        isOpen={isShortcutsOpen}
+        onClose={() => setIsShortcutsOpen(false)}
+      />
     </div>
   );
 }

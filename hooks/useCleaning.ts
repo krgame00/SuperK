@@ -60,7 +60,10 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
   const activeRequestRef = useRef<
     { token: number; pageUrl: string } | undefined
   >(undefined);
-  pagesRef.current = pages;
+
+  useEffect(() => {
+    pagesRef.current = pages;
+  }, [pages]);
 
   useEffect(() => {
     resultsRef.current = resultsByPage;
@@ -385,6 +388,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
     }
     if (!removed) return;
     resultsRef.current = retained;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Prunes revoked blob results on page removal
     setResultsByPage(retained);
     setCacheRevision((revision) => revision + 1);
   }, [pages, revokeResult]);

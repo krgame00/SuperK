@@ -252,6 +252,87 @@ def decode_yolo_blocks(
     return blocks
 
 
+def _binary_text_seed(
+    probability: np.ndarray,
+    threshold: float = 0.35,
+) -> np.ndarray:
+    return np.where(probability >= threshold, 255, 0).astype(np.uint8)
+
+
+def _candidate_support_from_seed(
+    seed: np.ndarray,
+    radius: int,
+) -> np.ndarray:
+    if radius <= 0:
+        return np.where(seed > 0, 255, 0).astype(np.uint8)
+
+    kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE,
+        (radius * 2 + 1, radius * 2 + 1),
+    )
+    return cv2.dilate(
+        np.where(seed > 0, 255, 0).astype(np.uint8),
+        kernel,
+        iterations=1,
+    )
+
+
+def _fuse_strokes_with_text_seed(
+    candidate: np.ndarray,
+    seed: np.ndarray,
+    support_radius: int = 3,
+) -> np.ndarray:
+    support = _candidate_support_from_seed(seed, support_radius)
+    return np.where(
+        (candidate > 0) & (support > 0),
+        255,
+        0,
+    ).astype(np.uint8)
+
+
+def _estimate_candidate_growth_radius(
+    candidate: np.ndarray,
+) -> int:
+    binary = np.where(candidate > 0, 255, 0).astype(np.uint8)
+    distance = cv2.distanceTransform(binary, cv2.DIST_L2, 3)
+    positive = distance[distance > 0]
+
+    if positive.size == 0:
+        return 1
+
+    half_stroke = float(np.percentile(positive, 75))
+    return int(np.clip(round(half_stroke * 0.75), 1, 4))
+
+
+def _filter_paddle_only_components(
+    candidate: np.ndarray,
+) -> np.ndarray:
+    binary = np.where(candidate > 0, 1, 0).astype(np.uint8)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(
+        binary,
+        connectivity=8,
+    )
+
+    output = np.zeros_like(candidate, dtype=np.uint8)
+    image_area = candidate.shape[0] * candidate.shape[1]
+
+    for component_id in range(1, count):
+        area = int(stats[component_id, cv2.CC_STAT_AREA])
+        width = int(stats[component_id, cv2.CC_STAT_WIDTH])
+        height = int(stats[component_id, cv2.CC_STAT_HEIGHT])
+
+        if area < 3:
+            continue
+        if area > max(12, round(image_area * 0.18)):
+            continue
+        if width > candidate.shape[1] * 0.85 and height <= 3:
+            continue
+
+        output[labels == component_id] = 255
+
+    return output
+
+
 def _extract_strokes_from_crop(crop: RgbImage) -> np.ndarray:
     if crop.size == 0:
         return np.zeros((0, 0), dtype=np.uint8)
@@ -260,10 +341,10 @@ def _extract_strokes_from_crop(crop: RgbImage) -> np.ndarray:
     bg_val = float(np.median(border))
     if bg_val > 160:
         core = (gray_crop < bg_val - 25).astype(np.uint8) * 255
-        dil = cv2.dilate(core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)), iterations=1)
+        return core
     elif bg_val < 100:
         core = (gray_crop > 150).astype(np.uint8) * 255
-        dil = cv2.dilate(core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (23, 23)), iterations=1)
+        return core
     else:
         diff = np.abs(gray_crop.astype(float) - bg_val)
         r = crop[:, :, 0].astype(float)
@@ -272,8 +353,7 @@ def _extract_strokes_from_crop(crop: RgbImage) -> np.ndarray:
         color_diff = np.maximum(0, r - (g + b) / 2.0)
         total_diff = np.maximum(diff, color_diff * 1.2)
         core = (total_diff > 25).astype(np.uint8) * 255
-        dil = cv2.dilate(core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)), iterations=1)
-    return dil
+        return core
 
 
 class HybridTextDetector:
@@ -314,7 +394,7 @@ class HybridTextDetector:
         combined_prob = np.zeros((h, w), dtype=np.float32)
         combined_blocks = list(ctd_res.blocks)
 
-        # Process all CTD blocks to extract precise character strokes
+        # Process all CTD blocks with seed-anchored stroke extraction
         for b in ctd_res.blocks:
             pad = 6
             bx1 = max(0, b.rect.x - pad)
@@ -323,13 +403,25 @@ class HybridTextDetector:
             by2 = min(h, b.rect.y + b.rect.height + pad)
             crop = image_rgb[by1:by2, bx1:bx2]
             if crop.size > 0:
-                dil = _extract_strokes_from_crop(crop)
-                combined_prob[by1:by2, bx1:bx2] = np.maximum(
-                    combined_prob[by1:by2, bx1:bx2],
-                    (dil > 0).astype(np.float32) * 0.95,
-                )
+                local_prob = ctd_res.mask_probability[by1:by2, bx1:bx2]
+                seed = _binary_text_seed(local_prob, threshold=0.35)
+                candidate = _extract_strokes_from_crop(crop)
+                fused = _fuse_strokes_with_text_seed(candidate, seed, support_radius=3)
+                if np.count_nonzero(fused) > 0:
+                    radius = _estimate_candidate_growth_radius(fused)
+                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (radius * 2 + 1, radius * 2 + 1))
+                    grown = cv2.dilate(fused, kernel, iterations=1)
+                    combined_prob[by1:by2, bx1:bx2] = np.maximum(
+                        combined_prob[by1:by2, bx1:bx2],
+                        (grown > 0).astype(np.float32) * 0.95,
+                    )
+                elif np.count_nonzero(seed) > 0:
+                    combined_prob[by1:by2, bx1:bx2] = np.maximum(
+                        combined_prob[by1:by2, bx1:bx2],
+                        local_prob,
+                    )
 
-        # PaddleOCR multi-angle text line recognition
+        # PaddleOCR multi-angle text line recognition (conservative, supporting evidence)
         if self.paddle_engine is not None:
             try:
                 paddle_res = self.paddle_engine.ocr(image_rgb, cls=True)
@@ -338,7 +430,7 @@ class HybridTextDetector:
                         box, (text, conf) = line
                         pts = np.array(box, dtype=np.int32)
                         bx, by, bw, bh = cv2.boundingRect(pts)
-                        pad = 8
+                        pad = 6
                         bx1 = max(0, bx - pad)
                         by1 = max(0, by - pad)
                         bx2 = min(w, bx + bw + pad)
@@ -346,12 +438,28 @@ class HybridTextDetector:
                         
                         crop = image_rgb[by1:by2, bx1:bx2]
                         if crop.size > 0:
-                            dil = _extract_strokes_from_crop(crop)
-                            if np.count_nonzero(dil) >= 3:
-                                combined_prob[by1:by2, bx1:bx2] = np.maximum(
-                                    combined_prob[by1:by2, bx1:bx2],
-                                    (dil > 0).astype(np.float32) * 0.95,
-                                )
+                            local_prob = ctd_res.mask_probability[by1:by2, bx1:bx2]
+                            seed = _binary_text_seed(local_prob, threshold=0.35)
+                            candidate = _extract_strokes_from_crop(crop)
+                            if np.count_nonzero(seed) > 0:
+                                fused = _fuse_strokes_with_text_seed(candidate, seed, support_radius=3)
+                                if np.count_nonzero(fused) > 0:
+                                    radius = _estimate_candidate_growth_radius(fused)
+                                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (radius * 2 + 1, radius * 2 + 1))
+                                    grown = cv2.dilate(fused, kernel, iterations=1)
+                                    combined_prob[by1:by2, bx1:bx2] = np.maximum(
+                                        combined_prob[by1:by2, bx1:bx2],
+                                        (grown > 0).astype(np.float32) * 0.95,
+                                    )
+                            else:
+                                filtered = _filter_paddle_only_components(candidate)
+                                if np.count_nonzero(filtered) >= 3:
+                                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+                                    grown = cv2.dilate(filtered, kernel, iterations=1)
+                                    combined_prob[by1:by2, bx1:bx2] = np.maximum(
+                                        combined_prob[by1:by2, bx1:bx2],
+                                        (grown > 0).astype(np.float32) * 0.95,
+                                    )
 
                         combined_blocks.append(
                             DetectedBlock(

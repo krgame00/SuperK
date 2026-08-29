@@ -65,7 +65,9 @@ describe("MaskEditor", () => {
       putImageData: vi.fn(),
       createImageData: vi.fn((w, h) => new ImageData(w, h)),
     };
-    HTMLCanvasElement.prototype.getContext = vi.fn(() => mockContext as unknown as CanvasRenderingContext2D) as any;
+    HTMLCanvasElement.prototype.getContext = vi.fn(
+      () => mockContext as unknown as CanvasRenderingContext2D,
+    ) as unknown as typeof HTMLCanvasElement.prototype.getContext;
     HTMLCanvasElement.prototype.getBoundingClientRect = vi.fn(() => ({
       left: 0,
       top: 0,
