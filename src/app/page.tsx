@@ -872,7 +872,7 @@ export default function WorkspacePage() {
         )}
             
         {/* Desktop Menu — Grouped: [Settings | View] | [Undo/Redo] | [Translate] | [Download] */}
-        <div className="hidden xl:flex items-center gap-1.5 xl:gap-2">
+        <div className="hidden md:flex items-center gap-1.5 lg:gap-2 flex-wrap">
           {/* ── Group 1: Settings & View ── */}
           <div className="flex items-center gap-1 bg-surface/50 rounded-lg px-1 py-0.5 border border-surface-hover/50">
             <button
@@ -1069,7 +1069,7 @@ export default function WorkspacePage() {
         </div>
 
         {/* Mobile Header Controls */}
-        <div className="flex xl:hidden items-center gap-2">
+        <div className="flex md:hidden items-center gap-2">
           <button 
             onClick={() => void handleTranslateCurrent()}
             disabled={operationBusy || pages.length === 0}
@@ -1099,10 +1099,10 @@ export default function WorkspacePage() {
         {isMobileMenuOpen && (
           <>
             <div 
-              className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 xl:hidden animate-in fade-in duration-200" 
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 md:hidden animate-in fade-in duration-200" 
               onClick={() => setIsMobileMenuOpen(false)} 
             />
-            <div className="absolute top-[60px] right-3 left-3 sm:right-6 sm:w-80 sm:left-auto bg-background border border-surface shadow-2xl rounded-xl p-3.5 z-50 xl:hidden flex flex-col gap-3 max-h-[calc(100vh-80px)] overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-200">
+            <div className="absolute top-[60px] right-3 left-3 sm:right-6 sm:w-80 sm:left-auto bg-background border border-surface shadow-2xl rounded-xl p-3.5 z-50 md:hidden flex flex-col gap-3 max-h-[calc(100vh-80px)] overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-200">
 
             {/* ── Section: 🔤 การแปล ── */}
             <div>

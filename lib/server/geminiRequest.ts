@@ -1,4 +1,8 @@
-﻿export type GeminiErrorCode =
+import {
+  type TranslationObservabilityMeta,
+} from "@/lib/translation/requestError";
+
+export type GeminiErrorCode =
   | "GEMINI_TIMEOUT"
   | "GEMINI_QUOTA"
   | "GEMINI_UPSTREAM";
@@ -26,6 +30,13 @@ export interface GeminiRequestResult<T> {
   data: T;
   keyIndex: number;
   model: string;
+  meta: TranslationObservabilityMeta;
+}
+
+export interface OpenAICompatibleResult<T> {
+  data: T;
+  model: string;
+  meta: TranslationObservabilityMeta;
 }
 
 export interface GeminiRequestOptions {
@@ -87,8 +98,11 @@ export async function requestGemini<T = unknown>(
   const startedAt = now();
   let firstHttpError: GeminiRequestError | undefined;
   let sawTransportFailure = false;
+  let attemptCount = 0;
+  let fallbackCount = 0;
 
-  for (const model of models) {
+  for (let modelIdx = 0; modelIdx < models.length; modelIdx++) {
+    const model = models[modelIdx];
     let keyOffset = 0;
 
     keyLoop: while (keyOffset < apiKeys.length) {
@@ -109,6 +123,7 @@ export async function requestGemini<T = unknown>(
           );
         }
 
+        attemptCount++;
         const controller = new AbortController();
         const timer = setTimeout(
           () => controller.abort(),
@@ -129,6 +144,7 @@ export async function requestGemini<T = unknown>(
           );
         } catch {
           sawTransportFailure = true;
+          fallbackCount++;
           break keyLoop;
         } finally {
           clearTimeout(timer);
@@ -150,6 +166,13 @@ export async function requestGemini<T = unknown>(
             data: data as T,
             keyIndex,
             model,
+            meta: {
+              provider: "gemini",
+              model,
+              attemptCount,
+              elapsedMs: now() - startedAt,
+              fallbackCount,
+            },
           };
         }
 
@@ -159,22 +182,26 @@ export async function requestGemini<T = unknown>(
         );
         firstHttpError ??= error;
 
-        if ((response.status === 500 || response.status === 503)
-          && serverRetry === 0) {
+        if (
+          (response.status === 500 || response.status === 503) &&
+          serverRetry === 0
+        ) {
           serverRetry += 1;
           await sleep(1_000);
           continue;
         }
 
         if (
-          response.status === 400
-          || response.status === 403
-          || response.status === 429
+          response.status === 400 ||
+          response.status === 403 ||
+          response.status === 429
         ) {
           keyOffset += 1;
+          fallbackCount++;
           continue keyLoop;
         }
 
+        fallbackCount++;
         break keyLoop;
       }
     }
@@ -194,23 +221,11 @@ export async function requestGemini<T = unknown>(
   throw upstreamError("Gemini request could not be completed", 502);
 }
 
-/**
- * Call an OpenAI-compatible endpoint (e.g., 9router at http://localhost:20128/v1)
- * with vision support. Expects the payload in OpenAI chat completions format.
- */
 export interface OpenAICompatibleOptions {
-  baseUrl: string;           // e.g. http://localhost:20128/v1
-  apiKey: string;            // 9router API key from DB
-  model: string;             // model name (e.g. "11asd" combo)
-  payload: {
-    messages: Array<{
-      role: string;
-      content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
-    }>;
-    max_tokens?: number;
-    temperature?: number;
-    [key: string]: unknown;
-  };
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  payload: Record<string, unknown>;
   attemptTimeoutMs?: number;
   totalBudgetMs?: number;
   fetchImpl?: typeof fetch;
@@ -220,7 +235,7 @@ export interface OpenAICompatibleOptions {
 
 export async function requestOpenAICompatible<T = unknown>(
   options: OpenAICompatibleOptions,
-): Promise<{ data: T; model: string }> {
+): Promise<OpenAICompatibleResult<T>> {
   const {
     baseUrl,
     apiKey,
@@ -232,9 +247,13 @@ export async function requestOpenAICompatible<T = unknown>(
     now = Date.now,
     sleep = defaultSleep,
   } = options;
-  const startedAt = now();
 
-  const url = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
+  const startedAt = now();
+  const normalizedBase = baseUrl.replace(/\/+$/, "");
+  const url = normalizedBase.endsWith("/chat/completions")
+    ? normalizedBase
+    : `${normalizedBase}/chat/completions`;
+
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${apiKey}`,
@@ -243,6 +262,7 @@ export async function requestOpenAICompatible<T = unknown>(
   let firstHttpError: GeminiRequestError | undefined;
   let sawTransportFailure = false;
   let retryAttempt = 0;
+  let attemptCount = 0;
 
   while (now() - startedAt < totalBudgetMs) {
     const remaining = totalBudgetMs - (now() - startedAt);
@@ -255,6 +275,7 @@ export async function requestOpenAICompatible<T = unknown>(
       );
     }
 
+    attemptCount++;
     const controller = new AbortController();
     const timer = setTimeout(
       () => controller.abort(),
@@ -289,7 +310,17 @@ export async function requestOpenAICompatible<T = unknown>(
     }
 
     if (response.ok) {
-      return { data: data as T, model };
+      return {
+        data: data as T,
+        model,
+        meta: {
+          provider: "openai_compatible",
+          model,
+          attemptCount,
+          elapsedMs: now() - startedAt,
+          fallbackCount: retryAttempt,
+        },
+      };
     }
 
     const error = upstreamError(
@@ -302,9 +333,10 @@ export async function requestOpenAICompatible<T = unknown>(
     if (response.status === 429 || response.status >= 500) {
       retryAttempt++;
       if (retryAttempt <= 3) {
-        const delayMs = response.status === 429
-          ? Math.min(2000 * Math.pow(2, retryAttempt - 1), 8000)
-          : 1000 * retryAttempt;
+        const delayMs =
+          response.status === 429
+            ? Math.min(2000 * Math.pow(2, retryAttempt - 1), 8000)
+            : 1000 * retryAttempt;
         await sleep(delayMs);
         continue;
       }

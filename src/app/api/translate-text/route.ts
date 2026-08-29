@@ -21,7 +21,7 @@ interface GeminiResponseData {
 
 export async function POST(req: Request) {
   try {
-    const { bubbles, targetLang, modelPreference } = await req.json();
+    const { bubbles, targetLang, modelPreference, policy } = await req.json();
     
     if (!bubbles || !Array.isArray(bubbles)) {
       return NextResponse.json({ error: "Missing or invalid text data" }, { status: 400 });
@@ -40,13 +40,19 @@ export async function POST(req: Request) {
       .map((key) => key.trim())
       .filter((key) => key.length > 0);
 
+    const sfxDirective = policy?.sfx === "ignore"
+      ? "- IGNORE all Sound Effects (SFX). Do NOT translate them."
+      : policy?.sfx === "preserve"
+      ? "- PRESERVE Sound Effects (SFX) in original form without translation."
+      : "- Translate Sound Effects (SFX) and wrap them in asterisks, e.g., *BOOM* or *ตู้ม*.";
+
     const promptText = 
       `You are an expert manga translator. Translate the following JSON list of text blocks to ${targetLang || 'Thai'}.\n`+
       `- Use highly natural, conversational flow appropriate for comic books. Avoid rigid word-for-word translation.\n`+
       `- Arrange sentences beautifully according to native Thai idioms and phrasing (เรียบเรียงประโยคให้สละสลวยเหมือนคนไทยพูดกันในชีวิตจริง ไม่แปลตรงตัว).\n`+
       `- Do NOT use line breaks (\\n) in the translated text. Keep the text of each bubble on a single continuous line (ห้ามเว้นบรรทัดมั่ว ให้ต่อเป็นบรรทัดเดียวกัน).\n`+
       `- For Thai: Adapt pronouns (แก, ฉัน, นาย, ข้า, เอ็ง) and endings (ครับ, ค่ะ, วะ, เว้ย, สิ, นะ) based on character relationships and mood.\n`+
-      `- Translate Sound Effects (SFX) and wrap them in asterisks, e.g., *BOOM* or *ตู้ม*.\n`+
+      `${sfxDirective}\n`+
       `- Read order is usually Right-to-Left, Top-to-Bottom.\n`+
       `The input format is {"bubbles":[{"t":"original text","box":[ymin,xmin,ymax,xmax]}]}.\n`+
       `Output ONLY valid JSON, no markdown, no explanation.\n`+

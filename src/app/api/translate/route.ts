@@ -5,8 +5,15 @@ import {
   requestGemini,
   requestOpenAICompatible,
 } from "@/lib/server/geminiRequest";
+import {
+  type TranslationPolicy,
+  buildPolicyDirectives,
+} from "@/lib/translationPolicy";
 
 let globalKeyIndex = 0;
+
+export const MAX_TRANSLATION_BODY_BYTES = 30 * 1024 * 1024;
+export const MAX_TRANSLATION_IMAGE_BYTES = 20 * 1024 * 1024;
 
 interface GeminiResponseData {
   promptFeedback?: {
@@ -24,6 +31,17 @@ interface GeminiResponseData {
 
 export async function POST(req: Request) {
   try {
+    const declaredLength = Number(req.headers.get("content-length") ?? "0");
+    if (
+      Number.isFinite(declaredLength) &&
+      declaredLength > MAX_TRANSLATION_BODY_BYTES
+    ) {
+      return NextResponse.json(
+        { error: "Translation request is too large" },
+        { status: 413 },
+      );
+    }
+
     const {
       imageBase64,
       mimeType,
@@ -33,10 +51,26 @@ export async function POST(req: Request) {
       apiKey: userApiKey,
       isRetry,
       context,
+      policy,
     } = await req.json();
 
     if (!imageBase64) {
       return NextResponse.json({ error: "Missing image data" }, { status: 400 });
+    }
+    if (
+      typeof imageBase64 !== "string" ||
+      imageBase64.length > Math.ceil((MAX_TRANSLATION_IMAGE_BYTES * 4) / 3) + 4
+    ) {
+      return NextResponse.json(
+        { error: "Translation image is too large" },
+        { status: 413 },
+      );
+    }
+    if (typeof mimeType !== "string" || !mimeType.startsWith("image/")) {
+      return NextResponse.json(
+        { error: "Unsupported image MIME type" },
+        { status: 415 },
+      );
     }
 
     // 9router (OpenAI-compatible) path — faster, no NSFW block
@@ -46,22 +80,27 @@ export async function POST(req: Request) {
     if (translateBaseUrl && translateApiKey) {
       try {
         const openAiResponse = await handleOpenAICompatible({
-          req,
           imageBase64,
           mimeType,
           targetLang,
           sourceLang,
           isRetry,
           context,
+          policy,
           translateBaseUrl,
           translateApiKey,
         });
         if (openAiResponse.ok) {
           return openAiResponse;
         }
-        console.warn("9router translation failed, falling back to direct Gemini API...");
+        console.warn(
+          "9router translation failed, falling back to direct Gemini API...",
+        );
       } catch (err) {
-        console.warn("9router unreachable, falling back to direct Gemini API...", err);
+        console.warn(
+          "9router unreachable, falling back to direct Gemini API...",
+          err,
+        );
       }
     }
 
@@ -96,17 +135,15 @@ export async function POST(req: Request) {
       ? `\nCONTEXT (translations from previous pages of this same manga):\n${context}\n\nCONSISTENCY RULES:\n- Use the exact same character names, pronouns (แก/ฉัน/นาย/ข้า/เอ็ง), and tone of address already established in the context above. Do NOT change them.\n- Keep speech patterns and slang consistent with earlier pages.\n- If a character is referred to by a name in context, keep using that name.\n- Context is ONLY for consistency reference: translate THIS page fresh; do not copy dialogue.\n`
       : "";
 
+    const policyRules = buildPolicyDirectives(policy);
+
     const promptText =
       `You are an expert manga translator. ${sourceHint}Translate this manga page to ${targetLang || "Thai"}.${retryDirective}${contextDirective}\n` +
       `- Use highly natural, conversational flow appropriate for comic books. Avoid rigid word-for-word translation.\n` +
       `- Arrange sentences beautifully according to native Thai idioms and phrasing (เรียบเรียงประโยคให้สละสลวยเหมือนคนไทยพูดกันในชีวิตจริง ไม่แปลตรงตัว).\n` +
       `- Do NOT use line breaks (\\n) in the translated text. Keep the text of each bubble on a single continuous line (ห้ามเว้นบรรทัดมั่ว ให้ต่อเป็นบรรทัดเดียวกัน).\n` +
       `- For Thai: Adapt pronouns (แก, ฉัน, นาย, ข้า, เอ็ง) and endings (ครับ, ค่ะ, วะ, เว้ย, สิ, นะ) based on character relationships and mood.\n` +
-      `- Translate ONLY story-bearing dialogue, thoughts, and narration.\n` +
-      `- Narration may appear without a speech bubble; include it when it forms a readable story sentence or caption.\n` +
-      `- IGNORE interface text: HUD elements, menus, button labels, character or stat labels, counters, status values, credits, watermarks, and other small scattered labels.\n` +
-      `- IGNORE all Sound Effects (SFX). Do NOT translate them.\n` +
-      `- DO NOT hallucinate text on textures, leaves, clothing, shading, or backgrounds. If an area does not clearly contain readable story text, ignore it completely.\n` +
+      `${policyRules}\n` +
       `- Read order is usually Right-to-Left, Top-to-Bottom.\n` +
       `Output ONLY valid JSON, no markdown, no explanation.\n` +
       `Format: {"bubbles":[{"original_text": "text found in image", "t":"translated text in Thai","box":[ymin, xmin, ymax, xmax]}]}\n` +
@@ -179,9 +216,6 @@ export async function POST(req: Request) {
         models: MODELS,
         payload,
         initialKeyIndex: globalKeyIndex,
-        // Multi-part image pages (6 tiles + text) routinely take >30s on
-        // Gemini; raise the per-attempt cap so slow-but-healthy responses
-        // don't get aborted as timeouts.
         attemptTimeoutMs: 60_000,
         totalBudgetMs: 180_000,
       });
@@ -246,23 +280,23 @@ export async function POST(req: Request) {
 }
 
 async function handleOpenAICompatible({
-  req,
   imageBase64,
   mimeType,
   targetLang,
   sourceLang,
   isRetry,
   context,
+  policy,
   translateBaseUrl,
   translateApiKey,
 }: {
-  req: Request;
   imageBase64: string;
   mimeType: string;
   targetLang: string;
   sourceLang: string;
   isRetry: boolean;
   context: string | undefined;
+  policy?: Partial<TranslationPolicy>;
   translateBaseUrl: string;
   translateApiKey: string;
 }) {
@@ -279,17 +313,15 @@ async function handleOpenAICompatible({
     ? `\nCONTEXT (translations from previous pages of this same manga):\n${context}\n\nCONSISTENCY RULES:\n- Use the exact same character names, pronouns (แก/ฉัน/นาย/ข้า/เอ็ง), and tone of address already established in the context above. Do NOT change them.\n- Keep speech patterns and slang consistent with earlier pages.\n- If a character is referred to by a name in context, keep using that name.\n- Context is ONLY for consistency reference: translate THIS page fresh; do not copy dialogue.\n`
     : "";
 
+  const policyRules = buildPolicyDirectives(policy);
+
   const promptText =
     `You are an expert manga translator. ${sourceHint}Translate this manga page to ${targetLang || "Thai"}.${retryDirective}${contextDirective}\n` +
     `- Use highly natural, conversational flow appropriate for comic books. Avoid rigid word-for-word translation.\n` +
     `- Arrange sentences beautifully according to native Thai idioms and phrasing (เรียบเรียงประโยคให้สละสลวยเหมือนคนไทยพูดกันในชีวิตจริง ไม่แปลตรงตัว).\n` +
     `- Do NOT use line breaks (\\n) in the translated text. Keep the text of each bubble on a single continuous line (ห้ามเว้นบรรทัดมั่ว ให้ต่อเป็นบรรทัดเดียวกัน).\n` +
     `- For Thai: Adapt pronouns (แก, ฉัน, นาย, ข้า, เอ็ง) and endings (ครับ, ค่ะ, วะ, เว้ย, สิ, นะ) based on character relationships and mood.\n` +
-    `- Translate ONLY story-bearing dialogue, thoughts, and narration.\n` +
-    `- Narration may appear without a speech bubble; include it when it forms a readable story sentence or caption.\n` +
-    `- IGNORE interface text: HUD elements, menus, button labels, character or stat labels, counters, status values, credits, watermarks, and other small scattered labels.\n` +
-    `- IGNORE all Sound Effects (SFX). Do NOT translate them.\n` +
-    `- DO NOT hallucinate text on textures, leaves, clothing, shading, or backgrounds. If an area does not clearly contain readable story text, ignore it completely.\n` +
+    `${policyRules}\n` +
     `- Read order is usually Right-to-Left, Top-to-Bottom.\n` +
     `Output ONLY valid JSON, no markdown, no explanation.\n` +
     `Format: {"bubbles":[{"original_text": "text found in image", "t":"translated text in Thai","box":[ymin, xmin, ymax, xmax]}]}\n` +
@@ -298,25 +330,25 @@ async function handleOpenAICompatible({
     `If no text found: {"bubbles":[]}`;
 
   // OpenAI-compatible payload with vision (image_url with data URI)
-    const payload = {
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: promptText },
-            {
-              type: "image_url",
-              image_url: {
-                url: `data:${mimeType || "image/jpeg"};base64,${imageBase64}`,
-              },
+  const payload = {
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: promptText },
+          {
+            type: "image_url",
+            image_url: {
+              url: `data:${mimeType || "image/jpeg"};base64,${imageBase64}`,
             },
-          ],
-        },
-      ],
-      max_tokens: 8192,
-      temperature: 0.3,
-      stream: false,
-    };
+          },
+        ],
+      },
+    ],
+    max_tokens: 8192,
+    temperature: 0.3,
+    stream: false,
+  };
 
   // Model: prefer 11asd combo (best of openrouter + gemini), fallback to combo name from env
   const model = process.env.SUPERK_TRANSLATE_MODEL || "11asd";
@@ -351,7 +383,10 @@ async function handleOpenAICompatible({
     }
 
     // Check for safety blocks in OpenAI format
-    if (choice.finish_reason === "content_filter" || choice.finish_reason === "safety") {
+    if (
+      choice.finish_reason === "content_filter" ||
+      choice.finish_reason === "safety"
+    ) {
       return NextResponse.json(
         { error: "เนื้อหาถูกแบนโดยระบบ Safety" },
         { status: 400 },

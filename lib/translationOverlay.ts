@@ -18,6 +18,13 @@ export interface TranslatedBubble {
   deleted?: boolean;
   /** redraw callback attached to overlay bubbles */
   render?: () => void;
+  styleProfile?: {
+    fill?: string;
+    outline?: string;
+    fillConfidence?: number;
+    outlineConfidence?: number;
+    source?: "auto" | "manual" | "global";
+  };
   [key: string]: unknown;
 }
 
@@ -141,12 +148,17 @@ export const downloadTranslatedImage = (
   return dataUrl;
 };
 
+export const getReadableMinimumFontSize = (pageWidth: number): number => {
+  if (!pageWidth || pageWidth <= 0) return 14;
+  return Math.max(14, Math.round(pageWidth * 0.0225));
+};
+
 export const wrapTextForBubble = (
   text: string,
   maxW: number,
   maxH: number,
   fs: number,
-  fontFamily: string,
+  fontFamily: string = "sans-serif",
   isOval: boolean = true
 ): string[] => {
   if (!text || !text.trim()) return [];
@@ -154,7 +166,15 @@ export const wrapTextForBubble = (
   let wds: string[] = [];
   if (typeof Intl !== 'undefined' && Intl.Segmenter) {
     const segmenter = new Intl.Segmenter('th', { granularity: 'word' });
-    wds = Array.from(segmenter.segment(text)).map(s => s.segment);
+    const rawSegments = Array.from(segmenter.segment(text)).map(s => s.segment);
+    // Combine punctuation to preceding word where practical
+    for (const seg of rawSegments) {
+      if (/^[.,!?:;...]+$/.test(seg) && wds.length > 0) {
+        wds[wds.length - 1] += seg;
+      } else {
+        wds.push(seg);
+      }
+    }
   } else {
     wds = text.split(/\s+/);
   }
@@ -169,7 +189,7 @@ export const wrapTextForBubble = (
     measureFn = (str: string) => str.length * (fs * 0.6);
   }
 
-  const lineH = fs * 1.45;
+  const lineH = fs * 1.35;
   const estimatedLineCount = Math.max(1, Math.round(maxH / lineH));
 
   const getLineMaxW = (lineIndex: number, totalLines: number): number => {
@@ -182,7 +202,7 @@ export const wrapTextForBubble = (
 
   let bestLines: string[] = [];
 
-  for (let tryLines = Math.max(1, estimatedLineCount - 1); tryLines <= estimatedLineCount + 2; tryLines++) {
+  for (let tryLines = Math.max(1, estimatedLineCount - 1); tryLines <= estimatedLineCount + 3; tryLines++) {
     const lines: string[] = [];
     let cur = "";
     let lineIdx = 0;
@@ -192,7 +212,7 @@ export const wrapTextForBubble = (
       const test = cur ? (cur + w) : w;
       if (measureFn(test) > allowedW && cur) {
         lines.push(cur);
-        cur = w.trimStart();
+        cur = w;
         lineIdx++;
       } else {
         cur = test;
@@ -200,34 +220,126 @@ export const wrapTextForBubble = (
     }
     if (cur) lines.push(cur);
 
-    const splitLines: string[] = [];
-    for (let i = 0; i < lines.length; i++) {
-      const ln = lines[i];
-      const allowedW = getLineMaxW(i, lines.length);
-      if (measureFn(ln) > allowedW) {
-        let c2 = "";
-        for (const c of [...ln]) {
-          if (measureFn(c2 + c) > allowedW && c2) {
-            splitLines.push(c2);
-            c2 = c;
-          } else {
-            c2 += c;
-          }
-        }
-        if (c2) splitLines.push(c2);
-      } else {
-        splitLines.push(ln);
-      }
-    }
-
-    bestLines = splitLines;
-    if (splitLines.length * lineH <= maxH * 1.15) {
+    bestLines = lines;
+    if (lines.length * lineH <= maxH * 1.15) {
       break;
     }
   }
 
-  return bestLines;
+  return bestLines.length > 0 ? bestLines : [text];
 };
+
+export interface BubbleTextFit {
+  fontSize: number;
+  lines: string[];
+  lineHeight: number;
+  fits: boolean;
+}
+
+export function fitTextForBubble(
+  text: string,
+  width: number,
+  height: number,
+  fontFamily: string = "sans-serif",
+  isOval: boolean = true,
+  fontSizeMultiplier = 1,
+  minFontSize = 12,
+): BubbleTextFit {
+  const safeW = width * 0.88;
+  const safeH = height * 0.88;
+  const maxFs = Math.max(minFontSize, Math.round(Math.min(height * 0.5, width * 0.45) * fontSizeMultiplier));
+  
+  let bestFit: BubbleTextFit = {
+    fontSize: minFontSize,
+    lines: wrapTextForBubble(text, safeW, safeH, minFontSize, fontFamily, isOval),
+    lineHeight: minFontSize * 1.35,
+    fits: false,
+  };
+
+  for (let fs = maxFs; fs >= minFontSize; fs--) {
+    const lineH = fs * 1.35;
+    const lines = wrapTextForBubble(text, safeW, safeH, fs, fontFamily, isOval);
+    const totalH = lines.length * lineH;
+    
+    let maxWidthOk = true;
+    const tempCanvas = typeof document !== 'undefined' ? document.createElement("canvas") : null;
+    const tempCtx = tempCanvas ? tempCanvas.getContext("2d") : null;
+    if (tempCtx) {
+      tempCtx.font = `bold ${fs}px ${fontFamily}`;
+      for (let i = 0; i < lines.length; i++) {
+        const allowed = isOval && lines.length > 1 ? safeW * Math.sqrt(Math.max(0.2, 1 - Math.pow(((i + 0.5) / lines.length - 0.5) * 2, 2))) : safeW;
+        if (tempCtx.measureText(lines[i]).width > allowed * 1.05) {
+          maxWidthOk = false;
+          break;
+        }
+      }
+    } else {
+      for (const l of lines) {
+        if (l.length * (fs * 0.6) > safeW * 1.05) {
+          maxWidthOk = false;
+          break;
+        }
+      }
+    }
+
+    if (totalH <= safeH && maxWidthOk) {
+      return {
+        fontSize: fs,
+        lines,
+        lineHeight: lineH,
+        fits: true,
+      };
+    }
+    if (fs === minFontSize) {
+      bestFit = {
+        fontSize: fs,
+        lines,
+        lineHeight: lineH,
+        fits: totalH <= safeH && maxWidthOk,
+      };
+    }
+  }
+
+  return bestFit;
+}
+
+export interface AdaptiveBubbleLayout extends BubbleTextFit {
+  width: number;
+  height: number;
+}
+
+export function fitTextInAdaptiveBubble(
+  text: string,
+  width: number,
+  height: number,
+  fontFamily: string = "sans-serif",
+  isOval: boolean = true,
+  fontSizeMultiplier = 1,
+  minFontSize = 12,
+  maxScale = 2.5,
+): AdaptiveBubbleLayout {
+  let curW = width;
+  let curH = height;
+  const maxW = width * maxScale;
+  const maxH = height * maxScale;
+
+  let fit = fitTextForBubble(text, curW, curH, fontFamily, isOval, fontSizeMultiplier, minFontSize);
+  if (fit.fits) {
+    return { ...fit, width: curW, height: curH };
+  }
+
+  while ((curW < maxW || curH < maxH) && !fit.fits) {
+    curW = Math.min(maxW, curW * 1.2);
+    curH = Math.min(maxH, curH * 1.2);
+    fit = fitTextForBubble(text, curW, curH, fontFamily, isOval, fontSizeMultiplier, minFontSize);
+    if (fit.fits) {
+      return { ...fit, width: curW, height: curH };
+    }
+    if (curW >= maxW && curH >= maxH) break;
+  }
+
+  return { ...fit, width: curW, height: curH };
+}
 
 export const applyTranslationOverlay = async (
   bubbles: TranslatedBubble[],
@@ -371,15 +483,19 @@ export const applyTranslationOverlay = async (
         const ts = textStyleRef?.current || { fontFamily: "Itim, sans-serif", textColor: "#000000", textOutline: "#FFFFFF", fontSizeMultiplier: 1.0 };
         const text = (b.t || b.translated || "").trim();
         if (!text) return;
-        const lines = wrapTextForBubble(text, currentBw * 0.9, currentBh * 0.9, Math.round(18 * ts.fontSizeMultiplier), ts.fontFamily, !b.isInvalidBox);
+        const fontFam = ts.fontFamily || "Itim, sans-serif";
+        const fontMult = ts.fontSizeMultiplier || 1.0;
+        const textColor = ts.textColor || "#000000";
+        const outlineColor = ts.textOutline || "#ffffff";
+        const lines = wrapTextForBubble(text, currentBw * 0.9, currentBh * 0.9, Math.round(18 * fontMult), fontFam, !b.isInvalidBox);
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.font = `bold ${Math.round(18 * ts.fontSizeMultiplier)}px ${ts.fontFamily}`;
-        ctx.strokeStyle = ts.textOutline;
+        ctx.font = `bold ${Math.round(18 * fontMult)}px ${fontFam}`;
+        ctx.strokeStyle = outlineColor;
         ctx.lineWidth = 3;
         lines.forEach((l, i) => {
           ctx.strokeText(l, currentBw / 2, (currentBh / 2) - ((lines.length - 1) * 20 / 2) + i * 20);
-          ctx.fillStyle = ts.textColor;
+          ctx.fillStyle = textColor;
           ctx.fillText(l, currentBw / 2, (currentBh / 2) - ((lines.length - 1) * 20 / 2) + i * 20);
         });
       };
@@ -453,7 +569,7 @@ export const applyTranslationOverlay = async (
           else if (id === 'move') { currentBx = rInitBx + dx; currentBy = rInitBy + dy; }
           renderBubble();
         });
-        handle.addEventListener('pointerup', () => { handle.releasePointerCapture(handle.id); saveAdjustment(); });
+        handle.addEventListener('pointerup', (e) => { handle.releasePointerCapture(e.pointerId); saveAdjustment(); });
         wrapper.appendChild(handle);
       });
 
