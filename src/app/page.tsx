@@ -15,6 +15,17 @@ import {
 } from "@/components/cleaning/CleaningToolbar";
 import { MaskEditor } from "@/components/cleaning/MaskEditor";
 import { MaskLegend } from "@/components/cleaning/MaskLegend";
+import { PageFilmstrip, type WorkspacePageItem } from "@/components/workspace/PageFilmstrip";
+import { SettingsModal } from "@/components/workspace/SettingsModal";
+import { StudioToolbar, type StudioTool } from "@/components/editing/StudioToolbar";
+import { TextPropertiesPanel } from "@/components/editing/TextPropertiesPanel";
+import { TextLayerCanvas } from "@/components/editing/TextLayerCanvas";
+import { WarpPanel } from "@/components/editing/WarpPanel";
+import { OcrAreaTool } from "@/components/editing/OcrAreaTool";
+import { FindReplaceDialog } from "@/components/editing/FindReplaceDialog";
+import { KeyboardShortcutsDialog } from "@/components/editing/KeyboardShortcutsDialog";
+import { useTextLayers } from "@/hooks/useTextLayers";
+
 import type {
   CleanerOverride,
   ManualRegionAction,
@@ -43,6 +54,21 @@ export default function WorkspacePage() {
   const [isMaskEditorOpen, setIsMaskEditorOpen] = useState(false);
   const uiOperationLockRef = useRef(false);
   const [isUiOperationBusy, setIsUiOperationBusy] = useState(false);
+  const [activeStudioTool, setActiveStudioTool] = useState<StudioTool>("select");
+  const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
+  const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
+  const {
+    textLayers,
+    selectedTextId,
+    selectedLayer,
+    addTextLayer,
+    updateTextLayer,
+    deleteTextLayer,
+    duplicateTextLayer,
+    selectTextLayer,
+    clearTextLayers,
+  } = useTextLayers(pages[currentPage]?.url || "");
+
 
   // Touch Swipe Gesture State for Mobile Reader
   const touchStartXRef = useRef<number | null>(null);
@@ -1531,153 +1557,146 @@ export default function WorkspacePage() {
         )}
       </main>
 
-      {/* Bottom Thumbnail Strip */}
+            {/* Bottom Filmstrip Component */}
+      <PageFilmstrip
+        pages={pages}
+        currentPage={currentPage}
+        onSelectPage={setCurrentPage}
+        onDeletePage={(i) => {
+          setPages((prev) => {
+            const target = prev[i];
+            if (target?.url?.startsWith("blob:")) URL.revokeObjectURL(target.url);
+            if (target?.thumbnailUrl?.startsWith("blob:")) URL.revokeObjectURL(target.thumbnailUrl);
+            const newPages = prev.filter((_, idx) => idx !== i);
+            if (newPages.length === 0) setCurrentPage(0);
+            else if (currentPage >= newPages.length)
+              setCurrentPage(newPages.length - 1);
+            else if (currentPage > i) setCurrentPage(currentPage - 1);
+            return newPages;
+          });
+        }}
+        onReorderPages={setPages}
+        onAddImages={handleImageUpload}
+        onClearAll={() => {
+          pages.forEach((p) => {
+            if (p.url?.startsWith("blob:")) URL.revokeObjectURL(p.url);
+            if (p.thumbnailUrl?.startsWith("blob:")) URL.revokeObjectURL(p.thumbnailUrl);
+          });
+          setPages([]);
+          setCurrentPage(0);
+          clearSavedSession();
+        }}
+      />
+
+      {/* Root Modals & Floating Overlays */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={closeSettings}
+        sourceLang={sourceLang}
+        onSourceLangChange={setSourceLang}
+        textStyle={textStyle}
+        onTextStyleChange={setTextStyle}
+        modelPreference={modelPreference}
+        onModelPreferenceChange={setModelPreference}
+        userApiKey={userApiKey}
+        onUserApiKeyChange={setUserApiKey}
+        policy={policy}
+        onPolicyChange={setPolicy}
+      />
+
+      {/* Studio Left Toolbar */}
       {pages.length > 0 && (
-        <div className={`fixed bottom-0 left-0 right-0 z-40 bg-background/95 backdrop-blur-md border-t border-surface-hover transition-transform duration-300 ${isThumbnailsCollapsed ? 'translate-y-full' : 'translate-y-0'}`}>
-          {/* Collapse / Expand Toggle Tab */}
-          <button
-            onClick={() => setIsThumbnailsCollapsed(!isThumbnailsCollapsed)}
-            className="absolute -top-7 right-4 bg-background/95 border-t border-x border-surface-hover text-muted hover:text-foreground rounded-t-md px-2.5 py-1 text-xs flex items-center gap-1.5 shadow-md backdrop-blur-md transition-colors"
-            title={isThumbnailsCollapsed ? "Show Thumbnails" : "Hide Thumbnails"}
-          >
-            {isThumbnailsCollapsed ? (
-              <>
-                <ChevronUp className="w-3.5 h-3.5" />
-                <span>Pages ({currentPage + 1}/{pages.length})</span>
-              </>
-            ) : (
-              <>
-                <ChevronDown className="w-3.5 h-3.5" />
-                <span>Hide</span>
-              </>
-            )}
-          </button>
+        <StudioToolbar
+          activeTool={activeStudioTool}
+          onSelectTool={setActiveStudioTool}
+          onAddText={() => {
+            addTextLayer();
+            setWorkspaceLayer("translated");
+          }}
+          onOpenFindReplace={() => setIsFindReplaceOpen(true)}
+          onOpenShortcuts={() => setIsShortcutsOpen(true)}
+          onEditMask={() => setIsMaskEditorOpen(true)}
+          disabled={operationBusy || isZipping}
+        />
+      )}
 
-          <div 
-            ref={thumbnailContainerRef}
-            className="flex items-center h-16 sm:h-20 px-3 gap-2 overflow-x-auto scrollbar-thin"
-          >
-            {pages.map((page, i) => (
-              <div key={i} className="relative group flex-shrink-0">
-                <button
-                  draggable
-                  onDragStart={(e) => {
-                    setDragIndex(i);
-                    e.dataTransfer.effectAllowed = 'move';
-                    e.stopPropagation();
-                  }}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setDragOverIndex(i);
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    setDragPosition(e.clientX - rect.left > rect.width / 2 ? 'right' : 'left');
-                  }}
-                  onDragLeave={() => {
-                    setDragOverIndex(null);
-                    setDragPosition(null);
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (dragIndex !== null) {
-                      const targetIndex = dragPosition === 'right' ? i + 1 : i;
-                      
-                      if (dragIndex !== targetIndex && dragIndex !== targetIndex - 1) {
-                        setPages(prev => {
-                          const updated = [...prev];
-                          const [moved] = updated.splice(dragIndex, 1);
-                          
-                          const finalIndex = dragIndex < targetIndex ? targetIndex - 1 : targetIndex;
-                          updated.splice(finalIndex, 0, moved);
-                          
-                          if (currentPage === dragIndex) setCurrentPage(finalIndex);
-                          else if (dragIndex < currentPage && finalIndex >= currentPage) setCurrentPage(currentPage - 1);
-                          else if (dragIndex > currentPage && finalIndex <= currentPage) setCurrentPage(currentPage + 1);
-                          
-                          return updated;
-                        });
-                      }
-                    }
-                    setDragIndex(null);
-                    setDragOverIndex(null);
-                    setDragPosition(null);
-                  }}
-                  onDragEnd={() => { setDragIndex(null); setDragOverIndex(null); setDragPosition(null); }}
-                  onClick={() => { setCurrentPage(i); }}
-                  className={`relative flex-shrink-0 rounded-md overflow-hidden transition-all duration-150 cursor-grab active:cursor-grabbing border-x-4 border-transparent ${
-                    i === currentPage
-                      ? 'ring-2 ring-primary ring-offset-2 ring-offset-background'
-                      : 'opacity-60 hover:opacity-100'
-                  } ${
-                    dragIndex === i ? 'opacity-30 scale-90' : ''
-                  } ${
-                    dragOverIndex === i && dragIndex !== i 
-                      ? dragPosition === 'left' ? '!border-l-primary' : '!border-r-primary' 
-                      : ''
-                  }`}
-                  title={`${page.name} — drag to reorder`}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={page.url}
-                    alt={page.name}
-                    className="h-12 sm:h-16 w-auto object-cover pointer-events-none"
-                  />
-                  <span className={`absolute bottom-0 inset-x-0 text-center text-[10px] font-medium py-0.5 ${
-                    i === currentPage
-                      ? 'bg-primary text-primary-content'
-                      : 'bg-background/70 text-muted group-hover:text-foreground'
-                  }`}>
-                    {i + 1}
-                  </span>
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setPages(prev => {
-                      const newPages = prev.filter((_, idx) => idx !== i);
-                      if (newPages.length === 0) setCurrentPage(0);
-                      else if (currentPage >= newPages.length) setCurrentPage(newPages.length - 1);
-                      else if (currentPage > i) setCurrentPage(currentPage - 1);
-                      return newPages;
-                    });
-                  }}
-                  className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-200 z-10 hover:scale-110 shadow-sm border-2 border-background"
-                  title="Remove image"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                </button>
-              </div>
-            ))}
-            
-            {/* Add more pages button */}
-            <label className="flex-shrink-0 flex flex-col items-center justify-center w-14 h-16 rounded-md border border-dashed border-surface-hover hover:border-muted text-muted hover:text-foreground cursor-pointer transition-colors duration-150" title="Add more pages">
-              <Upload className="w-4 h-4 mb-0.5" />
-              <span className="text-[10px]">Add</span>
-              <input type="file" multiple accept="image/*,.zip,.cbz,.pdf" className="hidden" onChange={handleImageUpload} />
-            </label>
-
-            {/* Clear All button */}
-            {pages.length > 1 && (
-              <button 
-                onClick={() => {
-                  if (confirm("ลบรูปภาพทั้งหมดใช่ไหม?")) {
-                    setPages([]);
-                    setCurrentPage(0);
-                    clearSavedSession();
-                  }
-                }}
-                className="flex-shrink-0 flex flex-col items-center justify-center w-14 h-16 rounded-md border border-dashed border-surface-hover hover:border-red-500/50 text-muted hover:text-red-500 cursor-pointer transition-colors duration-150" 
-                title="ลบรูปทั้งหมด"
-              >
-                <Trash2 className="w-4 h-4 mb-0.5" />
-                <span className="text-[10px]">Clear All</span>
-              </button>
-            )}
-          </div>
+      {/* Studio Right Floating Text Properties Panel */}
+      {selectedLayer && (
+        <div className="fixed right-4 top-20 z-40 max-h-[calc(100vh-100px)] overflow-y-auto shadow-2xl">
+          <TextPropertiesPanel
+            layer={selectedLayer}
+            onChange={(updates) => updateTextLayer(selectedLayer.id, updates)}
+            onDelete={deleteTextLayer}
+            onDuplicate={duplicateTextLayer}
+          />
         </div>
       )}
+
+      {/* Studio Right Floating Warp Panel */}
+      {activeStudioTool === "warp" && (
+        <div className="fixed right-4 top-20 z-40 shadow-2xl">
+          <WarpPanel
+            warp={selectedLayer?.warp}
+            onChange={(updates) => {
+              if (selectedLayer) {
+                updateTextLayer(selectedLayer.id, {
+                  warp: { ...selectedLayer.warp, ...updates } as typeof selectedLayer.warp,
+                });
+              }
+            }}
+            onReset={() => {
+              if (selectedLayer) {
+                updateTextLayer(selectedLayer.id, {
+                  warp: { effect: "none", bend: 0, horizontal: 0, vertical: 0 },
+                });
+              }
+            }}
+          />
+        </div>
+      )}
+
+      {/* Targeted OCR Area Selection Tool */}
+      <OcrAreaTool
+        active={activeStudioTool === "ocr"}
+        onDetectRegion={async (rect) => {
+          addTextLayer({
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+            text: "ตรวจจับข้อความ...",
+          });
+          import('react-hot-toast').then(m => m.default.success("ครอบพื้นที่ข้อความ"));
+          setActiveStudioTool("select");
+        }}
+        onClose={() => setActiveStudioTool("select")}
+      />
+
+      {/* Global Find & Replace Dialog */}
+      <FindReplaceDialog
+        isOpen={isFindReplaceOpen}
+        onClose={() => setIsFindReplaceOpen(false)}
+        onReplace={({ find, replace }) => {
+          if (!find) return;
+          let count = 0;
+          for (const layer of textLayers) {
+            if (layer.text.includes(find)) {
+              updateTextLayer(layer.id, {
+                text: layer.text.replaceAll(find, replace),
+              });
+              count++;
+            }
+          }
+          import('react-hot-toast').then(m => m.default.success(`แทนที่ ${count} จุด`));
+        }}
+      />
+
+      {/* Keyboard Shortcuts Dialog */}
+      <KeyboardShortcutsDialog
+        isOpen={isShortcutsOpen}
+        onClose={() => setIsShortcutsOpen(false)}
+      />
+
       {isMaskEditorOpen && currentCleaningResult && pages[currentPage] && (
         <MaskEditor
           sourceUrl={currentCleaningResult.cleanUrl}
