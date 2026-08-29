@@ -207,7 +207,7 @@ export function PageViewer({
           {/* Right Arrow Floating Button */}
           {currentPage < pages.length - 1 && (
             <button
-              onClick={() => onPageChange((prev) => prev - 1)}
+              onClick={() => onPageChange((prev) => prev + 1)}
               className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 bg-background/80 hover:bg-surface text-foreground p-2 rounded-full shadow-lg border border-surface-hover z-30 transition-all opacity-80 hover:opacity-100 hover:scale-110 active:scale-95"
               title="Next Page (Right Arrow)"
             >

@@ -1359,7 +1359,13 @@ export default function WorkspacePage() {
               cleaningResultsByPage={cleaningResultsByPage}
               translatedImagesMap={translatedImagesMap}
               brokenPages={brokenPages}
-              onPageChange={setCurrentPage}
+              onPageChange={(updater) => {
+                setCurrentPage((prev) => {
+                  const next = typeof updater === "function" ? updater(prev) : updater;
+                  if (pages.length === 0) return 0;
+                  return Math.max(0, Math.min(pages.length - 1, next));
+                });
+              }}
               onViewLayoutChange={setViewLayout}
               onRemovePage={(idx) => {
                 setPages((prev) => {
