@@ -15,6 +15,40 @@ export interface ResolvedTextStyle {
   outlineConfidence: number;
 }
 
+function hexToRgb(hex: string): [number, number, number] {
+  const clean = (hex || "").replace("#", "").trim();
+  if (clean.length === 3) {
+    return [
+      parseInt(clean[0] + clean[0], 16) || 0,
+      parseInt(clean[1] + clean[1], 16) || 0,
+      parseInt(clean[2] + clean[2], 16) || 0,
+    ];
+  }
+  return [
+    parseInt(clean.slice(0, 2), 16) || 0,
+    parseInt(clean.slice(2, 4), 16) || 0,
+    parseInt(clean.slice(4, 6), 16) || 0,
+  ];
+}
+
+function getLuminance(r: number, g: number, b: number): number {
+  return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+
+function colorDistance(
+  r1: number,
+  g1: number,
+  b1: number,
+  r2: number,
+  g2: number,
+  b2: number,
+): number {
+  const dr = r1 - r2;
+  const dg = g1 - g2;
+  const db = b1 - b2;
+  return Math.sqrt(dr * dr + dg * dg + db * db);
+}
+
 export function resolveBubbleTextStyle(
   bubble: TranslatedBubble,
   globalStyle: OverlayTextStyle = {},
@@ -64,9 +98,19 @@ export function resolveBubbleTextStyle(
   const hasHighFillConfidence = profile.fillConfidence >= minConfidence;
   const hasHighOutlineConfidence = profile.outlineConfidence >= minConfidence;
 
-  const resolvedFill = hasHighFillConfidence ? profile.fill : defaultFill;
-  const resolvedOutline =
+  let resolvedFill = hasHighFillConfidence ? profile.fill : defaultFill;
+  let resolvedOutline =
     autoOutlineEnabled && hasHighOutlineConfidence ? profile.outline : defaultOutline;
+
+  // 4. Enforce strong contrast between fill and outline to prevent muddy/unreadable text
+  const [fr, fg, fb] = hexToRgb(resolvedFill);
+  const [or, og, ob] = hexToRgb(resolvedOutline);
+  const fillLum = getLuminance(fr, fg, fb);
+  const dist = colorDistance(fr, fg, fb, or, og, ob);
+
+  if (dist < 80) {
+    resolvedOutline = fillLum < 128 ? "#ffffff" : "#000000";
+  }
 
   return {
     textColor: resolvedFill,

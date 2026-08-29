@@ -86,14 +86,12 @@ def refine_probability_mask(
         if int(stats[component_id, cv2.CC_STAT_AREA]) < minimum_area:
             continue
         component = np.where(labels == component_id, 255, 0).astype(np.uint8)
-        radius = _estimate_stroke_radius(component)
         box_w = stats[component_id, cv2.CC_STAT_WIDTH]
         box_h = stats[component_id, cv2.CC_STAT_HEIGHT]
+        radius = _estimate_stroke_radius(component)
         orientation_bonus = 1 if box_w > box_h * 2 else 0
-        dilation_radius = min(4, max(1, radius + orientation_bonus))
+        dilation_radius = min(5, max(2, radius + orientation_bonus))
         grown = constrained_dilate(component, protected_edges, dilation_radius)
-        eroded = cv2.erode(grown, erode_kernel, iterations=1)
-        grown = np.maximum(eroded, component)
         grown[protected_edges > 0] = 0
         combined = np.maximum(combined, grown)
         component_masks[component_id] = grown
