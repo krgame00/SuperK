@@ -69,7 +69,6 @@ class _BatchItem:
     route: CleanerRoute
     confidence: float
     cleaner: Cleaner
-    before: RgbImage
     support: BinaryMask
     damage_score: float
     damage_accepted: bool
@@ -356,13 +355,12 @@ class CleaningPipeline:
             if cleaner is None:
                 raise RuntimeError(f"no cleaner configured for {route.route.value}")
 
-            before = clean_image.copy()
             stage_started = perf_counter()
             if full_clean is not None:
                 repaired = full_clean
             else:
-                repaired = cleaner.clean(before, region_mask, region)
-            candidate, support = compose(before, repaired, region_mask)
+                repaired = cleaner.clean(clean_image, region_mask, region)
+            candidate, support = compose(clean_image, repaired, region_mask)
             _restore_protected(
                 image_rgb,
                 candidate,
@@ -371,7 +369,7 @@ class CleaningPipeline:
             )
             clean_ms += _elapsed_ms(stage_started)
             stage_started = perf_counter()
-            damage = verify_damage(before, candidate, support)
+            damage = verify_damage(clean_image, candidate, support)
             verify_ms += _elapsed_ms(stage_started)
             if damage.accepted:
                 clean_image = candidate
@@ -382,7 +380,6 @@ class CleaningPipeline:
                     route=route.route,
                     confidence=route.confidence,
                     cleaner=cleaner,
-                    before=before,
                     support=support,
                     damage_score=damage.damage_score,
                     damage_accepted=damage.accepted,
@@ -411,7 +408,7 @@ class CleaningPipeline:
                 and damage_score <= 0.02
             ):
                 retry_base = clean_image.copy()
-                retry_base[item.support > 0] = item.before[item.support > 0]
+                retry_base[item.support > 0] = image_rgb[item.support > 0]
                 retry_mask = cv2.dilate(
                     item.mask,
                     cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),

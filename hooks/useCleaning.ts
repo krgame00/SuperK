@@ -399,29 +399,6 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
     [revokeResult],
   );
 
-  // Background Pre-fetch Pipeline for Next Page (currentPage + 1)
-  useEffect(() => {
-    if (pages.length <= 1) return;
-    const nextPageIndex = currentPage + 1;
-    if (nextPageIndex >= pages.length) return;
-    const nextPageUrl = pages[nextPageIndex];
-    if (!nextPageUrl || resultsByPage.has(nextPageUrl)) return;
-
-    const timer = setTimeout(async () => {
-      if (activeRequestRef.current) return;
-      try {
-        const sourceBlob = await dataUrlOrFetchToBlob(nextPageUrl);
-        if (sourceBlob && !resultsRef.current.has(nextPageUrl)) {
-          await cleanPage(nextPageUrl, sourceBlob, false);
-        }
-      } catch (err) {
-        console.debug("Background prefetch skipped or idle:", err);
-      }
-    }, 1500);
-
-    return () => clearTimeout(timer);
-  }, [currentPage, pages, resultsByPage, cleanPage]);
-
   const currentResult = useMemo(
     () => (currentPageUrl ? resultsByPage.get(currentPageUrl) : undefined),
     [currentPageUrl, resultsByPage],
@@ -446,21 +423,4 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-async function dataUrlOrFetchToBlob(url: string): Promise<Blob | null> {
-  try {
-    if (url.startsWith("data:")) {
-      const [header, payload] = url.split(",");
-      const mime = header.match(/data:([^;]+)/)?.[1] || "image/png";
-      const binary = atob(payload);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-      return new Blob([bytes], { type: mime });
-    }
-    const res = await fetch(url);
-    return await res.blob();
-  } catch {
-    return null;
-  }
 }

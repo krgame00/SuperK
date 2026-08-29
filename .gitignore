@@ -56,8 +56,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# OCR service (local PaddleOCR - heavy)
-/ocr-service/
 # Scratch / probe files
 patch-probe.tmp
 original_content.js.txt

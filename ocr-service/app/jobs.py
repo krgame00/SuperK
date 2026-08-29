@@ -50,6 +50,33 @@ class PipelineFactory(Protocol):
     def __call__(self) -> Pipeline: ...
 
 
+def _trim_process_memory() -> None:
+    try:
+        import gc
+        import sys
+
+        gc.collect()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+        if sys.platform == "win32":
+            import ctypes
+
+            kernel32 = ctypes.WinDLL("kernel32")
+            psapi = ctypes.WinDLL("psapi")
+            h = kernel32.GetCurrentProcess()
+            psapi.EmptyWorkingSet.argtypes = [ctypes.c_void_p]
+            psapi.EmptyWorkingSet.restype = ctypes.c_bool
+            psapi.EmptyWorkingSet(h)
+    except Exception:
+        pass
+
+
 @dataclass
 class JobState:
     id: str
@@ -197,14 +224,7 @@ class JobStore:
             LOGGER.exception("cleaning job %s failed", job.id)
             self._fail(job)
         finally:
-            import gc
-            gc.collect()
-            try:
-                import torch
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except Exception:
-                pass
+            _trim_process_memory()
 
     def _run_retry(
         self,
@@ -245,14 +265,7 @@ class JobStore:
             LOGGER.exception("retry job %s failed", job.id)
             self._fail(job)
         finally:
-            import gc
-            gc.collect()
-            try:
-                import torch
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except Exception:
-                pass
+            _trim_process_memory()
 
     def _complete(
         self,
