@@ -20,6 +20,8 @@ export interface SettingsModalProps {
   onModelPreferenceChange: (model: string) => void;
   userApiKey: string;
   onUserApiKeyChange: (key: string) => void;
+  policy?: { sfx: "ignore" | "preserve" | "translate" };
+  onPolicyChange?: (policy: { sfx: "ignore" | "preserve" | "translate" }) => void;
 }
 
 export function SettingsModal({
@@ -33,6 +35,8 @@ export function SettingsModal({
   onModelPreferenceChange,
   userApiKey,
   onUserApiKeyChange,
+  policy,
+  onPolicyChange,
 }: SettingsModalProps): ReactElement | null {
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);

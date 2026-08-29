@@ -57,17 +57,18 @@ export default function WorkspacePage() {
   const [activeStudioTool, setActiveStudioTool] = useState<StudioTool>("select");
   const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
+  const [policy, setPolicy] = useState<{ sfx: "ignore" | "preserve" | "translate" }>({ sfx: "translate" });
   const {
-    textLayers,
-    selectedTextId,
+    document: editingDoc,
+    layers: textLayers,
     selectedLayer,
-    addTextLayer,
-    updateTextLayer,
-    deleteTextLayer,
-    duplicateTextLayer,
-    selectTextLayer,
-    clearTextLayers,
-  } = useTextLayers(pages[currentPage]?.url || "");
+    selectLayer: selectTextLayer,
+    addLayer: addTextLayer,
+    updateLayer: updateTextLayer,
+    deleteLayer: deleteTextLayer,
+    duplicateLayer: duplicateTextLayer,
+  } = useTextLayers({ pageId: pages[currentPage]?.url || "" });
+  const selectedTextId = editingDoc.selectedLayerId;
 
 
   // Touch Swipe Gesture State for Mobile Reader
@@ -1561,12 +1562,13 @@ export default function WorkspacePage() {
       <PageFilmstrip
         pages={pages}
         currentPage={currentPage}
+        isCollapsed={isThumbnailsCollapsed}
+        onToggleCollapse={() => setIsThumbnailsCollapsed(prev => !prev)}
         onSelectPage={setCurrentPage}
         onDeletePage={(i) => {
           setPages((prev) => {
             const target = prev[i];
             if (target?.url?.startsWith("blob:")) URL.revokeObjectURL(target.url);
-            if (target?.thumbnailUrl?.startsWith("blob:")) URL.revokeObjectURL(target.thumbnailUrl);
             const newPages = prev.filter((_, idx) => idx !== i);
             if (newPages.length === 0) setCurrentPage(0);
             else if (currentPage >= newPages.length)
@@ -1580,7 +1582,6 @@ export default function WorkspacePage() {
         onClearAll={() => {
           pages.forEach((p) => {
             if (p.url?.startsWith("blob:")) URL.revokeObjectURL(p.url);
-            if (p.thumbnailUrl?.startsWith("blob:")) URL.revokeObjectURL(p.thumbnailUrl);
           });
           setPages([]);
           setCurrentPage(0);
@@ -1591,11 +1592,21 @@ export default function WorkspacePage() {
       {/* Root Modals & Floating Overlays */}
       <SettingsModal
         isOpen={isSettingsOpen}
-        onClose={closeSettings}
+        onClose={() => setIsSettingsOpen(false)}
         sourceLang={sourceLang}
         onSourceLangChange={setSourceLang}
         textStyle={textStyle}
-        onTextStyleChange={setTextStyle}
+        onTextStyleChange={(style) =>
+          setTextStyle((prev) => {
+            const next = typeof style === "function" ? style(prev) : style;
+            return {
+              fontFamily: next.fontFamily,
+              fontSizeMultiplier: next.fontSizeMultiplier,
+              textColor: next.textColor ?? prev.textColor,
+              textOutline: next.textOutline ?? prev.textOutline,
+            };
+          })
+        }
         modelPreference={modelPreference}
         onModelPreferenceChange={setModelPreference}
         userApiKey={userApiKey}
