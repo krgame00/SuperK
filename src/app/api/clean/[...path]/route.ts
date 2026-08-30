@@ -1,7 +1,9 @@
 const DEFAULT_CLEANER_URL = "http://127.0.0.1:8765";
 export const MAX_PROXY_BODY_BYTES = 80 * 1024 * 1024;
 
-type CleanRouteContext = RouteContext<"/api/clean/[...path]">;
+interface CleanRouteContext {
+  params: Promise<{ path: string[] }>;
+}
 
 export async function GET(
   request: Request,
