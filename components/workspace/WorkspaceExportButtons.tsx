@@ -57,7 +57,7 @@ export function WorkspaceExportButtons({
     <div
       role="group"
       aria-label="ตัวเลือกการส่งออก"
-      className="flex-shrink-0 flex items-center bg-surface/50 rounded-lg border border-surface-hover/60 overflow-hidden shadow-xs"
+      className="flex-shrink-0 flex items-center bg-surface rounded-lg border border-border overflow-hidden shadow-xs"
     >
       {EXPORT_ACTIONS.map(({ kind, label, accessibleName, icon: Icon }, index) => {
         const isActionDisabled = disabled || Boolean(disabledKinds[kind]);
@@ -70,8 +70,8 @@ export function WorkspaceExportButtons({
             aria-label={accessibleName}
             title={accessibleName}
             onClick={() => onExport(kind)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-foreground transition-all duration-150 hover:bg-surface-hover active:bg-surface-hover/80 focus:outline-none focus-visible:bg-surface-hover focus-visible:ring-1 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none ${
-              !isLast ? "border-r border-surface-hover/60" : ""
+            className={`h-8.5 flex items-center gap-1.5 px-3 text-xs font-semibold text-foreground transition-all duration-150 hover:bg-surface-hover hover:text-white active:bg-surface-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-35 motion-reduce:transition-none ${
+              !isLast ? "border-r border-border" : ""
             }`}
           >
             <Icon className="h-3.5 w-3.5 text-muted shrink-0" aria-hidden="true" />

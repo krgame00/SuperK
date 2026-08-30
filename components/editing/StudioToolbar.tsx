@@ -37,7 +37,7 @@ export function StudioToolbar({
     <div
       role="toolbar"
       aria-label="แถบเครื่องมือสตูดิโอ"
-      className="flex items-center gap-1 bg-surface/50 rounded-lg px-1 py-0.5 border border-surface-hover/50 select-none"
+      className="flex items-center gap-1 bg-surface/90 rounded-lg p-1 border border-border shadow-xs select-none"
     >
       {/* 1. Pointer / Select Tool */}
       <button
@@ -46,13 +46,13 @@ export function StudioToolbar({
         onClick={() => onSelectTool("select")}
         aria-label="เครื่องมือเลือก (Select)"
         title="เครื่องมือเลือก / ย้าย (V)"
-        className={`px-2 py-1.5 rounded-md text-sm font-medium flex items-center gap-1 transition-all duration-150 ${
+        className={`h-8 w-8 rounded-md flex items-center justify-center gap-1 transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
           activeTool === "select"
-            ? "text-primary bg-primary/10 shadow-xs"
+            ? "text-primary bg-primary/10 shadow-xs border border-primary/30"
             : "text-muted hover:text-foreground hover:bg-surface-hover"
         } disabled:opacity-30`}
       >
-        <MousePointer className="w-4 h-4" />
+        <MousePointer className="w-4 h-4" aria-hidden="true" />
       </button>
 
       {/* 2. Text Tool */}
@@ -65,14 +65,14 @@ export function StudioToolbar({
         }}
         aria-label="เพิ่มข้อความ (Text)"
         title="เพิ่มกล่องข้อความใหม่ (T)"
-        className={`px-2 py-1.5 rounded-md text-sm font-medium flex items-center gap-1 transition-all duration-150 relative ${
+        className={`h-8 w-8 rounded-md flex items-center justify-center gap-1 transition-all duration-150 relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
           activeTool === "text"
-            ? "text-primary bg-primary/10 shadow-xs"
+            ? "text-primary bg-primary/10 shadow-xs border border-primary/30"
             : "text-muted hover:text-foreground hover:bg-surface-hover"
         } disabled:opacity-30`}
       >
-        <Type className="w-4 h-4" />
-        <Plus className="w-2.5 h-2.5 absolute top-1 right-1 text-primary stroke-[3]" />
+        <Type className="w-4 h-4" aria-hidden="true" />
+        <Plus className="w-2.5 h-2.5 absolute top-1 right-1 text-primary stroke-[3]" aria-hidden="true" />
       </button>
 
       {/* 3. Brush / Mask Tool */}
@@ -85,13 +85,13 @@ export function StudioToolbar({
         }}
         aria-label="แก้ไข Mask"
         title="แก้ไข Mask (B)"
-        className={`px-2 py-1.5 rounded-md text-sm font-medium flex items-center gap-1 transition-all duration-150 ${
+        className={`h-8 w-8 rounded-md flex items-center justify-center gap-1 transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
           activeTool === "mask"
-            ? "text-primary bg-primary/10 shadow-xs"
+            ? "text-primary bg-primary/10 shadow-xs border border-primary/30"
             : "text-muted hover:text-foreground hover:bg-surface-hover"
         } disabled:opacity-30`}
       >
-        <Brush className="w-4 h-4" />
+        <Brush className="w-4 h-4" aria-hidden="true" />
       </button>
 
       {/* 4. Targeted OCR Area Tool */}
@@ -101,13 +101,13 @@ export function StudioToolbar({
         onClick={() => onSelectTool(activeTool === "ocr" ? "select" : "ocr")}
         aria-label="ตีกรอบสแกน OCR"
         title="ตีกรอบสแกนข้อความ OCR เฉพาะจุด (O)"
-        className={`px-2 py-1.5 rounded-md text-sm font-medium flex items-center gap-1 transition-all duration-150 ${
+        className={`h-8 w-8 rounded-md flex items-center justify-center gap-1 transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
           activeTool === "ocr"
-            ? "text-primary bg-primary/10 shadow-xs"
+            ? "text-primary bg-primary/10 shadow-xs border border-primary/30"
             : "text-muted hover:text-foreground hover:bg-surface-hover"
         } disabled:opacity-30`}
       >
-        <ScanText className="w-4 h-4" />
+        <ScanText className="w-4 h-4" aria-hidden="true" />
       </button>
 
       {/* 5. Warp Tool */}
@@ -117,16 +117,16 @@ export function StudioToolbar({
         onClick={() => onSelectTool(activeTool === "warp" ? "select" : "warp")}
         aria-label="ดัดรูปทรง (Warp)"
         title="ดัดรูปทรง (W)"
-        className={`px-2 py-1.5 rounded-md text-sm font-medium flex items-center gap-1 transition-all duration-150 ${
+        className={`h-8 w-8 rounded-md flex items-center justify-center gap-1 transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
           activeTool === "warp"
-            ? "text-primary bg-primary/10 shadow-xs"
+            ? "text-primary bg-primary/10 shadow-xs border border-primary/30"
             : "text-muted hover:text-foreground hover:bg-surface-hover"
         } disabled:opacity-30`}
       >
-        <Sparkles className="w-4 h-4" />
+        <Sparkles className="w-4 h-4" aria-hidden="true" />
       </button>
 
-      <div className="w-px h-5 bg-surface-hover mx-0.5" />
+      <div className="w-px h-4 bg-border mx-0.5" aria-hidden="true" />
 
       {/* 6. Find & Replace */}
       <button
@@ -135,9 +135,9 @@ export function StudioToolbar({
         onClick={onOpenFindReplace}
         aria-label="ค้นหาและแทนที่คำ"
         title="ค้นหาและแทนที่ข้อความ (Ctrl + F)"
-        className="px-2 py-1.5 rounded-md text-sm font-medium flex items-center gap-1 text-muted hover:text-foreground hover:bg-surface-hover transition-colors disabled:opacity-30"
+        className="h-8 w-8 rounded-md flex items-center justify-center gap-1 text-muted hover:text-foreground hover:bg-surface-hover transition-colors disabled:opacity-30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
       >
-        <Replace className="w-4 h-4" />
+        <Replace className="w-4 h-4" aria-hidden="true" />
       </button>
 
       {/* 7. Keyboard Shortcuts Guide */}
@@ -146,9 +146,9 @@ export function StudioToolbar({
         onClick={onOpenShortcuts}
         aria-label="ดูคีย์ลัด"
         title="คีย์ลัดการใช้งาน (Keyboard Shortcuts)"
-        className="px-2 py-1.5 rounded-md text-sm font-medium flex items-center gap-1 text-muted hover:text-foreground hover:bg-surface-hover transition-colors"
+        className="h-8 w-8 rounded-md flex items-center justify-center gap-1 text-muted hover:text-foreground hover:bg-surface-hover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
       >
-        <Keyboard className="w-4 h-4" />
+        <Keyboard className="w-4 h-4" aria-hidden="true" />
       </button>
     </div>
   );

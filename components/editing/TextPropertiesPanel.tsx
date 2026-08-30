@@ -50,7 +50,7 @@ export function TextPropertiesPanel({
       {/* Header & Quick Action Buttons */}
       <div className="flex items-center justify-between border-b border-surface-hover/60 pb-2">
         <div className="flex items-center gap-1.5 font-medium text-sm">
-          <Type className="w-4 h-4 text-primary" />
+          <Type className="w-5 h-5 text-primary" />
           <span>แก้ไขข้อความ</span>
         </div>
         <div className="flex items-center gap-1">

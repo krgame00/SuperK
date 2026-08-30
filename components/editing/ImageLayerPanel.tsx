@@ -24,7 +24,7 @@ export function ImageLayerPanel({
     >
       <div className="flex items-center justify-between border-b border-surface-hover/60 pb-2">
         <div className="flex items-center gap-1.5 font-medium text-sm">
-          <ImageIcon className="w-4 h-4 text-primary" />
+          <ImageIcon className="w-5 h-5 text-primary" />
           <span>เลเยอร์รูปภาพ</span>
         </div>
         {onDelete && (

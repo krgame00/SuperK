@@ -69,6 +69,6 @@ describe("WorkspacePage smoke test", () => {
   it("renders without crashing (imports resolve, page mounts)", () => {
     render(<WorkspacePage />);
     // Header should be present
-    expect(screen.getByText(/ann|superk|translate/i)).toBeTruthy();
+    expect(screen.getByText(/manga translator|superk/i)).toBeTruthy();
   });
 });

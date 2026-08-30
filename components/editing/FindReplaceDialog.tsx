@@ -48,7 +48,7 @@ export function FindReplaceDialog({
       {/* Header */}
       <div className="flex items-center justify-between border-b border-surface-hover/60 pb-2.5 flex-shrink-0">
         <div className="flex items-center gap-2 font-medium text-sm">
-          <Replace className="w-4 h-4 text-primary" />
+          <Replace className="w-5 h-5 text-primary" />
           <span>ค้นหาและแทนที่ข้อความ</span>
         </div>
         <button
@@ -58,7 +58,7 @@ export function FindReplaceDialog({
           title="ปิด"
           aria-label="ปิด"
         >
-          <X className="w-4 h-4" />
+          <X className="w-5 h-5" />
         </button>
       </div>
 

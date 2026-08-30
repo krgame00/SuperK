@@ -45,7 +45,7 @@ export function KeyboardShortcutsDialog({
       {/* Header */}
       <div className="flex items-center justify-between border-b border-surface-hover/60 pb-2.5 flex-shrink-0">
         <div className="flex items-center gap-2 font-medium text-sm">
-          <Keyboard className="w-4 h-4 text-primary" />
+          <Keyboard className="w-5 h-5 text-primary" />
           <span>คีย์ลัด (Shortcuts)</span>
         </div>
         <button
@@ -55,7 +55,7 @@ export function KeyboardShortcutsDialog({
           title="ปิด"
           aria-label="ปิด"
         >
-          <X className="w-4 h-4" />
+          <X className="w-5 h-5" />
         </button>
       </div>
 

@@ -39,7 +39,7 @@ export function OcrAreaTool({
       className="fixed bottom-24 left-1/2 -translate-x-1/2 z-40 bg-surface/95 backdrop-blur-md border border-surface-hover rounded-xl px-4 py-3 shadow-2xl flex items-center gap-3 text-xs text-foreground select-none motion-reduce:transition-none"
     >
       <div className="flex items-center gap-2 font-medium">
-        <ScanText className="w-4 h-4 text-primary" />
+        <ScanText className="w-5 h-5 text-primary" />
         <span>โหมดเลือกพื้นที่ OCR</span>
       </div>
 
@@ -66,7 +66,7 @@ export function OcrAreaTool({
         aria-label="ยกเลิก"
         title="ยกเลิก"
       >
-        <X className="w-4 h-4" />
+        <X className="w-5 h-5" />
       </button>
     </div>
   );

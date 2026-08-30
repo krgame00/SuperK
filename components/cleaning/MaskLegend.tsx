@@ -25,27 +25,43 @@ export function MaskLegend({ regions }: MaskLegendProps) {
 
   return (
     <div
-      className="absolute top-2 right-2 z-20 max-w-[calc(100%-1rem)] rounded-md bg-black/90 px-2.5 py-2 text-xs text-white"
+      role="region"
       aria-label="Mask legend"
+      className="absolute top-2 right-2 z-20 max-w-[calc(100%-1rem)] rounded-lg bg-black/90 border border-zinc-700/80 px-3 py-2 text-xs text-white shadow-xl backdrop-blur-xs"
     >
-      <p className="mb-1.5 font-semibold">{pageLabels[pageRole]}</p>
-      <div className="flex flex-wrap gap-x-3 gap-y-1">
-        <LegendItem color="bg-[#ff3750]" label={`Clean ${clean}`} />
-        <LegendItem color="bg-[#ffbe28]" label={`Review ${review}`} />
-        <LegendItem color="bg-[#2d91ff]" label={`Protect ${protect}`} />
+      <p className="mb-1.5 font-bold text-white tracking-wide">{pageLabels[pageRole]}</p>
+      <div className="flex flex-wrap gap-x-3.5 gap-y-1">
+        <LegendItem shape="square" color="bg-[#ff3750]" label={`Clean ${clean}`} />
+        <LegendItem shape="diamond" color="bg-[#ffbe28]" label={`Review ${review}`} />
+        <LegendItem shape="circle" color="bg-[#2d91ff]" label={`Protect ${protect}`} />
       </div>
     </div>
   );
 }
 
-function LegendItem({ color, label }: { color: string; label: string }) {
+function LegendItem({
+  shape,
+  color,
+  label,
+}: {
+  shape: "square" | "diamond" | "circle";
+  color: string;
+  label: string;
+}) {
+  const shapeClass =
+    shape === "circle"
+      ? "rounded-full"
+      : shape === "diamond"
+      ? "rotate-45 rounded-[1px]"
+      : "rounded-xs";
+
   return (
-    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-[#E5E5E5] font-medium">
       <span
-        className={`h-2.5 w-2.5 rounded-sm ${color}`}
+        className={`h-2.5 w-2.5 ${shapeClass} ${color} shadow-xs border border-white/20`}
         aria-hidden="true"
       />
-      {label}
+      <span>{label}</span>
     </span>
   );
 }

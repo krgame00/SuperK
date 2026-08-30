@@ -33,7 +33,7 @@ export function WarpPanel({
     >
       <div className="flex items-center justify-between border-b border-surface-hover/60 pb-2">
         <div className="flex items-center gap-1.5 font-medium text-sm">
-          <Sparkles className="w-4 h-4 text-primary" />
+          <Sparkles className="w-5 h-5 text-primary" />
           <span>ดัดรูปทรง (Warp)</span>
         </div>
         <button
