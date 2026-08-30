@@ -10,9 +10,9 @@ CTD + OpenCV + AOT ONNX บน CPU และไม่เรียก paid API �
 
 ```powershell
 cd ocr-service
-py -3.12 -m venv .venv
-.\.venv\Scripts\python -m pip install --require-hashes -r requirements.lock
-.\.venv\Scripts\python scripts\install_models.py --baseline
+py -3.11 -m venv venv
+.\venv\Scripts\python -m pip install --require-hashes -r requirements.lock
+.\venv\Scripts\python scripts\install_models.py --baseline
 ```
 
 ไฟล์โมเดลจะถูกตรวจ SHA-256 ตาม `models/manifest.json` และไม่ถูก commit เข้า
@@ -42,8 +42,8 @@ npm run dev
 
 ```powershell
 cd ocr-service
-.\.venv\Scripts\pytest tests -v
-.\.venv\Scripts\ruff check app scripts tests
+.\venv\Scripts\pytest tests -v
+.\venv\Scripts\ruff check app scripts tests
 
 cd ..
 npm test
@@ -59,17 +59,17 @@ corpus manifest เก็บเฉพาะ hash, ขนาดภาพ, หม�
 
 ```powershell
 cd ocr-service
-.\.venv\Scripts\python scripts\review_benchmark_corpus.py `
+.\venv\Scripts\python scripts\review_benchmark_corpus.py `
   --root "F:\Doujin\Download" `
   --emit-review-dir benchmark-results\corpus-review `
   --count 160
 
-.\.venv\Scripts\python scripts\build_benchmark_manifest.py `
+.\venv\Scripts\python scripts\build_benchmark_manifest.py `
   --root "F:\Doujin\Download" `
   --review-labels benchmarks\review-labels.json `
   --count 30
 
-.\.venv\Scripts\python scripts\benchmark.py `
+.\venv\Scripts\python scripts\benchmark.py `
   --root "F:\Doujin\Download" `
   --manifest benchmarks\manifest.json `
   --protected-manifest benchmarks\protected-manifest.json `
