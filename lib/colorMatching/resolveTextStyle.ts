@@ -10,6 +10,8 @@ export interface ResolveStyleOptions {
 export interface ResolvedTextStyle {
   textColor: string;
   textOutline: string;
+  outlineWidth: number;
+  opacity: number;
   source: StyleSource;
   fillConfidence: number;
   outlineConfidence: number;
@@ -56,7 +58,7 @@ export function resolveBubbleTextStyle(
 ): ResolvedTextStyle {
   const defaultFill = globalStyle.textColor || "#000000";
   const defaultOutline = globalStyle.textOutline || "#ffffff";
-  const minConfidence = options.minConfidence ?? 0.65;
+  const minConfidence = options.minConfidence ?? 0.60;
   const autoMatchEnabled = options.autoMatchColors ?? true;
   const autoOutlineEnabled = options.autoMatchOutline ?? true;
 
@@ -66,20 +68,27 @@ export function resolveBubbleTextStyle(
     return {
       textColor: defaultFill,
       textOutline: defaultOutline,
+      outlineWidth: 1.0,
+      opacity: 1.0,
       source: "global",
       fillConfidence: 1.0,
       outlineConfidence: 1.0,
     };
   }
 
+  const fillConf = profile.fillConfidence ?? 1.0;
+  const outlineConf = profile.outlineConfidence ?? 1.0;
+
   // 1. Manual user override always wins
   if (profile.source === "manual") {
     return {
       textColor: profile.fill || defaultFill,
       textOutline: profile.outline || defaultOutline,
+      outlineWidth: profile.outlineWidth ?? 1.0,
+      opacity: profile.opacity ?? 1.0,
       source: "manual",
-      fillConfidence: profile.fillConfidence ?? 1.0,
-      outlineConfidence: profile.outlineConfidence ?? 1.0,
+      fillConfidence: fillConf,
+      outlineConfidence: outlineConf,
     };
   }
 
@@ -88,35 +97,42 @@ export function resolveBubbleTextStyle(
     return {
       textColor: defaultFill,
       textOutline: defaultOutline,
+      outlineWidth: 1.0,
+      opacity: 1.0,
       source: "global",
-      fillConfidence: profile.fillConfidence,
-      outlineConfidence: profile.outlineConfidence,
+      fillConfidence: fillConf,
+      outlineConfidence: outlineConf,
     };
   }
 
-  // 3. Auto-matched color with confidence check
-  const hasHighFillConfidence = profile.fillConfidence >= minConfidence;
-  const hasHighOutlineConfidence = profile.outlineConfidence >= minConfidence;
+  // 3. Auto-matched or nearby fallback color with confidence check
+  const isEligible =
+    profile.source === "fallback" || fillConf >= minConfidence;
+  const hasHighOutlineConfidence = outlineConf >= minConfidence;
 
-  const resolvedFill = hasHighFillConfidence ? profile.fill : defaultFill;
+  const resolvedFill = isEligible ? profile.fill : defaultFill;
   let resolvedOutline =
-    autoOutlineEnabled && hasHighOutlineConfidence ? profile.outline : defaultOutline;
+    autoOutlineEnabled && (hasHighOutlineConfidence || profile.source === "fallback")
+      ? profile.outline
+      : defaultOutline;
 
-  // 4. Enforce strong contrast between fill and outline to prevent muddy/unreadable text
+  // 4. Enforce strong contrast between fill and outline to prevent unreadable text
   const [fr, fg, fb] = hexToRgb(resolvedFill);
   const [or, og, ob] = hexToRgb(resolvedOutline);
   const fillLum = getLuminance(fr, fg, fb);
   const dist = colorDistance(fr, fg, fb, or, og, ob);
 
-  if (dist < 80) {
+  if (dist < 75) {
     resolvedOutline = fillLum < 128 ? "#ffffff" : "#000000";
   }
 
   return {
     textColor: resolvedFill,
     textOutline: resolvedOutline,
-    source: hasHighFillConfidence ? "auto" : "global",
-    fillConfidence: profile.fillConfidence,
-    outlineConfidence: profile.outlineConfidence,
+    outlineWidth: profile.outlineWidth ?? 1.0,
+    opacity: profile.opacity ?? 1.0,
+    source: isEligible ? profile.source : "global",
+    fillConfidence: fillConf,
+    outlineConfidence: outlineConf,
   };
 }

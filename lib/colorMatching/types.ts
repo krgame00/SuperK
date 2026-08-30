@@ -2,14 +2,17 @@
  * Style Profile and Color Matching Contract for Manga Text
  */
 
-export type StyleSource = "auto" | "manual" | "global";
+export type StyleSource = "auto" | "manual" | "global" | "fallback";
 
 export interface TextStyleProfile {
   fill: string;
   outline: string;
-  fillConfidence: number;
-  outlineConfidence: number;
+  outlineWidth?: number;
+  opacity?: number;
+  fillConfidence?: number;
+  outlineConfidence?: number;
   source: StyleSource;
+  nearbySourceId?: string;
 }
 
 export interface ColorSampleRegion {

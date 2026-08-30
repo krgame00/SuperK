@@ -26,7 +26,7 @@ export function rgbToHex(r: number, g: number, b: number): string {
   return `#${hr}${hg}${hb}`.toLowerCase();
 }
 
-interface ColorBucket {
+export interface ColorBucket {
   r: number;
   g: number;
   b: number;
@@ -46,11 +46,9 @@ export interface ColorCluster {
 
 export function clusterBuckets(
   buckets: ColorBucket[],
-  threshold = 38,
+  threshold = 36,
 ): ColorCluster[] {
   const clusters: ColorCluster[] = [];
-
-  // Sort buckets by centerScore descending so dominant core centers lead the clusters
   const sorted = [...buckets].sort((a, b) => b.centerScore - a.centerScore);
 
   for (const b of sorted) {
@@ -93,6 +91,10 @@ export interface ExtractColorOptions {
   minContrast?: number;
 }
 
+/**
+ * Advanced Text Style Color Extraction with Interior Mask Erosion,
+ * Anti-Aliasing Rejection, and Outline Separation.
+ */
 export function extractTextColors(
   sample: ColorSampleRegion,
   options: ExtractColorOptions = {},
@@ -104,20 +106,106 @@ export function extractTextColors(
     return createDefaultStyleProfile("global");
   }
 
-  const bgTolerance = options.backgroundTolerance ?? 30;
+  const bgTolerance = options.backgroundTolerance ?? 28;
 
-  // 1. Build Global Histogram across all pixels with center weighting
-  const allBuckets = new Map<string, ColorBucket>();
+  // 1. Step 1: Estimate Background Color from outer border pixels
   let bgRSum = 0;
   let bgGSum = 0;
   let bgBSum = 0;
   let bgCount = 0;
 
+  const borderWidth = Math.max(1, Math.min(3, Math.floor(Math.min(width, height) / 6)));
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const isBorder = x < borderWidth || x >= width - borderWidth || y < borderWidth || y >= height - borderWidth;
+      if (isBorder) {
+        const idx = (y * width + x) * 4;
+        const a = rgba[idx + 3];
+        if (a >= 64) {
+          bgRSum += rgba[idx];
+          bgGSum += rgba[idx + 1];
+          bgBSum += rgba[idx + 2];
+          bgCount++;
+        }
+      }
+    }
+  }
+
+  const bgR = bgCount > 0 ? bgRSum / bgCount : 255;
+  const bgG = bgCount > 0 ? bgGSum / bgCount : 255;
+  const bgB = bgCount > 0 ? bgBSum / bgCount : 255;
+
+  // 2. Step 2: Build Foreground Binary Map
+  const isFg = new Uint8Array(totalPixels);
+  let totalFgCount = 0;
+
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const idx = (y * width + x) * 4;
       const a = rgba[idx + 3];
-      if (a < 128) continue;
+      if (a < 64) continue;
+
+      const r = rgba[idx];
+      const g = rgba[idx + 1];
+      const b = rgba[idx + 2];
+
+      const distFromBg = colorDistance(r, g, b, bgR, bgG, bgB);
+      if (distFromBg >= bgTolerance) {
+        isFg[y * width + x] = 1;
+        totalFgCount++;
+      }
+    }
+  }
+
+  const fgRatio = totalFgCount / totalPixels;
+  if (totalFgCount < 4 || fgRatio < 0.008) {
+    return {
+      fill: "#000000",
+      outline: "#ffffff",
+      outlineWidth: 1.0,
+      fillConfidence: 0.3,
+      outlineConfidence: 0.3,
+      source: "global",
+    };
+  }
+
+  // 3. Step 3: Interior Erosion (Distinguish Core Interior from Edge / Transition Ring)
+  const isCoreInterior = new Uint8Array(totalPixels);
+  let coreCount = 0;
+
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const p = y * width + x;
+      if (isFg[p]) {
+        // Check 4 direct neighbors
+        if (
+          isFg[p - 1] &&
+          isFg[p + 1] &&
+          isFg[p - width] &&
+          isFg[p + width]
+        ) {
+          isCoreInterior[p] = 1;
+          coreCount++;
+        }
+      }
+    }
+  }
+
+  // If erosion removed all pixels (very small/thin text), fallback to all foreground pixels
+  const useErodedCore = coreCount >= 4;
+  const coreMap = useErodedCore ? isCoreInterior : isFg;
+
+  // 4. Step 4: Histogram & Color Clustering for Core Interior (Determines Fill Color)
+  const coreBuckets = new Map<string, ColorBucket>();
+  const edgeBuckets = new Map<string, ColorBucket>();
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const p = y * width + x;
+      const idx = p * 4;
+      const a = rgba[idx + 3];
+      if (a < 64) continue;
 
       const r = rgba[idx];
       const g = rgba[idx + 1];
@@ -134,152 +222,113 @@ export function extractTextColors(
       const distFromCenter = Math.sqrt(nx * nx + ny * ny);
       const centerWeight = distFromCenter <= 0.6 ? 2.5 : 1.0;
 
-      const existing = allBuckets.get(key);
-      if (existing) {
-        existing.r = (existing.r * existing.count + r) / (existing.count + 1);
-        existing.g = (existing.g * existing.count + g) / (existing.count + 1);
-        existing.b = (existing.b * existing.count + b) / (existing.count + 1);
-        existing.chroma = Math.max(existing.chroma, chroma);
-        existing.count++;
-        existing.centerScore += centerWeight;
-      } else {
-        allBuckets.set(key, { r, g, b, chroma, count: 1, centerScore: centerWeight });
-      }
-
-      // Sample outer perimeter for background estimation
-      if (x < 3 || x >= width - 3 || y < 3 || y >= height - 3) {
-        bgRSum += r;
-        bgGSum += g;
-        bgBSum += b;
-        bgCount++;
+      if (coreMap[p]) {
+        const existing = coreBuckets.get(key);
+        if (existing) {
+          existing.r = (existing.r * existing.count + r) / (existing.count + 1);
+          existing.g = (existing.g * existing.count + g) / (existing.count + 1);
+          existing.b = (existing.b * existing.count + b) / (existing.count + 1);
+          existing.chroma = Math.max(existing.chroma, chroma);
+          existing.count++;
+          existing.centerScore += centerWeight;
+        } else {
+          coreBuckets.set(key, { r, g, b, chroma, count: 1, centerScore: centerWeight });
+        }
+      } else if (isFg[p]) {
+        // Edge / transition pixel
+        const existing = edgeBuckets.get(key);
+        if (existing) {
+          existing.r = (existing.r * existing.count + r) / (existing.count + 1);
+          existing.g = (existing.g * existing.count + g) / (existing.count + 1);
+          existing.b = (existing.b * existing.count + b) / (existing.count + 1);
+          existing.chroma = Math.max(existing.chroma, chroma);
+          existing.count++;
+          existing.centerScore += centerWeight;
+        } else {
+          edgeBuckets.set(key, { r, g, b, chroma, count: 1, centerScore: centerWeight });
+        }
       }
     }
   }
 
-  // Determine Background Color (most frequent cluster or border average)
-  const sortedAll = Array.from(allBuckets.values()).sort((a, b) => b.count - a.count);
-  const mostFrequent = sortedAll[0] ?? { r: 255, g: 255, b: 255, chroma: 0, count: 0, centerScore: 0 };
+  const coreClusters = clusterBuckets(Array.from(coreBuckets.values()), 36);
+  const edgeClusters = clusterBuckets(Array.from(edgeBuckets.values()), 36);
 
-  const bgR = mostFrequent.count > totalPixels * 0.3
-    ? mostFrequent.r
-    : bgCount > 0 ? bgRSum / bgCount : 255;
-  const bgG = mostFrequent.count > totalPixels * 0.3
-    ? mostFrequent.g
-    : bgCount > 0 ? bgGSum / bgCount : 255;
-  const bgB = mostFrequent.count > totalPixels * 0.3
-    ? mostFrequent.b
-    : bgCount > 0 ? bgBSum / bgCount : 255;
-
-  // 2. Separate Foreground Buckets from Background
-  const foregroundBuckets: ColorBucket[] = [];
-  let totalFgCount = 0;
-
-  for (const bucket of allBuckets.values()) {
-    const distFromBg = colorDistance(bucket.r, bucket.g, bucket.b, bgR, bgG, bgB);
-    if (distFromBg >= bgTolerance) {
-      foregroundBuckets.push(bucket);
-      totalFgCount += bucket.count;
-    }
-  }
-
-  const fgRatio = totalFgCount / totalPixels;
-  if (totalFgCount < 4 || fgRatio < 0.01) {
-    return {
-      fill: "#000000",
-      outline: "#ffffff",
-      fillConfidence: 0.3,
-      outlineConfidence: 0.3,
-      source: "global",
-    };
-  }
-
-  // 3. Cluster foreground buckets to aggregate anti-aliased subpixels
-  const fgClusters = clusterBuckets(foregroundBuckets, 38);
-
-  // 4. Priority Detection for Chromatic Text (Pink, Blue, Red, Cyan, Yellow, etc.)
-  const chromaticClusters = fgClusters
-    .filter((c) => c.chroma >= 20 && c.count >= Math.max(3, totalFgCount * 0.04))
+  // 5. Step 5: Fill Color Determination
+  // A. Chromatic Core Cluster Priority (e.g. Pink, Cyan, Yellow, Red fill)
+  const chromaticCore = coreClusters
+    .filter((c) => c.chroma >= 18 && c.count >= Math.max(3, totalFgCount * 0.03))
     .sort((a, b) => b.centerScore - a.centerScore);
 
-  if (chromaticClusters.length > 0) {
-    const dominantChromatic = chromaticClusters[0];
-    const fillHex = rgbToHex(dominantChromatic.r, dominantChromatic.g, dominantChromatic.b);
+  let fillR = 0, fillG = 0, fillB = 0;
+  let fillHex = "#000000";
+  let fillConfidence = 0.85;
 
-    // Look for secondary foreground/outline cluster (e.g., cyan/white/dark outline around pink text)
-    let outlineHex = "";
-    let outlineConfidence = 0.85;
-
-    for (const candidate of fgClusters) {
-      const distToDominant = colorDistance(
-        candidate.r,
-        candidate.g,
-        candidate.b,
-        dominantChromatic.r,
-        dominantChromatic.g,
-        dominantChromatic.b,
-      );
-      if (distToDominant > 40 && candidate.count >= Math.max(3, totalFgCount * 0.04)) {
-        outlineHex = rgbToHex(candidate.r, candidate.g, candidate.b);
-        outlineConfidence = 0.90;
-        break;
-      }
-    }
-
-    if (!outlineHex) {
-      const luminance = 0.299 * dominantChromatic.r + 0.587 * dominantChromatic.g + 0.114 * dominantChromatic.b;
-      outlineHex = bgR > 180 ? "#ffffff" : luminance < 128 ? "#ffffff" : "#000000";
-    }
-
-    return {
-      fill: fillHex,
-      outline: outlineHex,
-      fillConfidence: 0.95,
-      outlineConfidence,
-      source: "auto",
-    };
+  if (chromaticCore.length > 0) {
+    const topChromatic = chromaticCore[0];
+    fillR = topChromatic.r;
+    fillG = topChromatic.g;
+    fillB = topChromatic.b;
+    fillHex = rgbToHex(fillR, fillG, fillB);
+    fillConfidence = 0.95;
+  } else if (coreClusters.length > 0) {
+    const sortedCore = coreClusters.sort((a, b) => b.centerScore - a.centerScore);
+    const topCluster = sortedCore[0];
+    fillR = topCluster.r;
+    fillG = topCluster.g;
+    fillB = topCluster.b;
+    fillHex = rgbToHex(fillR, fillG, fillB);
+    const contrastFromBg = colorDistance(fillR, fillG, fillB, bgR, bgG, bgB);
+    fillConfidence = clampConfidence(0.65 + (contrastFromBg / 441.67) * 0.3);
+  } else {
+    fillHex = "#000000";
+    fillConfidence = 0.5;
   }
 
-  // 5. Monochrome / Dominant Foreground Selection
-  const sortedFg = fgClusters.sort((a, b) => b.centerScore - a.centerScore);
-  const primary = sortedFg[0];
-  const primaryFillHex = rgbToHex(primary.r, primary.g, primary.b);
-
-  let outlineHex = bgR > 128 ? "#ffffff" : "#000000";
+  // 6. Step 6: Outline Color & Width Separation from Edge Transition Ring
+  let outlineHex = "";
   let outlineConfidence = 0.75;
+  let outlineWidth = 1.0;
 
-  for (let i = 1; i < sortedFg.length; i++) {
-    const candidate = sortedFg[i];
-    const distToPrimary = colorDistance(
-      candidate.r,
-      candidate.g,
-      candidate.b,
-      primary.r,
-      primary.g,
-      primary.b,
-    );
-    if (distToPrimary > 40 && candidate.count >= Math.max(3, totalFgCount * 0.05)) {
-      outlineHex = rgbToHex(candidate.r, candidate.g, candidate.b);
-      outlineConfidence = 0.85;
-      break;
+  // Search edge clusters for a distinct outline color that differs from fill and background
+  const candidateOutlineClusters = [...edgeClusters, ...coreClusters].filter((c) => {
+    const distToFill = colorDistance(c.r, c.g, c.b, fillR, fillG, fillB);
+    const distToBg = colorDistance(c.r, c.g, c.b, bgR, bgG, bgB);
+    return distToFill > 42 && distToBg > 30 && c.count >= Math.max(2, totalFgCount * 0.04);
+  }).sort((a, b) => b.centerScore - a.centerScore);
+
+  if (candidateOutlineClusters.length > 0) {
+    const bestOutline = candidateOutlineClusters[0];
+    outlineHex = rgbToHex(bestOutline.r, bestOutline.g, bestOutline.b);
+    outlineConfidence = 0.90;
+    const edgeRatio = (totalFgCount - coreCount) / Math.max(1, totalFgCount);
+    outlineWidth = edgeRatio > 0.4 ? 1.3 : 1.0;
+  } else {
+    // Contrast-based fallback outline (white for dark text, dark for light text)
+    const fillLum = 0.299 * fillR + 0.587 * fillG + 0.114 * fillB;
+    const bgLum = 0.299 * bgR + 0.587 * bgG + 0.114 * bgB;
+
+    if (bgLum > 180) {
+      outlineHex = fillLum < 128 ? "#ffffff" : "#000000";
+    } else {
+      outlineHex = fillLum < 128 ? "#ffffff" : "#000000";
     }
+    outlineConfidence = 0.80;
+    outlineWidth = 1.0;
   }
 
-  const primaryLuminance = 0.299 * primary.r + 0.587 * primary.g + 0.114 * primary.b;
-  if (outlineConfidence < 0.8) {
-    outlineHex = primaryLuminance < 128 ? "#ffffff" : "#000000";
+  // If core interior is very small (< 6 pixels) or fill confidence is low, clamp confidence appropriately
+  if (coreCount < 6) {
+    fillConfidence = Math.min(fillConfidence, 0.55);
   }
-
-  const contrast = colorDistance(primary.r, primary.g, primary.b, bgR, bgG, bgB);
-  const contrastRatio = contrast / 441.67;
-  const fillConfidence = clampConfidence(
-    Math.min(1.0, 0.6 + contrastRatio * 0.3 + Math.min(0.1, fgRatio * 0.5)),
-  );
 
   return {
-    fill: primaryFillHex,
+    fill: fillHex,
     outline: outlineHex,
-    fillConfidence,
-    outlineConfidence,
-    source: "auto",
+    outlineWidth,
+    opacity: 1.0,
+    fillConfidence: clampConfidence(fillConfidence),
+    outlineConfidence: clampConfidence(outlineConfidence),
+    source: fillConfidence >= 0.60 ? "auto" : "global",
   };
 }

@@ -2,6 +2,8 @@ import { undoManager } from "./undoManager";
 import { resolveBubbleTextStyle } from "./colorMatching/resolveTextStyle";
 import { sampleBubbleRegion } from "./colorMatching/canvasSampler";
 import { extractTextColors } from "./colorMatching/sampleTextColors";
+import { applyNearbyStyleFallbacks } from "./colorMatching/nearbyStyleFallback";
+import type { TextStyleProfile } from "./colorMatching/types";
 
 const ADJ_KEY = "superk:overlay-adjustments";
 
@@ -21,13 +23,7 @@ export interface TranslatedBubble {
   deleted?: boolean;
   /** redraw callback attached to overlay bubbles */
   render?: () => void;
-  styleProfile?: {
-    fill?: string;
-    outline?: string;
-    fillConfidence?: number;
-    outlineConfidence?: number;
-    source?: "auto" | "manual" | "global";
-  };
+  styleProfile?: TextStyleProfile;
   [key: string]: unknown;
 }
 
@@ -468,6 +464,18 @@ export const applyTranslationOverlay = async (
       }
     };
 
+    if (img && (img.naturalWidth > 0 || img.width > 0)) {
+      real.forEach((b) => {
+        if (!b.styleProfile && b.box && b.box.length === 4 && !b.isInvalidBox) {
+          const sample = sampleBubbleRegion(img, b.box);
+          if (sample) {
+            b.styleProfile = extractTextColors(sample);
+          }
+        }
+      });
+      applyNearbyStyleFallbacks(real);
+    }
+
     real.forEach((b) => {
       let rawX = 50, rawY = 50, rawW = 20, rawH = 10;
       let isInvalidBox = false;
@@ -491,13 +499,6 @@ export const applyTranslationOverlay = async (
         fallbackY2 = (fallbackY2 + 15 > 85) ? 8 : fallbackY2 + 12;
         rawW = 30; rawH = 15;
         b.isInvalidBox = true;
-      }
-
-      if (!b.styleProfile && img && (img.naturalWidth > 0 || img.width > 0) && b.box && b.box.length === 4 && !b.isInvalidBox) {
-        const sample = sampleBubbleRegion(img, b.box);
-        if (sample) {
-          b.styleProfile = extractTextColors(sample);
-        }
       }
 
       const bubbleId = b.id !== undefined ? `id-${b.id}` : `text-${(b.t || b.translated || "").slice(0, 10)}-${rawX.toFixed(1)}-${rawY.toFixed(1)}`;
@@ -581,6 +582,8 @@ export const applyTranslationOverlay = async (
         const resolvedStyle = resolveBubbleTextStyle(b, currentStyle);
         const textColor = resolvedStyle.textColor;
         const outlineColor = resolvedStyle.textOutline;
+        const outlineWidthScale = resolvedStyle.outlineWidth || 1.0;
+        const opacity = resolvedStyle.opacity ?? 1.0;
 
         const targetMinFs = Math.max(14, Math.round(getReadableMinimumFontSize(iw) * 0.75));
         const fit = fitTextForBubble(
@@ -596,11 +599,12 @@ export const applyTranslationOverlay = async (
         const lines = fit.lines;
         const lineH = Math.min(fontSize * 1.30, currentBh / Math.max(1, lines.length));
 
+        ctx.globalAlpha = opacity;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.font = `bold ${fontSize}px ${currentFontFam}`;
         ctx.strokeStyle = outlineColor;
-        ctx.lineWidth = Math.max(2, Math.round(fontSize * 0.16));
+        ctx.lineWidth = Math.max(2, Math.round(fontSize * 0.16 * outlineWidthScale));
         
         const totalH = (lines.length - 1) * lineH;
         const startY = (currentBh / 2) - (totalH / 2);

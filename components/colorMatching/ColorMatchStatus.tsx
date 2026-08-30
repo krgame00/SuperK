@@ -24,9 +24,10 @@ export function ColorMatchStatus({
     );
   }
 
-  const isAuto = profile.source === "auto";
-  const isHighConfidence = profile.fillConfidence >= 0.65;
-  const percent = Math.round(profile.fillConfidence * 100);
+  const isAuto = profile.source === "auto" || profile.source === "fallback";
+  const confidence = profile.fillConfidence ?? 1.0;
+  const isHighConfidence = confidence >= 0.65;
+  const percent = Math.round(confidence * 100);
 
   return (
     <div

@@ -97,6 +97,42 @@ describe("sampleTextColors color extraction engine", () => {
     expect(profile.source).toBe("auto");
   });
 
+  it("rejects anti-aliased edge gradient pixels in favor of core interior fill", () => {
+    // 30x30 region: White background (255, 255, 255)
+    // Edge transition: Blended muddy pinkish-grey (200, 150, 170)
+    // Core interior: Solid pure pink (255, 40, 140)
+    const sample = createSyntheticRegion(30, 30, (x, y) => {
+      if (x < 4 || x > 26 || y < 4 || y > 26) return [255, 255, 255, 255];
+      if (x < 8 || x > 22 || y < 8 || y > 22) return [200, 150, 170, 255]; // anti-aliased edge
+      return [255, 40, 140, 255]; // core interior
+    });
+
+    const profile = extractTextColors(sample);
+    expect(profile.fill).toBe("#ff288c");
+    expect(profile.fillConfidence).toBeGreaterThan(0.8);
+  });
+
+  it("protects text fill from adjacent artwork contamination", () => {
+    // 40x40 region: White speech bubble background (255, 255, 255)
+    // Top-left corner has adjacent red hair/artwork (220, 20, 20) at x<6, y<6
+    // Center dialogue text is solid dark navy (10, 20, 60) at x: 15..25, y: 15..25
+    const sample = createSyntheticRegion(40, 40, (x, y) => {
+      // Border background
+      if (x < 2 || x > 38 || y < 2 || y > 38) return [255, 255, 255, 255];
+      // Adjacent artwork in corner
+      if (x < 6 && y < 6) return [220, 20, 20, 255];
+      // Center dialogue text
+      if (x >= 14 && x <= 26 && y >= 14 && y <= 26) return [10, 20, 60, 255];
+      // Rest of bubble interior
+      return [255, 255, 255, 255];
+    });
+
+    const profile = extractTextColors(sample);
+    // Fill should be dark navy, NOT contaminated by the red artwork
+    expect(profile.fill).toBe("#0a143c");
+    expect(profile.fillConfidence).toBeGreaterThan(0.7);
+  });
+
   it("handles low-contrast / empty sample safely with global fallback", () => {
     const emptySample = createSyntheticRegion(10, 10, () => [255, 255, 255, 255]);
     const profile = extractTextColors(emptySample);
