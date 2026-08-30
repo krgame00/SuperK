@@ -17,9 +17,9 @@ test("offers original clean and translated as primary layers", () => {
     />,
   );
 
-  fireEvent.click(screen.getByRole("button", { name: "Original" }));
-  fireEvent.click(screen.getByRole("button", { name: "Clean" }));
-  fireEvent.click(screen.getByRole("button", { name: "Translated" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Original" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Clean" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Translated" }));
 
   expect(onLayerChange.mock.calls).toEqual([
     ["original"],
@@ -42,9 +42,9 @@ test("disables unavailable derived layers and advanced mask", () => {
     />,
   );
 
-  const clean = screen.getByRole("button", { name: "Clean" });
-  const translated = screen.getByRole("button", { name: "Translated" });
-  const mask = screen.getByRole("button", { name: "Mask" });
+  const clean = screen.getByRole("tab", { name: "Clean" });
+  const translated = screen.getByRole("tab", { name: "Translated" });
+  const mask = screen.getByRole("tab", { name: "Mask" });
 
   expect(clean.hasAttribute("disabled")).toBe(true);
   expect(translated.hasAttribute("disabled")).toBe(true);
@@ -69,15 +69,15 @@ test("exposes pressed state and preserves focus for enabled layer controls", () 
     />,
   );
 
-  const original = screen.getByRole("button", { name: "Original" });
-  const clean = screen.getByRole("button", { name: "Clean" });
-  const translated = screen.getByRole("button", { name: "Translated" });
-  const mask = screen.getByRole("button", { name: "Mask" });
+  const original = screen.getByRole("tab", { name: "Original" });
+  const clean = screen.getByRole("tab", { name: "Clean" });
+  const translated = screen.getByRole("tab", { name: "Translated" });
+  const mask = screen.getByRole("tab", { name: "Mask" });
 
-  expect(original.getAttribute("aria-pressed")).toBe("false");
-  expect(clean.getAttribute("aria-pressed")).toBe("true");
-  expect(translated.getAttribute("aria-pressed")).toBe("false");
-  expect(mask.getAttribute("aria-pressed")).toBe("false");
+  expect(original.getAttribute("aria-selected")).toBe("false");
+  expect(clean.getAttribute("aria-selected")).toBe("true");
+  expect(translated.getAttribute("aria-selected")).toBe("false");
+  expect(mask.getAttribute("aria-selected")).toBe("false");
 
   translated.focus();
   expect(document.activeElement).toBe(translated);

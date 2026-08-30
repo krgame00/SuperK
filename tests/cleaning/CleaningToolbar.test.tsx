@@ -18,7 +18,7 @@ test("offers clean and layer controls without hiding the page workflow", () => {
     />,
   );
   fireEvent.click(screen.getByRole("button", { name: "คลีนข้อความ" }));
-  fireEvent.click(screen.getByRole("button", { name: "Mask" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Mask" }));
   expect(onClean).toHaveBeenCalledOnce();
   expect(onLayerChange).toHaveBeenCalledWith("mask");
 });

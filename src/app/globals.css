@@ -2,20 +2,25 @@
 
 :root {
   /* Restrained Dark Mode */
-  --bg: oklch(0.10 0 0); /* Pure near-black */
-  --surface: oklch(0.15 0 0); /* Slightly lighter */
-  --surface-hover: oklch(0.20 0 0);
-  
-  --ink: oklch(0.98 0 0); /* Crisp white */
-  --muted: oklch(0.65 0 0); /* Secondary text */
-  
-  /* Brand (Seed: 356.8 - Pure Red) */
-  --primary: oklch(0.65 0.18 356.8); /* Elegant deep red */
-  --primary-hover: oklch(0.70 0.18 356.8);
-  --primary-content: oklch(0.98 0 0); /* White text on primary */
-  
-  --accent: oklch(0.85 0.05 200); /* Desaturated cool blue */
-  
+  --bg: oklch(0.12 0.01 260); /* Deep charcoal-slate background */
+  --surface: oklch(0.16 0.01 260); /* Elevated panels */
+  --surface-hover: oklch(0.22 0.01 260); /* Hover states */
+  --surface-active: oklch(0.26 0.02 260);
+
+  --border: oklch(0.24 0.01 260); /* Crisp subtle border */
+  --border-subtle: oklch(0.20 0.01 260);
+
+  --ink: oklch(0.95 0 0); /* Crisp primary text / icons */
+  --muted: oklch(0.70 0.01 260); /* Secondary text */
+  --muted-dark: oklch(0.48 0.01 260); /* Inactive */
+
+  /* Brand (SuperK Vibrant Magenta-Crimson) */
+  --primary: oklch(0.64 0.23 352);
+  --primary-hover: oklch(0.69 0.23 352);
+  --primary-content: oklch(0.99 0 0); /* Pure crisp white */
+
+  --accent: oklch(0.85 0.05 200);
+
   --background: var(--bg);
   --foreground: var(--ink);
 }
@@ -25,12 +30,15 @@
   --color-foreground: var(--foreground);
   --color-surface: var(--surface);
   --color-surface-hover: var(--surface-hover);
+  --color-surface-active: var(--surface-active);
+  --color-border: var(--border);
+  --color-border-subtle: var(--border-subtle);
   --color-muted: var(--muted);
   --color-primary: var(--primary);
   --color-primary-hover: var(--primary-hover);
   --color-primary-content: var(--primary-content);
   --color-accent: var(--accent);
-  
+
   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
 }
 

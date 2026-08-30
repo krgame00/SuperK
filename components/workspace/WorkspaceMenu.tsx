@@ -108,7 +108,7 @@ export const WorkspaceMenu = forwardRef<WorkspaceMenuHandle, WorkspaceMenuProps>
           type="button"
           disabled={disabled}
           onClick={() => setOpen((prev) => !prev)}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-surface-hover bg-surface px-3 py-1.5 text-xs font-medium text-foreground shadow-xs transition-colors hover:bg-surface-hover focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+          className="inline-flex h-8.5 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-semibold text-foreground shadow-xs transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-40"
           aria-haspopup="menu"
           aria-expanded={open}
           id={menuId}
@@ -120,7 +120,7 @@ export const WorkspaceMenu = forwardRef<WorkspaceMenuHandle, WorkspaceMenuProps>
 
         {open && (
           <div
-            className="absolute right-0 z-50 mt-1.5 w-48 origin-top-right rounded-xl border border-surface-hover bg-surface p-1.5 shadow-xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-100"
+            className="absolute right-0 z-50 mt-1.5 w-48 max-h-[min(70vh,24rem)] overflow-y-auto origin-top-right rounded-xl border border-border bg-surface p-1.5 shadow-xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-100 [scrollbar-width:thin]"
             role="menu"
             aria-labelledby={menuId}
           >
@@ -141,7 +141,7 @@ export const WorkspaceMenu = forwardRef<WorkspaceMenuHandle, WorkspaceMenuProps>
                   item.disabled
                     ? "opacity-40 cursor-not-allowed text-muted"
                     : activeIndex === idx
-                    ? "bg-primary text-white"
+                    ? "bg-primary text-primary-content font-semibold"
                     : "text-foreground hover:bg-surface-hover"
                 }`}
               >

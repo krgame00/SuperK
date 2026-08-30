@@ -9,7 +9,7 @@ import {
   applyTranslationOverlay,
   type TranslatedBubble,
 } from "@/lib/translationOverlay";
-import { Upload, Wand2, Download, Flame, Eye, EyeOff, Undo2, Redo2, GalleryVertical, RectangleHorizontal, Menu, X, Settings, FileArchive, BookOpen, FileText, Sparkles, RotateCcw } from "lucide-react";
+import { Upload, Download, Flame, Eye, EyeOff, Undo2, Redo2, GalleryVertical, RectangleHorizontal, Menu, X, Settings, FileArchive, BookOpen, FileText, Sparkles } from "lucide-react";
 import { undoManager } from "@/lib/undoManager";
 import JSZip from "jszip";
 import { useCleaning } from "@/hooks/useCleaning";
@@ -25,6 +25,9 @@ import type {
 import { PageViewer } from "@/components/workspace/PageViewer";
 import { PageFilmstrip } from "@/components/workspace/PageFilmstrip";
 import { SettingsModal } from "@/components/workspace/SettingsModal";
+import { WorkspaceExportMenu } from "@/components/workspace/WorkspaceExportMenu";
+import { WorkspacePrimaryAction } from "@/components/workspace/WorkspacePrimaryAction";
+import { WorkspaceAdvancedTools } from "@/components/workspace/WorkspaceAdvancedTools";
 import { generateComicInfoXml } from "@/lib/export/exportManager";
 import {
   FindReplaceDialog,
@@ -46,7 +49,7 @@ export default function WorkspacePage() {
   const uiOperationLockRef = useRef(false);
   const [isUiOperationBusy, setIsUiOperationBusy] = useState(false);
   const [brokenPages, setBrokenPages] = useState<Set<string>>(new Set());
-  
+
   // Settings Modal State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
@@ -406,24 +409,24 @@ export default function WorkspacePage() {
       ) {
         const currentDataUrl = downloadTranslatedImage("single", index, "", true);
         if (currentDataUrl) return currentDataUrl;
-      } 
-      
+      }
+
       if (translatedImageCacheRef.current.has(pageUrl)) {
         return translatedImageCacheRef.current.get(pageUrl) as string;
       }
-      
+
       const bubbles = bubbleCacheRef.current.get(pageUrl);
       if (bubbles && bubbles.length > 0) {
         setTranslationResult(`⏳ กำลังเตรียมรูปภาพหน้า ${index + 1}/${pages.length}...`);
         return new Promise<string>((resolve) => {
           const offscreenContainer = document.getElementById("offscreen-container");
           const offscreenImg = document.getElementById("offscreen-image") as HTMLImageElement;
-          
+
           if (!offscreenContainer || !offscreenImg) {
             resolve(pageUrl);
             return;
           }
-          
+
           // Safety timeout (4 seconds) so export never hangs indefinitely
           const timeout = setTimeout(() => {
             console.warn(`Offscreen render timed out for page ${index + 1}`);
@@ -431,7 +434,7 @@ export default function WorkspacePage() {
           }, 4000);
 
           offscreenContainer.querySelectorAll(".tl-overlay,.tl-canvas").forEach((el) => el.remove());
-          
+
           offscreenImg.onload = () => {
             applyTranslationOverlay(
               bubbles,
@@ -456,7 +459,7 @@ export default function WorkspacePage() {
       }
       return pageUrl;
     };
-    
+
     if (format === "strip") {
       try {
         setTranslationResult(`⏳ กำลังโหลดและรวมภาพแบบ Webtoon Strip...`);
@@ -510,8 +513,8 @@ export default function WorkspacePage() {
           const stripDataUrl = stripCanvas.toDataURL("image/jpeg", 0.92);
           const link = document.createElement("a");
           link.href = stripDataUrl;
-          link.download = isMulti 
-            ? `SuperK_Webtoon_Strip_Part${String(index).padStart(2, '0')}.jpg` 
+          link.download = isMulti
+            ? `SuperK_Webtoon_Strip_Part${String(index).padStart(2, '0')}.jpg`
             : `SuperK_Webtoon_LongStrip.jpg`;
           link.click();
         };
@@ -542,7 +545,7 @@ export default function WorkspacePage() {
       }
       return;
     }
-    
+
     if (format === "pdf") {
       try {
         const pdf = new jsPDF({ orientation: "portrait", unit: "px" });
@@ -552,7 +555,7 @@ export default function WorkspacePage() {
           try {
             const dataUrl = await getExportDataUrl(pages[i].url, i);
             if (!dataUrl) continue;
-            
+
             const img = new Image();
             img.src = dataUrl;
             await new Promise<void>((resolve) => {
@@ -560,7 +563,7 @@ export default function WorkspacePage() {
               img.onload = () => { clearTimeout(timer); resolve(); };
               img.onerror = () => { clearTimeout(timer); resolve(); };
             });
-            
+
             if (!img.naturalWidth || !img.naturalHeight) {
               console.warn(`Skipping broken page ${i + 1} for PDF export`);
               continue;
@@ -569,19 +572,19 @@ export default function WorkspacePage() {
             const orientation = img.naturalWidth > img.naturalHeight ? "l" : "p";
             if (addedCount > 0) pdf.addPage([img.naturalWidth, img.naturalHeight], orientation);
             else pdf.setPage(1);
-            
+
             if (addedCount === 0) {
               pdf.deletePage(1);
               pdf.addPage([img.naturalWidth, img.naturalHeight], orientation);
             }
-            
+
             pdf.addImage(dataUrl, "JPEG", 0, 0, img.naturalWidth, img.naturalHeight);
             addedCount++;
           } catch (err) {
             console.warn(`Error processing PDF page ${i + 1}`, err);
           }
         }
-        
+
         if (addedCount > 0) {
           setTranslationResult(`⏳ กำลังบันทึก PDF...`);
           pdf.save("SuperK_Translations.pdf");
@@ -599,17 +602,17 @@ export default function WorkspacePage() {
       }
       return;
     }
-    
+
     const zip = new JSZip();
     let zipAddedCount = 0;
-    
+
     for (let i = 0; i < pages.length; i++) {
       try {
         const dataUrl = await getExportDataUrl(pages[i].url, i);
         if (!dataUrl || !dataUrl.includes(",")) continue;
         const base64Data = dataUrl.split(",")[1];
         if (!base64Data) continue;
-        
+
         const originalName = pages[i].name;
         const extension = originalName.includes('.') ? originalName.split('.').pop() : 'png';
         const baseName = originalName.includes('.') ? originalName.substring(0, originalName.lastIndexOf('.')) : originalName;
@@ -620,7 +623,7 @@ export default function WorkspacePage() {
         console.warn(`Error processing ZIP page ${i + 1}`, err);
       }
     }
-    
+
     try {
       if (zipAddedCount > 0) {
         if (format === "cbz") {
@@ -654,7 +657,7 @@ export default function WorkspacePage() {
 
   const processFiles = async (files: File[]) => {
     // Natural sort: "page1, page2, page10" instead of "page1, page10, page2"
-    const sorted = [...files].sort((a, b) => 
+    const sorted = [...files].sort((a, b) =>
       a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
     );
 
@@ -664,11 +667,11 @@ export default function WorkspacePage() {
         try {
           const zip = new JSZip();
           const loadedZip = await zip.loadAsync(file);
-          
+
           const zipFiles = Object.values(loadedZip.files).filter(f => !f.dir && f.name.match(/\.(jpg|jpeg|png|webp|gif)$/i));
-          
+
           zipFiles.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
-          
+
           for (const zipFile of zipFiles) {
             const base64 = await zipFile.async("base64");
             const ext = zipFile.name.split('.').pop()?.toLowerCase();
@@ -687,7 +690,7 @@ export default function WorkspacePage() {
           const arrayBuffer = await file.arrayBuffer();
           const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
           const numPages = pdf.numPages;
-          
+
           for (let i = 1; i <= numPages; i++) {
             const page = await pdf.getPage(i);
             const viewport = page.getViewport({ scale: 2.0 }); // scale for better quality
@@ -696,7 +699,7 @@ export default function WorkspacePage() {
             canvas.height = viewport.height;
             const ctx = canvas.getContext("2d");
             if (!ctx) continue;
-            
+
             // pdfjs RenderParameters requires canvas ctx type from its own DOM
             // lib; our ctx is structurally identical so cast through unknown.
             const renderParams = {
@@ -719,7 +722,7 @@ export default function WorkspacePage() {
         newPages.push({ url: base64, name: file.name });
       }
     }
-    
+
     if (newPages.length > 0) {
       setPages(prev => {
         const updated = [...prev, ...newPages];
@@ -757,7 +760,7 @@ export default function WorkspacePage() {
   };
 
   return (
-    <div 
+    <div
       className="min-h-screen bg-background text-foreground flex flex-col font-sans"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -770,12 +773,12 @@ export default function WorkspacePage() {
           border: '1px solid var(--surface-hover)',
         },
       }} />
-      
+
       {/* Batch Progress Bar - Full Width */}
       {translateAllProgress && (
         <div className="fixed top-16 left-0 right-0 z-50">
           <div className="h-1 bg-surface w-full">
-            <div 
+            <div
               className="h-full bg-primary transition-all duration-500 ease-out"
               style={{ width: `${(translateAllProgress.current / translateAllProgress.total) * 100}%` }}
             />
@@ -784,36 +787,52 @@ export default function WorkspacePage() {
       )}
 
       {/* Header Panel */}
-      <header className="w-full bg-background/80 backdrop-blur-md border-b border-surface-hover h-16 flex justify-between items-center px-2 sm:px-6 z-50 fixed top-0">
-        <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0 mr-2">
-          <h1 className="text-lg font-medium tracking-tight text-foreground">
-            Super<span className="text-primary">K</span>
+      <header className="w-full bg-background/95 backdrop-blur-md border-b border-border/80 h-14 flex justify-between items-center px-3 sm:px-5 z-50 fixed top-0 select-none">
+        <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+          <h1 className="text-base font-semibold tracking-tight text-foreground flex items-center">
+            <span className="flex items-center gap-0.5">
+              Super<span className="text-primary font-bold">K</span>
+            </span>
+            <span className="text-muted text-xs font-normal hidden sm:inline-block pl-2.5 ml-2.5 border-l border-border/80 tracking-wide uppercase">
+              Manga Translator
+            </span>
           </h1>
-          <span className="text-muted text-sm hidden sm:inline-block pl-3 border-l border-surface-hover">Manga Translator</span>
         </div>
-        
-      {/* Simple Settings Modal with Backdrop */}
-      {isSettingsOpen && (
-        <>
-          <div 
-            className="fixed inset-0 bg-black/60 backdrop-blur-xs z-[90] animate-in fade-in duration-200" 
-            onClick={() => setIsSettingsOpen(false)} 
-          />
-          <div id="settings-modal" className="fixed inset-x-4 top-16 sm:absolute sm:inset-auto sm:right-6 sm:top-14 w-auto sm:w-80 max-w-sm bg-surface/95 backdrop-blur-xl border border-surface-hover rounded-xl shadow-2xl p-4 z-[100] max-h-[85vh] overflow-y-auto mx-auto animate-in fade-in zoom-in-95 duration-200">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="font-medium text-foreground">Settings</h3>
-              <button onClick={() => setIsSettingsOpen(false)} className="text-muted hover:text-foreground p-1 rounded-md hover:bg-surface">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-              </button>
-            </div>
-              
+
+        {/* Simple Settings Modal with Backdrop */}
+        {isSettingsOpen && (
+          <>
+            <div
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs z-[90] animate-in fade-in duration-200"
+              onClick={() => setIsSettingsOpen(false)}
+              aria-hidden="true"
+            />
+            <div
+              id="settings-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="settings-modal-title"
+              className="fixed inset-x-4 top-16 sm:absolute sm:inset-auto sm:right-6 sm:top-14 w-auto sm:w-80 max-w-sm bg-surface/95 backdrop-blur-xl border border-border rounded-xl shadow-2xl p-4 z-[100] max-h-[85vh] overflow-y-auto mx-auto animate-in fade-in zoom-in-95 duration-200"
+            >
+              <div className="flex justify-between items-center mb-4">
+                <h3 id="settings-modal-title" className="font-semibold text-foreground text-sm">Settings</h3>
+                <button
+                  type="button"
+                  onClick={() => setIsSettingsOpen(false)}
+                  aria-label="ปิดหน้าต่างตั้งค่า"
+                  className="text-muted hover:text-foreground p-1.5 rounded-md hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  <X className="w-4 h-4" aria-hidden="true" />
+                </button>
+              </div>
+
               <div className="space-y-4">
                 <div>
                   <label className="block text-xs font-medium text-muted mb-1">Source Language (ภาษาต้นฉบับ)</label>
                   <select
                     value={sourceLang}
                     onChange={(e) => setSourceLang(e.target.value)}
-                    className="w-full bg-background border border-surface-hover rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary appearance-none"
+                    className="w-full bg-background border border-border rounded-md px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary appearance-none"
                   >
                     <option value="auto">Auto Detect (ตรวจจับอัตโนมัติ)</option>
                     <option value="Japanese">🇯🇵 Japanese (ญี่ปุ่น)</option>
@@ -823,16 +842,16 @@ export default function WorkspacePage() {
                   </select>
                 </div>
 
-                <div className="pt-2 border-t border-surface-hover">
+                <div className="pt-2 border-t border-border">
                   <label className="block text-xs font-medium text-muted mb-2">Text Style (รูปแบบข้อความแปล)</label>
-                  
+
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between text-sm">
+                    <div className="flex items-center justify-between text-xs">
                       <span className="text-muted">Font Family</span>
                       <select
                         value={textStyle.fontFamily}
                         onChange={(e) => setTextStyle({ ...textStyle, fontFamily: e.target.value })}
-                        className="bg-background border border-surface-hover rounded px-2 py-1 text-foreground focus:outline-none focus:ring-1 focus:ring-primary w-32"
+                        className="bg-background border border-border rounded px-2 py-1 text-foreground focus:outline-none focus:ring-1 focus:ring-primary w-32"
                       >
                         <option value="Itim, cursive">Itim (การ์ตูน)</option>
                         <option value="Prompt, sans-serif">Prompt (อ่านง่าย)</option>
@@ -841,48 +860,51 @@ export default function WorkspacePage() {
                       </select>
                     </div>
 
-                    <div className="flex items-center justify-between text-sm">
+                    <div className="flex items-center justify-between text-xs">
                       <span className="text-muted">Text Color</span>
-                      <input 
-                        type="color" 
+                      <input
+                        type="color"
                         value={textStyle.textColor}
                         onChange={(e) => setTextStyle({ ...textStyle, textColor: e.target.value })}
-                        className="w-8 h-8 rounded cursor-pointer border-0 p-0 bg-transparent"
+                        aria-label="เลือกสีข้อความ"
+                        className="w-7 h-7 rounded cursor-pointer border-0 p-0 bg-transparent"
                       />
                     </div>
 
-                    <div className="flex items-center justify-between text-sm">
+                    <div className="flex items-center justify-between text-xs">
                       <span className="text-muted">Outline Color</span>
-                      <input 
-                        type="color" 
+                      <input
+                        type="color"
                         value={textStyle.textOutline}
                         onChange={(e) => setTextStyle({ ...textStyle, textOutline: e.target.value })}
-                        className="w-8 h-8 rounded cursor-pointer border-0 p-0 bg-transparent"
+                        aria-label="เลือกสีขอบข้อความ"
+                        className="w-7 h-7 rounded cursor-pointer border-0 p-0 bg-transparent"
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <div className="flex items-center justify-between text-sm text-muted">
+                      <div className="flex items-center justify-between text-xs text-muted">
                         <span>Font Size Multiplier</span>
-                        <span>{textStyle.fontSizeMultiplier.toFixed(1)}x</span>
+                        <span className="font-semibold text-foreground">{textStyle.fontSizeMultiplier.toFixed(1)}x</span>
                       </div>
-                      <input 
-                        type="range" 
+                      <input
+                        type="range"
                         min="0.5" max="2.0" step="0.1"
                         value={textStyle.fontSizeMultiplier}
                         onChange={(e) => setTextStyle({ ...textStyle, fontSizeMultiplier: parseFloat(e.target.value) })}
+                        aria-label="ปรับขนาดฟอนต์"
                         className="w-full accent-primary"
                       />
                     </div>
                   </div>
                 </div>
 
-                <div className="pt-2 border-t border-surface-hover">
+                <div className="pt-2 border-t border-border">
                   <label className="block text-xs font-medium text-muted mb-1">Model Preference</label>
                   <select
                     value={modelPreference}
                     onChange={(e) => setModelPreference(e.target.value)}
-                    className="w-full bg-background border border-surface-hover rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary appearance-none"
+                    className="w-full bg-background border border-border rounded-md px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary appearance-none"
                   >
                     <option value="auto">Auto (สลับโมเดลอัตโนมัติเมื่อโควต้าเต็ม)</option>
                     <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash Lite (แนะนำ! โควต้าเหลือเพียบ 500 RPD)</option>
@@ -894,19 +916,20 @@ export default function WorkspacePage() {
                     <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
                   </select>
                 </div>
-                
+
                 <div>
                   <label className="block text-xs font-medium text-muted mb-1">Gemini API Key (Optional)</label>
-                  <input 
-                    type="password" 
+                  <input
+                    type="password"
                     value={userApiKey}
                     onChange={(e) => setUserApiKey(e.target.value)}
-                    placeholder="AIzaSy..." 
-                    className="w-full bg-background border border-surface-hover rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    placeholder="AIzaSy..."
+                    aria-label="Gemini API Key"
+                    className="w-full bg-background border border-border rounded-md px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   />
-                  <p className="text-[10px] text-muted mt-1 leading-relaxed">
-                    By default, the app uses a shared key with limits (5 req/min). 
-                    To avoid &quot;Quota exceeded&quot; errors (especially in 18+ mode), enter your own free Gemini API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-primary hover:underline">Google AI Studio</a>.
+                  <p className="text-[11px] text-muted mt-1.5 leading-relaxed">
+                    By default, the app uses a shared key with limits.
+                    To avoid &quot;Quota exceeded&quot; errors (especially in 18+ mode), enter your free Gemini API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-primary underline font-medium">Google AI Studio</a>.
                   </p>
                 </div>
 
@@ -914,234 +937,180 @@ export default function WorkspacePage() {
             </div>
           </>
         )}
-            
-        {/* Desktop Menu — Grouped: [Settings | View] | [Undo/Redo] | [Translate] | [Download] */}
-        <div className="hidden md:flex items-center gap-1.5 lg:gap-2 flex-wrap">
-          {/* ── Group 1: Settings & View ── */}
-          <div className="flex items-center gap-1 bg-surface/50 rounded-lg px-1 py-0.5 border border-surface-hover/50">
-            <button
-              onClick={() => setIsSettingsOpen(!isSettingsOpen)}
-              className={`px-2.5 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 transition-all duration-150 ${isSettingsOpen ? 'text-primary bg-primary/10' : 'text-muted hover:text-foreground hover:bg-surface-hover'}`}
-              title="ตั้งค่า API & ฟอนต์"
-            >
-              <Settings className="w-4 h-4" />
-            </button>
 
-            <button
-              onClick={() => setNsfwBypassMode(!nsfwBypassMode)}
-              className={`px-2.5 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 transition-all duration-150 ${nsfwBypassMode ? 'text-red-400 bg-red-500/15 shadow-[0_0_8px_rgba(239,68,68,0.2)]' : 'text-muted hover:text-foreground hover:bg-surface-hover'}`}
-              title="โหมด 18+ หั่นภาพหลบเซนเซอร์"
-            >
-              <Flame className="w-4 h-4" />
-              {nsfwBypassMode && <span className="text-[10px] font-bold bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded-full leading-none">ON</span>}
-            </button>
-
-            <div className="w-px h-5 bg-surface-hover mx-0.5" />
-
-            <button
-              onClick={toggleOriginalTranslated}
-              disabled={!hasCurrentTranslation}
-              className={`px-2.5 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 transition-all duration-150 ${workspaceLayer === "original" ? 'text-muted hover:text-foreground hover:bg-surface-hover' : 'text-primary bg-primary/10'} disabled:opacity-30`}
-              title={workspaceLayer === "original" ? 'แสดงคำแปล' : 'ดูต้นฉบับ'}
-            >
-              {workspaceLayer === "original" ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
-            </button>
-
-            <button
-              onClick={() => setViewLayout(prev => prev === 'single' ? 'scroll' : 'single')}
-              disabled={pages.length === 0}
-              className={`px-2.5 py-1.5 rounded-md text-sm font-medium flex items-center gap-1.5 transition-all duration-150 ${viewLayout === 'scroll' ? 'text-primary bg-primary/10' : 'text-muted hover:text-foreground hover:bg-surface-hover'} disabled:opacity-30`}
-              title={viewLayout === 'scroll' ? 'โหมดเลื่อนอ่าน' : 'โหมดทีละหน้า'}
-            >
-              {viewLayout === 'scroll' ? <GalleryVertical className="w-4 h-4" /> : <RectangleHorizontal className="w-4 h-4" />}
-            </button>
-          </div>
-
-          {/* ── Group 2: Undo / Redo ── */}
-          <div className="flex items-center gap-0.5 bg-surface/50 rounded-lg px-1 py-0.5 border border-surface-hover/50">
-            <button
-              onClick={() => {
-                const label = undoManager.undo();
-                if (label) import('react-hot-toast').then(m => m.default(`↩️ Undo: ${label}`, { duration: 1500 }));
-              }}
-              disabled={!canUndo}
-              className="px-2 py-1.5 rounded-md text-sm font-medium flex items-center gap-1 transition-all duration-150 text-muted hover:text-foreground hover:bg-surface-hover disabled:opacity-20"
-              title="Undo (Ctrl+Z)"
-            >
-              <Undo2 className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => {
-                const label = undoManager.redo();
-                if (label) import('react-hot-toast').then(m => m.default(`↪️ Redo: ${label}`, { duration: 1500 }));
-              }}
-              disabled={!canRedo}
-              className="px-2 py-1.5 rounded-md text-sm font-medium flex items-center gap-1 transition-all duration-150 text-muted hover:text-foreground hover:bg-surface-hover disabled:opacity-20"
-              title="Redo (Ctrl+Shift+Z)"
-            >
-              <Redo2 className="w-4 h-4" />
-            </button>
-          </div>
-          
-          {/* ── Group 3: Translate Actions ── */}
-          <div className="flex items-center gap-1.5">
-            {batchFailures.length > 0 && !isTranslatingAll && !isTranslating && (
+        {/* Desktop Menu */}
+        <div className="hidden md:flex items-center gap-2.5 flex-nowrap">
+          {pages.length === 0 ? (
+            /* ── Empty State Header Controls: Clean & Minimal ── */
+            <div className="flex items-center gap-2">
               <button
-                onClick={() => void retryFailedPages()}
-                disabled={operationBusy || pages.length === 0}
-                className="flex-shrink-0 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 border border-amber-500/30 px-3 py-1.5 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm animate-pulse cursor-pointer"
-                title="ลองใหม่เฉพาะหน้าที่แปลไม่สำเร็จ"
+                type="button"
+                onClick={() => setNsfwBypassMode(!nsfwBypassMode)}
+                aria-label={nsfwBypassMode ? "ปิดโหมด 18+ หั่นภาพหลบเซนเซอร์" : "เปิดโหมด 18+ หั่นภาพหลบเซนเซอร์"}
+                className={`h-8.5 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                  nsfwBypassMode
+                    ? 'text-red-400 bg-red-500/15 border-red-500/30 shadow-xs'
+                    : 'text-foreground border-border hover:bg-surface-hover'
+                }`}
+                title="โหมด 18+ หั่นภาพหลบเซนเซอร์"
               >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>ลองใหม่ {batchFailures.length} หน้าที่พลาด</span>
+                <Flame className="w-4 h-4 text-red-400" aria-hidden="true" />
+                <span>โหมด 18+</span>
+                {nsfwBypassMode && <span className="text-[9px] font-bold bg-red-500/20 text-red-400 px-1 py-0.2 rounded-full leading-none">ON</span>}
               </button>
-            )}
-            <button 
-              onClick={() => void handleTranslateCurrent()}
-              disabled={operationBusy || pages.length === 0}
-              className="flex-shrink-0 bg-primary text-primary-content hover:bg-primary-hover disabled:opacity-50 px-4 py-1.5 rounded-md text-sm font-semibold flex items-center gap-2 transition-all duration-150 shadow-sm hover:shadow-md"
-            >
-              {isTranslating ? (
-                <span className="flex items-center gap-2">
-                  <span className="animate-spin h-3 w-3 border-2 border-primary-content border-t-transparent rounded-full"></span>
-                  <span>{workflowPhase === "cleaning" ? "กำลังคลีน..." : "กำลังแปล..."}</span>
-                </span>
-              ) : (
-                <span className="flex items-center gap-2">
-                  <Wand2 className="w-4 h-4" />
-                  <span>แปลหน้านี้</span>
-                </span>
-              )}
-            </button>
 
-            {isTranslatingAll ? (
-              <div className="flex-shrink-0 flex items-center gap-2 bg-primary/5 border border-primary/20 rounded-lg px-3 py-1">
-                <div className="flex flex-col gap-1 min-w-[140px]">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-primary font-semibold flex items-center gap-1.5">
-                      <span className="animate-spin h-3 w-3 border-2 border-primary border-t-transparent rounded-full"></span>
-                      {translateAllProgress?.message ?? 'เตรียม...'}
-                    </span>
-                    {translateAllProgress && (
-                      <span className="text-muted font-medium">
-                        {Math.round((translateAllProgress.current / translateAllProgress.total) * 100)}%
-                      </span>
-                    )}
-                  </div>
-                  <div className="w-full h-1.5 bg-surface rounded-full overflow-hidden">
-                    <div 
-                      className="h-full bg-gradient-to-r from-primary to-primary/70 rounded-full transition-all duration-500 ease-out"
-                      style={{ width: translateAllProgress ? `${(translateAllProgress.current / translateAllProgress.total) * 100}%` : '0%' }}
-                    />
-                  </div>
-                  {translateAllProgress && translateAllProgress.current > 1 && typeof translateAllProgress.remainingSeconds === 'number' && (
-                    <span className="text-[10px] text-muted">
-                      {translateAllProgress.remainingSeconds < 60
-                        ? `เหลือ ~${Math.ceil(translateAllProgress.remainingSeconds)} วิ`
-                        : `เหลือ ~${Math.ceil(translateAllProgress.remainingSeconds / 60)} นาที`}
-                    </span>
-                  )}
+              <button
+                type="button"
+                onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+                aria-label="เปิดหน้าต่างตั้งค่า"
+                className={`h-8.5 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                  isSettingsOpen
+                    ? 'text-primary bg-primary/10 border-primary/30'
+                    : 'text-foreground border-border hover:bg-surface-hover'
+                }`}
+                title="ตั้งค่า API & ฟอนต์"
+              >
+                <Settings className="w-4 h-4 text-muted" aria-hidden="true" />
+                <span>ตั้งค่า</span>
+              </button>
+            </div>
+          ) : (
+            /* ── Active Workspace Controls: Grouped & Unified ── */
+            <>
+              {/* ── Utilities Group (Undo, Redo, Eye, Layout, Tools) ── */}
+              <div className="flex items-center gap-1.5" role="group" aria-label="เครื่องมือและมุมมอง">
+                <div className="flex items-center bg-surface/80 rounded-lg p-0.5 border border-border/70 gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const label = undoManager.undo();
+                      if (label) import('react-hot-toast').then(m => m.default(`↩️ Undo: ${label}`, { duration: 1500 }));
+                    }}
+                    disabled={!canUndo}
+                    aria-label="เลิกทำ (Undo, Ctrl+Z)"
+                    className="h-7.5 w-7.5 rounded-md flex items-center justify-center text-muted hover:text-foreground hover:bg-surface-hover/80 disabled:opacity-25 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    title="Undo (Ctrl+Z)"
+                  >
+                    <Undo2 className="w-4 h-4" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const label = undoManager.redo();
+                      if (label) import('react-hot-toast').then(m => m.default(`↪️ Redo: ${label}`, { duration: 1500 }));
+                    }}
+                    disabled={!canRedo}
+                    aria-label="ทำซ้ำ (Redo, Ctrl+Shift+Z)"
+                    className="h-7.5 w-7.5 rounded-md flex items-center justify-center text-muted hover:text-foreground hover:bg-surface-hover/80 disabled:opacity-25 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    title="Redo (Ctrl+Shift+Z)"
+                  >
+                    <Redo2 className="w-4 h-4" aria-hidden="true" />
+                  </button>
                 </div>
-                <button 
-                  onClick={cancelTranslateAll} 
-                  className="bg-red-500/15 text-red-400 hover:bg-red-500/25 px-3 py-1.5 rounded-md text-xs font-semibold transition-all"
+
+                {/* Layer toggle for quickly peeking translation */}
+                <button
+                  type="button"
+                  onClick={toggleOriginalTranslated}
+                  disabled={!hasCurrentTranslation}
+                  aria-label={workspaceLayer === "original" ? "สลับไปแสดงคำแปล" : "สลับไปดูภาพต้นฉบับ"}
+                  className={`h-8.5 w-8.5 rounded-lg border border-border flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                    workspaceLayer === "original" ? 'text-muted hover:text-foreground hover:bg-surface-hover/80 bg-surface' : 'text-primary bg-primary/10'
+                  } disabled:opacity-30`}
+                  title={workspaceLayer === "original" ? 'แสดงคำแปล' : 'ดูต้นฉบับ'}
                 >
-                  หยุด
+                  {workspaceLayer === "original" ? <Eye className="w-4 h-4" aria-hidden="true" /> : <EyeOff className="w-4 h-4" aria-hidden="true" />}
                 </button>
+
+                {/* Layout toggle (Single / Scroll) */}
+                <button
+                  type="button"
+                  onClick={() => setViewLayout(prev => prev === 'single' ? 'scroll' : 'single')}
+                  disabled={pages.length === 0}
+                  aria-label={viewLayout === 'scroll' ? "เปลี่ยนเป็นโหมดอ่านทีละหน้า" : "เปลี่ยนเป็นโหมดเลื่อนอ่าน"}
+                  className={`h-8.5 w-8.5 rounded-lg border border-border flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                    viewLayout === 'scroll' ? 'text-primary bg-primary/10' : 'text-muted hover:text-foreground hover:bg-surface-hover/80 bg-surface'
+                  } disabled:opacity-30`}
+                  title={viewLayout === 'scroll' ? 'โหมดเลื่อนอ่าน' : 'โหมดทีละหน้า'}
+                >
+                  {viewLayout === 'scroll' ? <GalleryVertical className="w-4 h-4" aria-hidden="true" /> : <RectangleHorizontal className="w-4 h-4" aria-hidden="true" />}
+                </button>
+
+                {/* Advanced Tools dropdown */}
+                <WorkspaceAdvancedTools
+                  batchFailures={batchFailures}
+                  onRetryFailedPages={() => void retryFailedPages()}
+                  disabled={operationBusy}
+                  nsfwBypassMode={nsfwBypassMode}
+                  onToggleNsfw={() => setNsfwBypassMode(!nsfwBypassMode)}
+                  viewLayout={viewLayout}
+                  onToggleViewLayout={() => setViewLayout(prev => prev === 'single' ? 'scroll' : 'single')}
+                  onOpenSettings={() => setIsSettingsOpen(true)}
+                  onOpenShortcuts={() => setIsShortcutsOpen(true)}
+                />
               </div>
-            ) : (
-              <button 
-                onClick={() => void handleTranslateBook()}
-                disabled={operationBusy || pages.length === 0}
-                className="flex-shrink-0 bg-gradient-to-r from-primary/20 to-primary/10 text-primary hover:from-primary/30 hover:to-primary/20 disabled:opacity-50 px-4 py-1.5 rounded-md text-sm font-semibold flex items-center gap-2 transition-all duration-150 border border-primary/20"
-              >
-                <Sparkles className="w-4 h-4" />
-                <span>แปลทั้งเล่ม</span>
-              </button>
-            )}
-          </div>
 
-          {/* ── Group 4: Download ── */}
-          <div className="flex-shrink-0 flex items-center bg-surface/50 rounded-lg border border-surface-hover/50 overflow-hidden">
-            <button
-              onClick={() => {
-                const originalName = pages[currentPage].name;
-                const extension = originalName.includes('.') ? originalName.split('.').pop() : 'png';
-                const baseName = originalName.includes('.') ? originalName.substring(0, originalName.lastIndexOf('.')) : originalName;
-                const filename = `SuperK_Page_${String(currentPage + 1).padStart(3, '0')}_${baseName}.${extension}`;
-                downloadTranslatedImage("single", currentPage, filename);
-              }}
-              disabled={activeBubbles.length === 0 || workspaceLayer !== "translated"}
-              className="text-foreground disabled:opacity-40 px-2.5 py-1.5 text-sm font-medium flex items-center gap-1.5 border-r border-surface-hover/60 hover:bg-surface-hover transition-all"
-              title="ดาวน์โหลดหน้านี้"
-            >
-              <Download className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => handleDownloadAll("strip")}
-              disabled={isZipping || pages.length === 0}
-              className="text-foreground disabled:opacity-40 px-2.5 py-1.5 text-sm flex items-center gap-1 border-r border-surface-hover/60 hover:bg-surface-hover transition-all"
-              title="ดาวน์โหลดทั้งหมดเป็น Webtoon Long Strip"
-            >
-              {isZipping ? <span className="animate-spin h-3.5 w-3.5 border-2 border-foreground border-t-transparent rounded-full"></span> : <><GalleryVertical className="w-3.5 h-3.5 text-muted" /><span className="text-xs font-bold">Strip</span></>}
-            </button>
-            <button
-              onClick={() => handleDownloadAll("zip")}
-              disabled={isZipping || pages.length === 0}
-              className="text-foreground disabled:opacity-40 px-2.5 py-1.5 text-sm flex items-center gap-1 border-r border-surface-hover/60 hover:bg-surface-hover transition-all"
-              title="ดาวน์โหลดทั้งหมดเป็น ZIP"
-            >
-              {isZipping ? <span className="animate-spin h-3.5 w-3.5 border-2 border-foreground border-t-transparent rounded-full"></span> : <><FileArchive className="w-3.5 h-3.5 text-muted" /><span className="text-xs font-bold">ZIP</span></>}
-            </button>
-            <button
-              onClick={() => handleDownloadAll("cbz")}
-              disabled={isZipping || pages.length === 0}
-              className="text-foreground disabled:opacity-40 px-2.5 py-1.5 text-sm flex items-center gap-1 border-r border-surface-hover/60 hover:bg-surface-hover transition-all"
-              title="ดาวน์โหลดทั้งหมดเป็น CBZ"
-            >
-              {isZipping ? <span className="animate-spin h-3.5 w-3.5 border-2 border-foreground border-t-transparent rounded-full"></span> : <><BookOpen className="w-3.5 h-3.5 text-muted" /><span className="text-xs font-bold">CBZ</span></>}
-            </button>
-            <button
-              onClick={() => handleDownloadAll("pdf")}
-              disabled={isZipping || pages.length === 0}
-              className="text-foreground disabled:opacity-40 px-2.5 py-1.5 text-sm flex items-center gap-1 hover:bg-surface-hover transition-all"
-              title="ดาวน์โหลดทั้งหมดเป็น PDF"
-            >
-              {isZipping ? <span className="animate-spin h-3.5 w-3.5 border-2 border-foreground border-t-transparent rounded-full"></span> : <><FileText className="w-3.5 h-3.5 text-muted" /><span className="text-xs font-bold">PDF</span></>}
-            </button>
-          </div>
+              {/* ── Primary Action Buttons ── */}
+              <div className="flex items-center gap-2">
+                <WorkspacePrimaryAction
+                  isTranslating={isTranslating}
+                  isTranslatingAll={isTranslatingAll}
+                  workflowPhase={workflowPhase}
+                  translateAllProgress={translateAllProgress}
+                  onTranslateCurrent={() => void handleTranslateCurrent()}
+                  onTranslateBook={() => void handleTranslateBook()}
+                  onCancelTranslateAll={cancelTranslateAll}
+                  disabled={operationBusy || pages.length === 0}
+                />
 
-          <button
-            onClick={() => setIsSettingsOpen(true)}
-            className="p-2 rounded-lg bg-surface/50 border border-surface-hover/50 text-muted hover:text-foreground hover:bg-surface-hover transition-all"
-            title="Settings (API Key, ฟอนต์, Glossary)"
-          >
-            <Settings className="w-4 h-4" />
-          </button>
+                {/* ── Export Menu Dropdown ── */}
+                <WorkspaceExportMenu
+                  disabled={pages.length === 0}
+                  disabledKinds={{
+                    image: activeBubbles.length === 0 || workspaceLayer !== "translated",
+                    pdf: isZipping || pages.length === 0,
+                    strip: isZipping || pages.length === 0,
+                    zip: isZipping || pages.length === 0,
+                    cbz: isZipping || pages.length === 0,
+                  }}
+                  onExport={(kind) => {
+                    if (kind === "image") {
+                      const originalName = pages[currentPage]?.name || "page.png";
+                      const extension = originalName.includes('.') ? originalName.split('.').pop() : 'png';
+                      const baseName = originalName.includes('.') ? originalName.substring(0, originalName.lastIndexOf('.')) : originalName;
+                      const filename = `SuperK_Page_${String(currentPage + 1).padStart(3, '0')}_${baseName}.${extension}`;
+                      downloadTranslatedImage("single", currentPage, filename);
+                    } else {
+                      handleDownloadAll(kind);
+                    }
+                  }}
+                />
+              </div>
+            </>
+          )}
         </div>
 
         {/* Mobile Header Controls */}
         <div className="flex md:hidden items-center gap-2">
-          <button 
-            onClick={() => void handleTranslateCurrent()}
-            disabled={operationBusy || pages.length === 0}
-            className="bg-primary text-primary-content hover:bg-primary-hover disabled:opacity-50 disabled:hover:bg-primary px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors duration-150"
-          >
-            {isTranslating ? (
-              <span className="flex items-center gap-2">
-                <span className="animate-spin h-3 w-3 border-2 border-primary-content border-t-transparent rounded-full"></span>
-                <span>Translating</span>
-              </span>
-            ) : (
-              <span className="flex items-center gap-2">
-                <Wand2 className="w-4 h-4" />
-                <span>Translate</span>
-              </span>
-            )}
-          </button>
+          {pages.length > 0 && (
+            <WorkspacePrimaryAction
+              isTranslating={isTranslating}
+              isTranslatingAll={isTranslatingAll}
+              workflowPhase={workflowPhase}
+              translateAllProgress={translateAllProgress}
+              onTranslateCurrent={() => void handleTranslateCurrent()}
+              onTranslateBook={() => void handleTranslateBook()}
+              onCancelTranslateAll={cancelTranslateAll}
+              disabled={operationBusy}
+              compact
+            />
+          )}
           <button
+            type="button"
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className={`p-2 rounded-md transition-colors ${isMobileMenuOpen ? 'bg-surface text-foreground' : 'text-muted hover:text-foreground hover:bg-surface'}`}
+            aria-expanded={isMobileMenuOpen}
+            aria-label={isMobileMenuOpen ? "ปิดเมนู" : "เปิดเมนู"}
+            className={`p-1.5 rounded-md transition-colors ${isMobileMenuOpen ? 'bg-surface text-foreground' : 'text-muted hover:text-foreground hover:bg-surface'}`}
           >
             {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>
@@ -1150,9 +1119,9 @@ export default function WorkspacePage() {
         {/* Mobile Dropdown Menu with Backdrop */}
         {isMobileMenuOpen && (
           <>
-            <div 
-              className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 md:hidden animate-in fade-in duration-200" 
-              onClick={() => setIsMobileMenuOpen(false)} 
+            <div
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 md:hidden animate-in fade-in duration-200"
+              onClick={() => setIsMobileMenuOpen(false)}
             />
             <div className="absolute top-[60px] right-3 left-3 sm:right-6 sm:w-80 sm:left-auto bg-background border border-surface shadow-2xl rounded-xl p-3.5 z-50 md:hidden flex flex-col gap-3 max-h-[calc(100vh-80px)] overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-200">
 
@@ -1173,7 +1142,7 @@ export default function WorkspacePage() {
                     )}
                   </div>
                   <div className="w-full h-2 bg-surface rounded-full overflow-hidden">
-                    <div 
+                    <div
                       className="h-full bg-gradient-to-r from-primary to-primary/60 rounded-full transition-all duration-500 ease-out"
                       style={{ width: translateAllProgress ? `${(translateAllProgress.current / translateAllProgress.total) * 100}%` : '0%' }}
                     />
@@ -1185,20 +1154,20 @@ export default function WorkspacePage() {
                         : `เหลืออีก ~${Math.ceil(translateAllProgress.remainingSeconds / 60)} นาที`}
                     </span>
                   )}
-                  <button 
-                    onClick={cancelTranslateAll} 
+                  <button
+                    onClick={cancelTranslateAll}
                     className="w-full bg-red-500/15 text-red-400 hover:bg-red-500/25 px-4 py-2 rounded-md text-sm font-semibold flex justify-center items-center gap-2 transition-all"
                   >
                     ⏹ หยุดแปล
                   </button>
                 </div>
               ) : (
-                <button 
+                <button
                   onClick={() => { void handleTranslateBook(); setIsMobileMenuOpen(false); }}
                   disabled={operationBusy || pages.length === 0}
                   className="w-full bg-gradient-to-r from-primary/20 to-primary/10 text-primary hover:from-primary/30 hover:to-primary/20 disabled:opacity-50 px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-all duration-150 border border-primary/20"
                 >
-                  <Sparkles className="w-4 h-4" />
+                  <Sparkles className="w-5 h-5" />
                   <span>✨ แปลทั้งเล่ม</span>
                 </button>
               )}
@@ -1261,7 +1230,7 @@ export default function WorkspacePage() {
                 disabled={!canUndo}
                 className="bg-surface text-foreground disabled:opacity-25 p-2.5 rounded-lg text-sm font-medium flex justify-center items-center gap-2 border border-transparent"
               >
-                <Undo2 className="w-4 h-4" /> ย้อนกลับ
+                <Undo2 className="w-5 h-5" /> ย้อนกลับ
               </button>
               <button
                 onClick={() => {
@@ -1271,7 +1240,7 @@ export default function WorkspacePage() {
                 disabled={!canRedo}
                 className="bg-surface text-foreground disabled:opacity-25 p-2.5 rounded-lg text-sm font-medium flex justify-center items-center gap-2 border border-transparent"
               >
-                <Redo2 className="w-4 h-4" /> ทำซ้ำ
+                <Redo2 className="w-5 h-5" /> ทำซ้ำ
               </button>
             </div>
 
@@ -1290,7 +1259,7 @@ export default function WorkspacePage() {
                 disabled={activeBubbles.length === 0 || workspaceLayer !== "translated"}
                 className="w-full bg-surface text-foreground disabled:opacity-40 p-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2 mb-2 border border-transparent"
               >
-                <Download className="w-4 h-4" /> บันทึกหน้านี้
+                <Download className="w-5 h-5" /> บันทึกหน้านี้
               </button>
               <div className="grid grid-cols-4 gap-2">
                 <button
@@ -1298,28 +1267,28 @@ export default function WorkspacePage() {
                   disabled={isZipping || pages.length === 0}
                   className="bg-surface text-foreground disabled:opacity-40 p-2 rounded-lg text-xs font-bold flex flex-col items-center justify-center gap-1 border border-transparent"
                 >
-                  {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <><GalleryVertical className="w-4 h-4 text-muted" /><span>Strip</span></>}
+                  {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <><GalleryVertical className="w-5 h-5 text-muted" /><span>Strip</span></>}
                 </button>
                 <button
                   onClick={() => { handleDownloadAll("zip"); setIsMobileMenuOpen(false); }}
                   disabled={isZipping || pages.length === 0}
                   className="bg-surface text-foreground disabled:opacity-40 p-2 rounded-lg text-xs font-bold flex flex-col items-center justify-center gap-1 border border-transparent"
                 >
-                  {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <><FileArchive className="w-4 h-4 text-muted" /><span>ZIP</span></>}
+                  {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <><FileArchive className="w-5 h-5 text-muted" /><span>ZIP</span></>}
                 </button>
                 <button
                   onClick={() => { handleDownloadAll("cbz"); setIsMobileMenuOpen(false); }}
                   disabled={isZipping || pages.length === 0}
                   className="bg-surface text-foreground disabled:opacity-40 p-2 rounded-lg text-xs font-bold flex flex-col items-center justify-center gap-1 border border-transparent"
                 >
-                  {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <><BookOpen className="w-4 h-4 text-muted" /><span>CBZ</span></>}
+                  {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <><BookOpen className="w-5 h-5 text-muted" /><span>CBZ</span></>}
                 </button>
                 <button
                   onClick={() => { handleDownloadAll("pdf"); setIsMobileMenuOpen(false); }}
                   disabled={isZipping || pages.length === 0}
                   className="bg-surface text-foreground disabled:opacity-40 p-2 rounded-lg text-xs font-bold flex flex-col items-center justify-center gap-1 border border-transparent"
                 >
-                  {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <><FileText className="w-4 h-4 text-muted" /><span>PDF</span></>}
+                  {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <><FileText className="w-5 h-5 text-muted" /><span>PDF</span></>}
                 </button>
               </div>
             </div>
@@ -1329,10 +1298,11 @@ export default function WorkspacePage() {
     </header>
 
       {/* Main Workspace */}
-      <main className={`flex-1 w-full mt-16 flex flex-col items-center transition-opacity duration-300 ${isDragging ? 'opacity-50' : 'opacity-100'} ${pages.length > 0 ? 'mb-24 sm:mb-28' : ''}`}>
+      <main className={`flex-1 w-full mt-14 flex flex-col items-center transition-opacity duration-300 ${isDragging ? 'opacity-50' : 'opacity-100'} ${pages.length > 0 ? 'mb-24 sm:mb-28' : ''}`}>
         {workflowMessage && (
-          <div className="fixed top-20 z-40 bg-surface/80 backdrop-blur-sm border border-surface-hover text-foreground px-4 py-1.5 rounded-full text-sm shadow-sm animate-in fade-in slide-in-from-top-2 duration-300">
-            {workflowMessage}
+          <div className="fixed top-16 left-1/2 -translate-x-1/2 z-40 bg-surface/90 backdrop-blur-md border border-primary/30 text-foreground px-4 py-1.5 rounded-full text-xs font-semibold shadow-lg animate-in fade-in slide-in-from-top-2 duration-300 flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+            <span>{workflowMessage}</span>
           </div>
         )}
 
@@ -1386,7 +1356,7 @@ export default function WorkspacePage() {
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img id="offscreen-image" alt="offscreen" className="max-w-full h-auto" crossOrigin="anonymous" />
             </div>
-            
+
             {isDragging && (
               <div className="fixed inset-0 z-50 bg-background/80 flex items-center justify-center">
                 <div className="text-xl text-primary font-medium flex items-center gap-3">
@@ -1439,7 +1409,7 @@ export default function WorkspacePage() {
               <Upload className={`w-8 h-8 mb-4 ${isDragging ? 'text-primary' : 'text-muted'}`} />
               <p className="text-foreground text-lg mb-1 font-medium">Drag & Drop manga pages</p>
               <p className="text-muted text-sm mb-6">Support for Images, ZIP, CBZ, and PDF</p>
-              
+
               <label className="bg-surface hover:bg-surface-hover text-foreground px-6 py-2 rounded-md text-sm font-medium cursor-pointer transition-colors duration-150 border border-surface-hover">
                 Browse Files
                 <input type="file" multiple accept="image/*,.zip,.cbz,.pdf" className="hidden" onChange={handleImageUpload} />

@@ -1,6 +1,7 @@
 "use client";
 
-import { useRef, type ReactElement } from "react";
+import { useRef, useEffect, useMemo, type ReactElement } from "react";
+import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { MaskLegend } from "@/components/cleaning/MaskLegend";
 import type { PageCleaningResult } from "@/hooks/useCleaning";
@@ -22,6 +23,69 @@ export interface PageViewerProps {
   onImageError: (url: string) => void;
 }
 
+function VirtualPageItem({
+  page,
+  index,
+  totalPages,
+  isTranslated,
+  cleanedSrc,
+  cachedTranslated,
+  workspaceLayer,
+  onPageChange,
+  onViewLayoutChange,
+}: {
+  page: { url: string; name: string };
+  index: number;
+  totalPages: number;
+  isTranslated: boolean;
+  cleanedSrc: string;
+  cachedTranslated: string | undefined;
+  workspaceLayer: string;
+  onPageChange: (idx: number) => void;
+  onViewLayoutChange: (layout: "single" | "scroll") => void;
+}) {
+  const blobUrl = useMemo(() => {
+    if (cachedTranslated?.startsWith("data:")) {
+      return URL.createObjectURL(dataUrlToBlob(cachedTranslated));
+    }
+    return null;
+  }, [cachedTranslated]);
+
+  useEffect(() => {
+    return () => {
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
+  }, [blobUrl]);
+
+  const imgSrc =
+    workspaceLayer === "original"
+      ? page.url
+      : workspaceLayer === "translated" && isTranslated
+        ? blobUrl ?? cachedTranslated ?? cleanedSrc
+        : cleanedSrc;
+
+  return (
+    <div
+      className="w-full relative cursor-pointer hover:opacity-95 transition-opacity"
+      onClick={() => {
+        onPageChange(index);
+        onViewLayoutChange("single");
+      }}
+      title="Click to edit this page"
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={imgSrc}
+        alt={`Page ${index + 1}`}
+        className="w-full h-auto object-contain block m-0 p-0"
+      />
+      <div className="absolute top-2 left-2 bg-black/70 text-white text-xs px-2.5 py-1 rounded-md opacity-0 hover:opacity-100 pointer-events-none transition-opacity">
+        {index + 1} / {totalPages}
+      </div>
+    </div>
+  );
+}
+
 export function PageViewer({
   pages,
   currentPage,
@@ -38,6 +102,13 @@ export function PageViewer({
 }: PageViewerProps): ReactElement | null {
   const touchStartXRef = useRef<number | null>(null);
   const touchStartYRef = useRef<number | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const virtualizer = useWindowVirtualizer({
+    count: pages.length,
+    estimateSize: () => 1000,
+    overscan: 2,
+  });
 
   if (pages.length === 0) return null;
 
@@ -67,41 +138,35 @@ export function PageViewer({
   return (
     <div className="relative w-full flex justify-center items-center flex-1 min-h-[60vh]">
       {viewLayout === "scroll" ? (
-        <div className="flex flex-col items-center gap-0 w-full max-w-3xl sm:max-w-4xl lg:max-w-5xl pb-32">
-          {pages.map((p, idx) => {
-            const isTranslated = translatedImagesMap?.has(p.url) ?? false;
-            const cleanedSrc =
-              cleaningResultsByPage.get(p.url)?.cleanUrl ?? p.url;
-            const cachedTranslated = translatedImagesMap?.get(p.url);
-            const translatedBlobUrl =
-              cachedTranslated?.startsWith("data:")
-                ? URL.createObjectURL(dataUrlToBlob(cachedTranslated))
-                : cachedTranslated;
-            const imgSrc =
-              workspaceLayer === "original"
-                ? p.url
-                : workspaceLayer === "translated" && isTranslated
-                  ? translatedBlobUrl ?? cleanedSrc
-                  : cleanedSrc;
+        <div
+          ref={listRef}
+          className="relative w-full max-w-3xl sm:max-w-4xl lg:max-w-5xl mx-auto pb-32"
+          style={{ height: `${virtualizer.getTotalSize()}px` }}
+        >
+          {virtualizer.getVirtualItems().map((virtualItem) => {
+            const idx = virtualItem.index;
+            const p = pages[idx];
             return (
               <div
-                key={idx}
-                className="w-full relative cursor-pointer hover:opacity-95 transition-opacity"
-                onClick={() => {
-                  onPageChange(idx);
-                  onViewLayoutChange("single");
+                key={virtualItem.key}
+                data-index={virtualItem.index}
+                ref={virtualizer.measureElement}
+                className="absolute top-0 left-0 w-full flex justify-center"
+                style={{
+                  transform: `translateY(${virtualItem.start}px)`,
                 }}
-                title="Click to edit this page"
               >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={imgSrc}
-                  alt={`Page ${idx + 1}`}
-                  className="w-full h-auto object-contain block m-0 p-0"
+                <VirtualPageItem
+                  page={p}
+                  index={idx}
+                  totalPages={pages.length}
+                  isTranslated={translatedImagesMap?.has(p.url) ?? false}
+                  cleanedSrc={cleaningResultsByPage.get(p.url)?.cleanUrl ?? p.url}
+                  cachedTranslated={translatedImagesMap?.get(p.url)}
+                  workspaceLayer={workspaceLayer}
+                  onPageChange={onPageChange}
+                  onViewLayoutChange={onViewLayoutChange}
                 />
-                <div className="absolute top-2 left-2 bg-black/70 text-white text-xs px-2.5 py-1 rounded-md opacity-0 hover:opacity-100 pointer-events-none transition-opacity">
-                  {idx + 1} / {pages.length}
-                </div>
               </div>
             );
           })}
@@ -117,11 +182,13 @@ export function PageViewer({
           {/* Left Arrow Floating Button */}
           {currentPage > 0 && (
             <button
+              type="button"
               onClick={() => onPageChange((prev) => prev - 1)}
-              className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 bg-background/80 hover:bg-surface text-foreground p-2 rounded-full shadow-lg border border-surface-hover z-30 transition-all opacity-80 hover:opacity-100 hover:scale-110 active:scale-95"
+              aria-label={`หน้าที่แล้ว (หน้า ${currentPage} จาก ${pages.length})`}
+              className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-full border border-border bg-background/90 text-foreground shadow-xl backdrop-blur-xs transition-all duration-150 hover:bg-surface hover:text-white hover:scale-110 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background z-30"
               title="Previous Page (Left Arrow)"
             >
-              <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" />
+              <ChevronLeft className="w-5 h-5" aria-hidden="true" />
             </button>
           )}
 
@@ -140,8 +207,10 @@ export function PageViewer({
                   รูปนี้อาจมาจากไฟล์ทอร์เรนต์ที่โหลดไม่ครบ 100% ทำให้ไม่สามารถแสดงผลได้
                 </p>
                 <button
+                  type="button"
                   onClick={() => onRemovePage(currentPage)}
-                  className="bg-red-500/20 text-red-400 hover:bg-red-500/30 px-4 py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer"
+                  aria-label={`ลบรูปภาพที่เสียออก: ${currentPageItem.name}`}
+                  className="bg-red-500/20 text-red-400 hover:bg-red-500/30 px-4 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
                 >
                   🗑️ ลบรูปพังนี้ออก
                 </button>
@@ -155,7 +224,7 @@ export function PageViewer({
                       ? currentPageItem.url
                       : currentCleaningResult?.cleanUrl ?? currentPageItem.url
                   }
-                  alt={currentPageItem.name}
+                  alt={`หน้า ${currentPage + 1}: ${currentPageItem.name}`}
                   title={currentPageItem.name}
                   onError={() => onImageError(currentPageItem.url)}
                   className="max-w-full max-h-[calc(100vh-160px)] sm:max-h-[calc(100vh-180px)] w-auto h-auto object-contain drop-shadow-sm select-none block"
@@ -207,17 +276,19 @@ export function PageViewer({
           {/* Right Arrow Floating Button */}
           {currentPage < pages.length - 1 && (
             <button
+              type="button"
               onClick={() => onPageChange((prev) => prev + 1)}
-              className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 bg-background/80 hover:bg-surface text-foreground p-2 rounded-full shadow-lg border border-surface-hover z-30 transition-all opacity-80 hover:opacity-100 hover:scale-110 active:scale-95"
+              aria-label={`หน้าถัดไป (หน้า ${currentPage + 2} จาก ${pages.length})`}
+              className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-full border border-border bg-background/90 text-foreground shadow-xl backdrop-blur-xs transition-all duration-150 hover:bg-surface hover:text-white hover:scale-110 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background z-30"
               title="Next Page (Right Arrow)"
             >
-              <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6" />
+              <ChevronRight className="w-5 h-5" aria-hidden="true" />
             </button>
           )}
 
           {/* Floating Page Badge */}
-          <div className="absolute bottom-2 bg-background/80 backdrop-blur-xs text-foreground text-xs px-3 py-1 rounded-full border border-surface-hover shadow-sm pointer-events-none z-30">
-            {currentPage + 1} / {pages.length}
+          <div className="absolute bottom-2 bg-background/90 backdrop-blur-xs text-foreground text-xs font-medium px-3.5 py-1.5 rounded-full border border-border shadow-md pointer-events-none z-30" aria-live="polite">
+            <span className="sr-only">หน้าปัจจุบัน: </span>{currentPage + 1} / {pages.length}
           </div>
         </div>
       )}
