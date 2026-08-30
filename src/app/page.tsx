@@ -1337,7 +1337,7 @@ export default function WorkspacePage() {
     </header>
 
       {/* Main Workspace */}
-      <main className={`flex-1 w-full mt-14 flex flex-col items-center transition-opacity duration-300 ${isDragging ? 'opacity-50' : 'opacity-100'} ${pages.length > 0 ? 'mb-24 sm:mb-28' : ''}`}>
+      <main className={`flex-1 w-full mt-14 flex flex-col items-center transition-opacity duration-300 ${isDragging ? 'opacity-50' : 'opacity-100'} ${pages.length > 0 ? (isThumbnailsCollapsed ? 'mb-10 sm:mb-12' : 'mb-24 sm:mb-28') : ''}`}>
         {workflowMessage && (
           <div className="fixed top-16 left-1/2 -translate-x-1/2 z-40 bg-surface/90 backdrop-blur-md border border-primary/30 text-foreground px-4 py-1.5 rounded-full text-xs font-semibold shadow-lg animate-in fade-in slide-in-from-top-2 duration-300 flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />

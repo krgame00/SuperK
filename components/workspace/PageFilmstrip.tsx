@@ -44,8 +44,8 @@ export function PageFilmstrip({
     <nav
       role="region"
       aria-label="รายการหน้ามังงะและเครื่องมือจัดการหน้า"
-      className={`fixed right-0 bottom-0 left-0 z-30 flex flex-col items-center border-t border-surface-hover/80 bg-background/95 backdrop-blur-md transition-transform duration-200 ${
-        isCollapsed ? "translate-y-[calc(100%-28px)]" : "translate-y-0"
+      className={`fixed right-0 bottom-0 left-0 z-30 flex flex-col items-center border-t border-surface-hover/80 bg-background/95 backdrop-blur-md transition-transform duration-200 ease-out ${
+        isCollapsed ? "translate-y-full" : "translate-y-0"
       }`}
     >
       {/* Collapse/Expand Toggle Button */}
