@@ -5,108 +5,64 @@ import { WorkspaceAdvancedTools } from "@/components/workspace/WorkspaceAdvanced
 import { WorkspaceExportMenu } from "@/components/workspace/WorkspaceExportMenu";
 import { WorkspacePrimaryAction } from "@/components/workspace/WorkspacePrimaryAction";
 
-describe("WorkspaceControls Task 9 Verification", () => {
-  test("at compact presentation, exactly one enabled primary workflow button is accessible", () => {
+describe("WorkspaceControls", () => {
+  test("renders one dominant action and dispatches its current state", () => {
+    const onAction = vi.fn();
     render(
       <WorkspacePrimaryAction
-        isTranslating={false}
-        isTranslatingAll={false}
-        onTranslateCurrent={vi.fn()}
-        onTranslateBook={vi.fn()}
-        onCancelTranslateAll={vi.fn()}
-        compact
+        state={{ kind: "review", label: "ตรวจแก้คำแปล", disabled: false, cancellable: false }}
+        onAction={onAction}
       />,
     );
-
-    const buttons = screen.getAllByRole("button");
-    expect(buttons).toHaveLength(1);
-    expect(buttons[0]).toHaveTextContent("แปลหน้านี้");
+    fireEvent.click(screen.getByRole("button", { name: "ตรวจแก้คำแปล" }));
+    expect(onAction).toHaveBeenCalledOnce();
   });
 
-  test("advanced and export triggers expose aria-expanded and open interactive menus", () => {
-    const onExport = vi.fn();
-    const onRetryFailed = vi.fn();
-
-    render(
-      <div>
-        <WorkspaceAdvancedTools
-          batchFailures={[2, 3]}
-          onRetryFailedPages={onRetryFailed}
-          nsfwBypassMode={false}
-          onToggleNsfw={vi.fn()}
-          viewLayout="single"
-          onToggleViewLayout={vi.fn()}
-          onOpenSettings={vi.fn()}
-        />
-        <WorkspaceExportMenu
-          disabled={false}
-          onExport={onExport}
-        />
-      </div>,
-    );
-
-    const toolsTrigger = screen.getByRole("button", { name: /เครื่องมือ/i });
-    const exportTrigger = screen.getByRole("button", { name: /ส่งออก/i });
-
-    expect(toolsTrigger).toHaveAttribute("aria-expanded", "false");
-    expect(exportTrigger).toHaveAttribute("aria-expanded", "false");
-
-    fireEvent.click(toolsTrigger);
-    expect(toolsTrigger).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("menu")).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: /ลองใหม่ 2 หน้าที่พลาด/i })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("menuitem", { name: /ลองใหม่ 2 หน้าที่พลาด/i }));
-    expect(onRetryFailed).toHaveBeenCalledOnce();
-  });
-
-  test("batch partial failure keeps the export action enabled for successful pages", () => {
-    const onExport = vi.fn();
-
-    render(
-      <WorkspaceExportMenu
-        disabled={false}
-        disabledKinds={{
-          image: false,
-          pdf: true,
-          strip: true,
-          zip: true,
-          cbz: true,
-        }}
-        onExport={onExport}
-      />,
-    );
-
-    const exportTrigger = screen.getByRole("button", { name: /ส่งออก/i });
-    expect(exportTrigger).not.toBeDisabled();
-
-    fireEvent.click(exportTrigger);
-    const imageOption = screen.getByRole("menuitem", { name: /รูปภาพหน้านี้/i });
-    expect(imageOption).not.toBeDisabled();
-
-    fireEvent.click(imageOption);
-    expect(onExport).toHaveBeenCalledWith("image");
-  });
-
-  test("ongoing progress renders with role status and aria-live polite", () => {
+  test("announces busy state and exposes cancel only when supported", () => {
+    const onCancel = vi.fn();
     render(
       <WorkspacePrimaryAction
-        isTranslating={false}
-        isTranslatingAll={true}
-        translateAllProgress={{
-          current: 3,
-          total: 10,
-          message: "กำลังแปลหน้า 3...",
-        }}
-        onTranslateCurrent={vi.fn()}
-        onTranslateBook={vi.fn()}
-        onCancelTranslateAll={vi.fn()}
+        state={{ kind: "busy", label: "กำลังแปล…", disabled: true, cancellable: true }}
+        onAction={vi.fn()}
+        onCancel={onCancel}
       />,
     );
+    expect(screen.getByRole("status")).toHaveTextContent("กำลังแปล");
+    fireEvent.click(screen.getByRole("button", { name: "ยกเลิก" }));
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
 
-    const statusRegion = screen.getByRole("status");
-    expect(statusRegion).toHaveAttribute("aria-live", "polite");
-    expect(statusRegion).toHaveTextContent("30%");
-    expect(statusRegion).toHaveTextContent("กำลังแปลหน้า 3...");
+  test("export menu contains every existing format", () => {
+    const onExport = vi.fn();
+    render(<WorkspaceExportMenu disabled={false} onExport={onExport} />);
+    const trigger = screen.getByRole("button", { name: "ส่งออก" });
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    for (const name of ["รูปภาพหน้านี้", "PDF", "Strip", "ZIP", "CBZ"]) {
+      expect(screen.getByRole("menuitem", { name })).toBeVisible();
+    }
+    fireEvent.click(screen.getByRole("menuitem", { name: "CBZ" }));
+    expect(onExport).toHaveBeenCalledWith("cbz");
+    expect(trigger).toHaveFocus();
+  });
+
+  test("menu closes on Escape and restores trigger focus", () => {
+    render(
+      <WorkspaceAdvancedTools
+        canClean
+        canEditMask
+        busy={false}
+        batchFailureCount={0}
+        onClean={vi.fn()}
+        onEditMask={vi.fn()}
+        onTranslateBook={vi.fn()}
+        onRetryFailedPages={vi.fn()}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: "เครื่องมือขั้นสูง" });
+    fireEvent.click(trigger);
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
   });
 });

@@ -29,7 +29,7 @@ export interface WorkspaceMenuHandle {
   focusTrigger(): void;
 }
 
-interface WorkspaceMenuProps {
+export interface WorkspaceMenuProps {
   label: string;
   items: WorkspaceMenuItem[];
   disabled?: boolean;
@@ -48,6 +48,7 @@ export const WorkspaceMenu = forwardRef<WorkspaceMenuHandle, WorkspaceMenuProps>
     const ownTriggerRef = useRef<HTMLButtonElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+    const getTrigger = () => triggerRef?.current || ownTriggerRef.current;
 
     useImperativeHandle(
       ref,
@@ -78,25 +79,65 @@ export const WorkspaceMenu = forwardRef<WorkspaceMenuHandle, WorkspaceMenuProps>
       return () => document.removeEventListener("mousedown", handleOutsideClick);
     }, [open]);
 
+    useEffect(() => {
+      if (open) {
+        const firstEnabled = items.findIndex((item) => !item.disabled);
+        const targetIndex = activeIndex >= 0 ? activeIndex : firstEnabled;
+        if (targetIndex >= 0 && itemRefs.current[targetIndex]) {
+          itemRefs.current[targetIndex]?.focus();
+        }
+      }
+    }, [open, activeIndex, items]);
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        e.preventDefault();
         setOpen(false);
-        (triggerRef?.current || ownTriggerRef.current)?.focus();
+        getTrigger()?.focus();
       } else if (e.key === "ArrowDown") {
         e.preventDefault();
         if (!open) {
           setOpen(true);
-          setActiveIndex(0);
+          const first = items.findIndex((i) => !i.disabled);
+          setActiveIndex(first >= 0 ? first : 0);
         } else {
-          setActiveIndex((prev) => (prev + 1) % items.length);
+          let next = (activeIndex + 1) % items.length;
+          while (items[next]?.disabled && next !== activeIndex) {
+            next = (next + 1) % items.length;
+          }
+          setActiveIndex(next);
+          itemRefs.current[next]?.focus();
         }
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         if (!open) {
           setOpen(true);
-          setActiveIndex(items.length - 1);
+          const last = items.findLastIndex ? items.findLastIndex((i) => !i.disabled) : items.length - 1;
+          setActiveIndex(last >= 0 ? last : items.length - 1);
         } else {
-          setActiveIndex((prev) => (prev - 1 + items.length) % items.length);
+          let prev = (activeIndex - 1 + items.length) % items.length;
+          while (items[prev]?.disabled && prev !== activeIndex) {
+            prev = (prev - 1 + items.length) % items.length;
+          }
+          setActiveIndex(prev);
+          itemRefs.current[prev]?.focus();
+        }
+      } else if (e.key === "Home") {
+        e.preventDefault();
+        const first = items.findIndex((i) => !i.disabled);
+        if (first >= 0) {
+          setActiveIndex(first);
+          itemRefs.current[first]?.focus();
+        }
+      } else if (e.key === "End") {
+        e.preventDefault();
+        let last = items.length - 1;
+        while (last >= 0 && items[last]?.disabled) {
+          last--;
+        }
+        if (last >= 0) {
+          setActiveIndex(last);
+          itemRefs.current[last]?.focus();
         }
       }
     };
@@ -107,7 +148,15 @@ export const WorkspaceMenu = forwardRef<WorkspaceMenuHandle, WorkspaceMenuProps>
           ref={triggerRef || ownTriggerRef}
           type="button"
           disabled={disabled}
-          onClick={() => setOpen((prev) => !prev)}
+          onClick={() => {
+            setOpen((prev) => {
+              if (!prev) {
+                const first = items.findIndex((i) => !i.disabled);
+                setActiveIndex(first >= 0 ? first : 0);
+              }
+              return !prev;
+            });
+          }}
           className="inline-flex h-8.5 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-semibold text-foreground shadow-xs transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-40"
           aria-haspopup="menu"
           aria-expanded={open}
@@ -135,6 +184,7 @@ export const WorkspaceMenu = forwardRef<WorkspaceMenuHandle, WorkspaceMenuProps>
                 disabled={item.disabled}
                 onClick={() => {
                   setOpen(false);
+                  getTrigger()?.focus();
                   item.onSelect();
                 }}
                 className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-medium transition-colors ${

@@ -1,3 +1,4 @@
+import { undoManager } from "./undoManager";
 import { resolveBubbleTextStyle } from "./colorMatching/resolveTextStyle";
 import { sampleBubbleRegion } from "./colorMatching/canvasSampler";
 import { extractTextColors } from "./colorMatching/sampleTextColors";
@@ -184,7 +185,6 @@ export const wrapTextForBubble = (
     try {
       const segmenter = new Intl.Segmenter(locale, { granularity: 'word' });
       const rawSegments = Array.from(segmenter.segment(text)).map(s => s.segment);
-      // Combine punctuation to preceding word where practical
       for (const seg of rawSegments) {
         if (/^[.,!?:;...]+$/.test(seg) && wds.length > 0) {
           wds[wds.length - 1] += seg;
@@ -376,7 +376,6 @@ export function fitTextInAdaptiveBubble(
     if (fit.fits) break;
   }
 
-  // Snug fit: tighten dimensions to the actual text content instead of keeping giant empty margins
   if (fit.lines.length > 0) {
     const textH = (fit.lines.length - 1) * fit.lineHeight + fit.fontSize * 1.25;
     const textW = measureTextLinesWidth(fit.lines, fit.fontSize, fontFamily);
@@ -494,7 +493,6 @@ export const applyTranslationOverlay = async (
         b.isInvalidBox = true;
       }
 
-      // Sample color profile on-the-fly from the rendered image if not yet analyzed
       if (!b.styleProfile && img && (img.naturalWidth > 0 || img.width > 0) && b.box && b.box.length === 4 && !b.isInvalidBox) {
         const sample = sampleBubbleRegion(img, b.box);
         if (sample) {
@@ -527,7 +525,11 @@ export const applyTranslationOverlay = async (
       };
 
       const wrapper = document.createElement("div");
-      wrapper.className = "translation-bubble-wrapper";
+      wrapper.className = "translation-bubble translation-bubble-wrapper";
+      wrapper.tabIndex = 0;
+      const shortText = (b.t || b.translated || "").replace(/\s+/g, " ").trim().slice(0, 60);
+      wrapper.setAttribute("aria-label", `กล่องข้อความ: ${shortText}`);
+      wrapper.setAttribute("data-bubble-id", bubbleId);
       wrapper.style.cssText = `position:absolute; box-sizing:border-box; cursor:grab; pointer-events:auto; touch-action:none; border-radius:4px; z-index:10; transform-origin:center center;`;
       
       const bCanvas = document.createElement("canvas");
@@ -644,6 +646,206 @@ export const applyTranslationOverlay = async (
           isDragging = false;
           wrapper.releasePointerCapture(e.pointerId);
           saveAdjustment();
+        }
+      });
+
+      const openLiveEditor = () => {
+        tlContainer.querySelectorAll("[data-translation-editor]").forEach((el) => el.remove());
+
+        const openingText = (b.t || b.translated || "").trim();
+        const editor = document.createElement("div");
+        editor.setAttribute("data-translation-editor", "true");
+        editor.className = "translation-editor-bubble";
+        editor.style.cssText = `position:absolute; z-index:50; pointer-events:auto; display:flex; align-items:center; gap:4px; background:#18181b; border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:6px; box-shadow:0 8px 24px rgba(0,0,0,0.5);`;
+
+        const input = document.createElement("input");
+        input.type = "text";
+        input.value = openingText;
+        input.setAttribute("aria-label", "แก้ไขข้อความแปล");
+        input.className = "translation-editor-input";
+        input.style.cssText = `background:#27272a; color:#f4f4f5; border:1px solid #3f3f46; border-radius:6px; padding:4px 8px; font-size:12px; min-width:180px; outline:none;`;
+
+        editor.appendChild(input);
+
+        const rect = tlContainer.getBoundingClientRect();
+        const bLeftPx = (currentBx / iw) * (rect.width || iw);
+        const bTopPx = (currentBy / ih) * (rect.height || ih);
+        const editorTop = bTopPx - 44 >= 0 ? bTopPx - 44 : bTopPx + (currentBh / ih) * (rect.height || ih) + 6;
+        const editorLeft = Math.max(8, Math.min((rect.width || iw) - 220, bLeftPx));
+
+        editor.style.left = `${editorLeft}px`;
+        editor.style.top = `${editorTop}px`;
+
+        let isCommitted = false;
+
+        const commit = () => {
+          if (isCommitted) return;
+          isCommitted = true;
+          const finalVal = input.value.trim();
+          b.t = finalVal;
+          b.translated = finalVal;
+          renderBubble();
+          saveAdjustment();
+          if (finalVal !== openingText) {
+            undoManager.push({
+              label: "แก้ไขข้อความ",
+              undo: () => {
+                b.t = openingText;
+                b.translated = openingText;
+                renderBubble();
+                saveAdjustment();
+              },
+              redo: () => {
+                b.t = finalVal;
+                b.translated = finalVal;
+                renderBubble();
+                saveAdjustment();
+              },
+            });
+          }
+          editor.remove();
+          wrapper.focus();
+        };
+
+        const cancel = () => {
+          if (isCommitted) return;
+          isCommitted = true;
+          b.t = openingText;
+          b.translated = openingText;
+          renderBubble();
+          editor.remove();
+          wrapper.focus();
+        };
+
+        input.addEventListener("input", () => {
+          b.t = input.value;
+          b.translated = input.value;
+          renderBubble();
+        });
+
+        input.addEventListener("keydown", (e) => {
+          e.stopPropagation();
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            cancel();
+          }
+        });
+
+        input.addEventListener("blur", () => {
+          commit();
+        });
+
+        tlContainer.appendChild(editor);
+        input.focus();
+        input.select();
+      };
+
+      const deleteBubbleWithUndo = () => {
+        b.deleted = true;
+        wrapper.style.display = "none";
+        setSelectedBubble(null);
+        undoManager.push({
+          label: "ลบกล่องข้อความ",
+          undo: () => {
+            b.deleted = false;
+            wrapper.style.display = "block";
+            renderBubble();
+          },
+          redo: () => {
+            b.deleted = true;
+            wrapper.style.display = "none";
+            setSelectedBubble(null);
+          },
+        });
+      };
+
+      wrapper.addEventListener("focus", () => {
+        setSelectedBubble(wrapper);
+      });
+
+      wrapper.addEventListener("dblclick", (e) => {
+        e.stopPropagation();
+        openLiveEditor();
+      });
+
+      wrapper.addEventListener("keydown", (e) => {
+        if (e.target !== wrapper) return;
+
+        if (e.key === "Enter") {
+          e.preventDefault();
+          e.stopPropagation();
+          openLiveEditor();
+          return;
+        }
+
+        if (e.key === "Delete" || e.key === "Backspace") {
+          e.preventDefault();
+          e.stopPropagation();
+          deleteBubbleWithUndo();
+          return;
+        }
+
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          setSelectedBubble(null);
+          tlContainer.focus();
+          return;
+        }
+
+        if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
+          e.preventDefault();
+          e.stopPropagation();
+
+          const delta = e.shiftKey ? 10 : 1;
+          const initBx = currentBx;
+          const initBy = currentBy;
+          const initBw = currentBw;
+          const initBh = currentBh;
+
+          if (e.altKey) {
+            if (e.key === "ArrowRight") {
+              currentBw = Math.max(20, Math.min(iw - currentBx, currentBw + delta));
+            } else if (e.key === "ArrowLeft") {
+              currentBw = Math.max(20, currentBw - delta);
+            } else if (e.key === "ArrowDown") {
+              currentBh = Math.max(20, Math.min(ih - currentBy, currentBh + delta));
+            } else if (e.key === "ArrowUp") {
+              currentBh = Math.max(20, currentBh - delta);
+            }
+          } else {
+            if (e.key === "ArrowRight") {
+              currentBx = Math.max(0, Math.min(iw - currentBw, currentBx + delta));
+            } else if (e.key === "ArrowLeft") {
+              currentBx = Math.max(0, Math.min(iw - currentBw, currentBx - delta));
+            } else if (e.key === "ArrowDown") {
+              currentBy = Math.max(0, Math.min(ih - currentBh, currentBy + delta));
+            } else if (e.key === "ArrowUp") {
+              currentBy = Math.max(0, Math.min(ih - currentBh, currentBy - delta));
+            }
+          }
+
+          if (currentBx !== initBx || currentBy !== initBy || currentBw !== initBw || currentBh !== initBh) {
+            renderBubble();
+            saveAdjustment();
+            const newBx = currentBx, newBy = currentBy, newBw = currentBw, newBh = currentBh;
+            undoManager.push({
+              label: e.altKey ? "ปรับขนาดกล่องข้อความ" : "ย้ายตำแหน่งกล่องข้อความ",
+              undo: () => {
+                currentBx = initBx; currentBy = initBy; currentBw = initBw; currentBh = initBh;
+                renderBubble();
+                saveAdjustment();
+              },
+              redo: () => {
+                currentBx = newBx; currentBy = newBy; currentBw = newBw; currentBh = newBh;
+                renderBubble();
+                saveAdjustment();
+              },
+            });
+          }
         }
       });
 
@@ -771,6 +973,7 @@ export const applyTranslationOverlay = async (
         const btn = document.createElement("button");
         btn.type = "button";
         btn.title = title;
+        btn.setAttribute("aria-label", title);
         btn.className = "action-handle";
         btn.innerHTML = svg;
         btn.style.cssText = `
@@ -869,14 +1072,7 @@ export const applyTranslationOverlay = async (
         "แก้ไขข้อความ",
         `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>`,
         () => {
-          const currentText = b.t || b.translated || "";
-          const newText = prompt("แก้ไขข้อความแปล:", currentText);
-          if (newText !== null) {
-            b.t = newText;
-            b.translated = newText;
-            renderBubble();
-            saveAdjustment();
-          }
+          openLiveEditor();
         }
       );
 
@@ -889,8 +1085,7 @@ export const applyTranslationOverlay = async (
         "ลบกล่องข้อความ",
         `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>`,
         () => {
-          b.deleted = true;
-          wrapper.remove();
+          deleteBubbleWithUndo();
         },
         true
       );
@@ -911,7 +1106,9 @@ export const applyTranslationOverlay = async (
 
     const handleDocumentPointerDown = (e: PointerEvent) => {
       const target = e.target as HTMLElement | null;
-      if (target && !target.closest('.translation-bubble-wrapper') && !target.closest('.action-handle')) setSelectedBubble(null);
+      if (target && !target.closest('.translation-bubble-wrapper') && !target.closest('.action-handle') && !target.closest('[data-translation-editor]')) {
+        setSelectedBubble(null);
+      }
     };
     const handleDocumentKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") setSelectedBubble(null); };
     document.addEventListener('pointerdown', handleDocumentPointerDown);

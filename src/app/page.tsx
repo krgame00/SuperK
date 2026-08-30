@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { getWorkspacePrimaryAction } from "@/lib/workspacePrimaryAction";
 import { useTranslation } from "@/hooks/useTranslation";
 import { jsPDF } from "jspdf";
 import { Toaster } from "react-hot-toast";
@@ -223,6 +224,50 @@ export default function WorkspacePage() {
     }
   }, [handleTranslateAll, operationBusy, pages.length]);
 
+  const [reviewedPageUrls, setReviewedPageUrls] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const hasEnteredReview = Boolean(
+    currentPageUrl && reviewedPageUrls.has(currentPageUrl),
+  );
+
+  const primaryAction = getWorkspacePrimaryAction({
+    hasPage: Boolean(currentPageUrl),
+    hasCleanResult: Boolean(currentCleaningResult),
+    hasTranslation: hasCurrentTranslation,
+    hasEnteredReview,
+    isCleaning: Boolean(cleaningProgress) || workflowPhase === "cleaning",
+    isTranslating,
+    workflowPhase,
+    cancellable: isTranslatingAll,
+  });
+
+  const exportTriggerRef = useRef<HTMLButtonElement>(null);
+  const advancedToolsTriggerRef = useRef<HTMLButtonElement>(null);
+
+  const handlePrimaryAction = async () => {
+    if (!currentPageUrl) return;
+    if (primaryAction.kind === "prepare-and-translate" || primaryAction.kind === "translate") {
+      const translated = await handleTranslateCurrent();
+      if (translated) {
+        setReviewedPageUrls((current) => {
+          const next = new Set(current);
+          next.delete(currentPageUrl);
+          return next;
+        });
+      }
+      return;
+    }
+    if (primaryAction.kind === "review") {
+      setWorkspaceLayer("translated");
+      setReviewedPageUrls((current) => new Set(current).add(currentPageUrl));
+      return;
+    }
+    if (primaryAction.kind === "export") {
+      exportTriggerRef.current?.click();
+    }
+  };
+
   const handleRetryRegion = async (
     regionId: string,
     mask: Blob,
@@ -233,6 +278,11 @@ export default function WorkspacePage() {
     const page = pages[currentPage];
     if (page) {
       invalidatePageTranslation(page.url);
+      setReviewedPageUrls((current) => {
+        const next = new Set(current);
+        next.delete(page.url);
+        return next;
+      });
       setWorkspaceLayer("clean");
     }
     return result;
@@ -1038,29 +1088,24 @@ export default function WorkspacePage() {
 
                 {/* Advanced Tools dropdown */}
                 <WorkspaceAdvancedTools
-                  batchFailures={batchFailures}
+                  canClean={Boolean(currentPageUrl)}
+                  canEditMask={Boolean(currentCleaningResult)}
+                  busy={operationBusy}
+                  batchFailureCount={batchFailures.length}
+                  onClean={() => void handleCleanCurrentPage()}
+                  onEditMask={() => setIsMaskEditorOpen(true)}
+                  onTranslateBook={() => void handleTranslateBook()}
                   onRetryFailedPages={() => void retryFailedPages()}
-                  disabled={operationBusy}
-                  nsfwBypassMode={nsfwBypassMode}
-                  onToggleNsfw={() => setNsfwBypassMode(!nsfwBypassMode)}
-                  viewLayout={viewLayout}
-                  onToggleViewLayout={() => setViewLayout(prev => prev === 'single' ? 'scroll' : 'single')}
-                  onOpenSettings={() => setIsSettingsOpen(true)}
-                  onOpenShortcuts={() => setIsShortcutsOpen(true)}
+                  triggerRef={advancedToolsTriggerRef}
                 />
               </div>
 
               {/* ── Primary Action Buttons ── */}
               <div className="flex items-center gap-2">
                 <WorkspacePrimaryAction
-                  isTranslating={isTranslating}
-                  isTranslatingAll={isTranslatingAll}
-                  workflowPhase={workflowPhase}
-                  translateAllProgress={translateAllProgress}
-                  onTranslateCurrent={() => void handleTranslateCurrent()}
-                  onTranslateBook={() => void handleTranslateBook()}
-                  onCancelTranslateAll={cancelTranslateAll}
-                  disabled={operationBusy || pages.length === 0}
+                  state={primaryAction}
+                  onAction={() => void handlePrimaryAction()}
+                  onCancel={cancelTranslateAll}
                 />
 
                 {/* ── Export Menu Dropdown ── */}
@@ -1094,15 +1139,9 @@ export default function WorkspacePage() {
         <div className="flex md:hidden items-center gap-2">
           {pages.length > 0 && (
             <WorkspacePrimaryAction
-              isTranslating={isTranslating}
-              isTranslatingAll={isTranslatingAll}
-              workflowPhase={workflowPhase}
-              translateAllProgress={translateAllProgress}
-              onTranslateCurrent={() => void handleTranslateCurrent()}
-              onTranslateBook={() => void handleTranslateBook()}
-              onCancelTranslateAll={cancelTranslateAll}
-              disabled={operationBusy}
-              compact
+              state={primaryAction}
+              onAction={() => void handlePrimaryAction()}
+              onCancel={cancelTranslateAll}
             />
           )}
           <button
