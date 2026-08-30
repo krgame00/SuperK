@@ -27,7 +27,7 @@ def _ensure_cuda_path() -> None:
     with CUDAExecutionProvider fails and we silently fall back to CPU.
     """
     try:
-        import torch  # noqa: PLC0415
+        import torch
 
         lib_dir = Path(torch.__file__).resolve().parent / "lib"
         if lib_dir.is_dir():

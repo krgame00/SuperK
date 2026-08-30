@@ -7,12 +7,10 @@ from typing import Protocol, Self, cast
 
 import cv2
 import numpy as np
-import onnxruntime as ort
 from numpy.typing import NDArray
 
-from app.ort_utils import create_inference_session, preferred_providers
-
 from app.model_store import ModelStore
+from app.ort_utils import create_inference_session
 from app.schemas import PixelRect
 
 LOGGER = logging.getLogger(__name__)
@@ -380,7 +378,7 @@ class HybridTextDetector:
             try:
                 from paddleocr import PaddleOCR
                 paddle = PaddleOCR(use_gpu=False, use_angle_cls=True, lang="en", show_log=False)
-            except Exception:
+            except (ImportError, RuntimeError, OSError):
                 paddle = None
         return cls(ctd_detector=ctd, paddle_engine=paddle)
 
@@ -390,7 +388,7 @@ class HybridTextDetector:
 
         ctd_res = self.ctd_detector.detect(image_rgb)
         h, w = image_rgb.shape[:2]
-        
+
         combined_prob = np.zeros((h, w), dtype=np.float32)
         combined_blocks = list(ctd_res.blocks)
 
@@ -427,7 +425,7 @@ class HybridTextDetector:
                 paddle_res = self.paddle_engine.ocr(image_rgb, cls=True)
                 if paddle_res and paddle_res[0]:
                     for line in paddle_res[0]:
-                        box, (text, conf) = line
+                        box, (_text, conf) = line
                         pts = np.array(box, dtype=np.int32)
                         bx, by, bw, bh = cv2.boundingRect(pts)
                         pad = 6
@@ -435,7 +433,7 @@ class HybridTextDetector:
                         by1 = max(0, by - pad)
                         bx2 = min(w, bx + bw + pad)
                         by2 = min(h, by + bh + pad)
-                        
+
                         crop = image_rgb[by1:by2, bx1:bx2]
                         if crop.size > 0:
                             local_prob = ctd_res.mask_probability[by1:by2, bx1:bx2]
@@ -445,7 +443,10 @@ class HybridTextDetector:
                                 fused = _fuse_strokes_with_text_seed(candidate, seed, support_radius=3)
                                 if np.count_nonzero(fused) > 0:
                                     radius = _estimate_candidate_growth_radius(fused)
-                                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (radius * 2 + 1, radius * 2 + 1))
+                                    k_size = radius * 2 + 1
+                                    kernel = cv2.getStructuringElement(
+                                        cv2.MORPH_ELLIPSE, (k_size, k_size)
+                                    )
                                     grown = cv2.dilate(fused, kernel, iterations=1)
                                     combined_prob[by1:by2, bx1:bx2] = np.maximum(
                                         combined_prob[by1:by2, bx1:bx2],

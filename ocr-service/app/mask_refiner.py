@@ -81,7 +81,6 @@ def refine_probability_mask(
     combined = np.zeros_like(seed, dtype=np.uint8)
     component_masks: dict[int, BinaryMask] = {}
     radii: dict[int, int] = {}
-    erode_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     for component_id in range(1, count):
         if int(stats[component_id, cv2.CC_STAT_AREA]) < minimum_area:
             continue

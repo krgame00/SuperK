@@ -10,11 +10,11 @@ from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
 
-from app.cleaners.aot import AotCleaner
 from app.cleaners.anime_lama import AnimeLamaCleaner, CleanerUnavailable
-from app.cleaners.lama_large import LamaLargeCleaner
+from app.cleaners.aot import AotCleaner
 from app.cleaners.flat import FlatCleaner, GradientCleaner
-from app.detector import HybridTextDetector, TextDetector
+from app.cleaners.lama_large import LamaLargeCleaner
+from app.detector import HybridTextDetector
 from app.jobs import JobStore, Pipeline, PipelineFactory
 from app.model_store import ModelStore
 from app.pipeline import CleaningPipeline

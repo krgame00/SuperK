@@ -32,7 +32,7 @@ def route_region(
     cleaners: dict | None = None,
 ) -> RouteDecision:
     features = extract_region_features(image_rgb, mask, region)
-    
+
     # Complex backgrounds (high variance + high edge density) -> LAMA large
     # (if available in cleaners dict)
     use_lama = (

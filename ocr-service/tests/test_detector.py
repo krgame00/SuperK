@@ -131,7 +131,7 @@ def test_ctd_model_returns_source_sized_mask() -> None:
 
 
 def test_hybrid_detector_combines_masks() -> None:
-    from app.detector import HybridTextDetector, DetectionResult, LetterboxTransform
+    from app.detector import DetectionResult, HybridTextDetector, LetterboxTransform
 
     class DummyCTD:
         def detect(self, img):

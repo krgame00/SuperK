@@ -1,18 +1,16 @@
 from __future__ import annotations
 
-import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol, Self, cast
 
 import numpy as np
-import onnxruntime as ort
 from numpy.typing import NDArray
 
 from app.detector import RgbImage
 from app.mask_refiner import BinaryMask, MaskRegion
 from app.model_store import ModelStore
-from app.ort_utils import create_inference_session, preferred_providers
+from app.ort_utils import create_inference_session
 
 
 @dataclass(frozen=True)
