@@ -98,7 +98,7 @@ export function resolveBubbleTextStyle(
   const hasHighFillConfidence = profile.fillConfidence >= minConfidence;
   const hasHighOutlineConfidence = profile.outlineConfidence >= minConfidence;
 
-  let resolvedFill = hasHighFillConfidence ? profile.fill : defaultFill;
+  const resolvedFill = hasHighFillConfidence ? profile.fill : defaultFill;
   let resolvedOutline =
     autoOutlineEnabled && hasHighOutlineConfidence ? profile.outline : defaultOutline;
 
