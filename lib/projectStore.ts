@@ -239,30 +239,38 @@ export const loadProjectSession = async (): Promise<{
 
     const translatedImageCache = new Map<string, string>();
 
-    // 1. Restore from Asset Blobs (V3 schema)
+    const rawAssets: Array<{ pageUrl: string; asset?: StoredAsset }> = [];
+
+    // 1. Fetch all asset records within active IDB transaction
     if (data.translatedAssetIds && data.translatedAssetIds.length > 0) {
       for (const [pageUrl, assetId] of data.translatedAssetIds) {
         const asset = await requestResult<StoredAsset | undefined>(
           assetStore.get(assetId),
         );
-        if (asset?.blob) {
-          const blobObj =
-            asset.blob instanceof Blob
-              ? asset.blob
-              : new Blob([asset.blob as BlobPart], {
-                  type: asset.mimeType || "image/png",
-                });
-          const dataUrl = await blobToDataUrl(blobObj, asset.mimeType);
+        rawAssets.push({ pageUrl, asset });
+      }
+    }
+
+    // 2. Convert blobs to Data URLs outside the IDB transaction
+    for (const { pageUrl, asset } of rawAssets) {
+      if (asset?.blob) {
+        const blobObj =
+          asset.blob instanceof Blob
+            ? asset.blob
+            : new Blob([asset.blob as BlobPart], {
+                type: asset.mimeType || "image/png",
+              });
+        const dataUrl = await blobToDataUrl(blobObj, asset.mimeType);
+        translatedImageCache.set(pageUrl, dataUrl);
+      }
+    }
+
+    // 3. Fallback to legacy Data URLs (V2 schema backwards compatibility)
+    if (data.translatedImageCache && data.translatedImageCache.length > 0) {
+      for (const [pageUrl, dataUrl] of data.translatedImageCache) {
+        if (!translatedImageCache.has(pageUrl)) {
           translatedImageCache.set(pageUrl, dataUrl);
         }
-      }
-    } else if (
-      data.translatedImageCache &&
-      data.translatedImageCache.length > 0
-    ) {
-      // 2. Fallback to legacy Data URLs (V2 schema backwards compatibility)
-      for (const [pageUrl, dataUrl] of data.translatedImageCache) {
-        translatedImageCache.set(pageUrl, dataUrl);
       }
     }
 
