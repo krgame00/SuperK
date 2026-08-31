@@ -42,6 +42,16 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   title: "SuperK Manga Translator",
   description: "Seamlessly translate manga with AI",
+  icons: {
+    icon: [
+      { url: "/favicon.ico" },
+      { url: "/icon-512.jpg", sizes: "512x512", type: "image/jpeg" },
+    ],
+    apple: [
+      { url: "/icon-512.jpg", sizes: "512x512", type: "image/jpeg" },
+    ],
+    shortcut: ["/favicon.ico"],
+  },
 };
 
 export default function RootLayout({
