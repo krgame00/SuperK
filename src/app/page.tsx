@@ -839,6 +839,12 @@ export default function WorkspacePage() {
       {/* Header Panel */}
       <header className="w-full bg-background/95 backdrop-blur-md border-b border-border/80 h-14 flex justify-between items-center px-3 sm:px-5 z-50 fixed top-0 select-none">
         <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/icon-512.jpg"
+            alt="SuperK Logo"
+            className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg shadow-sm border border-border/80 object-cover flex-shrink-0"
+          />
           <h1 className="text-base font-semibold tracking-tight text-foreground flex items-center">
             <span className="flex items-center gap-0.5">
               Super<span className="text-primary font-bold">K</span>
