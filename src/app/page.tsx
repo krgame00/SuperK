@@ -841,7 +841,7 @@ export default function WorkspacePage() {
         <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="/icon-512.jpg"
+            src="/icon-512.png"
             alt="SuperK Logo"
             className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg shadow-sm border border-border/80 object-cover flex-shrink-0"
           />
