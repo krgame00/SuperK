@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import { type GlossaryEntry } from "@/lib/translation/glossary";
-import { Plus, Trash2, BookText } from "lucide-react";
+import { Plus, Trash2, BookText, Flame, X } from "lucide-react";
 
 export interface WorkspaceTextStyle {
   fontFamily: string;
@@ -24,6 +24,8 @@ export interface SettingsModalProps {
   onUserApiKeyChange: (key: string) => void;
   glossary?: GlossaryEntry[];
   onGlossaryChange?: (glossary: GlossaryEntry[]) => void;
+  nsfwBypassMode?: boolean;
+  onNsfwBypassModeChange?: (enabled: boolean) => void;
 }
 
 export function SettingsModal({
@@ -39,6 +41,8 @@ export function SettingsModal({
   onUserApiKeyChange,
   glossary = [],
   onGlossaryChange,
+  nsfwBypassMode = false,
+  onNsfwBypassModeChange,
 }: SettingsModalProps): ReactElement | null {
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -119,20 +123,7 @@ export function SettingsModal({
             onClick={onClose}
             className="rounded-md p-1 text-muted hover:bg-surface hover:text-foreground"
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
+            <X className="w-4 h-4" />
           </button>
         </div>
 
@@ -340,6 +331,36 @@ export function SettingsModal({
               </a>
               .
             </p>
+          </div>
+
+          <div className="border-t border-surface-hover pt-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+                  <Flame className="h-3.5 w-3.5 text-red-400" />
+                  <span>โหมด 18+ (NSFW Bypass)</span>
+                </label>
+                <p className="mt-0.5 text-[10px] text-muted">
+                  หั่นภาพหลบการตรวจจับเนื้อหา 18+ ของ Gemini
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={nsfwBypassMode}
+                aria-label="เปิด/ปิดโหมด 18+ หั่นภาพหลบเซนเซอร์"
+                onClick={() => onNsfwBypassModeChange?.(!nsfwBypassMode)}
+                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                  nsfwBypassMode ? "bg-red-500" : "bg-surface-hover"
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                    nsfwBypassMode ? "translate-x-4" : "translate-x-0"
+                  }`}
+                />
+              </button>
+            </div>
           </div>
         </div>
       </div>

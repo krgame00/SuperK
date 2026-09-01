@@ -855,166 +855,11 @@ export default function WorkspacePage() {
           </h1>
         </div>
 
-        {/* Simple Settings Modal with Backdrop */}
-        {isSettingsOpen && (
-          <>
-            <div
-              className="fixed inset-0 bg-black/60 backdrop-blur-xs z-[90] animate-in fade-in duration-200"
-              onClick={() => setIsSettingsOpen(false)}
-              aria-hidden="true"
-            />
-            <div
-              id="settings-modal"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="settings-modal-title"
-              className="fixed inset-x-4 top-16 sm:absolute sm:inset-auto sm:right-6 sm:top-14 w-auto sm:w-80 max-w-sm bg-surface/95 backdrop-blur-xl border border-border rounded-xl shadow-2xl p-4 z-[100] max-h-[85vh] overflow-y-auto mx-auto animate-in fade-in zoom-in-95 duration-200"
-            >
-              <div className="flex justify-between items-center mb-4">
-                <h3 id="settings-modal-title" className="font-semibold text-foreground text-sm">Settings</h3>
-                <button
-                  type="button"
-                  onClick={() => setIsSettingsOpen(false)}
-                  aria-label="ปิดหน้าต่างตั้งค่า"
-                  className="text-muted hover:text-foreground p-1.5 rounded-md hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                >
-                  <X className="w-4 h-4" aria-hidden="true" />
-                </button>
-              </div>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-xs font-medium text-muted mb-1">Source Language (ภาษาต้นฉบับ)</label>
-                  <select
-                    value={sourceLang}
-                    onChange={(e) => setSourceLang(e.target.value)}
-                    className="w-full bg-background border border-border rounded-md px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary appearance-none"
-                  >
-                    <option value="auto">Auto Detect (ตรวจจับอัตโนมัติ)</option>
-                    <option value="Japanese">🇯🇵 Japanese (ญี่ปุ่น)</option>
-                    <option value="Korean">🇰🇷 Korean (เกาหลี)</option>
-                    <option value="Chinese">🇨🇳 Chinese (จีน)</option>
-                    <option value="English">🇬🇧 English (อังกฤษ)</option>
-                  </select>
-                </div>
-
-                <div className="pt-2 border-t border-border">
-                  <label className="block text-xs font-medium text-muted mb-2">Text Style (รูปแบบข้อความแปล)</label>
-
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-muted">Font Family</span>
-                      <select
-                        value={textStyle.fontFamily}
-                        onChange={(e) => setTextStyle({ ...textStyle, fontFamily: e.target.value })}
-                        className="bg-background border border-border rounded px-2 py-1 text-foreground focus:outline-none focus:ring-1 focus:ring-primary w-32"
-                      >
-                        <option value="Itim, cursive">Itim (การ์ตูน)</option>
-                        <option value="Prompt, sans-serif">Prompt (อ่านง่าย)</option>
-                        <option value="Kanit, sans-serif">Kanit (โมเดิร์น)</option>
-                        <option value="Sarabun, sans-serif">Sarabun (ทางการ)</option>
-                      </select>
-                    </div>
-
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-muted">Text Color</span>
-                      <input
-                        type="color"
-                        value={textStyle.textColor}
-                        onChange={(e) => setTextStyle({ ...textStyle, textColor: e.target.value })}
-                        aria-label="เลือกสีข้อความ"
-                        className="w-7 h-7 rounded cursor-pointer border-0 p-0 bg-transparent"
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-muted">Outline Color</span>
-                      <input
-                        type="color"
-                        value={textStyle.textOutline}
-                        onChange={(e) => setTextStyle({ ...textStyle, textOutline: e.target.value })}
-                        aria-label="เลือกสีขอบข้อความ"
-                        className="w-7 h-7 rounded cursor-pointer border-0 p-0 bg-transparent"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between text-xs text-muted">
-                        <span>Font Size Multiplier</span>
-                        <span className="font-semibold text-foreground">{textStyle.fontSizeMultiplier.toFixed(1)}x</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="0.5" max="2.0" step="0.1"
-                        value={textStyle.fontSizeMultiplier}
-                        onChange={(e) => setTextStyle({ ...textStyle, fontSizeMultiplier: parseFloat(e.target.value) })}
-                        aria-label="ปรับขนาดฟอนต์"
-                        className="w-full accent-primary"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="pt-2 border-t border-border">
-                  <label className="block text-xs font-medium text-muted mb-1">Model Preference</label>
-                  <select
-                    value={modelPreference}
-                    onChange={(e) => setModelPreference(e.target.value)}
-                    className="w-full bg-background border border-border rounded-md px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary appearance-none"
-                  >
-                    <option value="auto">Auto (สลับโมเดลอัตโนมัติเมื่อโควต้าเต็ม)</option>
-                    <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash Lite (แนะนำ! โควต้าเหลือเพียบ 500 RPD)</option>
-                    <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
-                    <option value="gemini-3-flash">Gemini 3.0 Flash</option>
-                    <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
-                    <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite</option>
-                    <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-                    <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-muted mb-1">Gemini API Key (Optional)</label>
-                  <input
-                    type="password"
-                    value={userApiKey}
-                    onChange={(e) => setUserApiKey(e.target.value)}
-                    placeholder="AIzaSy..."
-                    aria-label="Gemini API Key"
-                    className="w-full bg-background border border-border rounded-md px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                  <p className="text-[11px] text-muted mt-1.5 leading-relaxed">
-                    By default, the app uses a shared key with limits.
-                    To avoid &quot;Quota exceeded&quot; errors (especially in 18+ mode), enter your free Gemini API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-primary underline font-medium">Google AI Studio</a>.
-                  </p>
-                </div>
-
-              </div>
-            </div>
-          </>
-        )}
-
         {/* Desktop Menu */}
         <div className="hidden md:flex items-center gap-2.5 flex-nowrap">
           {pages.length === 0 ? (
             /* ── Empty State Header Controls: Clean & Minimal ── */
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setNsfwBypassMode(!nsfwBypassMode)}
-                aria-label={nsfwBypassMode ? "ปิดโหมด 18+ หั่นภาพหลบเซนเซอร์" : "เปิดโหมด 18+ หั่นภาพหลบเซนเซอร์"}
-                className={`h-8.5 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
-                  nsfwBypassMode
-                    ? 'text-red-400 bg-red-500/15 border-red-500/30 shadow-xs'
-                    : 'text-foreground border-border hover:bg-surface-hover'
-                }`}
-                title="โหมด 18+ หั่นภาพหลบเซนเซอร์"
-              >
-                <Flame className="w-4 h-4 text-red-400" aria-hidden="true" />
-                <span>โหมด 18+</span>
-                {nsfwBypassMode && <span className="text-[9px] font-bold bg-red-500/20 text-red-400 px-1 py-0.2 rounded-full leading-none">ON</span>}
-              </button>
-
               <button
                 type="button"
                 onClick={() => setIsSettingsOpen(!isSettingsOpen)}
@@ -1511,6 +1356,8 @@ export default function WorkspacePage() {
         onUserApiKeyChange={setUserApiKey}
         glossary={glossary}
         onGlossaryChange={setGlossary}
+        nsfwBypassMode={nsfwBypassMode}
+        onNsfwBypassModeChange={setNsfwBypassMode}
       />
 
       <FindReplaceDialog
