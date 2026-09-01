@@ -197,20 +197,20 @@ def _default_pipeline_factory(settings: Settings) -> Callable[[], Pipeline]:
             service_root / "models" / "manifest.json",
         )
         detector = HybridTextDetector.from_model_store(model_store)
-        anime_lama = None
+        lama_large = None
         try:
-            anime_lama = AnimeLamaCleaner.from_model_store(model_store)
+            lama_large = LamaLargeCleaner.from_model_store(model_store)
         except Exception:
-            anime_lama = None
+            lama_large = None
 
         aot = AotCleaner(model_store)
-        if anime_lama is not None:
+        if lama_large is not None:
             cleaners: dict = {
-                CleanerRoute.FLAT: anime_lama,
-                CleanerRoute.GRADIENT: anime_lama,
-                CleanerRoute.ARTWORK: anime_lama,
-                "anime-lama": anime_lama,
-                "lama-large": anime_lama,
+                CleanerRoute.FLAT: lama_large,
+                CleanerRoute.GRADIENT: lama_large,
+                CleanerRoute.ARTWORK: lama_large,
+                "lama-large": lama_large,
+                "anime-lama": lama_large,
                 "aot": aot,
             }
         else:

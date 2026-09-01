@@ -1,10 +1,7 @@
-"""LamaLargeCleaner — lama_large (AnimeManga) inpainter via torch.
-
-Model: dreMaz/AnimeMangaInpainting lama_large_512px.ckpt (GPL-3.0 arch from
-manga-image-translator; checkpoint license: see model card).
-"""
+"""LamaLargeCleaner — High-Precision Manga Inpainting Engine via PyTorch / Big LaMa."""
 from __future__ import annotations
 
+import importlib
 import importlib.util
 from pathlib import Path
 from typing import Self
@@ -23,33 +20,57 @@ class CleanerUnavailable(RuntimeError):
 
 
 class LamaLargeCleaner:
-    def __init__(self, model, torch_module) -> None:
+    def __init__(self, model: object, torch_module: object) -> None:
         self.model = model
         self.torch = torch_module
 
     @classmethod
     def from_model_store(cls, model_store: ModelStore) -> Self:
+        # Prefer anime-lama .pt TorchScript (standalone JIT with embedded FFC graph)
+        try:
+            pt_path = model_store.ensure("anime-lama")
+            if Path(pt_path).exists() and Path(pt_path).stat().st_size > 1000:
+                return cls.from_model_path(pt_path)
+        except Exception:
+            pass
+
         return cls.from_model_path(model_store.ensure("lama-large"))
 
     @classmethod
     def from_model_path(cls, model_path: str | Path) -> Self:
         if importlib.util.find_spec("torch") is None:
             raise CleanerUnavailable("lama-large requires torch")
+        torch = importlib.import_module("torch")
+
+        p = Path(model_path)
+        if p.suffix == ".pt" or str(model_path).endswith(".pt"):
+            model = torch.jit.load(str(model_path), map_location="cpu")
+            model.eval()
+            if torch.cuda.is_available():
+                model = model.to("cuda")
+            return cls(model, torch)
+
+        # Fallback for .ckpt
         try:
             from app.cleaners.lama_large_arch import build_lama_large
-        except (ImportError, Exception):
-            raise CleanerUnavailable("lama_large_arch not available")
-        torch = importlib.import_module("torch")
-        gen = build_lama_large()
-        sd = torch.load(str(model_path), map_location="cpu", weights_only=False)
-        gen.load_state_dict(sd["gen_state_dict"])
-        del sd
-        import gc
-        gc.collect()
-        gen.eval()
-        if torch.cuda.is_available():
-            gen = gen.to("cuda")
-        return cls(gen, torch)
+            gen = build_lama_large()
+            sd = torch.load(str(model_path), map_location="cpu", weights_only=False)
+            gen.load_state_dict(sd.get("gen_state_dict", sd))
+            gen.eval()
+            if torch.cuda.is_available():
+                gen = gen.to("cuda")
+            return cls(gen, torch)
+        except Exception as err:
+            # If ckpt arch fails, try anime-lama .pt
+            parent = p.parent
+            pt_alt = parent / "anime-manga-big-lama.pt"
+            if pt_alt.exists():
+                model = torch.jit.load(str(pt_alt), map_location="cpu")
+                model.eval()
+                if torch.cuda.is_available():
+                    model = model.to("cuda")
+                return cls(model, torch)
+            raise CleanerUnavailable(f"Failed to load lama-large: {err}")
 
     def clean(
         self,
@@ -81,12 +102,20 @@ class LamaLargeCleaner:
             image_padded.transpose(2, 0, 1)[None, ...],
         )
         mask_tensor = self.torch.from_numpy(mask_padded[None, None, ...])
-        is_cuda = next(self.model.parameters()).is_cuda
+        
+        is_cuda = False
+        try:
+            is_cuda = next(self.model.parameters()).is_cuda
+        except Exception:
+            is_cuda = False
+
         if is_cuda:
             image_tensor = image_tensor.to("cuda")
             mask_tensor = mask_tensor.to("cuda")
+
         with self.torch.inference_mode():
             output = self.model(image_tensor, mask_tensor)
+
         repaired = (
             output.detach()
             .cpu()
@@ -110,7 +139,7 @@ class LamaLargeCleaner:
         self,
         image_rgb: RgbImage,
         mask: BinaryMask,
-        max_dim: int = 1024,
+        max_dim: int = 1536,
     ) -> RgbImage:
         if not np.any(mask):
             return image_rgb.copy()
@@ -138,12 +167,20 @@ class LamaLargeCleaner:
             image_padded.transpose(2, 0, 1)[None, ...],
         )
         mask_tensor = self.torch.from_numpy(mask_padded[None, None, ...])
-        is_cuda = next(self.model.parameters()).is_cuda
+
+        is_cuda = False
+        try:
+            is_cuda = next(self.model.parameters()).is_cuda
+        except Exception:
+            is_cuda = False
+
         if is_cuda:
             image_tensor = image_tensor.to("cuda")
             mask_tensor = mask_tensor.to("cuda")
+
         with self.torch.inference_mode():
             output = self.model(image_tensor, mask_tensor)
+
         repaired = (
             output.detach()
             .cpu()
