@@ -197,41 +197,29 @@ def _default_pipeline_factory(settings: Settings) -> Callable[[], Pipeline]:
             service_root / "models" / "manifest.json",
         )
         detector = HybridTextDetector.from_model_store(model_store)
-        lama_large = None
+        anime_lama = None
         try:
-            lama_large = LamaLargeCleaner.from_model_store(model_store)
+            anime_lama = AnimeLamaCleaner.from_model_store(model_store)
         except Exception:
-            lama_large = None
+            anime_lama = None
 
-        if lama_large is not None:
+        aot = AotCleaner(model_store)
+        if anime_lama is not None:
             cleaners: dict = {
-                CleanerRoute.FLAT: lama_large,
-                CleanerRoute.GRADIENT: lama_large,
-                CleanerRoute.ARTWORK: lama_large,
-                "lama-large": lama_large,
+                CleanerRoute.FLAT: anime_lama,
+                CleanerRoute.GRADIENT: anime_lama,
+                CleanerRoute.ARTWORK: anime_lama,
+                "anime-lama": anime_lama,
+                "lama-large": anime_lama,
+                "aot": aot,
             }
         else:
-            try:
-                anime_lama = AnimeLamaCleaner.from_model_store(model_store)
-            except Exception:
-                anime_lama = None
-            aot = AotCleaner(model_store)
-            if anime_lama is not None:
-                cleaners = {
-                    CleanerRoute.FLAT: anime_lama,
-                    CleanerRoute.GRADIENT: anime_lama,
-                    CleanerRoute.ARTWORK: anime_lama,
-                    "anime-lama": anime_lama,
-                    "lama-large": anime_lama,
-                    "aot": aot,
-                }
-            else:
-                cleaners = {
-                    CleanerRoute.FLAT: FlatCleaner(),
-                    CleanerRoute.GRADIENT: GradientCleaner(),
-                    CleanerRoute.ARTWORK: aot,
-                    "aot": aot,
-                }
+            cleaners = {
+                CleanerRoute.FLAT: FlatCleaner(),
+                CleanerRoute.GRADIENT: GradientCleaner(),
+                CleanerRoute.ARTWORK: aot,
+                "aot": aot,
+            }
 
         return CleaningPipeline(
             detector=detector,
