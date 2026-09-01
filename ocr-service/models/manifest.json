@@ -13,7 +13,7 @@
   },
   "anime-lama": {
     "url": "https://huggingface.co/df1412/anime-big-lama/resolve/main/anime-manga-big-lama.pt",
-    "sha256": "f08d2ec49c4c487cc1288be339af5987bb466c552379ba7acb45a0a9551d5c19",
+    "sha256": "479d3afdcb7ed2fd944ed4ebcc39ca45b33491f0f2e43eb1000bd623cfb41823",
     "filename": "anime-manga-big-lama.pt",
     "license": "MIT"
   },

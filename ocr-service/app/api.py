@@ -213,18 +213,25 @@ def _default_pipeline_factory(settings: Settings) -> Callable[[], Pipeline]:
         else:
             try:
                 anime_lama = AnimeLamaCleaner.from_model_store(model_store)
-            except CleanerUnavailable:
+            except Exception:
                 anime_lama = None
             aot = AotCleaner(model_store)
-            primary_artwork = anime_lama or aot
-            cleaners = {
-                CleanerRoute.FLAT: FlatCleaner(),
-                CleanerRoute.GRADIENT: GradientCleaner(),
-                CleanerRoute.ARTWORK: primary_artwork,
-                "aot": aot,
-            }
             if anime_lama is not None:
-                cleaners["anime-lama"] = anime_lama
+                cleaners = {
+                    CleanerRoute.FLAT: anime_lama,
+                    CleanerRoute.GRADIENT: anime_lama,
+                    CleanerRoute.ARTWORK: anime_lama,
+                    "anime-lama": anime_lama,
+                    "lama-large": anime_lama,
+                    "aot": aot,
+                }
+            else:
+                cleaners = {
+                    CleanerRoute.FLAT: FlatCleaner(),
+                    CleanerRoute.GRADIENT: GradientCleaner(),
+                    CleanerRoute.ARTWORK: aot,
+                    "aot": aot,
+                }
 
         return CleaningPipeline(
             detector=detector,
