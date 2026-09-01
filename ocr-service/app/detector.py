@@ -471,28 +471,31 @@ class HybridTextDetector:
             except Exception:
                 LOGGER.debug("PaddleOCR text detection failed", exc_info=True)
 
-        # Fallback: if stroke extraction produced an empty mask for a high-confidence CTD block, fallback to CTD prob
-        for b in ctd_res.blocks:
-            bx1 = max(0, b.rect.x)
-            by1 = max(0, b.rect.y)
-            bx2 = min(w, bx1 + b.rect.width)
-            by2 = min(h, by1 + b.rect.height)
-            if np.count_nonzero(combined_prob[by1:by2, bx1:bx2]) < 5 and b.confidence >= 0.5:
-                combined_prob[by1:by2, bx1:bx2] = np.maximum(
-                    combined_prob[by1:by2, bx1:bx2],
-                    ctd_res.mask_probability[by1:by2, bx1:bx2],
-                )
+        # Merge full CTD probability mask so no floating/vertical text is dropped
+        combined_prob = np.maximum(combined_prob, ctd_res.mask_probability)
 
-        if combined_blocks:
-            block_support = np.zeros((h, w), dtype=bool)
-            for b in combined_blocks:
-                margin = 24
-                bx1 = max(0, b.rect.x - margin)
-                by1 = max(0, b.rect.y - margin)
-                bx2 = min(w, b.rect.x + b.rect.width + margin)
-                by2 = min(h, b.rect.y + b.rect.height + margin)
-                block_support[by1:by2, bx1:bx2] = True
-            combined_prob[~block_support] = 0.0
+        # Detect any additional text blocks from high-confidence CTD mask components
+        ctd_high_prob = (ctd_res.mask_probability >= 0.35).astype(np.uint8)
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(ctd_high_prob, connectivity=8)
+        for comp_id in range(1, num_labels):
+            area = stats[comp_id, cv2.CC_STAT_AREA]
+            if area >= 16:
+                cx = stats[comp_id, cv2.CC_STAT_LEFT]
+                cy = stats[comp_id, cv2.CC_STAT_TOP]
+                cw = stats[comp_id, cv2.CC_STAT_WIDTH]
+                ch = stats[comp_id, cv2.CC_STAT_HEIGHT]
+                # Check if this component is already covered by an existing block
+                covered = any(
+                    abs(b.rect.x - cx) < 20 and abs(b.rect.y - cy) < 20
+                    for b in combined_blocks
+                )
+                if not covered:
+                    combined_blocks.append(
+                        DetectedBlock(
+                            rect=PixelRect(x=cx, y=cy, width=cw, height=ch),
+                            confidence=0.85,
+                        )
+                    )
 
         return DetectionResult(
             mask_probability=combined_prob,

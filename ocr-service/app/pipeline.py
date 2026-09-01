@@ -444,14 +444,13 @@ class CleaningPipeline:
                 verify_ms += _elapsed_ms(stage_started)
                 residual = report.residual_score
                 damage_score = report.damage_score
-                accepted = report.accepted
                 if accepted:
                     clean_image = candidate
                 else:
                     restore = (item.support > 0) | (retry_support > 0)
-                    clean_image[restore] = item.before[restore]
+                    clean_image[restore] = image_rgb[restore]
             elif not accepted and item.damage_accepted:
-                clean_image[item.support > 0] = item.before[item.support > 0]
+                clean_image[item.support > 0] = image_rgb[item.support > 0]
 
             records.append(
                 _record(

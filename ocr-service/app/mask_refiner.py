@@ -89,9 +89,11 @@ def refine_probability_mask(
         box_h = stats[component_id, cv2.CC_STAT_HEIGHT]
         radius = _estimate_stroke_radius(component)
         orientation_bonus = 1 if box_w > box_h * 2 else 0
-        dilation_radius = min(5, max(2, radius + orientation_bonus))
+        dilation_radius = min(6, max(2, radius + orientation_bonus))
         grown = constrained_dilate(component, protected_edges, dilation_radius)
+        # Always retain original text component seed, only constrain background dilation
         grown[protected_edges > 0] = 0
+        grown = np.maximum(grown, component)
         combined = np.maximum(combined, grown)
         component_masks[component_id] = grown
         radii[component_id] = radius

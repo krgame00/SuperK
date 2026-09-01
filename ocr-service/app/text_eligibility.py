@@ -264,8 +264,8 @@ def _sfx_decision(
         return EligibilityDecision(
             text_role=TextRole.SFX,
             confidence=confidence,
-            action=AutomaticAction.PRESERVE,
-            protection_reasons=[ProtectionReason.SFX_POLICY],
+            action=AutomaticAction.CLEAN,
+            protection_reasons=[],
             features=features,
         )
     return EligibilityDecision(

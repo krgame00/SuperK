@@ -163,8 +163,7 @@ def test_high_confidence_artwork_text_is_sfx() -> None:
 
     assert decision.text_role is TextRole.SFX
     assert decision.confidence >= 0.90
-    assert decision.action is AutomaticAction.PRESERVE
-    assert decision.protection_reasons == [ProtectionReason.SFX_POLICY]
+    assert decision.action is AutomaticAction.CLEAN
 
 
 def test_irregular_free_text_can_be_sfx_without_dense_artwork() -> None:
@@ -174,8 +173,7 @@ def test_irregular_free_text_can_be_sfx_without_dense_artwork() -> None:
 
     assert decision.text_role is TextRole.SFX
     assert decision.confidence >= 0.90
-    assert decision.action is AutomaticAction.PRESERVE
-    assert decision.protection_reasons == [ProtectionReason.SFX_POLICY]
+    assert decision.action is AutomaticAction.CLEAN
 
 
 def test_margin_review_text_is_attempted_on_comic_page() -> None:
@@ -298,19 +296,19 @@ def test_narration_threshold_only_changes_semantic_role(
 
 
 @pytest.mark.parametrize(
-    ("score", "expected_role", "expected_action", "expected_reason"),
+    ("score", "expected_role", "expected_action", "expected_reasons"),
     [
         (
             0.899,
             TextRole.REVIEW,
             AutomaticAction.CLEAN,
-            ProtectionReason.LOW_CONFIDENCE,
+            [ProtectionReason.LOW_CONFIDENCE],
         ),
         (
             0.900,
             TextRole.SFX,
-            AutomaticAction.PRESERVE,
-            ProtectionReason.SFX_POLICY,
+            AutomaticAction.CLEAN,
+            [],
         ),
     ],
 )
@@ -318,7 +316,7 @@ def test_sfx_threshold_controls_preservation(
     score: float,
     expected_role: TextRole,
     expected_action: AutomaticAction,
-    expected_reason: ProtectionReason,
+    expected_reasons: list[ProtectionReason],
 ) -> None:
     decision = _classify(
         _features(artwork_edges=score, irregularity=score),
@@ -326,4 +324,4 @@ def test_sfx_threshold_controls_preservation(
 
     assert decision.text_role is expected_role
     assert decision.action is expected_action
-    assert decision.protection_reasons == [expected_reason]
+    assert decision.protection_reasons == expected_reasons
