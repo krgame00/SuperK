@@ -19,7 +19,7 @@
   },
   "lama-large": {
     "url": "https://huggingface.co/dreMaz/AnimeMangaInpainting/resolve/main/lama_large_512px.ckpt",
-    "sha256": "e844f6ed153814dae1bc64235efe87d43e4710123b81d091bab753103c0cca11",
+    "sha256": "11d30fbb3000fb2eceae318b75d9ced9229d99ae990a7f8b3ac35c8d31f2c935",
     "filename": "lama_large_512px.ckpt",
     "license": "GPL-3.0"
   }
