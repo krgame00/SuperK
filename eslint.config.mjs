@@ -19,6 +19,7 @@ const eslintConfig = defineConfig([
     "chrome-extension/**",
     ".agents/**",
     ".worktrees/**",
+    "scratch/**",
   ]),
 ]);
 

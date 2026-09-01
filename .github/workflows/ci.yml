@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npx tsc --noEmit
@@ -32,6 +32,7 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - run: pip install -r requirements-dev.in
       - run: pytest tests -q --ignore=tests/test_api.py -m "not model"
       - run: ruff check app scripts tests
