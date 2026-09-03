@@ -48,34 +48,41 @@ async function forward(
   const contentType = request.headers.get("content-type");
   if (contentType) headers.set("content-type", contentType);
 
-  try {
-    const upstream = await fetch(target.toString(), {
-      method: request.method,
-      headers,
-      body,
-      cache: "no-store",
-    });
-    const responseHeaders = new Headers(upstream.headers);
-    responseHeaders.set("cache-control", "no-store");
-    responseHeaders.delete("connection");
-    responseHeaders.delete("transfer-encoding");
-    return new Response(upstream.body, {
-      status: upstream.status,
-      statusText: upstream.statusText,
-      headers: responseHeaders,
-    });
-  } catch {
-    return Response.json(
-      {
-        detail:
-          "Local cleaning service is unavailable. Start it and try again.",
-      },
-      {
-        status: 503,
-        headers: { "cache-control": "no-store" },
-      },
-    );
+  const attempts = request.method === "GET" ? 3 : 1;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      const upstream = await fetch(target.toString(), {
+        method: request.method,
+        headers,
+        body,
+        cache: "no-store",
+      });
+      const responseHeaders = new Headers(upstream.headers);
+      responseHeaders.set("cache-control", "no-store");
+      responseHeaders.delete("connection");
+      responseHeaders.delete("transfer-encoding");
+      return new Response(upstream.body, {
+        status: upstream.status,
+        statusText: upstream.statusText,
+        headers: responseHeaders,
+      });
+    } catch {
+      if (attempt < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 600));
+      }
+    }
   }
+
+  return Response.json(
+    {
+      detail:
+        "Local cleaning service is unavailable. Start it and try again.",
+    },
+    {
+      status: 503,
+      headers: { "cache-control": "no-store" },
+    },
+  );
 }
 
 function tooLarge(): Response {
