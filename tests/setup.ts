@@ -24,19 +24,22 @@ if (typeof globalThis.ImageData === "undefined") {
 
 if (typeof globalThis.Blob !== "undefined" && !globalThis.Blob.prototype.stream) {
   globalThis.Blob.prototype.stream = function () {
-    const blob = this;
     return new ReadableStream({
-      start(controller) {
-        if (typeof blob.arrayBuffer === "function") {
-          blob.arrayBuffer().then((buffer) => {
-            controller.enqueue(new Uint8Array(buffer));
-            controller.close();
-          }).catch((err) => controller.error(err));
-        } else if (typeof blob.text === "function") {
-          blob.text().then((str) => {
-            controller.enqueue(new TextEncoder().encode(str));
-            controller.close();
-          }).catch((err) => controller.error(err));
+      start: (controller) => {
+        if (typeof this.arrayBuffer === "function") {
+          this.arrayBuffer()
+            .then((buffer) => {
+              controller.enqueue(new Uint8Array(buffer));
+              controller.close();
+            })
+            .catch((err) => controller.error(err));
+        } else if (typeof this.text === "function") {
+          this.text()
+            .then((str) => {
+              controller.enqueue(new TextEncoder().encode(str));
+              controller.close();
+            })
+            .catch((err) => controller.error(err));
         } else {
           controller.enqueue(new Uint8Array(0));
           controller.close();
