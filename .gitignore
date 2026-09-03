@@ -59,6 +59,7 @@ next-env.d.ts
 # Scratch / probe files
 patch-probe.tmp
 original_content.js.txt
+/scratch/
 
 # Hermes plans
 /.hermes/
