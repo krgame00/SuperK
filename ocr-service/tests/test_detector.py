@@ -159,3 +159,36 @@ def test_hybrid_detector_combines_masks() -> None:
     assert np.any(res.mask_probability[20:40, 20:40] > 0.5)
 
 
+def test_merge_adjacent_blocks_bridges_vertical_dialogue_gap() -> None:
+    from app.detector import DetectedBlock, _merge_adjacent_blocks
+    from app.schemas import PixelRect
+
+    b1 = DetectedBlock(rect=PixelRect(x=100, y=50, width=80, height=40), confidence=0.9)
+    # b2 is in the same column, with a vertical gap of 15px
+    b2 = DetectedBlock(rect=PixelRect(x=105, y=105, width=75, height=35), confidence=0.8)
+    # b3 is far away
+    b3 = DetectedBlock(rect=PixelRect(x=300, y=50, width=50, height=50), confidence=0.7)
+
+    merged = _merge_adjacent_blocks([b1, b2, b3], max_gap=30)
+    assert len(merged) == 2
+    # The first merged block spans y from 50 to 140
+    merged_col = next(b for b in merged if b.rect.x <= 110)
+    assert merged_col.rect.y == 50
+    assert merged_col.rect.height == 90  # 140 - 50
+
+
+def test_detect_skin_tattoos_finds_dark_text_on_skin() -> None:
+    from app.detector import _detect_skin_tattoos
+
+    # Create an image with skin tone (Cr~150, Cb~105 in YCrCb)
+    # RGB approximately: (240, 195, 180)
+    image = np.full((120, 120, 3), (240, 195, 180), dtype=np.uint8)
+    # Draw realistic dark text stroke in the middle (3px thick)
+    image[52:55, 40:80] = (20, 20, 20)
+
+    mask = _detect_skin_tattoos(image)
+    assert mask.shape == (120, 120)
+    assert np.any(mask[52:55, 40:80] > 0)
+
+
+

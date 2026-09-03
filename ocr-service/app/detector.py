@@ -392,8 +392,12 @@ class HybridTextDetector:
         combined_prob = np.zeros((h, w), dtype=np.float32)
         combined_blocks = list(ctd_res.blocks)
 
-        # Process all CTD blocks with seed-anchored stroke extraction
-        for b in ctd_res.blocks:
+        # First merge vertically adjacent blocks to prevent inter-line gaps from dropping dialogue lines
+        merged_blocks = _merge_adjacent_blocks(ctd_res.blocks, max_gap=40)
+        combined_blocks = list(merged_blocks)
+
+        # Process all blocks with seed-anchored stroke extraction and artwork leak protection
+        for b in merged_blocks:
             pad = 6
             bx1 = max(0, b.rect.x - pad)
             by1 = max(0, b.rect.y - pad)
@@ -402,11 +406,24 @@ class HybridTextDetector:
             crop = image_rgb[by1:by2, bx1:bx2]
             if crop.size > 0:
                 local_prob = ctd_res.mask_probability[by1:by2, bx1:bx2]
-                seed = _binary_text_seed(local_prob, threshold=0.35)
+                # Lower threshold inside detected block to 0.18 to catch colored/cyan outlined text
+                seed = _binary_text_seed(local_prob, threshold=0.18)
                 candidate = _extract_strokes_from_crop(crop)
+
+                # Check for bright text core and colored glow (e.g. cyan/blue manga dialogue)
+                bright = (crop[:, :, 0] > 190) & (crop[:, :, 1] > 190) & (crop[:, :, 2] > 190)
+                blue_glow = (crop[:, :, 2] > 110) & (crop[:, :, 2] > crop[:, :, 0].astype(int) + 20)
+                glow_candidate = (bright | blue_glow).astype(np.uint8) * 255
+                candidate = np.maximum(candidate, glow_candidate)
+
                 fused = _fuse_strokes_with_text_seed(candidate, seed, support_radius=3)
+
+                # SAFETY CHECK: If fused covers more than 55% of the crop, it leaked into background artwork!
+                # Restrict back to seed + glow instead of turning the crop into a solid brick
                 if np.count_nonzero(fused) > 0:
-                    radius = _estimate_candidate_growth_radius(fused)
+                    if np.count_nonzero(fused) / fused.size > 0.55:
+                        fused = np.maximum(seed, glow_candidate)
+                    radius = min(3, _estimate_candidate_growth_radius(fused))
                     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (radius * 2 + 1, radius * 2 + 1))
                     grown = cv2.dilate(fused, kernel, iterations=1)
                     combined_prob[by1:by2, bx1:bx2] = np.maximum(
@@ -497,8 +514,82 @@ class HybridTextDetector:
                         )
                     )
 
+        # Detect skin-tone tattoos and body stamps
+        tattoo_mask = _detect_skin_tattoos(image_rgb)
+        if np.count_nonzero(tattoo_mask) > 0:
+            combined_prob = np.maximum(combined_prob, (tattoo_mask > 0).astype(np.float32) * 0.90)
+            num_t, _, t_stats, _ = cv2.connectedComponentsWithStats(tattoo_mask, connectivity=8)
+            for t_id in range(1, num_t):
+                tx = int(t_stats[t_id, cv2.CC_STAT_LEFT])
+                ty = int(t_stats[t_id, cv2.CC_STAT_TOP])
+                tw = int(t_stats[t_id, cv2.CC_STAT_WIDTH])
+                th = int(t_stats[t_id, cv2.CC_STAT_HEIGHT])
+                if t_stats[t_id, cv2.CC_STAT_AREA] >= 30:
+                    combined_blocks.append(
+                        DetectedBlock(
+                            rect=PixelRect(x=tx, y=ty, width=tw, height=th),
+                            confidence=0.75,
+                        )
+                    )
+
         return DetectionResult(
             mask_probability=combined_prob,
             blocks=combined_blocks,
             scale=ctd_res.scale,
         )
+
+
+def _merge_adjacent_blocks(blocks: Sequence[DetectedBlock], max_gap: int = 40) -> list[DetectedBlock]:
+    if not blocks:
+        return []
+    rects = [[b.rect.x, b.rect.y, b.rect.x + b.rect.width, b.rect.y + b.rect.height, b.confidence] for b in blocks]
+    merged: list[list[float]] = []
+    for r in sorted(rects, key=lambda x: (x[0], x[1])):
+        combined = False
+        for m in merged:
+            x_overlap = min(r[2], m[2]) - max(r[0], m[0])
+            y_gap = max(0, r[1] - m[3], m[1] - r[3])
+            min_w = min(r[2] - r[0], m[2] - m[0])
+            if x_overlap > 0.3 * min_w and y_gap <= max_gap:
+                m[0] = min(m[0], r[0])
+                m[1] = min(m[1], r[1])
+                m[2] = max(m[2], r[2])
+                m[3] = max(m[3], r[3])
+                m[4] = max(m[4], r[4])
+                combined = True
+                break
+        if not combined:
+            merged.append(r[:])
+    return [
+        DetectedBlock(
+            rect=PixelRect(x=int(m[0]), y=int(m[1]), width=int(m[2] - m[0]), height=int(m[3] - m[1])),
+            confidence=float(m[4]),
+        )
+        for m in merged
+    ]
+
+
+def _detect_skin_tattoos(image_rgb: RgbImage) -> np.ndarray:
+    h, w = image_rgb.shape[:2]
+    ycrcb = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2YCrCb)
+    cr = ycrcb[:, :, 1]
+    cb = ycrcb[:, :, 2]
+    is_skin = (cr >= 135) & (cr <= 170) & (cb >= 85) & (cb <= 125)
+    # Dilate skin mask so that dark text drawn on skin is fully enclosed
+    skin_envelope = cv2.dilate(is_skin.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)), iterations=1)
+    gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+    blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel)
+    tattoo_candidates = (blackhat > 25) & (skin_envelope > 0)
+    num_t, t_labels, t_stats, _ = cv2.connectedComponentsWithStats(
+        tattoo_candidates.astype(np.uint8), connectivity=8
+    )
+    mask = np.zeros((h, w), dtype=np.uint8)
+    for i in range(1, num_t):
+        area = t_stats[i, cv2.CC_STAT_AREA]
+        tw = t_stats[i, cv2.CC_STAT_WIDTH]
+        th = t_stats[i, cv2.CC_STAT_HEIGHT]
+        if 15 <= area <= 800 and tw < 150 and th < 80:
+            mask[t_labels == i] = 255
+    return cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)), iterations=1)
+
