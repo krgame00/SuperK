@@ -102,7 +102,7 @@ class LamaLargeCleaner:
             image_padded.transpose(2, 0, 1)[None, ...],
         )
         mask_tensor = self.torch.from_numpy(mask_padded[None, None, ...])
-        
+
         is_cuda = False
         try:
             is_cuda = next(self.model.parameters()).is_cuda
