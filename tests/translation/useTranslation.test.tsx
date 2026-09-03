@@ -40,10 +40,7 @@ const translatedBubble = {
 };
 
 const imageResponse = () =>
-  new Response(Buffer.from("clean"), {
-    status: 200,
-    headers: { "Content-Type": "image/png" },
-  });
+  new Response(new Blob(["clean"], { type: "image/png" }), { status: 200 });
 
 const successResponse = () =>
   Response.json({
