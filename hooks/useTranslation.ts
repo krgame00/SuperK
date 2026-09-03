@@ -429,6 +429,34 @@ export function useTranslation({
     [viewMode],
   );
 
+async function readBlobAsDataUrl(blob: Blob): Promise<string> {
+  if (typeof blob.arrayBuffer === "function") {
+    const buffer = await blob.arrayBuffer();
+    const mimeType = blob.type && blob.type.startsWith("image/") ? blob.type : "image/jpeg";
+    if (typeof Buffer !== "undefined") {
+      return `data:${mimeType};base64,${Buffer.from(buffer).toString("base64")}`;
+    }
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return `data:${mimeType};base64,${btoa(binary)}`;
+  }
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error("อ่านรูปภาพคลีนไม่สำเร็จ"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function readBlobAsBase64(blob: Blob): Promise<string> {
+  const dataUrl = await readBlobAsDataUrl(blob);
+  const commaIndex = dataUrl.indexOf(",");
+  return commaIndex !== -1 ? dataUrl.slice(commaIndex + 1) : dataUrl;
+}
+
   const cacheBackgroundOnly = useCallback(
     async (backgroundUrl: string, pageUrl: string): Promise<void> => {
       const response = await fetch(backgroundUrl);
@@ -436,12 +464,7 @@ export function useTranslation({
         throw new Error(`ไม่สามารถโหลดรูปภาพคลีนได้ (HTTP ${response.status})`);
       }
       const blob = await response.blob();
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = () => reject(new Error("อ่านรูปภาพคลีนไม่สำเร็จ"));
-        reader.readAsDataURL(blob);
-      });
+      const dataUrl = await readBlobAsDataUrl(blob);
 
       translatedImageCacheRef.current.set(pageUrl, dataUrl);
       bubbleCacheRef.current.set(pageUrl, []);
@@ -469,11 +492,7 @@ export function useTranslation({
       if (!resImg.ok) throw new Error(`ไม่สามารถโหลดรูปภาพได้ (HTTP ${resImg.status})`);
       const blob = await resImg.blob();
       const actualMimeType = blob.type && blob.type.startsWith('image/') ? blob.type : "image/jpeg";
-      const base64 = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
-        reader.readAsDataURL(blob);
-      });
+      const base64 = await readBlobAsBase64(blob);
 
       if (nsfwBypassMode || forceNsfwBypass) {
         const imgEl = await waitForImageReady(recognitionUrl);

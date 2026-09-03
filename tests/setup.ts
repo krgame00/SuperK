@@ -49,4 +49,44 @@ if (typeof globalThis.Blob !== "undefined" && !globalThis.Blob.prototype.stream)
   };
 }
 
+if (typeof globalThis.FileReader !== "undefined") {
+  const originalReadAsDataURL = globalThis.FileReader.prototype.readAsDataURL;
+  globalThis.FileReader.prototype.readAsDataURL = function (blob: Blob) {
+    if (blob && typeof blob.arrayBuffer === "function") {
+      blob
+        .arrayBuffer()
+        .then((buffer) => {
+          const base64 = Buffer.from(buffer).toString("base64");
+          const mimeType = blob.type || "application/octet-stream";
+          Object.defineProperty(this, "result", {
+            configurable: true,
+            writable: true,
+            value: `data:${mimeType};base64,${base64}`,
+          });
+          if (typeof this.onload === "function") {
+            this.onload(new ProgressEvent("load") as ProgressEvent<FileReader>);
+          }
+          if (typeof this.onloadend === "function") {
+            this.onloadend(new ProgressEvent("loadend") as ProgressEvent<FileReader>);
+          }
+        })
+        .catch((error) => {
+          Object.defineProperty(this, "error", {
+            configurable: true,
+            writable: true,
+            value: error,
+          });
+          if (typeof this.onerror === "function") {
+            this.onerror(new ProgressEvent("error") as ProgressEvent<FileReader>);
+          }
+          if (typeof this.onloadend === "function") {
+            this.onloadend(new ProgressEvent("loadend") as ProgressEvent<FileReader>);
+          }
+        });
+      return;
+    }
+    return originalReadAsDataURL.call(this, blob);
+  };
+}
+
 afterEach(cleanup);
