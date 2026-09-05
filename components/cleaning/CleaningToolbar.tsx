@@ -140,7 +140,7 @@ export function CleaningToolbar({
   );
 }
 
-function stageLabel(stage: CleaningProgress["stage"]): string {
+export function stageLabel(stage: CleaningProgress["stage"]): string {
   const labels = {
     queued: "รอคิว",
     detecting: "ตรวจข้อความ",

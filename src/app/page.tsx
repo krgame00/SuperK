@@ -16,6 +16,7 @@ import JSZip from "jszip";
 import { useCleaning } from "@/hooks/useCleaning";
 import {
   CleaningToolbar,
+  stageLabel,
   type WorkspaceLayer,
 } from "@/components/cleaning/CleaningToolbar";
 import { MaskEditor } from "@/components/cleaning/MaskEditor";
@@ -245,7 +246,27 @@ export default function WorkspacePage() {
   const translationBusy = isTranslating || isTranslatingAll;
   const operationBusy =
     isUiOperationBusy || translationBusy || Boolean(cleaningProgress);
-  const workflowMessage = importStatusMessage ?? translateAllProgress?.message ?? translationResult;
+  const translateAllStatusText = translateAllProgress
+    ? `${translateAllProgress.message}${
+        typeof translateAllProgress.remainingSeconds === "number" && translateAllProgress.current > 1
+          ? ` · ${
+              translateAllProgress.remainingSeconds < 60
+                ? `เหลืออีก ~${Math.ceil(translateAllProgress.remainingSeconds)} วิ`
+                : `เหลืออีก ~${Math.ceil(translateAllProgress.remainingSeconds / 60)} นาที`
+            }`
+          : ""
+      } (${Math.round((translateAllProgress.current / translateAllProgress.total) * 100)}%)`
+    : null;
+
+  const cleaningStatusText = cleaningProgress
+    ? `กำลังคลีน: ${stageLabel(cleaningProgress.stage)} · ${cleaningProgress.completedRegions}/${cleaningProgress.totalRegions} · ${(cleaningProgress.elapsedMs / 1000).toFixed(1)}s`
+    : null;
+
+  const workflowMessage =
+    importStatusMessage ??
+    translateAllStatusText ??
+    (isFocusMode && !isFocusToolbarVisible ? cleaningStatusText : null) ??
+    translationResult;
 
   const handleTranslateCurrent = useCallback(async (): Promise<boolean> => {
     if (
@@ -933,10 +954,14 @@ export default function WorkspacePage() {
 
       {/* Batch Progress Bar - Full Width */}
       {translateAllProgress && (
-        <div className="fixed top-16 left-0 right-0 z-50">
-          <div className="h-1 bg-surface w-full">
+        <div
+          className={`fixed left-0 right-0 z-50 transition-all duration-200 ${
+            isFocusMode ? "top-0" : "top-14"
+          }`}
+        >
+          <div className="h-1 bg-surface/60 backdrop-blur-xs w-full">
             <div
-              className="h-full bg-primary transition-all duration-500 ease-out"
+              className="h-full bg-primary shadow-[0_0_8px_rgba(var(--primary-rgb),0.7)] transition-all duration-500 ease-out"
               style={{ width: `${(translateAllProgress.current / translateAllProgress.total) * 100}%` }}
             />
           </div>
@@ -1413,10 +1438,14 @@ export default function WorkspacePage() {
           </div>
         )}
 
-        {workflowMessage && !isFocusMode && (
-          <div className="fixed top-16 left-1/2 -translate-x-1/2 z-40 bg-surface/90 backdrop-blur-md border border-primary/30 text-foreground px-4 py-1.5 rounded-full text-xs font-semibold shadow-lg animate-in fade-in slide-in-from-top-2 duration-300 flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-            <span>{workflowMessage}</span>
+        {workflowMessage && (!isFocusMode || !isFocusToolbarVisible) && (
+          <div
+            className={`fixed left-1/2 -translate-x-1/2 z-40 bg-surface/90 backdrop-blur-md border border-primary/30 text-foreground px-4 py-1.5 rounded-full text-xs font-semibold shadow-lg animate-in fade-in slide-in-from-top-2 duration-300 flex items-center gap-2 max-w-[90vw] truncate transition-all ${
+              isFocusMode ? "top-3" : "top-16"
+            }`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse shrink-0" />
+            <span className="truncate">{workflowMessage}</span>
           </div>
         )}
 
@@ -1430,12 +1459,12 @@ export default function WorkspacePage() {
                   : "px-1 pb-20 sm:pb-22"
             }`}
           >
-            {/* Cleaning Toolbar: Floating on desktop so it doesn't push the canvas, standard flow on mobile */}
+            {/* Cleaning Toolbar: Floating at the top on all screen sizes so it never pushes the canvas */}
             <div
-              className={`w-full md:absolute md:top-2.5 md:left-1/2 md:-translate-x-1/2 md:z-30 flex justify-center pointer-events-none px-2 transition-all duration-300 ease-out ${
+              className={`w-full absolute top-2.5 left-1/2 -translate-x-1/2 z-30 flex justify-center pointer-events-none px-2 transition-all duration-300 ease-out ${
                 isFocusMode && !isFocusToolbarVisible
                   ? "-translate-y-24 opacity-0 pointer-events-none max-h-0 py-0 overflow-hidden"
-                  : "translate-y-0 opacity-100 py-1 md:py-0"
+                  : "translate-y-0 opacity-100 py-0"
               }`}
             >
               <div className="pointer-events-auto max-w-full">
