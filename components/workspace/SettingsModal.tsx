@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import { type GlossaryEntry } from "@/lib/translation/glossary";
-import { Plus, Trash2, BookText, Flame, X } from "lucide-react";
+import { Plus, Trash2, BookText, Flame, X, ChevronDown } from "lucide-react";
 
 export interface WorkspaceTextStyle {
   fontFamily: string;
@@ -46,12 +46,17 @@ export function SettingsModal({
 }: SettingsModalProps): ReactElement | null {
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const previousActiveElementRef = useRef<HTMLElement | null>(null);
   const [newSource, setNewSource] = useState("");
   const [newTarget, setNewTarget] = useState("");
 
   useEffect(() => {
     if (isOpen) {
+      previousActiveElementRef.current = document.activeElement as HTMLElement | null;
       closeRef.current?.focus();
+    } else if (previousActiveElementRef.current) {
+      previousActiveElementRef.current.focus?.();
+      previousActiveElementRef.current = null;
     }
   }, [isOpen]);
 
@@ -129,50 +134,67 @@ export function SettingsModal({
 
         <div className="space-y-4">
           <div>
-            <label className="mb-1 block text-xs font-medium text-muted">
-              Source Language
+            <label htmlFor="settings-source-lang" className="mb-1 block text-xs font-medium text-muted">
+              Source Language (ภาษาต้นฉบับ)
             </label>
-            <select
-              value={sourceLang}
-              onChange={(e) => onSourceLangChange(e.target.value)}
-              className="w-full appearance-none rounded-md border border-surface-hover bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-            >
-              <option value="auto">Auto Detect</option>
-              <option value="Japanese">Japanese (日本語)</option>
-              <option value="Korean">Korean (한국어)</option>
-              <option value="Chinese">Chinese (中文)</option>
-              <option value="English">English</option>
-            </select>
+            <div className="relative">
+              <select
+                id="settings-source-lang"
+                aria-label="Source Language (ภาษาต้นฉบับ)"
+                value={sourceLang}
+                onChange={(e) => onSourceLangChange(e.target.value)}
+                className="w-full appearance-none rounded-md border border-surface-hover bg-background px-3 py-2 pr-8 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+              >
+                <option value="auto">Auto Detect (ตรวจจับอัตโนมัติ)</option>
+                <option value="Japanese">Japanese (日本語)</option>
+                <option value="Korean">Korean (한국어)</option>
+                <option value="Chinese">Chinese (中文)</option>
+                <option value="English">English</option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" aria-hidden="true" />
+            </div>
           </div>
 
           <div className="border-t border-surface-hover pt-2">
-            <label className="mb-2 block text-xs font-medium text-muted">
-              Typography
-            </label>
+            <span className="mb-2 block text-xs font-medium text-muted">
+              Typography (รูปแบบข้อความ)
+            </span>
             <div className="space-y-3">
               <div>
-                <select
-                  value={textStyle.fontFamily}
-                  onChange={(e) =>
-                    onTextStyleChange((prev: WorkspaceTextStyle) => ({
-                      ...prev,
-                      fontFamily: e.target.value,
-                    }))
-                  }
-                  className="w-full appearance-none rounded-md border border-surface-hover bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                >
-                  <option value="Itim, sans-serif">Itim (น่ารัก / สบายๆ)</option>
-                  <option value="Mitr, sans-serif">Mitr (อ่านง่าย / โมเดิร์น)</option>
-                  <option value="Chakra Petch, sans-serif">
-                    Chakra Petch (แอ็กชัน / หุ่นยนต์)
-                  </option>
-                  <option value="Sarabun, sans-serif">Sarabun (ทางการ / บรรยาย)</option>
-                </select>
+                <label htmlFor="settings-font-family" className="mb-1 block text-xs text-muted">
+                  Font Family (แบบอักษร)
+                </label>
+                <div className="relative">
+                  <select
+                    id="settings-font-family"
+                    aria-label="Font Family (แบบอักษร)"
+                    value={textStyle.fontFamily}
+                    onChange={(e) =>
+                      onTextStyleChange((prev: WorkspaceTextStyle) => ({
+                        ...prev,
+                        fontFamily: e.target.value,
+                      }))
+                    }
+                    className="w-full appearance-none rounded-md border border-surface-hover bg-background px-3 py-2 pr-8 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                  >
+                    <option value="Itim, sans-serif">Itim (น่ารัก / สบายๆ)</option>
+                    <option value="Mitr, sans-serif">Mitr (อ่านง่าย / โมเดิร์น)</option>
+                    <option value="Chakra Petch, sans-serif">
+                      Chakra Petch (แอ็กชัน / หุ่นยนต์)
+                    </option>
+                    <option value="Sarabun, sans-serif">Sarabun (ทางการ / บรรยาย)</option>
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" aria-hidden="true" />
+                </div>
               </div>
 
               <div className="flex items-center justify-between">
-                <span className="text-sm text-muted">Text Color</span>
+                <label htmlFor="settings-text-color" className="text-sm text-muted cursor-pointer">
+                  Text Color (สีข้อความ)
+                </label>
                 <input
+                  id="settings-text-color"
+                  aria-label="Text Color (สีข้อความ)"
                   type="color"
                   value={textStyle.textColor || "#000000"}
                   onChange={(e) =>
@@ -186,8 +208,12 @@ export function SettingsModal({
               </div>
 
               <div className="flex items-center justify-between">
-                <span className="text-sm text-muted">Outline Color</span>
+                <label htmlFor="settings-text-outline" className="text-sm text-muted cursor-pointer">
+                  Outline Color (สีขอบตัวอักษร)
+                </label>
                 <input
+                  id="settings-text-outline"
+                  aria-label="Outline Color (สีขอบตัวอักษร)"
                   type="color"
                   value={textStyle.textOutline || "#ffffff"}
                   onChange={(e) =>
@@ -201,11 +227,13 @@ export function SettingsModal({
               </div>
 
               <div className="space-y-1">
-                <div className="flex items-center justify-between text-sm text-muted">
-                  <span>Font Size Multiplier</span>
-                  <span>{textStyle.fontSizeMultiplier.toFixed(1)}x</span>
-                </div>
+                <label htmlFor="settings-font-size" className="flex items-center justify-between text-sm text-muted cursor-pointer">
+                  <span>Font Size Multiplier (ขนาดตัวอักษร)</span>
+                  <span className="font-semibold text-foreground">{textStyle.fontSizeMultiplier.toFixed(1)}x</span>
+                </label>
                 <input
+                  id="settings-font-size"
+                  aria-label="Font Size Multiplier (ขนาดตัวอักษร)"
                   type="range"
                   min="0.5"
                   max="2.0"
@@ -225,10 +253,10 @@ export function SettingsModal({
 
           <div className="border-t border-surface-hover pt-2">
             <div className="mb-2 flex items-center justify-between">
-              <label className="flex items-center gap-1.5 text-xs font-medium text-muted">
+              <span className="flex items-center gap-1.5 text-xs font-medium text-muted">
                 <BookText className="h-3.5 w-3.5 text-primary" />
                 <span>Glossary & ล็อกชื่อตัวละคร</span>
-              </label>
+              </span>
               <span className="text-[10px] text-muted">
                 {glossary.length} คำ
               </span>
@@ -251,6 +279,7 @@ export function SettingsModal({
                       onClick={() => handleRemoveGlossary(idx)}
                       className="ml-1 text-muted hover:text-red-400"
                       title="ลบคำศัพท์"
+                      aria-label={`ลบคำศัพท์ ${entry.source}`}
                     >
                       <Trash2 className="h-3 w-3" />
                     </button>
@@ -259,8 +288,10 @@ export function SettingsModal({
               </div>
             )}
 
-            <form onSubmit={handleAddGlossary} className="flex gap-1.5">
+            <form onSubmit={handleAddGlossary} className="flex gap-1.5" aria-label="เพิ่มคำศัพท์ใหม่">
               <input
+                id="settings-glossary-source"
+                aria-label="คำต้นฉบับ เช่น Luffy"
                 type="text"
                 value={newSource}
                 onChange={(e) => setNewSource(e.target.value)}
@@ -268,6 +299,8 @@ export function SettingsModal({
                 className="w-1/2 rounded border border-surface-hover bg-background px-2 py-1 text-xs text-foreground placeholder:text-muted/60 focus:outline-none focus:ring-1 focus:ring-primary"
               />
               <input
+                id="settings-glossary-target"
+                aria-label="คำแปลที่ต้องการ เช่น ลูฟี่"
                 type="text"
                 value={newTarget}
                 onChange={(e) => setNewTarget(e.target.value)}
@@ -278,6 +311,7 @@ export function SettingsModal({
                 type="submit"
                 className="flex items-center justify-center rounded bg-primary px-2 py-1 text-primary-content hover:bg-primary-hover"
                 title="เพิ่มคำศัพท์"
+                aria-label="เพิ่มคำศัพท์ลงใน Glossary"
               >
                 <Plus className="h-3.5 w-3.5" />
               </button>
@@ -285,32 +319,39 @@ export function SettingsModal({
           </div>
 
           <div className="border-t border-surface-hover pt-2">
-            <label className="mb-1 block text-xs font-medium text-muted">
-              Model Preference
+            <label htmlFor="settings-model-preference" className="mb-1 block text-xs font-medium text-muted">
+              Model Preference (โมเดล Gemini)
             </label>
-            <select
-              value={modelPreference}
-              onChange={(e) => onModelPreferenceChange(e.target.value)}
-              className="w-full appearance-none rounded-md border border-surface-hover bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-            >
-              <option value="auto">Auto (สลับโมเดลอัตโนมัติเมื่อโควต้าเต็ม)</option>
-              <option value="gemini-3.5-flash-lite">
-                Gemini 3.5 Flash Lite (แนะนำ! โควต้าเหลือเพียบ 500 RPD)
-              </option>
-              <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
-              <option value="gemini-3-flash">Gemini 3.0 Flash</option>
-              <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
-              <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite</option>
-              <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-              <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
-            </select>
+            <div className="relative">
+              <select
+                id="settings-model-preference"
+                aria-label="Model Preference (โมเดล Gemini)"
+                value={modelPreference}
+                onChange={(e) => onModelPreferenceChange(e.target.value)}
+                className="w-full appearance-none rounded-md border border-surface-hover bg-background px-3 py-2 pr-8 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+              >
+                <option value="auto">Auto (สลับโมเดลอัตโนมัติเมื่อโควต้าเต็ม)</option>
+                <option value="gemini-3.5-flash-lite">
+                  Gemini 3.5 Flash Lite (แนะนำ! โควต้าเหลือเพียบ 500 RPD)
+                </option>
+                <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
+                <option value="gemini-3-flash">Gemini 3.0 Flash</option>
+                <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+                <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite</option>
+                <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" aria-hidden="true" />
+            </div>
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-medium text-muted">
+            <label htmlFor="settings-api-key" className="mb-1 block text-xs font-medium text-muted">
               Gemini API Key (Optional)
             </label>
             <input
+              id="settings-api-key"
+              aria-label="Gemini API Key"
               type="password"
               value={userApiKey}
               onChange={(e) => onUserApiKeyChange(e.target.value)}

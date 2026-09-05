@@ -215,6 +215,7 @@ export const saveProjectSession = async (data: {
     await transactionDone(tx);
   } catch (err) {
     console.warn("Failed to save project session to IndexedDB", err);
+    throw err;
   }
 };
 

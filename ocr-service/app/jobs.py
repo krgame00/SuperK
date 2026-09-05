@@ -353,6 +353,8 @@ class JobStore:
     @staticmethod
     def _fail(job: JobState) -> None:
         with job.lock:
+            job.output = None  # Evict full numpy array to free RAM
+            job.source_bytes = b""  # Evict raw input bytes to free RAM
             job.status = JobStatus.FAILED
             job.error = "Image cleaning failed. Check the input and local models."
             job.elapsed_ms = job._current_elapsed_ms()

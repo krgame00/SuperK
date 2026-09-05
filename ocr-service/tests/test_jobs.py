@@ -256,3 +256,30 @@ def test_more_than_15_jobs_not_deleted(tmp_path: Path) -> None:
         assert (tmp_path / "jobs" / first_id / "result.json").is_file()
     finally:
         store.shutdown()
+
+
+def test_failed_job_releases_memory(tmp_path: Path) -> None:
+    class _FailingPipeline:
+        def run(self, image_rgb: np.ndarray, progress_callback=None) -> PipelineOutput:
+            raise RuntimeError("Simulated cleaner failure")
+
+    store = JobStore(pipeline_factory=lambda: _FailingPipeline(), cache_dir=tmp_path)
+    try:
+        png_bytes = _make_png(32, 32)
+        assert len(png_bytes) > 0
+        job_id = store.submit(png_bytes, "failing.png")
+        job = _wait_for_job(store, job_id)
+
+        assert job.status == JobStatus.FAILED
+        assert job.error is not None
+        # Memory release verification: large buffers must be evicted
+        assert job.source_bytes == b""
+        assert job.output is None
+
+        # API snapshot must still be queryable
+        snapshot = job.snapshot()
+        assert snapshot["status"] == "failed"
+        assert snapshot["error"] == job.error
+    finally:
+        store.shutdown()
+

@@ -3,6 +3,17 @@ import numpy as np
 from app.compositor import compose
 
 
+def test_default_composition_does_not_expand_mask_support() -> None:
+    original = np.zeros((12, 12, 3), np.uint8)
+    repaired = np.full_like(original, 255)
+    mask = np.zeros((12, 12), np.uint8)
+    mask[6, 6] = 255
+
+    _, support = compose(original, repaired, mask)
+
+    assert np.array_equal(support, mask)
+
+
 def test_compositor_is_identical_outside_support() -> None:
     random = np.random.default_rng(20260727)
     original = random.integers(0, 256, (96, 96, 3), dtype=np.uint8)

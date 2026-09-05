@@ -143,15 +143,33 @@ export function TextPropertiesPanel({
             <label htmlFor="text-font-size" className="text-muted text-[11px] flex-shrink-0">
               ขนาดฟอนต์
             </label>
-            <div className="flex items-center gap-2 flex-1 justify-end">
+            <div className="flex items-center gap-1.5 flex-1 justify-end">
+              <button
+                type="button"
+                onClick={() => onChange({ fontSize: Math.max(8, (layer.fontSize || 20) - 2) })}
+                aria-label="ลดขนาดฟอนต์"
+                title="ลดขนาดฟอนต์ (-2)"
+                className="w-7 h-7 flex items-center justify-center rounded border border-surface-hover bg-background hover:bg-surface-hover text-muted hover:text-foreground text-sm font-semibold transition-colors"
+              >
+                -
+              </button>
               <input
                 type="range"
                 min="10"
                 max="72"
                 value={layer.fontSize || 20}
                 onChange={(e) => onChange({ fontSize: Number(e.target.value) })}
-                className="w-24 accent-primary"
+                className="w-20 accent-primary"
               />
+              <button
+                type="button"
+                onClick={() => onChange({ fontSize: Math.min(120, (layer.fontSize || 20) + 2) })}
+                aria-label="เพิ่มขนาดฟอนต์"
+                title="เพิ่มขนาดฟอนต์ (+2)"
+                className="w-7 h-7 flex items-center justify-center rounded border border-surface-hover bg-background hover:bg-surface-hover text-muted hover:text-foreground text-sm font-semibold transition-colors"
+              >
+                +
+              </button>
               <input
                 id="text-font-size"
                 aria-label="ขนาดฟอนต์"

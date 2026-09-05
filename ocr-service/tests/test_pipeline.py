@@ -455,9 +455,9 @@ def test_ui_page_story_region_is_sent_to_cleaner() -> None:
             np.zeros_like(mask),
         ),
         cleaners={
-            "flat": SolidCleaner(0),
-            "gradient": SolidCleaner(0),
-            "artwork": SolidCleaner(0),
+            "flat": SolidCleaner(80),
+            "gradient": SolidCleaner(80),
+            "artwork": SolidCleaner(80),
         },
         page_classifier=ui_page,
         protection_detector=_empty_protection,

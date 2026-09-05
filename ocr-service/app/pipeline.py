@@ -11,7 +11,13 @@ import numpy as np
 from app.cleaners.base import Cleaner
 from app.compositor import compose
 from app.detector import DetectionResult, RgbImage
-from app.mask_refiner import BinaryMask, MaskRegion, RefinedMask, refine_mask
+from app.mask_refiner import (
+    BinaryMask,
+    MaskRegion,
+    RefinedMask,
+    constrained_dilate,
+    refine_mask,
+)
 from app.page_context import PageContext, classify_page
 from app.protection import ProtectionResult, detect_protection
 from app.region_router import route_region
@@ -216,15 +222,20 @@ class CleaningPipeline:
                 support,
                 region,
                 self.residual_probe,
+                evidence_envelope=refined.envelope,
+                protected_edges=refined.protected_edges,
             )
             verify_ms += _elapsed_ms(stage_started)
             if not report.accepted and report.retry_mask_radius is not None:
                 stage_started = perf_counter()
-                retry_mask = cv2.dilate(
-                    region_mask,
-                    cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
-                )
+                retry_mask = region_mask.copy()
+                if report.residual_mask is not None and np.any(report.residual_mask > 0):
+                    retry_mask = np.maximum(retry_mask, report.residual_mask)
+                elif report.retry_mask_radius:
+                    retry_mask = constrained_dilate(retry_mask, protection.protected_mask, 1)
                 retry_mask[protection.protected_mask > 0] = 0
+                if refined.envelope is not None:
+                    retry_mask[refined.envelope == 0] = 0
                 # Use LAMA Large for second pass if available (ensemble effect)
                 fallback_cleaner = self.cleaners.get("lama-large") or cleaner
                 retry_repaired = fallback_cleaner.clean(before, retry_mask, region)
@@ -244,6 +255,8 @@ class CleaningPipeline:
                     support,
                     region,
                     self.residual_probe,
+                    evidence_envelope=refined.envelope,
+                    protected_edges=refined.protected_edges,
                 )
                 verify_ms += _elapsed_ms(stage_started)
 
@@ -402,20 +415,30 @@ class CleaningPipeline:
             residual = residual_scores.get(item.region.id, 0.0)
             damage_score = item.damage_score
             accepted = item.damage_accepted and residual <= 0.18
-            if (
-                item.damage_accepted
-                and residual > 0.18
-                and damage_score <= 0.02
-            ):
+            if item.damage_accepted and residual > 0.18:
+                report_pre = verify_region(
+                    image_rgb,
+                    clean_image,
+                    item.mask,
+                    item.support,
+                    item.region,
+                    self.residual_probe,
+                    evidence_envelope=refined.envelope,
+                    protected_edges=refined.protected_edges,
+                )
                 retry_base = clean_image.copy()
                 retry_base[item.support > 0] = image_rgb[item.support > 0]
-                retry_mask = cv2.dilate(
-                    item.mask,
-                    cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
-                )
+                retry_mask = item.mask.copy()
+                if report_pre.residual_mask is not None and np.any(report_pre.residual_mask > 0):
+                    retry_mask = np.maximum(retry_mask, report_pre.residual_mask)
+                else:
+                    retry_mask = constrained_dilate(retry_mask, protection.protected_mask, 1)
                 retry_mask[protection.protected_mask > 0] = 0
+                if refined.envelope is not None:
+                    retry_mask[refined.envelope == 0] = 0
                 stage_started = perf_counter()
-                repaired = item.cleaner.clean(
+                fallback_cleaner = self.cleaners.get("lama-large") or item.cleaner
+                repaired = fallback_cleaner.clean(
                     retry_base,
                     retry_mask,
                     item.region,
@@ -440,10 +463,13 @@ class CleaningPipeline:
                     retry_support,
                     item.region,
                     self.residual_probe,
+                    evidence_envelope=refined.envelope,
+                    protected_edges=refined.protected_edges,
                 )
                 verify_ms += _elapsed_ms(stage_started)
                 residual = report.residual_score
                 damage_score = report.damage_score
+                accepted = report.accepted
                 if accepted:
                     clean_image = candidate
                 else:

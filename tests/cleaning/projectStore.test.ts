@@ -90,4 +90,46 @@ describe("Phase 5: Blob asset store and session persistence", () => {
     expect(blob).toBeInstanceOf(Blob);
     expect(blob.type).toBe("image/png");
   });
+
+  it("propagates error to caller when IndexedDB write fails", async () => {
+    const originalIndexedDB = window.indexedDB;
+    const mockDB = {
+      ...originalIndexedDB,
+      open: () => {
+        const req = {} as IDBOpenDBRequest;
+        setTimeout(() => {
+          Object.defineProperty(req, "error", {
+            value: new Error("Simulated IndexedDB quota exceeded"),
+          });
+          if (req.onerror) {
+            req.onerror(new Event("error") as any);
+          }
+        }, 0);
+        return req;
+      },
+    };
+    Object.defineProperty(window, "indexedDB", {
+      value: mockDB,
+      configurable: true,
+      writable: true,
+    });
+
+    try {
+      await expect(
+        saveProjectSession({
+          pages: [{ url: "http://example.com/p1.png", name: "P1" }],
+          currentPage: 0,
+          bubbleCache: new Map(),
+          translatedImageCache: new Map(),
+        }),
+      ).rejects.toThrow("Simulated IndexedDB quota exceeded");
+    } finally {
+      Object.defineProperty(window, "indexedDB", {
+        value: originalIndexedDB,
+        configurable: true,
+        writable: true,
+      });
+    }
+  });
 });
+

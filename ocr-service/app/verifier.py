@@ -4,7 +4,7 @@ from typing import Protocol
 
 import cv2
 import numpy as np
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.detector import RgbImage
 from app.mask_refiner import BinaryMask, MaskRegion
@@ -15,10 +15,13 @@ class ResidualProbe(Protocol):
 
 
 class VerificationReport(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     residual_score: float = Field(ge=0)
     damage_score: float = Field(ge=0)
     accepted: bool
     retry_mask_radius: int | None
+    residual_mask: BinaryMask | None = None
 
 
 def verify_damage(
@@ -48,6 +51,8 @@ def verify_region(
     support_mask: BinaryMask,
     region: MaskRegion,
     residual_probe: ResidualProbe,
+    evidence_envelope: BinaryMask | None = None,
+    protected_edges: BinaryMask | None = None,
 ) -> VerificationReport:
     rect = region.rect
     crop = cleaned[
@@ -58,15 +63,43 @@ def verify_region(
         rect.y : rect.y + rect.height,
         rect.x : rect.x + rect.width,
     ]
-    residual = residual_probe.score(crop, crop_mask)
+    res_mask = np.zeros_like(source_mask)
+    if hasattr(residual_probe, "score_envelope"):
+        env = (
+            evidence_envelope
+            if evidence_envelope is not None
+            else np.ones_like(source_mask) * 255
+        )
+        prot = (
+            protected_edges
+            if protected_edges is not None
+            else np.zeros_like(source_mask)
+        )
+        report = residual_probe.score_envelope(
+            cleaned,
+            source_mask,
+            env,
+            prot,
+        )
+        residual = report.residual_score
+        if report.residual_mask is not None:
+            res_mask = report.residual_mask.copy()
+    else:
+        residual = residual_probe.score(crop, crop_mask)
+
     damage = verify_damage(original, cleaned, support_mask)
     accepted = damage.accepted and residual <= 0.18
-    retry = 2 if residual > 0.18 and damage.damage_score <= 0.02 else None
+
+    # Safe retry: eligible if residual text remains, but no pixels changed outside support
+    outside_changed = np.any(original != cleaned, axis=2) & (support_mask == 0)
+    retry = 2 if (residual > 0.18 and not np.any(outside_changed)) else None
+
     return VerificationReport(
         residual_score=residual,
         damage_score=damage.damage_score,
         accepted=accepted,
         retry_mask_radius=retry,
+        residual_mask=res_mask if np.any(res_mask > 0) else None,
     )
 
 

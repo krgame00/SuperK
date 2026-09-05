@@ -16,7 +16,9 @@ const SHORTCUTS = [
   { key: "Delete / Backspace", desc: "ลบกล่องข้อความที่เลือกอยู่" },
   { key: "Ctrl + D", desc: "คัดลอก (Duplicate) กล่องข้อความ" },
   { key: "Arrow Left / Right", desc: "สลับไปหน้าก่อนหน้า / ถัดไป" },
-  { key: "Escape", desc: "ยกเลิกการเลือก / ปิดหน้าต่าง" },
+  { key: "F", desc: "โหมดโฟกัสเต็มหน้าจอ (Focus Mode)" },
+  { key: "B", desc: "ซ่อน / แสดงแถบเครื่องมือบน (ในโหมดโฟกัส)" },
+  { key: "Escape", desc: "ยกเลิกการเลือก / ปิดหน้าต่าง / ออกจากโฟกัส" },
 ];
 
 export function KeyboardShortcutsDialog({

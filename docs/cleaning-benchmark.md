@@ -87,9 +87,21 @@ root ที่ผู้ใช้ระบุและจับคู่ด้ว
 แต่ยังไม่ใช่การรับประกันทุกเครื่องหรือทุกความละเอียด เวลาจะสูงขึ้นตามจำนวน
 artwork regions ที่เรียก AOT และกำลัง CPU
 
+## การอัปเดต Pipeline 2.0.0-safe-glyph (กันยายน 2026)
+
+แก้ปัญหา Blind Spot ในกรณีข้อความฟอนต์ตกแต่ง/มี Outline สีขาว (Outlined Glyph) ที่ detector เดิมจับได้เฉพาะแกนกลางตัวหนังสือ แต่ขอบนอกตกหล่น ทำให้ probe เดิมตรวจไม่เจอเพราะตรวจเฉพาะใน `source_mask`:
+
+1. **Evidence Envelope Search Boundary**: นำ `TextEvidenceRegion` มากั้นขอบเขตค้นหาแบบไม่แตะต้องเส้นภาพตัวละคร (`protected_edges`)
+2. **Glyph Component Completion**: ประกอบ fill + outline ตามสีและเชื่อมโยง component แทนการใช้ dilation ใหญ่ โดยจำกัด spatial dilation ไว้ที่ $\le 1$ px
+3. **Envelope-wide Residual Probe & Confirmed Retry**: ขยายการตรวจ residual ทั่ว evidence envelope และอนุญาตให้ retry เฉพาะ component ที่ยืนยันว่าเป็นตัวหนังสือเท่านั้น
+4. **Acceptance Invariants**:
+   - Changed pixels outside support = 0
+   - Changed pixels inside protected artwork mask = 0
+   - Real regression job `42c1b526d9414e0d89f3dec236eb6367` (Region 2 residual: `0.217` -> `0.0000`, clean damage $\le 0.0144$)
+
 ## ข้อจำกัดด้านคุณภาพ
 
-residual score เป็นการตรวจซ้ำด้วย CTD ภายใน support และ damage score
+residual score เป็นการตรวจซ้ำด้วย CTD ภายใน envelope และ damage score
 ตรวจการเปลี่ยนภาพนอก support จึงเหมาะเป็น regression gate แต่ไม่แทนการรีวิว
 สายตามนุษย์ ระบบตั้งใจ preserve region ที่ความมั่นใจไม่ถึงเกณฑ์ โดยผลล่าสุด
 ส่ง 73.3% ของ region ไป review เพื่อไม่ให้ลบเครดิต UI watermark หรือเส้นภาพ

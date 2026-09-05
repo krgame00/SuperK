@@ -131,6 +131,45 @@ describe("sampleTextColors color extraction engine", () => {
     expect(profile.fillConfidence).toBeGreaterThan(0.7);
   });
 
+  it("samples fill and outline only from the supplied glyph mask", () => {
+    const sample = createSyntheticRegion(40, 40, (x, y) => {
+      if (x < 14) return [0, 200, 255, 255]; // Character hair inside the OCR box.
+      if (x >= 19 && x <= 30 && y >= 10 && y <= 29) {
+        const isOutline = x < 22 || x > 27 || y < 13 || y > 26;
+        return isOutline ? [255, 30, 130, 255] : [255, 255, 255, 255];
+      }
+      return [35, 35, 35, 255];
+    });
+    sample.glyphMask = new Uint8ClampedArray(40 * 40);
+    for (let y = 10; y <= 29; y++) {
+      for (let x = 19; x <= 30; x++) {
+        sample.glyphMask[y * 40 + x] = 255;
+      }
+    }
+
+    const profile = extractTextColors(sample);
+
+    expect(profile.fill).toBe("#ffffff");
+    expect(profile.outline).toBe("#ff1e82");
+    expect(profile.fillConfidence).toBeGreaterThan(0.75);
+  });
+
+  it("rejects border-connected artwork when no glyph mask is available", () => {
+    const sample = createSyntheticRegion(40, 40, (x, y) => {
+      if (x < 14) return [0, 200, 255, 255];
+      if (x >= 19 && x <= 30 && y >= 10 && y <= 29) {
+        const isOutline = x < 22 || x > 27 || y < 13 || y > 26;
+        return isOutline ? [255, 30, 130, 255] : [255, 255, 255, 255];
+      }
+      return [35, 35, 35, 255];
+    });
+
+    const profile = extractTextColors(sample);
+
+    expect(profile.fill).toBe("#ffffff");
+    expect(profile.outline).toBe("#ff1e82");
+  });
+
   it("handles low-contrast / empty sample safely with global fallback", () => {
     const emptySample = createSyntheticRegion(10, 10, () => [255, 255, 255, 255]);
     const profile = extractTextColors(emptySample);

@@ -5,6 +5,7 @@ import threading
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -325,3 +326,40 @@ def _mask_png() -> bytes:
     output = io.BytesIO()
     Image.new("L", (8, 8), 255).save(output, format="PNG")
     return output.getvalue()
+
+
+def test_api_pipeline_version_invalidates_cache_and_reports_glyph_version(
+    client: TestClient,
+    png_bytes: bytes,
+    tmp_path: Path,
+) -> None:
+    from app.cache import ResultCache
+
+    # Verify cache key changes with pipeline version
+    cache = ResultCache(tmp_path)
+    old_key = cache.key_for(
+        png_bytes,
+        pipeline_version="1.0.0",
+        detector_model_sha="0" * 64,
+        cleaner_model_sha="0" * 64,
+        settings={},
+    )
+    new_key = cache.key_for(
+        png_bytes,
+        pipeline_version="2.1.0-complete-glyph",
+        detector_model_sha="0" * 64,
+        cleaner_model_sha="0" * 64,
+        settings={},
+    )
+    assert old_key != new_key, "Changing pipeline version must invalidate cache key"
+
+    # Verify API result reports new pipeline version
+    created = client.post(
+        "/v1/jobs",
+        files={"image": ("page.png", png_bytes, "image/png")},
+    ).json()
+    job = _wait_for_terminal(client, created["job_id"])
+    assert job["status"] == "succeeded"
+
+    result = client.get(f"/v1/jobs/{created['job_id']}/result").json()
+    assert result["pipeline_version"] == "2.1.0-complete-glyph"

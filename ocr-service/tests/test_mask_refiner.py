@@ -88,3 +88,63 @@ def test_nearby_mixed_orientation_glyphs_share_one_repair_region() -> None:
         minimum_component_area=1,
     )
     assert len(result.regions) == 1
+
+
+def test_group_regions_caps_maximum_gap_to_prevent_giant_chaining() -> None:
+    # Two tall vertical text columns (height 200) separated by 80px
+    probability = np.zeros((400, 400), np.float32)
+    # Column 1 at x=50..70, y=50..250
+    probability[50:250, 50:70] = 1.0
+    # Column 2 at x=150..170, y=50..250 (gap of 80px)
+    probability[50:250, 150:170] = 1.0
+
+    result = refine_probability_mask(
+        probability,
+        np.zeros((400, 400), np.uint8),
+        threshold=0.5,
+        minimum_component_area=1,
+    )
+    # With uncapped 1.5*median (1.5*200 = 300px), they would be merged into 1 giant region.
+    # With capped maximum_gap (50px), the 80px gap keeps them as 2 separate regions.
+    assert len(result.regions) == 2, f"Expected 2 regions, got {len(result.regions)}"
+
+
+def test_text_outline_and_shadow_are_not_blocked_by_protected_edges() -> None:
+    # Red curtain background [140, 40, 40]
+    image = np.full((60, 60, 3), 40, dtype=np.uint8)
+    image[:, :, 0] = 140
+
+    # White text with black stroke outline
+    # Black outline at 23:37, 23:37
+    image[23:37, 23:37] = 10
+    # White core at 25:35, 25:35
+    image[25:35, 25:35] = 250
+
+    probability = np.zeros((60, 60), dtype=np.float32)
+    probability[25:35, 25:35] = 0.95  # Model detected text core
+
+    protected = build_protected_edges(image, probability)
+    # The immediate 2px stroke outline of the letter should NOT be in protected edges
+    assert protected[23:37, 23:37].sum() == 0, "Text outline should not be marked as a protected artwork edge"
+
+
+def test_non_text_artwork_and_body_marks_remain_fully_protected() -> None:
+    # Skin tone background
+    image = np.full((60, 60, 3), 220, dtype=np.uint8)
+    image[:, :, 0] = 240
+    image[:, :, 1] = 210
+    image[:, :, 2] = 195
+
+    # Red body mark / tattoo 'X' (zero text probability)
+    image[20:40, 29:31] = [180, 40, 30]
+    image[29:31, 20:40] = [180, 40, 30]
+
+    probability = np.zeros((60, 60), dtype=np.float32)
+    # Text is located elsewhere
+    probability[5:10, 5:10] = 0.95
+
+    protected = build_protected_edges(image, probability)
+    # The body mark contour MUST have protected edges
+    assert protected[18:42, 18:42].sum() > 0, "Artwork / body mark edges must remain strictly protected"
+
+

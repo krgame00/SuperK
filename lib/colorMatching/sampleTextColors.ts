@@ -86,6 +86,66 @@ export function clusterBuckets(
   return clusters;
 }
 
+function discardBorderConnectedComponents(
+  foreground: Uint8Array,
+  rgba: Uint8ClampedArray,
+  width: number,
+  height: number,
+): void {
+  const visited = new Uint8Array(foreground.length);
+  const neighbors = [
+    [-1, -1], [0, -1], [1, -1],
+    [-1, 0],           [1, 0],
+    [-1, 1],  [0, 1],  [1, 1],
+  ] as const;
+
+  for (let start = 0; start < foreground.length; start++) {
+    if (!foreground[start] || visited[start]) continue;
+    const component: number[] = [];
+    const queue = [start];
+    visited[start] = 1;
+    let touchesBorder = false;
+
+    for (let head = 0; head < queue.length; head++) {
+      const pixel = queue[head];
+      component.push(pixel);
+      const x = pixel % width;
+      const y = Math.floor(pixel / width);
+      if (x === 0 || y === 0 || x === width - 1 || y === height - 1) {
+        touchesBorder = true;
+      }
+
+      for (const [dx, dy] of neighbors) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+        const next = ny * width + nx;
+        if (!foreground[next] || visited[next]) continue;
+        const pixelOffset = pixel * 4;
+        const nextOffset = next * 4;
+        if (
+          colorDistance(
+            rgba[pixelOffset],
+            rgba[pixelOffset + 1],
+            rgba[pixelOffset + 2],
+            rgba[nextOffset],
+            rgba[nextOffset + 1],
+            rgba[nextOffset + 2],
+          ) > 48
+        ) {
+          continue;
+        }
+        visited[next] = 1;
+        queue.push(next);
+      }
+    }
+
+    if (touchesBorder) {
+      for (const pixel of component) foreground[pixel] = 0;
+    }
+  }
+}
+
 export interface ExtractColorOptions {
   backgroundTolerance?: number;
   minContrast?: number;
@@ -100,7 +160,7 @@ export function extractTextColors(
   sample: ColorSampleRegion,
   options: ExtractColorOptions = {},
 ): TextStyleProfile {
-  const { width, height, rgba } = sample;
+  const { width, height, rgba, glyphMask } = sample;
   const totalPixels = width * height;
 
   if (!rgba || totalPixels === 0 || width === 0 || height === 0) {
@@ -108,6 +168,8 @@ export function extractTextColors(
   }
 
   const bgTolerance = options.backgroundTolerance ?? 26;
+  const hasGlyphMask = glyphMask?.length === totalPixels;
+  const minContrast = options.minContrast ?? (hasGlyphMask ? 10 : bgTolerance);
 
   // 1. Modal Background Estimation from Perimeter Border (Prevents Muddy Border Averages)
   const borderWidth = Math.max(1, Math.min(3, Math.floor(Math.min(width, height) / 6)));
@@ -116,7 +178,8 @@ export function extractTextColors(
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const isBorder = x < borderWidth || x >= width - borderWidth || y < borderWidth || y >= height - borderWidth;
-      if (isBorder) {
+      const pixel = y * width + x;
+      if (isBorder && (!hasGlyphMask || glyphMask[pixel] < 32)) {
         const idx = (y * width + x) * 4;
         const a = rgba[idx + 3];
         if (a >= 64) {
@@ -154,15 +217,41 @@ export function extractTextColors(
   let chromaticCount = 0;
   let whiteCount = 0;
   let darkInkCount = 0;
+  let maskedPixelCount = 0;
 
   const chromaticBuckets = new Map<string, ColorBucket>();
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const idx = (y * width + x) * 4;
+      const pixel = y * width + x;
       const a = rgba[idx + 3];
       if (a < 64) continue;
 
+      if (hasGlyphMask) {
+        if (glyphMask[pixel] < 32) continue;
+        maskedPixelCount++;
+      }
+
+      const r = rgba[idx];
+      const g = rgba[idx + 1];
+      const b = rgba[idx + 2];
+      const distFromBg = colorDistance(r, g, b, bgR, bgG, bgB);
+      if (distFromBg >= (hasGlyphMask ? minContrast : bgTolerance)) {
+        isFg[pixel] = 1;
+      }
+    }
+  }
+
+  if (!hasGlyphMask) {
+    discardBorderConnectedComponents(isFg, rgba, width, height);
+  }
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const pixel = y * width + x;
+      if (!isFg[pixel]) continue;
+      const idx = pixel * 4;
       const r = rgba[idx];
       const g = rgba[idx + 1];
       const b = rgba[idx + 2];
@@ -171,50 +260,48 @@ export function extractTextColors(
       const chroma = maxVal - minVal;
       const saturation = maxVal > 0 ? chroma / maxVal : 0;
       const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      totalFgCount++;
 
-      const distFromBg = colorDistance(r, g, b, bgR, bgG, bgB);
-      if (distFromBg >= bgTolerance) {
-        isFg[y * width + x] = 1;
-        totalFgCount++;
+      // Real manga colored text has high saturation (>= 40%) or high chroma (>= 70)
+      // This strictly rejects pale skin tones, paper texture, and neutral shadows
+      const isMangaColoredText = (saturation >= 0.38 && chroma >= 35) || chroma >= 70;
 
-        // Real manga colored text has high saturation (>= 40%) or high chroma (>= 70)
-        // This strictly rejects pale skin tones, paper texture, and neutral shadows
-        const isMangaColoredText = (saturation >= 0.38 && chroma >= 35) || chroma >= 70;
+      if (isMangaColoredText) {
+        chromaticCount++;
+        const qr = Math.floor(r / 16) * 16 + 8;
+        const qg = Math.floor(g / 16) * 16 + 8;
+        const qb = Math.floor(b / 16) * 16 + 8;
+        const key = `${qr},${qg},${qb}`;
 
-        if (isMangaColoredText) {
-          chromaticCount++;
-          const qr = Math.floor(r / 16) * 16 + 8;
-          const qg = Math.floor(g / 16) * 16 + 8;
-          const qb = Math.floor(b / 16) * 16 + 8;
-          const key = `${qr},${qg},${qb}`;
+        const nx = (x - width / 2) / Math.max(1, width / 2);
+        const ny = (y - height / 2) / Math.max(1, height / 2);
+        const distFromCenter = Math.sqrt(nx * nx + ny * ny);
+        const centerWeight = distFromCenter <= 0.65 ? 2.5 : 1.0;
 
-          const nx = (x - width / 2) / Math.max(1, width / 2);
-          const ny = (y - height / 2) / Math.max(1, height / 2);
-          const distFromCenter = Math.sqrt(nx * nx + ny * ny);
-          const centerWeight = distFromCenter <= 0.65 ? 2.5 : 1.0;
-
-          const existing = chromaticBuckets.get(key);
-          if (existing) {
-            existing.r = (existing.r * existing.count + r) / (existing.count + 1);
-            existing.g = (existing.g * existing.count + g) / (existing.count + 1);
-            existing.b = (existing.b * existing.count + b) / (existing.count + 1);
-            existing.chroma = Math.max(existing.chroma, chroma);
-            existing.count++;
-            existing.centerScore += centerWeight;
-          } else {
-            chromaticBuckets.set(key, { r, g, b, chroma, count: 1, centerScore: centerWeight });
-          }
-        } else if (lum >= 210) {
-          whiteCount++;
-        } else if (lum <= 65) {
-          darkInkCount++;
+        const existing = chromaticBuckets.get(key);
+        if (existing) {
+          existing.r = (existing.r * existing.count + r) / (existing.count + 1);
+          existing.g = (existing.g * existing.count + g) / (existing.count + 1);
+          existing.b = (existing.b * existing.count + b) / (existing.count + 1);
+          existing.chroma = Math.max(existing.chroma, chroma);
+          existing.count++;
+          existing.centerScore += centerWeight;
+        } else {
+          chromaticBuckets.set(key, { r, g, b, chroma, count: 1, centerScore: centerWeight });
         }
+      } else if (lum >= 210) {
+        whiteCount++;
+      } else if (lum <= 65) {
+        darkInkCount++;
       }
     }
   }
 
   const fgRatio = totalFgCount / totalPixels;
-  if (totalFgCount < 4 || fgRatio < 0.005) {
+  const candidateRatio = hasGlyphMask
+    ? totalFgCount / Math.max(1, maskedPixelCount)
+    : fgRatio;
+  if (totalFgCount < 4 || candidateRatio < 0.005) {
     return {
       fill: bgLum > 128 ? "#000000" : "#ffffff",
       outline: bgLum > 128 ? "#ffffff" : "#000000",
@@ -225,6 +312,13 @@ export function extractTextColors(
       source: "global",
     };
   }
+
+  const maskPurity = hasGlyphMask
+    ? totalFgCount / Math.max(1, maskedPixelCount)
+    : 1;
+  const autoConfidence = hasGlyphMask
+    ? clampConfidence(0.55 + Math.min(0.45, maskPurity))
+    : 0.95;
 
   // 3. Manga Archetype Detection: Chromatic Text & Glowing Outlines
   const hasStrongChromatic = chromaticCount >= Math.max(6, totalFgCount * 0.025);
@@ -241,8 +335,8 @@ export function extractTextColors(
         outline: chromHex,
         outlineWidth: 1.25,
         opacity: 1.0,
-        fillConfidence: 0.95,
-        outlineConfidence: 0.95,
+        fillConfidence: autoConfidence,
+        outlineConfidence: autoConfidence,
         source: "auto",
       };
     }
@@ -259,8 +353,8 @@ export function extractTextColors(
       outline: outlineHex,
       outlineWidth: 1.0,
       opacity: 1.0,
-      fillConfidence: 0.95,
-      outlineConfidence: 0.90,
+      fillConfidence: autoConfidence,
+      outlineConfidence: clampConfidence(autoConfidence - 0.05),
       source: "auto",
     };
   }
@@ -273,8 +367,8 @@ export function extractTextColors(
       outline: "#ffffff",
       outlineWidth: 1.0,
       opacity: 1.0,
-      fillConfidence: 0.95,
-      outlineConfidence: 0.95,
+      fillConfidence: autoConfidence,
+      outlineConfidence: autoConfidence,
       source: "auto",
     };
   }
@@ -286,8 +380,8 @@ export function extractTextColors(
       outline: "#000000",
       outlineWidth: 1.0,
       opacity: 1.0,
-      fillConfidence: 0.95,
-      outlineConfidence: 0.95,
+      fillConfidence: autoConfidence,
+      outlineConfidence: autoConfidence,
       source: "auto",
     };
   }
@@ -436,6 +530,9 @@ export function extractTextColors(
     fillConfidence = Math.min(fillConfidence, 0.55);
   }
 
+  fillConfidence = Math.min(fillConfidence, autoConfidence);
+  outlineConfidence = Math.min(outlineConfidence, autoConfidence);
+
   return {
     fill: fillHex,
     outline: outlineHex,
@@ -446,4 +543,3 @@ export function extractTextColors(
     source: fillConfidence >= 0.60 ? "auto" : "global",
   };
 }
-

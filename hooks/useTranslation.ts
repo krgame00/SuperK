@@ -14,6 +14,7 @@ import { sampleBubbleRegion } from "@/lib/colorMatching/canvasSampler";
 import { extractTextColors } from "@/lib/colorMatching/sampleTextColors";
 import { type GlossaryEntry } from "@/lib/translation/glossary";
 
+export type SaveStatus = "idle" | "saving" | "saved" | "error";
 export type TranslationWorkflowPhase = "cleaning" | "translating";
 
 export interface BatchPageFailure {
@@ -26,6 +27,7 @@ export interface BatchPageFailure {
 export interface PreparedTranslationPage {
   recognitionUrl: string;
   backgroundUrl: string;
+  maskUrl?: string;
 }
 
 interface UseTranslationProps {
@@ -119,14 +121,18 @@ const waitForImageReady = (src: string, timeoutMs = 3000): Promise<HTMLImageElem
 const enrichBubblesWithColorProfiles = async (
   bubbles: TranslatedBubble[],
   recognitionUrl: string,
+  maskUrl?: string,
 ): Promise<TranslatedBubble[]> => {
   if (!bubbles || bubbles.length === 0 || !recognitionUrl) return bubbles;
   try {
     const img = await waitForImageReady(recognitionUrl, 2000);
+    const maskImg = maskUrl
+      ? await waitForImageReady(maskUrl, 2000).catch(() => undefined)
+      : undefined;
     for (const b of bubbles) {
       if (b.styleProfile && b.styleProfile.source === "manual") continue;
       if (!b.box || b.box.length < 4 || b.isInvalidBox) continue;
-      const sample = sampleBubbleRegion(img, b.box);
+      const sample = sampleBubbleRegion(img, b.box, maskImg);
       if (sample) {
         b.styleProfile = extractTextColors(sample);
       }
@@ -183,14 +189,14 @@ export function useTranslation({
     });
   }, [textStyle, activeBubbles]);
   const [userApiKey, setUserApiKey] = useState<string>(() => {
-    if (typeof window !== "undefined") {
+    if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
       return localStorage.getItem("gemini_api_key") || "";
     }
     return "";
   });
 
   const [glossary, setGlossary] = useState<GlossaryEntry[]>(() => {
-    if (typeof window !== "undefined") {
+    if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
       try {
         const saved = localStorage.getItem("manga_glossary");
         return saved ? JSON.parse(saved) : [];
@@ -254,23 +260,78 @@ export function useTranslation({
       }, 100);
       return () => clearTimeout(timer);
     } else {
-      setActiveBubbles([]);
+      setActiveBubbles((prev) => (prev.length === 0 ? prev : []));
     }
   }, [currentPage, pages, viewMode]);
 
+  // Save status and revision management for session reliability
+  const saveRevisionRef = useRef(0);
+  const lastSavedRevisionRef = useRef(0);
+  const isSavingRef = useRef(false);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const pagesRef = useRef(pages);
+  pagesRef.current = pages;
+  const currentPageRef = useRef(currentPage);
+  currentPageRef.current = currentPage;
+
+  const performSave = useCallback(async (targetRevision: number): Promise<boolean> => {
+    const currentPages = pagesRef.current;
+    if (currentPages.length === 0) return false;
+    if (isSavingRef.current) return false;
+
+    isSavingRef.current = true;
+    setSaveStatus("saving");
+    setSaveError(null);
+
+    try {
+      await saveProjectSession({
+        pages: currentPages.map((p) => (typeof p === "string" ? { url: p, name: "Page" } : p)),
+        currentPage: currentPageRef.current,
+        bubbleCache: bubbleCacheRef.current,
+        translatedImageCache: translatedImageCacheRef.current,
+      });
+
+      lastSavedRevisionRef.current = targetRevision;
+      if (saveRevisionRef.current === targetRevision) {
+        setSaveStatus("saved");
+        setSaveError(null);
+      } else {
+        // A newer revision was requested while saving; keep status as saving
+        setSaveStatus("saving");
+      }
+      return true;
+    } catch (err) {
+      console.error("Auto-save session failed:", err);
+      setSaveStatus("error");
+      setSaveError(err instanceof Error ? err.message : "บันทึกข้อมูลไม่สำเร็จ");
+      return false;
+    } finally {
+      isSavingRef.current = false;
+    }
+  }, []);
+
+  const pageUrlsKey = pages.join("|");
+
   // Auto-save session to IndexedDB (debounced)
   useEffect(() => {
-    if (pages.length === 0) return;
+    if (pages.length === 0) {
+      setSaveStatus("idle");
+      setSaveError(null);
+      return;
+    }
+
+    saveRevisionRef.current += 1;
+    const currentRevision = saveRevisionRef.current;
+    setSaveStatus("saving");
+
     const timer = setTimeout(() => {
-      saveProjectSession({
-        pages: pages.map(p => typeof p === 'string' ? { url: p, name: 'Page' } : p),
-        currentPage,
-        bubbleCache: bubbleCacheRef.current,
-        translatedImageCache: translatedImageCacheRef.current
-      });
+      void performSave(currentRevision);
     }, 1000);
+
     return () => clearTimeout(timer);
-  }, [pages, currentPage, activeBubbles, cacheRevision]);
+  }, [pageUrlsKey, currentPage, activeBubbles, cacheRevision, performSave]);
 
   // Restore saved session helper
   const restoreSavedSession = useCallback(async () => {
@@ -279,13 +340,27 @@ export function useTranslation({
     bubbleCacheRef.current = saved.bubbleCache;
     translatedImageCacheRef.current = saved.translatedImageCache;
     setTranslatedImages(new Map(saved.translatedImageCache));
+    lastSavedRevisionRef.current = saveRevisionRef.current;
+    setSaveStatus("saved");
+    setSaveError(null);
     return saved;
   }, []);
+
+  const retrySaveSession = useCallback(async (): Promise<boolean> => {
+    if (pages.length === 0 || isSavingRef.current) return false;
+    saveRevisionRef.current += 1;
+    const currentRevision = saveRevisionRef.current;
+    return await performSave(currentRevision);
+  }, [pages.length, performSave]);
 
   const clearSavedSession = async () => {
     bubbleCacheRef.current.clear();
     translatedImageCacheRef.current.clear();
     setTranslatedImages(new Map());
+    saveRevisionRef.current = 0;
+    lastSavedRevisionRef.current = 0;
+    setSaveStatus("idle");
+    setSaveError(null);
     await clearProjectSession();
   };
 
@@ -787,6 +862,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       const coloredBubbles = await enrichBubblesWithColorProfiles(
         outcome.bubbles,
         recognitionUrl,
+        preparedPage.maskUrl,
       );
       await renderAndCacheTranslation(
         coloredBubbles,
@@ -1105,13 +1181,18 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     userApiKey,
     setUserApiKey: (key: string) => {
       setUserApiKey(key);
-      if (key) localStorage.setItem("gemini_api_key", key);
-      else localStorage.removeItem("gemini_api_key");
+      if (typeof localStorage !== "undefined") {
+        if (key) localStorage.setItem("gemini_api_key", key);
+        else localStorage.removeItem("gemini_api_key");
+      }
     },
     glossary,
     setGlossary: updateGlossary,
     restoreSavedSession,
     clearSavedSession,
+    saveStatus,
+    saveError,
+    retrySaveSession,
     workflowPhase,
     batchFailures,
     retryFailedPages,

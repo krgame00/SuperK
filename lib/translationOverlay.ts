@@ -21,6 +21,8 @@ export interface TranslatedBubble {
   __resized?: boolean;
   /** runtime flag set once the user has deleted a bubble */
   deleted?: boolean;
+  /** runtime font size multiplier for this bubble */
+  fontSizeMultiplier?: number;
   /** redraw callback attached to overlay bubbles */
   render?: () => void;
   styleProfile?: TextStyleProfile;
@@ -44,6 +46,7 @@ export interface OverlayAdjustment {
   iw: number;
   ih: number;
   rotation?: number;
+  fontSizeMultiplier?: number;
 }
 
 export const readOverlayAdjustments = (): Record<string, Record<string, OverlayAdjustment>> => {
@@ -504,6 +507,10 @@ export const applyTranslationOverlay = async (
       const bubbleId = b.id !== undefined ? `id-${b.id}` : `text-${(b.t || b.translated || "").slice(0, 10)}-${rawX.toFixed(1)}-${rawY.toFixed(1)}`;
       const adj = savedAdj[bubbleId];
 
+      if (adj?.fontSizeMultiplier !== undefined && b.fontSizeMultiplier === undefined) {
+        b.fontSizeMultiplier = adj.fontSizeMultiplier;
+      }
+
       let currentBx = adj ? adj.bx : (rawX / 100) * iw - ((rawW / 100) * iw) / 2;
       let currentBy = adj ? adj.by : (rawY / 100) * ih - ((rawH / 100) * ih) / 2;
       let currentBw = adj ? adj.bw : (rawW / 100) * iw;
@@ -521,6 +528,7 @@ export const applyTranslationOverlay = async (
           iw,
           ih,
           rotation: currentRotation,
+          ...(typeof b.fontSizeMultiplier === "number" ? { fontSizeMultiplier: b.fontSizeMultiplier } : {}),
         };
         saveOverlayAdjustments(all);
       };
@@ -578,7 +586,8 @@ export const applyTranslationOverlay = async (
         const text = (b.t || b.translated || "").trim();
         if (!text) return;
         const currentFontFam = currentStyle.fontFamily || "Itim, sans-serif";
-        const currentFontMult = currentStyle.fontSizeMultiplier || 1.0;
+        const bubbleMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
+        const currentFontMult = (currentStyle.fontSizeMultiplier || 1.0) * bubbleMult;
         const resolvedStyle = resolveBubbleTextStyle(b, currentStyle);
         const textColor = resolvedStyle.textColor;
         const outlineColor = resolvedStyle.textOutline;
@@ -586,6 +595,7 @@ export const applyTranslationOverlay = async (
         const opacity = resolvedStyle.opacity ?? 1.0;
 
         const targetMinFs = Math.max(14, Math.round(getReadableMinimumFontSize(iw) * 0.75));
+        const minFsAllowed = Math.max(8, Math.round(targetMinFs * Math.min(1.0, bubbleMult)));
         const fit = fitTextForBubble(
           text,
           currentBw * 0.92,
@@ -593,7 +603,7 @@ export const applyTranslationOverlay = async (
           currentFontFam,
           !b.isInvalidBox,
           currentFontMult,
-          targetMinFs
+          minFsAllowed
         );
         const fontSize = fit.fontSize;
         const lines = fit.lines;
@@ -628,17 +638,23 @@ export const applyTranslationOverlay = async (
       wrapper.addEventListener('pointerdown', (e) => {
         const target = e.target as HTMLElement;
         if (target.closest('.action-handle') || target.closest('.delete-btn') || target.closest('.edit-btn')) return;
+        e.stopPropagation();
         setSelectedBubble(wrapper);
         isDragging = true;
         dragStartX = e.clientX;
         dragStartY = e.clientY;
         initialBx = currentBx;
         initialBy = currentBy;
-        wrapper.setPointerCapture(e.pointerId);
+        try {
+          wrapper.setPointerCapture(e.pointerId);
+        } catch {
+          // ignore
+        }
       });
 
       wrapper.addEventListener('pointermove', (e) => {
         if (!isDragging) return;
+        e.stopPropagation();
         const rect = tlContainer.getBoundingClientRect();
         currentBx = initialBx + (e.clientX - dragStartX) * (iw / rect.width);
         currentBy = initialBy + (e.clientY - dragStartY) * (ih / rect.height);
@@ -647,8 +663,25 @@ export const applyTranslationOverlay = async (
 
       wrapper.addEventListener('pointerup', (e) => {
         if (isDragging) {
+          e.stopPropagation();
           isDragging = false;
-          wrapper.releasePointerCapture(e.pointerId);
+          try {
+            wrapper.releasePointerCapture(e.pointerId);
+          } catch {
+            // ignore
+          }
+          saveAdjustment();
+        }
+      });
+
+      wrapper.addEventListener('pointercancel', (e) => {
+        if (isDragging) {
+          isDragging = false;
+          try {
+            wrapper.releasePointerCapture(e.pointerId);
+          } catch {
+            // ignore
+          }
           saveAdjustment();
         }
       });
@@ -775,6 +808,28 @@ export const applyTranslationOverlay = async (
         openLiveEditor();
       });
 
+      const adjustBubbleFontSize = (delta: number) => {
+        const oldMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
+        const newMult = Math.max(0.4, Math.min(3.0, Number((oldMult + delta).toFixed(2))));
+        if (newMult === oldMult) return;
+        b.fontSizeMultiplier = newMult;
+        renderBubble();
+        saveAdjustment();
+        undoManager.push({
+          label: delta > 0 ? "เพิ่มขนาดข้อความ" : "ลดขนาดข้อความ",
+          undo: () => {
+            b.fontSizeMultiplier = oldMult;
+            renderBubble();
+            saveAdjustment();
+          },
+          redo: () => {
+            b.fontSizeMultiplier = newMult;
+            renderBubble();
+            saveAdjustment();
+          },
+        });
+      };
+
       wrapper.addEventListener("keydown", (e) => {
         if (e.target !== wrapper) return;
 
@@ -782,6 +837,20 @@ export const applyTranslationOverlay = async (
           e.preventDefault();
           e.stopPropagation();
           openLiveEditor();
+          return;
+        }
+
+        if (e.key === "+" || e.key === "=") {
+          e.preventDefault();
+          e.stopPropagation();
+          adjustBubbleFontSize(0.12);
+          return;
+        }
+
+        if (e.key === "-" || e.key === "_") {
+          e.preventDefault();
+          e.stopPropagation();
+          adjustBubbleFontSize(-0.12);
           return;
         }
 
@@ -860,42 +929,63 @@ export const applyTranslationOverlay = async (
           pos: 'nw',
           cursor: 'grab',
           title: 'หมุนข้อความ',
-          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>`
+          size: 48,
+          offset: -24,
+          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>`
         },
         {
           id: 'scale',
           pos: 'ne',
           cursor: 'nesw-resize',
           title: 'ปรับขนาดเฉียง',
-          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" x2="14" y1="3" y2="10"/><line x1="3" x2="10" y1="21" y2="14"/></svg>`
+          size: 48,
+          offset: -24,
+          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" x2="14" y1="3" y2="10"/><line x1="3" x2="10" y1="21" y2="14"/></svg>`
         },
         {
           id: 'width',
           pos: 'e',
           cursor: 'ew-resize',
           title: 'ปรับความกว้าง',
-          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 8 22 12 18 16"/><polyline points="6 8 2 12 6 16"/><line x1="2" x2="22" y1="12" y2="12"/></svg>`
+          size: 48,
+          offset: -24,
+          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 8 22 12 18 16"/><polyline points="6 8 2 12 6 16"/><line x1="2" x2="22" y1="12" y2="12"/></svg>`
         },
         {
           id: 'move',
           pos: 'sw',
           cursor: 'move',
-          title: 'ย้ายตำแหน่ง',
-          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" x2="22" y1="12" y2="12"/><line x1="12" x2="12" y1="2" y2="22"/></svg>`
+          title: 'ย้ายตำแหน่ง (ลากเพื่อย้ายกล่อง)',
+          size: 52,
+          offset: -26,
+          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" x2="22" y1="12" y2="12"/><line x1="12" x2="12" y1="2" y2="22"/></svg>`
         }
       ];
 
-      handlesConfig.forEach(({ id, pos, cursor, title, icon }) => {
+      handlesConfig.forEach(({ id, pos, cursor, title, icon, size, offset }) => {
         const handle = document.createElement("div");
         handle.className = `action-handle action-handle--${id}`;
         handle.title = title;
-        handle.style.cssText = `position:absolute; width:28px; height:28px; background:#ffffff; border:2.5px solid #3b82f6; border-radius:50%; z-index:30; opacity:0; pointer-events:none; display:flex; align-items:center; justify-content:center; color:#2563eb; cursor:${cursor}; box-shadow:0 2px 8px rgba(0,0,0,0.3); transition:transform 100ms ease, opacity 150ms ease; touch-action:none;`;
+        const handleSize = size || 36;
+        const handleOffset = offset || -18;
+        handle.style.cssText = `position:absolute; width:${handleSize}px; height:${handleSize}px; background:#ffffff; border:3px solid #3b82f6; border-radius:50%; z-index:35; opacity:0; pointer-events:none; display:flex; align-items:center; justify-content:center; color:#2563eb; cursor:${cursor}; box-shadow:0 4px 14px rgba(0,0,0,0.4); transition:transform 120ms ease, opacity 150ms ease, box-shadow 120ms ease; touch-action:none; user-select:none;`;
         handle.innerHTML = icon;
 
-        if (pos === 'nw') { handle.style.top = '-14px'; handle.style.left = '-14px'; }
-        else if (pos === 'ne') { handle.style.top = '-14px'; handle.style.right = '-14px'; }
-        else if (pos === 'e') { handle.style.top = '50%'; handle.style.right = '-14px'; handle.style.transform = 'translateY(-50%)'; }
-        else if (pos === 'sw') { handle.style.bottom = '-14px'; handle.style.left = '-14px'; }
+        if (pos === 'nw') { handle.style.top = `${handleOffset}px`; handle.style.left = `${handleOffset}px`; }
+        else if (pos === 'ne') { handle.style.top = `${handleOffset}px`; handle.style.right = `${handleOffset}px`; }
+        else if (pos === 'e') { handle.style.top = '50%'; handle.style.right = `${handleOffset}px`; handle.style.transform = 'translateY(-50%)'; }
+        else if (pos === 'sw') { handle.style.bottom = `${handleOffset}px`; handle.style.left = `${handleOffset}px`; }
+
+        handle.addEventListener('mouseenter', () => {
+          handle.style.transform = pos === 'e' ? 'translateY(-50%) scale(1.15)' : 'scale(1.15)';
+          handle.style.boxShadow = '0 6px 16px rgba(37,99,235,0.45)';
+          handle.style.borderColor = '#1d4ed8';
+        });
+        handle.addEventListener('mouseleave', () => {
+          handle.style.transform = pos === 'e' ? 'translateY(-50%) scale(1)' : 'scale(1)';
+          handle.style.boxShadow = '0 3px 10px rgba(0,0,0,0.35)';
+          handle.style.borderColor = '#3b82f6';
+        });
 
         let rStartX = 0, rStartY = 0;
         let rInitBx = 0, rInitBy = 0, rInitBw = 0, rInitBh = 0;
@@ -943,7 +1033,21 @@ export const applyTranslationOverlay = async (
         });
 
         handle.addEventListener('pointerup', (e) => {
-          handle.releasePointerCapture(e.pointerId);
+          e.stopPropagation();
+          try {
+            handle.releasePointerCapture(e.pointerId);
+          } catch {
+            // ignore
+          }
+          saveAdjustment();
+        });
+
+        handle.addEventListener('pointercancel', (e) => {
+          try {
+            handle.releasePointerCapture(e.pointerId);
+          } catch {
+            // ignore
+          }
           saveAdjustment();
         });
 
@@ -957,15 +1061,16 @@ export const applyTranslationOverlay = async (
         position: absolute;
         bottom: 100%;
         left: 50%;
-        transform: translateX(-50%) translateY(-10px);
-        background: #18181b;
-        border: 1px solid rgba(255, 255, 255, 0.15);
+        transform: translateX(-50%) translateY(-14px);
+        background: rgba(24, 24, 27, 0.96);
+        backdrop-filter: blur(12px);
+        border: 1.5px solid rgba(255, 255, 255, 0.25);
         border-radius: 9999px;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-        padding: 4px 8px;
+        box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55);
+        padding: 6px 12px;
         display: flex;
         align-items: center;
-        gap: 4px;
+        gap: 3px;
         z-index: 40;
         opacity: 0;
         pointer-events: none;
@@ -981,9 +1086,9 @@ export const applyTranslationOverlay = async (
         btn.className = "action-handle";
         btn.innerHTML = svg;
         btn.style.cssText = `
-          width: 28px;
-          height: 28px;
-          border-radius: 6px;
+          width: 42px;
+          height: 42px;
+          border-radius: 10px;
           background: transparent;
           color: ${isDanger ? '#ef4444' : '#e4e4e7'};
           border: none;
@@ -992,14 +1097,16 @@ export const applyTranslationOverlay = async (
           justify-content: center;
           cursor: pointer;
           padding: 0;
-          transition: background 150ms ease, color 150ms ease;
+          transition: background 150ms ease, color 150ms ease, transform 120ms ease;
         `;
         btn.onmouseenter = () => {
-          btn.style.background = isDanger ? 'rgba(239,68,68,0.2)' : 'rgba(255,255,255,0.12)';
+          btn.style.background = isDanger ? 'rgba(239,68,68,0.2)' : 'rgba(255,255,255,0.15)';
+          btn.style.transform = 'scale(1.08)';
           if (isDanger) btn.style.color = '#f87171';
         };
         btn.onmouseleave = () => {
           btn.style.background = 'transparent';
+          btn.style.transform = 'scale(1)';
           btn.style.color = isDanger ? '#ef4444' : '#e4e4e7';
         };
         btn.onpointerdown = (e) => e.stopPropagation();
@@ -1010,10 +1117,24 @@ export const applyTranslationOverlay = async (
         return btn;
       };
 
+      // Decrease Font Size Button [A-]
+      const decreaseFontBtn = createToolBtn(
+        "ลดขนาดข้อความ (A- หรือคีย์ -)",
+        `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18 9 5l5 13"/><path d="M6 13h6"/><line x1="16" y1="12" x2="22" y2="12"/></svg>`,
+        () => adjustBubbleFontSize(-0.12)
+      );
+
+      // Increase Font Size Button [A+]
+      const increaseFontBtn = createToolBtn(
+        "เพิ่มขนาดข้อความ (A+ หรือคีย์ +)",
+        `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18 9 5l5 13"/><path d="M6 13h6"/><line x1="19" y1="9" x2="19" y2="15"/><line x1="16" y1="12" x2="22" y2="12"/></svg>`,
+        () => adjustBubbleFontSize(0.12)
+      );
+
       // Duplicate Button
       const duplicateBtn = createToolBtn(
         "ทำซ้ำกล่องข้อความ",
-        `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`,
+        `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`,
         () => {
           const clone = { ...b, id: `${Date.now()}` };
           real.push(clone);
@@ -1025,7 +1146,7 @@ export const applyTranslationOverlay = async (
       // Copy Text Button
       const copyBtn = createToolBtn(
         "คัดลอกข้อความ",
-        `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`,
+        `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`,
         () => {
           navigator.clipboard.writeText(b.t || b.translated || "");
           import('react-hot-toast').then(m => m.default.success("คัดลอกข้อความแล้ว"));
@@ -1035,7 +1156,7 @@ export const applyTranslationOverlay = async (
       // Text Color / Format Button
       const colorBtn = createToolBtn(
         "เปลี่ยนสีข้อความ",
-        `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 2 4 4-12 12H6v-4z"/><path d="m14 6 4 4"/></svg>`,
+        `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 2 4 4-12 12H6v-4z"/><path d="m14 6 4 4"/></svg>`,
         () => {
           const resolved = resolveBubbleTextStyle(b, textStyleRef?.current || ts);
           const newColor = prompt("ใส่รหัสสีข้อความ (เช่น #000000, #ffffff, #ef4444, #ff3399):", resolved.textColor);
@@ -1056,7 +1177,7 @@ export const applyTranslationOverlay = async (
       // Background Fill / Inpaint Button
       const fillBtn = createToolBtn(
         "เติมสีพื้นหลัง",
-        `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"/></svg>`,
+        `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"/></svg>`,
         () => {
           bCanvas.style.backgroundColor = bCanvas.style.backgroundColor ? "" : "#ffffff";
         }
@@ -1065,7 +1186,7 @@ export const applyTranslationOverlay = async (
       // Layers / Z-Index Button
       const layerBtn = createToolBtn(
         "นำมาข้างหน้าสุด",
-        `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`,
+        `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`,
         () => {
           tlContainer.appendChild(wrapper);
         }
@@ -1074,33 +1195,38 @@ export const applyTranslationOverlay = async (
       // Edit Text (Pencil) Button
       const editBtn = createToolBtn(
         "แก้ไขข้อความ",
-        `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>`,
+        `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>`,
         () => {
           openLiveEditor();
         }
       );
 
-      // Divider
-      const divider = document.createElement("div");
-      divider.style.cssText = `width:1px; height:18px; background:rgba(255,255,255,0.2); margin:0 2px;`;
+      const createDivider = () => {
+        const div = document.createElement("div");
+        div.style.cssText = `width:1.5px; height:24px; background:rgba(255,255,255,0.25); margin:0 4px;`;
+        return div;
+      };
 
       // Delete Button (Red Trash)
       const deleteBtn = createToolBtn(
         "ลบกล่องข้อความ",
-        `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>`,
+        `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>`,
         () => {
           deleteBubbleWithUndo();
         },
         true
       );
 
-      toolbar.appendChild(duplicateBtn);
-      toolbar.appendChild(copyBtn);
+      toolbar.appendChild(decreaseFontBtn);
+      toolbar.appendChild(increaseFontBtn);
+      toolbar.appendChild(createDivider());
+      toolbar.appendChild(editBtn);
       toolbar.appendChild(colorBtn);
       toolbar.appendChild(fillBtn);
+      toolbar.appendChild(duplicateBtn);
+      toolbar.appendChild(copyBtn);
       toolbar.appendChild(layerBtn);
-      toolbar.appendChild(editBtn);
-      toolbar.appendChild(divider);
+      toolbar.appendChild(createDivider());
       toolbar.appendChild(deleteBtn);
       wrapper.appendChild(toolbar);
 

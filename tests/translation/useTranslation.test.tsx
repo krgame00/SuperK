@@ -2,8 +2,13 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import { useTranslation } from "@/hooks/useTranslation";
+import { sampleBubbleRegion } from "@/lib/colorMatching/canvasSampler";
 import { saveProjectSession } from "@/lib/projectStore";
 import { applyTranslationOverlay } from "@/lib/translationOverlay";
+
+vi.mock("@/lib/colorMatching/canvasSampler", () => ({
+  sampleBubbleRegion: vi.fn(() => null),
+}));
 
 vi.mock("@/lib/translationOverlay", () => ({
   applyTranslationOverlay: vi.fn(
@@ -128,6 +133,40 @@ test("reads Original pixels and renders translated bubbles onto Clean", async ()
   expect(
     offscreenCall?.[6]?.querySelector("img")?.getAttribute("src"),
   ).toBe("blob:clean");
+});
+
+test("passes the cleaning mask to automatic text color sampling", async () => {
+  const pages = ["blob:original"];
+  const preparePageForTranslation = vi.fn().mockResolvedValue({
+    recognitionUrl: "blob:original",
+    backgroundUrl: "blob:clean",
+    maskUrl: "blob:glyph-mask",
+  });
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url === "blob:original") return imageResponse();
+    if (url === "/api/translate") return successResponse();
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  const { result } = renderHook(() =>
+    useTranslation({
+      currentPage: 0,
+      pages,
+      viewMode: "single",
+      preparePageForTranslation,
+    }),
+  );
+
+  await act(async () => {
+    expect(await result.current.handleTranslate()).toBe(true);
+  });
+
+  expect(vi.mocked(sampleBubbleRegion)).toHaveBeenCalledWith(
+    expect.any(HTMLImageElement),
+    translatedBubble.box,
+    expect.objectContaining({ src: "blob:glyph-mask" }),
+  );
 });
 test("keeps translation caches keyed by the original URL", async () => {
   const pages = ["blob:original"];
@@ -630,3 +669,109 @@ test("active and background pages cache from unique clean offscreen containers",
     "data:offscreen,blob:clean-2",
   );
 });
+
+test("transitions saveStatus to saving then saved on mount with pages", async () => {
+  vi.useFakeTimers();
+  const { result } = renderHook(() =>
+    useTranslation({
+      currentPage: 0,
+      pages: ["blob:page1"],
+      viewMode: "single",
+      preparePageForTranslation: vi.fn(),
+    }),
+  );
+
+  expect(result.current.saveStatus).toBe("saving");
+  expect(result.current.saveError).toBeNull();
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+
+  expect(saveProjectSession).toHaveBeenCalled();
+  expect(result.current.saveStatus).toBe("saved");
+  expect(result.current.saveError).toBeNull();
+});
+
+test("sets saveStatus to error when saveProjectSession fails and recovers via retrySaveSession", async () => {
+  vi.useFakeTimers();
+  vi.mocked(saveProjectSession).mockRejectedValueOnce(
+    new Error("QuotaExceededError: storage full"),
+  );
+
+  const { result } = renderHook(() =>
+    useTranslation({
+      currentPage: 0,
+      pages: ["blob:page1"],
+      viewMode: "single",
+      preparePageForTranslation: vi.fn(),
+    }),
+  );
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+
+  expect(result.current.saveStatus).toBe("error");
+  expect(result.current.saveError).toContain("QuotaExceededError");
+
+  // Retry succeeds
+  vi.mocked(saveProjectSession).mockResolvedValueOnce(undefined);
+
+  await act(async () => {
+    const ok = await result.current.retrySaveSession();
+    expect(ok).toBe(true);
+  });
+
+  expect(result.current.saveStatus).toBe("saved");
+  expect(result.current.saveError).toBeNull();
+});
+
+test("does not mark as saved when a new revision arrives while saving", async () => {
+  vi.useFakeTimers();
+  let resolveFirstSave: () => void = () => {};
+  vi.mocked(saveProjectSession).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveFirstSave = resolve;
+      }),
+  );
+
+  const { result } = renderHook(() =>
+    useTranslation({
+      currentPage: 0,
+      pages: ["blob:page1"],
+      viewMode: "single",
+      preparePageForTranslation: vi.fn(),
+    }),
+  );
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+
+  expect(result.current.saveStatus).toBe("saving");
+
+  // Invalidate page while save is in flight to trigger a newer revision
+  act(() => {
+    result.current.invalidatePageTranslation("blob:page1");
+  });
+
+  expect(result.current.saveStatus).toBe("saving");
+
+  // First save resolves
+  await act(async () => {
+    resolveFirstSave();
+  });
+
+  // Since new revision was queued, saveStatus must NOT be marked saved prematurely
+  expect(result.current.saveStatus).toBe("saving");
+
+  // Catchup save fires
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+
+  expect(result.current.saveStatus).toBe("saved");
+});
+

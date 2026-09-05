@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "case_id": "safe-complete-glyph",
+  "source_hash": "49c0d6cdd0a9dbcbd4134ffbeffe689d18179a853103f414ff6157bde468e906",
+  "width": 1280,
+  "height": 1820,
+  "evidence_regions": [
+    {
+      "id": "center-dialogue",
+      "rect": {
+        "x": 457,
+        "y": 568,
+        "width": 127,
+        "height": 302
+      },
+      "text_sample": "THIS TIME, ... LITTLE GANGS."
+    }
+  ],
+  "gates": {
+    "max_residual_score": 0.18,
+    "max_mask_growth_px": 1,
+    "max_changed_pixels_outside_support": 0,
+    "max_protected_edge_crossings": 0
+  }
+}

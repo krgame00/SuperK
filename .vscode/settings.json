@@ -1,6 +1,6 @@
 {
     "git.ignoreLimitWarning": true,
-    "python.defaultInterpreterPath": "${workspaceFolder}/ocr-service/venv/Scripts/python.exe",
+    "python.defaultInterpreterPath": "C:/Users/PC/Downloads/manga-translator/ocr-service/venv/Scripts/python.exe",
     "python.analysis.extraPaths": [
         "${workspaceFolder}/ocr-service"
     ]

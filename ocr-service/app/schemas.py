@@ -98,6 +98,20 @@ class JobProgress(BaseModel):
     elapsed_ms: int = Field(ge=0)
 
 
+class EvidenceSource(StrEnum):
+    CTD = "ctd"
+    PADDLE = "paddle"
+    BOTH = "both"
+
+
+class TextEvidenceRegion(BaseModel):
+    id: str
+    rect: PixelRect
+    polygon: list[tuple[int, int]] | None = None
+    source: EvidenceSource = EvidenceSource.CTD
+    confidence: float = Field(ge=0, le=1)
+
+
 class CleaningResult(BaseModel):
     job_id: str
     source_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -109,3 +123,4 @@ class CleaningResult(BaseModel):
     protected_mask_asset: str
     regions: list[RegionRecord]
     timings_ms: dict[str, int]
+    pipeline_version: str = "2.1.0-complete-glyph"

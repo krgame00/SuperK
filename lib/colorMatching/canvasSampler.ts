@@ -77,6 +77,7 @@ export function sampleBubbleRegionFromImageData(
 export function sampleBubbleRegion(
   image: HTMLImageElement | HTMLCanvasElement,
   box: number[],
+  glyphMaskImage?: HTMLImageElement | HTMLCanvasElement,
 ): ColorSampleRegion | null {
   try {
     const naturalWidth =
@@ -112,11 +113,63 @@ export function sampleBubbleRegion(
     const imgData = ctx.getImageData(0, 0, rect.width, rect.height);
     if (!imgData?.data) return null;
 
-    return {
+    const sample: ColorSampleRegion = {
       width: rect.width,
       height: rect.height,
       rgba: imgData.data,
     };
+
+    if (glyphMaskImage) {
+      const maskWidth =
+        "naturalWidth" in glyphMaskImage
+          ? glyphMaskImage.naturalWidth || glyphMaskImage.width
+          : glyphMaskImage.width;
+      const maskHeight =
+        "naturalHeight" in glyphMaskImage
+          ? glyphMaskImage.naturalHeight || glyphMaskImage.height
+          : glyphMaskImage.height;
+
+      if (maskWidth && maskHeight) {
+        const maskRect = normalizeBubbleBox(box, maskWidth, maskHeight);
+        const maskCanvas = document.createElement("canvas");
+        maskCanvas.width = rect.width;
+        maskCanvas.height = rect.height;
+        const maskContext = maskCanvas.getContext("2d", {
+          willReadFrequently: true,
+        });
+        if (maskContext && typeof maskContext.drawImage === "function") {
+          maskContext.drawImage(
+            glyphMaskImage,
+            maskRect.x,
+            maskRect.y,
+            maskRect.width,
+            maskRect.height,
+            0,
+            0,
+            rect.width,
+            rect.height,
+          );
+          const maskData = maskContext.getImageData(
+            0,
+            0,
+            rect.width,
+            rect.height,
+          ).data;
+          const glyphMask = new Uint8ClampedArray(rect.width * rect.height);
+          for (let pixel = 0; pixel < glyphMask.length; pixel++) {
+            const offset = pixel * 4;
+            glyphMask[pixel] = Math.max(
+              maskData[offset],
+              maskData[offset + 1],
+              maskData[offset + 2],
+            );
+          }
+          sample.glyphMask = glyphMask;
+        }
+      }
+    }
+
+    return sample;
   } catch {
     return null;
   }

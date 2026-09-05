@@ -31,6 +31,7 @@ class RefinedMask:
     mask: BinaryMask
     regions: list[MaskRegion]
     protected_edges: BinaryMask
+    envelope: BinaryMask | None = None
 
 
 def build_protected_edges(
@@ -40,7 +41,12 @@ def build_protected_edges(
 ) -> BinaryMask:
     luminance = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
     edges = cv2.Canny(luminance, 80, 160)
-    edges[probability >= edge_lock_threshold] = 0
+    text_zone = (probability >= edge_lock_threshold).astype(np.uint8)
+    if np.any(text_zone):
+        text_zone = cv2.dilate(text_zone, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+        edges[text_zone > 0] = 0
+    else:
+        edges[probability >= edge_lock_threshold] = 0
     return edges
 
 
@@ -59,39 +65,135 @@ def constrained_dilate(
     return grown
 
 
-def refine_probability_mask(
-    probability: NDArray[np.float32],
+def complete_glyph_mask(
+    image_rgb: RgbImage,
+    seed: BinaryMask,
+    envelope: BinaryMask,
     protected_edges: BinaryMask,
-    threshold: float = 0.35,
-    minimum_component_area: int | None = None,
-) -> RefinedMask:
-    if probability.shape != protected_edges.shape:
-        raise ValueError("probability and protected_edges must have the same shape")
+) -> BinaryMask:
+    """Completes text glyphs (fill and outline) as connected components inside the
 
-    image_area = probability.shape[0] * probability.shape[1]
+    evidence envelope without expanding across protected artwork edges.
+    """
+    if np.count_nonzero(seed) == 0 or np.count_nonzero(envelope) == 0:
+        return seed.copy()
+
+    seed_bin = np.where(seed > 0, 255, 0).astype(np.uint8)
+    seed_bin[envelope == 0] = 0
+    if np.count_nonzero(seed_bin) == 0:
+        return seed.copy()
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(seed_bin, connectivity=8)
+    if num_labels <= 1:
+        return seed_bin
+
+    completed = np.zeros_like(seed_bin)
+    h_img, w_img = image_rgb.shape[:2]
+
+    for comp_idx in range(1, num_labels):
+        comp_mask = (labels == comp_idx).astype(np.uint8) * 255
+        seed_area = int(stats[comp_idx, cv2.CC_STAT_AREA])
+        bx = int(stats[comp_idx, cv2.CC_STAT_LEFT])
+        by = int(stats[comp_idx, cv2.CC_STAT_TOP])
+        bw = int(stats[comp_idx, cv2.CC_STAT_WIDTH])
+        bh = int(stats[comp_idx, cv2.CC_STAT_HEIGHT])
+
+        margin = max(4, min(12, int(max(bw, bh) * 0.4)))
+        x1 = max(0, bx - margin)
+        y1 = max(0, by - margin)
+        x2 = min(w_img, bx + bw + margin)
+        y2 = min(h_img, by + bh + margin)
+
+        sub_img = image_rgb[y1:y2, x1:x2]
+        sub_seed = comp_mask[y1:y2, x1:x2]
+        sub_env = envelope[y1:y2, x1:x2]
+        sub_prot = protected_edges[y1:y2, x1:x2]
+        sub_valid = (sub_env > 0) & (sub_prot == 0)
+
+        seed_pts = sub_img[sub_seed > 0]
+        if seed_pts.size == 0:
+            continue
+        fill_median = np.median(seed_pts, axis=0)
+        fill_std = np.std(seed_pts, axis=0)
+
+        dist_to_seed = cv2.distanceTransform((255 - sub_seed).astype(np.uint8), cv2.DIST_L2, 3)
+
+        bg_mask = (sub_env > 0) & (dist_to_seed >= max(3.0, margin - 1.5))
+        if np.count_nonzero(bg_mask) < 5:
+            bg_mask = (sub_env > 0) & (dist_to_seed >= 2.0)
+        if np.count_nonzero(bg_mask) >= 5:
+            bg_median = np.median(sub_img[bg_mask], axis=0)
+        else:
+            bg_median = np.median(sub_img[[0, -1], :], axis=(0, 1))
+
+        dist_fill = np.linalg.norm(sub_img.astype(float) - fill_median, axis=2)
+        dist_bg = np.linalg.norm(sub_img.astype(float) - bg_median, axis=2)
+
+        fill_candidate = (dist_fill <= max(40.0, float(np.mean(fill_std) * 3.0 + 15.0))) & (dist_to_seed <= 4.0)
+        outline_candidate = (dist_to_seed <= 4.5) & (dist_bg >= 14.0)
+
+        candidate = (sub_seed > 0) | fill_candidate | outline_candidate
+        candidate = candidate & sub_valid
+
+        cand_u8 = candidate.astype(np.uint8) * 255
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        closed = cv2.morphologyEx(cand_u8, cv2.MORPH_CLOSE, kernel)
+
+        h_cand, w_cand = closed.shape
+        flood = closed.copy()
+        flood_mask = np.zeros((h_cand + 2, w_cand + 2), dtype=np.uint8)
+        cv2.floodFill(flood, flood_mask, (0, 0), 255)
+        filled = closed | (255 - flood)
+        filled = filled & (sub_valid.astype(np.uint8) * 255)
+
+        n_cc, l_cc, s_cc, _ = cv2.connectedComponentsWithStats(filled, connectivity=8)
+        sub_comp_out = np.zeros_like(filled)
+        for c in range(1, n_cc):
+            m = (l_cc == c).astype(np.uint8) * 255
+            if np.any((m > 0) & (sub_seed > 0)):
+                c_area = int(s_cc[c, cv2.CC_STAT_AREA])
+                if c_area <= seed_area * 5.0 or seed_area < 20:
+                    sub_comp_out = np.maximum(sub_comp_out, m)
+                else:
+                    sub_comp_out = np.maximum(sub_comp_out, sub_seed)
+
+        sub_comp_out[sub_prot > 0] = 0
+        completed[y1:y2, x1:x2] = np.maximum(completed[y1:y2, x1:x2], sub_comp_out)
+
+    completed[protected_edges > 0] = 0
+    return completed
+
+
+def _refine_seed_mask(
+    seed: BinaryMask,
+    protected_edges: BinaryMask,
+    minimum_component_area: int | None = None,
+    envelope: BinaryMask | None = None,
+) -> RefinedMask:
+    if seed.shape != protected_edges.shape:
+        raise ValueError("seed and protected_edges must have the same shape")
+
+    image_area = seed.shape[0] * seed.shape[1]
     minimum_area = minimum_component_area
     if minimum_area is None:
         minimum_area = max(6, round(image_area * 0.000002))
 
-    seed = (probability >= threshold).astype(np.uint8)
+    seed_bin = np.where(seed > 0, 255, 0).astype(np.uint8)
     count, labels, stats, _ = cv2.connectedComponentsWithStats(
-        seed,
+        seed_bin,
         connectivity=8,
     )
-    combined = np.zeros_like(seed, dtype=np.uint8)
+    combined = np.zeros_like(seed_bin, dtype=np.uint8)
     component_masks: dict[int, BinaryMask] = {}
     radii: dict[int, int] = {}
     for component_id in range(1, count):
         if int(stats[component_id, cv2.CC_STAT_AREA]) < minimum_area:
             continue
         component = np.where(labels == component_id, 255, 0).astype(np.uint8)
-        box_w = stats[component_id, cv2.CC_STAT_WIDTH]
-        box_h = stats[component_id, cv2.CC_STAT_HEIGHT]
         radius = _estimate_stroke_radius(component)
-        orientation_bonus = 1 if box_w > box_h * 2 else 0
-        dilation_radius = min(6, max(2, radius + orientation_bonus))
+        # Spatial dilation after completion is strictly capped at 1 px
+        dilation_radius = 1
         grown = constrained_dilate(component, protected_edges, dilation_radius)
-        # Always retain original text component seed, only constrain background dilation
         grown[protected_edges > 0] = 0
         grown = np.maximum(grown, component)
         combined = np.maximum(combined, grown)
@@ -103,6 +205,21 @@ def refine_probability_mask(
         mask=combined,
         regions=regions,
         protected_edges=protected_edges.copy(),
+        envelope=envelope.copy() if envelope is not None else None,
+    )
+
+
+def refine_probability_mask(
+    probability: NDArray[np.float32],
+    protected_edges: BinaryMask,
+    threshold: float = 0.35,
+    minimum_component_area: int | None = None,
+) -> RefinedMask:
+    seed = (probability >= threshold).astype(np.uint8) * 255
+    return _refine_seed_mask(
+        seed,
+        protected_edges,
+        minimum_component_area=minimum_component_area,
     )
 
 
@@ -116,11 +233,36 @@ def refine_mask(
         image_rgb,
         detection.mask_probability,
     )
-    return refine_probability_mask(
-        detection.mask_probability,
+    h, w = image_rgb.shape[:2]
+    envelope = np.zeros((h, w), dtype=np.uint8)
+    if detection.evidence_regions:
+        for ev in detection.evidence_regions:
+            if ev.polygon and len(ev.polygon) >= 3:
+                pts = np.array(ev.polygon, dtype=np.int32).reshape((-1, 1, 2))
+                cv2.fillPoly(envelope, [pts], 255)
+            else:
+                rect = ev.rect
+                envelope[rect.y : rect.y + rect.height, rect.x : rect.x + rect.width] = 255
+    elif detection.blocks:
+        for b in detection.blocks:
+            rect = b.rect
+            envelope[rect.y : rect.y + rect.height, rect.x : rect.x + rect.width] = 255
+    else:
+        seed_raw = (detection.mask_probability >= active.threshold).astype(np.uint8) * 255
+        envelope = cv2.dilate(seed_raw, cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9)))
+
+    if np.any(envelope):
+        envelope = cv2.dilate(envelope, cv2.getStructuringElement(cv2.MORPH_RECT, (17, 17)))
+        envelope[protected_edges > 0] = 0
+
+    seed = (detection.mask_probability >= active.threshold).astype(np.uint8) * 255
+    completed_seed = complete_glyph_mask(image_rgb, seed, envelope, protected_edges)
+
+    return _refine_seed_mask(
+        completed_seed,
         protected_edges,
-        threshold=active.threshold,
         minimum_component_area=active.minimum_component_area,
+        envelope=envelope,
     )
 
 
@@ -148,7 +290,8 @@ def _group_regions(
     median_height = float(np.median([rect.height for rect in rects.values()]))
     mask_height, mask_width = next(iter(component_masks.values())).shape
     page_scale_floor = 0.02 * min(mask_height, mask_width)
-    maximum_gap = max(1.0, 1.5 * median_height, page_scale_floor)
+    uncapped_gap = max(1.0, 1.5 * median_height, page_scale_floor)
+    maximum_gap = min(uncapped_gap, 50.0)
     parents = {component_id: component_id for component_id in component_ids}
 
     def find(component_id: int) -> int:

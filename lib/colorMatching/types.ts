@@ -19,6 +19,7 @@ export interface ColorSampleRegion {
   width: number;
   height: number;
   rgba: Uint8ClampedArray;
+  glyphMask?: Uint8ClampedArray;
 }
 
 export function clampConfidence(val: number): number {

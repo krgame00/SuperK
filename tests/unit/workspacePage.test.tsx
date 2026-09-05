@@ -71,4 +71,41 @@ describe("WorkspacePage smoke test", () => {
     // Header should be present
     expect(screen.getByText(/manga translator|superk/i)).toBeTruthy();
   });
+
+  it("does not show 'Drop images to add' overlay when dragging non-file elements", () => {
+    const { container } = render(<WorkspacePage />);
+
+    // Fire dragOver with no Files in types (e.g. dragging text or internal element)
+    const rootDiv = container.firstChild as HTMLElement;
+    const dragOverEvent = {
+      preventDefault: vi.fn(),
+      dataTransfer: {
+        types: ["text/plain"],
+        files: [],
+      },
+    };
+
+    // Trigger dragOver
+    import("@testing-library/react").then(({ fireEvent }) => {
+      fireEvent.dragOver(rootDiv, dragOverEvent);
+    });
+
+    expect(screen.queryByText(/Drop images to add/i)).toBeNull();
+  });
+
+  it("shows highlight on dropzone when dragging external Files in empty state", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    const { container } = render(<WorkspacePage />);
+
+    const rootDiv = container.firstChild as HTMLElement;
+    fireEvent.dragOver(rootDiv, {
+      dataTransfer: {
+        types: ["Files"],
+        files: [new File(["dummy"], "page1.png", { type: "image/png" })],
+      },
+    });
+
+    const dropzone = screen.getByText(/Drag & Drop manga pages/i).parentElement;
+    expect(dropzone).toHaveClass("border-primary");
+  });
 });

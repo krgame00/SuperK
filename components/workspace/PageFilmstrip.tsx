@@ -1,6 +1,12 @@
 "use client";
 
-import { useRef, useState, type ChangeEvent, type ReactElement } from "react";
+import {
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ReactElement,
+  type WheelEvent,
+} from "react";
 import { Check, ChevronDown, ChevronUp, Trash2, Upload } from "lucide-react";
 
 export interface WorkspacePageItem {
@@ -18,6 +24,7 @@ export interface PageFilmstripProps {
   onClearAll: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
+  isFocusMode?: boolean;
 }
 
 export function PageFilmstrip({
@@ -30,6 +37,7 @@ export function PageFilmstrip({
   onClearAll,
   isCollapsed,
   onToggleCollapse,
+  isFocusMode = false,
 }: PageFilmstripProps): ReactElement | null {
   const thumbnailContainerRef = useRef<HTMLDivElement>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -38,14 +46,37 @@ export function PageFilmstrip({
     null,
   );
 
+  const handleThumbnailWheel = (event: WheelEvent<HTMLDivElement>): void => {
+    if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+
+    const container = event.currentTarget;
+    const maxScrollLeft = Math.max(
+      0,
+      container.scrollWidth - container.clientWidth,
+    );
+    const nextScrollLeft = Math.min(
+      maxScrollLeft,
+      Math.max(0, container.scrollLeft + event.deltaY),
+    );
+
+    if (nextScrollLeft !== container.scrollLeft) {
+      event.preventDefault();
+      container.scrollLeft = nextScrollLeft;
+    }
+  };
+
   if (pages.length === 0) return null;
 
   return (
     <nav
       role="region"
       aria-label="รายการหน้ามังงะและเครื่องมือจัดการหน้า"
-      className={`fixed right-0 bottom-0 left-0 z-30 flex flex-col items-center border-t border-surface-hover/80 bg-background/95 backdrop-blur-md transition-transform duration-200 ease-out ${
-        isCollapsed ? "translate-y-full" : "translate-y-0"
+      className={`fixed right-0 bottom-0 left-0 z-30 flex min-w-0 flex-col items-center border-t border-surface-hover/80 bg-background/95 backdrop-blur-md transition-all duration-200 ease-out ${
+        isFocusMode
+          ? "translate-y-[150%] opacity-0 pointer-events-none"
+          : isCollapsed
+            ? "translate-y-full"
+            : "translate-y-0"
       }`}
     >
       {/* Collapse/Expand Toggle Button */}
@@ -76,7 +107,8 @@ export function PageFilmstrip({
       <div
         id="page-filmstrip"
         ref={thumbnailContainerRef}
-        className="flex h-20 items-center gap-3 overflow-x-auto overscroll-x-contain px-4 sm:h-22 [scrollbar-width:thin]"
+        onWheel={handleThumbnailWheel}
+        className="flex h-20 w-full max-w-full min-w-0 touch-pan-x items-center gap-3 overflow-x-auto overscroll-x-contain px-4 sm:h-22 [scrollbar-width:thin]"
       >
         {pages.map((page, i) => {
           const isSelected = i === currentPage;

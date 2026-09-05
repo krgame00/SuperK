@@ -15,6 +15,7 @@ interface CleaningToolbarProps {
   onLayerChange: (layer: WorkspaceLayer) => void;
   progress?: CleaningProgress;
   error?: CleaningHookError;
+  className?: string;
 }
 
 const primaryLayers: Array<{
@@ -27,7 +28,7 @@ const primaryLayers: Array<{
 ];
 
 const tabBaseClass =
-  "relative h-8.5 rounded-md px-3.5 text-xs font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-35 select-none";
+  "relative h-8 rounded-md px-3 text-xs font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-35 select-none";
 
 export function CleaningToolbar({
   hasPage,
@@ -39,12 +40,16 @@ export function CleaningToolbar({
   onLayerChange,
   progress,
   error,
+  className,
 }: CleaningToolbarProps) {
   const isRunning = Boolean(progress);
   return (
     <section
       aria-label="เครื่องมือคลีนข้อความ"
-      className="mb-3 flex w-full max-w-4xl flex-wrap items-center justify-between gap-2.5 rounded-xl border border-border/70 bg-surface/85 px-3 py-2 shadow-sm backdrop-blur-md transition-all"
+      className={
+        className ??
+        "flex w-full max-w-4xl flex-wrap items-center justify-between gap-2 rounded-xl border border-border/70 bg-surface/90 px-3 py-1.5 shadow-md backdrop-blur-md transition-all"
+      }
     >
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <button

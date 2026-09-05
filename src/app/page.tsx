@@ -10,7 +10,7 @@ import {
   applyTranslationOverlay,
   type TranslatedBubble,
 } from "@/lib/translationOverlay";
-import { Upload, Download, Flame, Eye, EyeOff, Undo2, Redo2, GalleryVertical, RectangleHorizontal, Menu, X, Settings, FileArchive, BookOpen, FileText, Sparkles } from "lucide-react";
+import { Upload, Download, Flame, Eye, EyeOff, Undo2, Redo2, GalleryVertical, RectangleHorizontal, Menu, X, Settings, FileArchive, BookOpen, FileText, Sparkles, Loader2, Check, AlertCircle, RefreshCw } from "lucide-react";
 import { undoManager } from "@/lib/undoManager";
 import JSZip from "jszip";
 import { useCleaning } from "@/hooks/useCleaning";
@@ -56,8 +56,63 @@ export default function WorkspacePage() {
   const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importStatusMessage, setImportStatusMessage] = useState<string | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
+  const [isFocusMode, setIsFocusMode] = useState(false);
+  const [isFocusToolbarVisible, setIsFocusToolbarVisible] = useState(false);
+
+  // Reset focus toolbar visibility whenever entering focus mode
+  useEffect(() => {
+    if (isFocusMode) {
+      setIsFocusToolbarVisible(false);
+    }
+  }, [isFocusMode]);
+
+  // Global keyboard shortcuts for Focus Mode (F to toggle, T to toggle top bar, Esc to exit)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable ||
+          (typeof target.closest === "function" && Boolean(target.closest('[role="dialog"]'))))
+      ) {
+        return;
+      }
+
+      if (e.key === "f" || e.key === "F") {
+        if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+          e.preventDefault();
+          setIsFocusMode((prev) => !prev);
+        }
+      } else if (e.key === "b" || e.key === "B") {
+        if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+          setIsFocusMode((focus) => {
+            if (focus) {
+              e.preventDefault();
+              setIsFocusToolbarVisible((prev) => !prev);
+            }
+            return focus;
+          });
+        }
+      } else if (e.key === "Escape") {
+        setIsFocusMode((prev) => {
+          if (prev) {
+            e.preventDefault();
+            return false;
+          }
+          return false;
+        });
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const pageUrls = useMemo(() => pages.map(p => p.url), [pages]);
   const {
@@ -103,6 +158,7 @@ export default function WorkspacePage() {
         return {
           recognitionUrl: pageUrl,
           backgroundUrl: cachedResult.cleanUrl,
+          maskUrl: cachedResult.maskUrl,
         };
       }
 
@@ -119,6 +175,7 @@ export default function WorkspacePage() {
       return {
         recognitionUrl: pageUrl,
         backgroundUrl: result.cleanUrl,
+        maskUrl: result.maskUrl,
       };
     },
     [cleanPage, cleaningResultsByPage, pages],
@@ -154,6 +211,9 @@ export default function WorkspacePage() {
     setTextStyle,
     restoreSavedSession,
     clearSavedSession,
+    saveStatus,
+    saveError,
+    retrySaveSession,
     workflowPhase,
     batchFailures,
     retryFailedPages,
@@ -185,7 +245,7 @@ export default function WorkspacePage() {
   const translationBusy = isTranslating || isTranslatingAll;
   const operationBusy =
     isUiOperationBusy || translationBusy || Boolean(cleaningProgress);
-  const workflowMessage = translateAllProgress?.message ?? translationResult;
+  const workflowMessage = importStatusMessage ?? translateAllProgress?.message ?? translationResult;
 
   const handleTranslateCurrent = useCallback(async (): Promise<boolean> => {
     if (
@@ -706,82 +766,121 @@ export default function WorkspacePage() {
   };
 
   const processFiles = async (files: File[]) => {
-    // Natural sort: "page1, page2, page10" instead of "page1, page10, page2"
-    const sorted = [...files].sort((a, b) =>
-      a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
-    );
+    if (files.length === 0 || isImporting) return;
 
-    const newPages: {url: string, name: string}[] = [];
-    for (const file of sorted) {
-      if (file.type === "application/zip" || file.type === "application/x-zip-compressed" || file.name.toLowerCase().endsWith('.zip') || file.name.toLowerCase().endsWith('.cbz')) {
-        try {
-          const zip = new JSZip();
-          const loadedZip = await zip.loadAsync(file);
+    setIsImporting(true);
+    setImportStatusMessage("กำลังจัดเตรียมไฟล์...");
 
-          const zipFiles = Object.values(loadedZip.files).filter(f => !f.dir && f.name.match(/\.(jpg|jpeg|png|webp|gif)$/i));
+    try {
+      // Natural sort: "page1, page2, page10" instead of "page1, page10, page2"
+      const sorted = [...files].sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+      );
 
-          zipFiles.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+      const newPages: {url: string, name: string}[] = [];
+      let failureCount = 0;
 
-          for (const zipFile of zipFiles) {
-            const base64 = await zipFile.async("base64");
-            const ext = zipFile.name.split('.').pop()?.toLowerCase();
-            const mimeType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : ext === 'gif' ? 'image/gif' : 'image/jpeg';
-            newPages.push({ url: `data:${mimeType};base64,${base64}`, name: zipFile.name });
+      for (let fileIdx = 0; fileIdx < sorted.length; fileIdx++) {
+        const file = sorted[fileIdx];
+        const isArchive = file.type === "application/zip" || file.type === "application/x-zip-compressed" || file.name.toLowerCase().endsWith('.zip') || file.name.toLowerCase().endsWith('.cbz');
+        const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith('.pdf');
+
+        if (isArchive) {
+          try {
+            setImportStatusMessage(`กำลังแตกไฟล์ ZIP/CBZ: ${file.name}...`);
+            const zip = new JSZip();
+            const loadedZip = await zip.loadAsync(file);
+
+            const zipFiles = Object.values(loadedZip.files).filter(f => !f.dir && f.name.match(/\.(jpg|jpeg|png|webp|gif)$/i));
+            zipFiles.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+            if (zipFiles.length === 0) {
+              const toast = (await import('react-hot-toast')).default;
+              toast.error(`ไม่พบไฟล์รูปภาพใน ${file.name}`);
+              failureCount++;
+              continue;
+            }
+
+            for (let zIdx = 0; zIdx < zipFiles.length; zIdx++) {
+              const zipFile = zipFiles[zIdx];
+              setImportStatusMessage(`กำลังอ่านไฟล์ ${file.name} (รูปที่ ${zIdx + 1}/${zipFiles.length})...`);
+              const base64 = await zipFile.async("base64");
+              const ext = zipFile.name.split('.').pop()?.toLowerCase();
+              const mimeType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : ext === 'gif' ? 'image/gif' : 'image/jpeg';
+              newPages.push({ url: `data:${mimeType};base64,${base64}`, name: zipFile.name });
+            }
+          } catch (e) {
+            console.error("Failed to extract zip/cbz", e);
+            failureCount++;
+            const toast = (await import('react-hot-toast')).default;
+            toast.error(`ไม่สามารถเปิดไฟล์ ZIP/CBZ: ${file.name}`);
           }
-        } catch (e) {
-          console.error("Failed to extract zip/cbz", e);
+        } else if (isPdf) {
+          try {
+            setImportStatusMessage(`กำลังเปิดไฟล์ PDF: ${file.name}...`);
+            const pdfjsLib = await import('pdfjs-dist');
+            if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+              pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+            }
+            const arrayBuffer = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            const numPages = pdf.numPages;
+
+            for (let i = 1; i <= numPages; i++) {
+              setImportStatusMessage(`กำลังแปลงหน้า PDF: ${file.name} (หน้า ${i}/${numPages})...`);
+              const page = await pdf.getPage(i);
+              const viewport = page.getViewport({ scale: 2.0 }); // scale for better quality
+              const canvas = document.createElement("canvas");
+              canvas.width = viewport.width;
+              canvas.height = viewport.height;
+              const ctx = canvas.getContext("2d");
+              if (!ctx) continue;
+
+              // pdfjs RenderParameters requires canvas ctx type from its own DOM
+              // lib; our ctx is structurally identical so cast through unknown.
+              const renderParams = {
+                canvasContext: ctx,
+                viewport,
+              } as unknown as Parameters<typeof page.render>[0];
+              await page.render(renderParams).promise;
+              const base64 = canvas.toDataURL("image/jpeg", 0.95);
+              newPages.push({ url: base64, name: `${file.name.replace('.pdf', '')}_page${i}.jpg` });
+            }
+          } catch (e) {
+            console.error("Failed to parse PDF", e);
+            failureCount++;
+            const toast = (await import('react-hot-toast')).default;
+            toast.error(`ไม่สามารถแปลงไฟล์ PDF: ${file.name}`);
+          }
+        } else if (file.type.startsWith("image/")) {
+          setImportStatusMessage(`กำลังโหลดรูป: ${file.name} (${fileIdx + 1}/${sorted.length})...`);
+          const base64 = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = (event) => resolve(event.target?.result as string);
+            reader.readAsDataURL(file);
+          });
+          newPages.push({ url: base64, name: file.name });
         }
-      } else if (file.type === "application/pdf" || file.name.toLowerCase().endsWith('.pdf')) {
-        try {
-          const pdfjsLib = await import('pdfjs-dist');
-          if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-            pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
-          }
-          const arrayBuffer = await file.arrayBuffer();
-          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-          const numPages = pdf.numPages;
-
-          for (let i = 1; i <= numPages; i++) {
-            const page = await pdf.getPage(i);
-            const viewport = page.getViewport({ scale: 2.0 }); // scale for better quality
-            const canvas = document.createElement("canvas");
-            canvas.width = viewport.width;
-            canvas.height = viewport.height;
-            const ctx = canvas.getContext("2d");
-            if (!ctx) continue;
-
-            // pdfjs RenderParameters requires canvas ctx type from its own DOM
-            // lib; our ctx is structurally identical so cast through unknown.
-            const renderParams = {
-              canvasContext: ctx,
-              viewport,
-            } as unknown as Parameters<typeof page.render>[0];
-            await page.render(renderParams).promise;
-            const base64 = canvas.toDataURL("image/jpeg", 0.95);
-            newPages.push({ url: base64, name: `${file.name.replace('.pdf', '')}_page${i}.jpg` });
-          }
-        } catch (e) {
-          console.error("Failed to parse PDF", e);
-        }
-      } else if (file.type.startsWith("image/")) {
-        const base64 = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onload = (event) => resolve(event.target?.result as string);
-          reader.readAsDataURL(file);
-        });
-        newPages.push({ url: base64, name: file.name });
       }
-    }
 
-    if (newPages.length > 0) {
-      setPages(prev => {
-        const updated = [...prev, ...newPages];
-        if (prev.length === 0) {
-          setCurrentPage(0);
-          setActiveBubbles([]);
-        }
-        return updated;
-      });
+      if (newPages.length > 0) {
+        setPages(prev => {
+          const updated = [...prev, ...newPages];
+          if (prev.length === 0) {
+            setCurrentPage(0);
+            setActiveBubbles([]);
+          }
+          return updated;
+        });
+        const toast = (await import('react-hot-toast')).default;
+        toast.success(`นำเข้าสำเร็จ ${newPages.length} หน้า`);
+      } else if (failureCount > 0) {
+        const toast = (await import('react-hot-toast')).default;
+        toast.error("ไม่สามารถนำเข้าไฟล์ที่เลือกได้ กรุณาตรวจสอบรูปแบบไฟล์");
+      }
+    } finally {
+      setIsImporting(false);
+      setImportStatusMessage(null);
     }
   };
 
@@ -793,20 +892,28 @@ export default function WorkspacePage() {
   };
 
   const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
+    // Only accept drag if files from outside the browser are being dragged
+    const hasFiles = e.dataTransfer.types && Array.from(e.dataTransfer.types).includes("Files");
+    if (hasFiles) {
+      e.preventDefault();
+      setIsDragging(true);
+    }
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
-    setIsDragging(false);
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDragging(false);
+    }
   };
 
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    const files = Array.from(e.dataTransfer.files);
-    await processFiles(files);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const files = Array.from(e.dataTransfer.files);
+      await processFiles(files);
+    }
   };
 
   return (
@@ -837,7 +944,11 @@ export default function WorkspacePage() {
       )}
 
       {/* Header Panel */}
-      <header className="w-full bg-background/95 backdrop-blur-md border-b border-border/80 h-14 flex justify-between items-center px-3 sm:px-5 z-50 fixed top-0 select-none">
+      <header
+        className={`w-full bg-background/95 backdrop-blur-md border-b border-border/80 h-14 flex justify-between items-center px-3 sm:px-5 z-50 fixed top-0 select-none transition-transform duration-300 ${
+          isFocusMode ? "-translate-y-full pointer-events-none" : "translate-y-0"
+        }`}
+      >
         <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -853,6 +964,50 @@ export default function WorkspacePage() {
               Manga Translator
             </span>
           </h1>
+
+          {/* Save Status Indicator */}
+          {pages.length > 0 && saveStatus !== "idle" && (
+            <div className="flex items-center ml-1 sm:ml-2">
+              {saveStatus === "saving" && (
+                <span
+                  className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] text-muted font-medium bg-surface/60 border border-border/60 rounded-full select-none"
+                  title="กำลังบันทึกข้อมูลล่าสุดลง IndexedDB..."
+                >
+                  <Loader2 className="w-3 h-3 animate-spin text-primary" />
+                  <span className="hidden sm:inline">กำลังบันทึก...</span>
+                </span>
+              )}
+              {saveStatus === "saved" && (
+                <span
+                  className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] text-emerald-500/90 dark:text-emerald-400 font-medium bg-emerald-500/10 border border-emerald-500/20 rounded-full select-none"
+                  title="บันทึกข้อมูลล่าสุดลงเครื่องเรียบร้อยแล้ว"
+                >
+                  <Check className="w-3 h-3 text-emerald-500" />
+                  <span className="hidden sm:inline">บันทึกแล้ว</span>
+                </span>
+              )}
+              {saveStatus === "error" && (
+                <div
+                  className="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-[11px] text-amber-500 dark:text-amber-400 font-medium bg-amber-500/10 border border-amber-500/30 rounded-full shadow-xs"
+                  role="alert"
+                >
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                  <span className="hidden sm:inline truncate max-w-[150px]">
+                    {saveError || "บันทึกไม่สำเร็จ"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void retrySaveSession()}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-amber-600 dark:text-amber-400 hover:underline cursor-pointer ml-1 pl-1.5 border-l border-amber-500/30 focus-visible:outline-none"
+                    title="ลองบันทึกอีกครั้ง"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>ลองใหม่</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Desktop Menu */}
@@ -949,6 +1104,32 @@ export default function WorkspacePage() {
                   onRetryFailedPages={() => void retryFailedPages()}
                   triggerRef={advancedToolsTriggerRef}
                 />
+
+                {/* Settings button (always accessible in desktop header) */}
+                <button
+                  type="button"
+                  onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+                  aria-label="เปิดหน้าต่างตั้งค่า"
+                  className={`h-8.5 w-8.5 rounded-lg border flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                    isSettingsOpen
+                      ? 'text-primary bg-primary/10 border-primary/30'
+                      : 'text-muted hover:text-foreground hover:bg-surface-hover/80 bg-surface border-border'
+                  }`}
+                  title="ตั้งค่า API, ฟอนต์, คำศัพท์"
+                >
+                  <Settings className="w-4 h-4" aria-hidden="true" />
+                </button>
+
+                {/* Keyboard shortcuts helper button */}
+                <button
+                  type="button"
+                  onClick={() => setIsShortcutsOpen(true)}
+                  aria-label="ดูปุ่มลัดคีย์บอร์ด (?)"
+                  className="h-8.5 w-8.5 rounded-lg border border-border flex items-center justify-center text-muted hover:text-foreground hover:bg-surface-hover/80 bg-surface transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary text-xs font-semibold"
+                  title="ปุ่มลัดคีย์บอร์ด (?)"
+                >
+                  ?
+                </button>
               </div>
 
               {/* ── Primary Action Buttons ── */}
@@ -961,6 +1142,7 @@ export default function WorkspacePage() {
 
                 {/* ── Export Menu Dropdown ── */}
                 <WorkspaceExportMenu
+                  triggerRef={exportTriggerRef}
                   disabled={pages.length === 0}
                   disabledKinds={{
                     image: activeBubbles.length === 0 || workspaceLayer !== "translated",
@@ -1188,8 +1370,50 @@ export default function WorkspacePage() {
     </header>
 
       {/* Main Workspace */}
-      <main className={`flex-1 w-full mt-14 flex flex-col items-center transition-opacity duration-300 ${isDragging ? 'opacity-50' : 'opacity-100'} ${pages.length > 0 ? (isThumbnailsCollapsed ? 'mb-10 sm:mb-12' : 'mb-24 sm:mb-28') : ''}`}>
-        {workflowMessage && (
+      <main
+        className={`w-full flex flex-col items-center overflow-hidden transition-all duration-300 ${
+          isFocusMode
+            ? "h-[100dvh] mt-0"
+            : pages.length > 0
+              ? "h-[calc(100dvh-3.5rem)] mt-14"
+              : "flex-1 min-h-[calc(100dvh-3.5rem)] mt-14"
+        } ${isDragging ? "opacity-50" : "opacity-100"}`}
+      >
+        {isFocusMode && (
+          <div className="fixed top-3 right-3 z-40 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setIsFocusToolbarVisible((prev) => !prev)}
+              aria-label={isFocusToolbarVisible ? "ซ่อนแถบเครื่องมือคลีน (B)" : "แสดงแถบเครื่องมือคลีน (B)"}
+              className="bg-surface/90 hover:bg-surface text-foreground/80 hover:text-foreground text-xs px-3 py-1.5 rounded-full border border-border/80 shadow-lg backdrop-blur-md transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+              title={isFocusToolbarVisible ? "ซ่อนแถบบน (B)" : "แสดงแถบบน (B)"}
+            >
+              {isFocusToolbarVisible ? (
+                <EyeOff className="w-3.5 h-3.5 text-primary" />
+              ) : (
+                <Eye className="w-3.5 h-3.5 text-muted" />
+              )}
+              <span>{isFocusToolbarVisible ? "ซ่อนแถบบน" : "แสดงแถบบน"}</span>
+              <kbd className="px-1.5 py-0.5 text-[10px] font-semibold bg-background/80 rounded border border-border/60 text-muted">
+                B
+              </kbd>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsFocusMode(false)}
+              aria-label="ออกจากโหมดโฟกัส (Esc หรือ F)"
+              className="bg-surface/90 hover:bg-surface text-foreground/80 hover:text-foreground text-xs px-3 py-1.5 rounded-full border border-border/80 shadow-lg backdrop-blur-md transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+              title="Exit Focus Mode (Esc / F)"
+            >
+              <span>ออกจากโหมดโฟกัส</span>
+              <kbd className="px-1.5 py-0.5 text-[10px] font-semibold bg-background/80 rounded border border-border/60 text-muted">
+                Esc
+              </kbd>
+            </button>
+          </div>
+        )}
+
+        {workflowMessage && !isFocusMode && (
           <div className="fixed top-16 left-1/2 -translate-x-1/2 z-40 bg-surface/90 backdrop-blur-md border border-primary/30 text-foreground px-4 py-1.5 rounded-full text-xs font-semibold shadow-lg animate-in fade-in slide-in-from-top-2 duration-300 flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
             <span>{workflowMessage}</span>
@@ -1197,49 +1421,74 @@ export default function WorkspacePage() {
         )}
 
         {pages.length > 0 ? (
-          <div className="w-full flex flex-col items-center flex-1 px-2 sm:px-4 py-4 sm:py-6">
-            <CleaningToolbar
-              hasPage={pages.length > 0 && !operationBusy}
-              hasResult={Boolean(currentCleaningResult)}
-              hasTranslated={hasCurrentTranslation}
-              layer={workspaceLayer}
-              onClean={() => void handleCleanCurrentPage()}
-              onEditMask={() => setIsMaskEditorOpen(true)}
-              onLayerChange={setWorkspaceLayer}
-              progress={cleaningProgress}
-              error={cleaningError}
-            />
+          <div
+            className={`w-full flex-1 min-h-0 flex flex-col items-center relative overflow-hidden transition-all duration-200 ${
+              isFocusMode
+                ? "p-0"
+                : isThumbnailsCollapsed
+                  ? "px-1 pb-7"
+                  : "px-1 pb-20 sm:pb-22"
+            }`}
+          >
+            {/* Cleaning Toolbar: Floating on desktop so it doesn't push the canvas, standard flow on mobile */}
+            <div
+              className={`w-full md:absolute md:top-2.5 md:left-1/2 md:-translate-x-1/2 md:z-30 flex justify-center pointer-events-none px-2 transition-all duration-300 ease-out ${
+                isFocusMode && !isFocusToolbarVisible
+                  ? "-translate-y-24 opacity-0 pointer-events-none max-h-0 py-0 overflow-hidden"
+                  : "translate-y-0 opacity-100 py-1 md:py-0"
+              }`}
+            >
+              <div className="pointer-events-auto max-w-full">
+                <CleaningToolbar
+                  hasPage={pages.length > 0 && !operationBusy}
+                  hasResult={Boolean(currentCleaningResult)}
+                  hasTranslated={hasCurrentTranslation}
+                  layer={workspaceLayer}
+                  onClean={() => void handleCleanCurrentPage()}
+                  onEditMask={() => setIsMaskEditorOpen(true)}
+                  onLayerChange={setWorkspaceLayer}
+                  progress={cleaningProgress}
+                  error={cleaningError}
+                  className="flex w-full max-w-4xl flex-wrap items-center justify-between gap-2 rounded-xl border border-border/80 bg-surface/90 px-3 py-1.5 shadow-xl backdrop-blur-md transition-all"
+                />
+              </div>
+            </div>
 
-            <PageViewer
-              pages={pages}
-              currentPage={currentPage}
-              viewLayout={viewLayout}
-              workspaceLayer={workspaceLayer}
-              currentCleaningResult={currentCleaningResult}
-              cleaningResultsByPage={cleaningResultsByPage}
-              translatedImagesMap={translatedImagesMap}
-              brokenPages={brokenPages}
-              onPageChange={(updater) => {
-                setCurrentPage((prev) => {
-                  const next = typeof updater === "function" ? updater(prev) : updater;
-                  if (pages.length === 0) return 0;
-                  return Math.max(0, Math.min(pages.length - 1, next));
-                });
-              }}
-              onViewLayoutChange={setViewLayout}
-              onRemovePage={(idx) => {
-                setPages((prev) => {
-                  const newPages = prev.filter((_, i) => i !== idx);
-                  if (newPages.length === 0) setCurrentPage(0);
-                  else if (currentPage >= newPages.length) setCurrentPage(newPages.length - 1);
-                  return newPages;
-                });
-                import("react-hot-toast").then((m) => m.default("ลบรูปพังออกแล้ว", { duration: 1500 }));
-              }}
-              onImageError={(url) => {
-                setBrokenPages((prev) => new Set(prev).add(url));
-              }}
-            />
+            {/* PageViewer in full flex container */}
+            <div className="flex-1 min-h-0 w-full h-full relative flex justify-center items-center overflow-hidden">
+              <PageViewer
+                pages={pages}
+                currentPage={currentPage}
+                viewLayout={viewLayout}
+                workspaceLayer={workspaceLayer}
+                currentCleaningResult={currentCleaningResult}
+                cleaningResultsByPage={cleaningResultsByPage}
+                translatedImagesMap={translatedImagesMap}
+                brokenPages={brokenPages}
+                isFocusMode={isFocusMode}
+                onToggleFocusMode={() => setIsFocusMode((prev) => !prev)}
+                onPageChange={(updater) => {
+                  setCurrentPage((prev) => {
+                    const next = typeof updater === "function" ? updater(prev) : updater;
+                    if (pages.length === 0) return 0;
+                    return Math.max(0, Math.min(pages.length - 1, next));
+                  });
+                }}
+                onViewLayoutChange={setViewLayout}
+                onRemovePage={(idx) => {
+                  setPages((prev) => {
+                    const newPages = prev.filter((_, i) => i !== idx);
+                    if (newPages.length === 0) setCurrentPage(0);
+                    else if (currentPage >= newPages.length) setCurrentPage(newPages.length - 1);
+                    return newPages;
+                  });
+                  import("react-hot-toast").then((m) => m.default("ลบรูปพังออกแล้ว", { duration: 1500 }));
+                }}
+                onImageError={(url) => {
+                  setBrokenPages((prev) => new Set(prev).add(url));
+                }}
+              />
+            </div>
 
             {/* Hidden container for offscreen rendering */}
             <div id="offscreen-container" className="fixed top-0 left-0 w-full max-w-4xl opacity-0 pointer-events-none -z-50" style={{ visibility: 'hidden' }}>
@@ -1296,14 +1545,36 @@ export default function WorkspacePage() {
             )}
 
             <div className={`w-full aspect-video rounded-xl border border-dashed flex flex-col items-center justify-center transition-colors duration-200 ${isDragging ? 'border-primary bg-primary/5' : 'border-surface-hover hover:border-muted'}`}>
-              <Upload className={`w-8 h-8 mb-4 ${isDragging ? 'text-primary' : 'text-muted'}`} />
-              <p className="text-foreground text-lg mb-1 font-medium">Drag & Drop manga pages</p>
-              <p className="text-muted text-sm mb-6">Support for Images, ZIP, CBZ, and PDF</p>
+              {isImporting ? (
+                <div className="flex flex-col items-center justify-center p-6 gap-3 animate-in fade-in duration-150">
+                  <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                  <p className="text-foreground text-base font-medium">{importStatusMessage || "กำลังนำเข้าไฟล์..."}</p>
+                  <p className="text-muted text-xs">กรุณารอสักครู่ ระบบกำลังประมวลผลหน้ามังงะ</p>
+                </div>
+              ) : (
+                <>
+                  <Upload className={`w-8 h-8 mb-4 ${isDragging ? 'text-primary' : 'text-muted'}`} />
+                  <p className="text-foreground text-lg mb-1 font-medium">Drag & Drop manga pages</p>
+                  <p className="text-muted text-sm mb-6">Support for Images, ZIP, CBZ, and PDF</p>
 
-              <label className="bg-surface hover:bg-surface-hover text-foreground px-6 py-2 rounded-md text-sm font-medium cursor-pointer transition-colors duration-150 border border-surface-hover">
-                Browse Files
-                <input type="file" multiple accept="image/*,.zip,.cbz,.pdf" className="hidden" onChange={handleImageUpload} />
-              </label>
+                  <label
+                    htmlFor="file-upload-input"
+                    className="bg-surface hover:bg-surface-hover text-foreground px-6 py-2 rounded-md text-sm font-medium cursor-pointer transition-colors duration-150 border border-surface-hover focus-within:ring-2 focus-within:ring-primary focus-within:outline-none inline-flex items-center gap-2"
+                  >
+                    <span>เลือกไฟล์มังงะ (Browse Files)</span>
+                    <input
+                      id="file-upload-input"
+                      type="file"
+                      multiple
+                      accept="image/*,.zip,.cbz,.pdf"
+                      className="sr-only"
+                      tabIndex={0}
+                      disabled={isImporting}
+                      onChange={handleImageUpload}
+                    />
+                  </label>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -1332,6 +1603,7 @@ export default function WorkspacePage() {
         }}
         isCollapsed={isThumbnailsCollapsed}
         onToggleCollapse={() => setIsThumbnailsCollapsed(!isThumbnailsCollapsed)}
+        isFocusMode={isFocusMode}
       />
       {isMaskEditorOpen && currentCleaningResult && pages[currentPage] && (
         <MaskEditor
