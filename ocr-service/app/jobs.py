@@ -308,8 +308,10 @@ class JobStore:
             if job.status in (JobStatus.QUEUED, JobStatus.RUNNING):
                 raise RuntimeError("job is still active")
             asset_dir = job.asset_dir
-        if asset_dir is not None:
-            shutil.rmtree(asset_dir, ignore_errors=True)
+            if asset_dir is not None:
+                # Remove under the job lock so an in-flight retry job reading
+                # the same parent assets cannot race the deletion.
+                shutil.rmtree(asset_dir, ignore_errors=True)
         with self._jobs_lock:
             self._jobs.pop(job_id, None)
         return True
@@ -430,6 +432,17 @@ class JobStore:
         output: PipelineOutput,
         image_shape: tuple[int, int],
     ) -> None:
+        with job.lock:
+            if job.status is not JobStatus.RUNNING:
+                # The watchdog already failed this job (timeout) — discard
+                # the late result entirely. Nothing may be written: a
+                # result.json on disk would resurrect the job as SUCCEEDED
+                # after a restart.
+                LOGGER.warning(
+                    "job %s completed after failing; discarding result",
+                    job.id,
+                )
+                return
         self._update_progress(
             job,
             JobStage.ENCODING,
@@ -438,8 +451,10 @@ class JobStore:
         )
         asset_dir = self._write_assets(job.id, output)
         height, width = image_shape
-        if job.source_bytes:
-            source_hash = hashlib.sha256(job.source_bytes).hexdigest()
+        with job.lock:
+            source_bytes = job.source_bytes
+        if source_bytes:
+            source_hash = hashlib.sha256(source_bytes).hexdigest()
         else:
             source_hash = hashlib.sha256(output.source_image.tobytes()).hexdigest()
 
@@ -466,12 +481,13 @@ class JobStore:
 
         with job.lock:
             if job.status is not JobStatus.RUNNING:
-                # A watchdog already failed the job (timeout) — don't let the
-                # late pipeline result resurrect it as succeeded.
+                # The watchdog fired while assets were being written — remove
+                # the partial dir so nothing restorable is left behind.
                 LOGGER.warning(
-                    "job %s completed after failing; discarding result",
+                    "job %s failed while completing; removing partial assets",
                     job.id,
                 )
+                shutil.rmtree(asset_dir, ignore_errors=True)
                 return
             job.asset_dir = asset_dir
             job.output = None  # Evict full numpy array to free RAM

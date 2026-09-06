@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -357,4 +358,63 @@ def test_delete_job_removes_assets_and_registry_entry(tmp_path: Path) -> None:
         assert store.get(job_id) is None
         assert store.delete_job(job_id) is False
     finally:
+        store.shutdown()
+
+
+def test_watchdog_fails_timed_out_job_and_discards_late_result(tmp_path: Path) -> None:
+    release = threading.Event()
+
+    class _SlowPipeline:
+        def run(self, image_rgb: np.ndarray, progress_callback=None) -> PipelineOutput:
+            # Outlasts the 0.05s watchdog, then finishes "late".
+            release.wait(timeout=5)
+            h, w = image_rgb.shape[:2]
+            return PipelineOutput(
+                source_image=image_rgb,
+                clean_image=image_rgb,
+                mask=np.zeros((h, w), dtype=np.uint8),
+                review_mask=np.zeros((h, w), dtype=np.uint8),
+                protected_mask=np.zeros((h, w), dtype=np.uint8),
+                regions=[],
+                timings_ms={"total": 1},
+            )
+
+    store = JobStore(
+        pipeline_factory=lambda: _SlowPipeline(),
+        cache_dir=tmp_path,
+        job_timeout_seconds=0.05,
+    )
+    try:
+        job_id = store.submit(_make_png(32, 32), "slow.png")
+
+        # Watchdog window elapses while the pipeline is still running
+        deadline = time.time() + 5
+        job = store.get(job_id)
+        while time.time() < deadline:
+            job = store.get(job_id)
+            if job.status == JobStatus.FAILED:
+                break
+            time.sleep(0.02)
+        assert job.status == JobStatus.FAILED
+        assert "timed out" in (job.error or "")
+        # No assets or result.json may exist for the timed-out job
+        assert not (tmp_path / "jobs" / job_id / "result.json").exists()
+
+        # Let the pipeline finish late — the result must stay discarded.
+        # shutdown(wait=True) joins the worker so the late _complete has run.
+        release.set()
+        store.shutdown()
+        with job.lock:
+            assert job.status == JobStatus.FAILED
+        assert not (tmp_path / "jobs" / job_id / "result.json").exists()
+        assert not (tmp_path / "jobs" / job_id).exists()
+
+        # A "restart" must not resurrect the job from disk
+        store2 = JobStore(pipeline_factory=lambda: _TestPipeline(), cache_dir=tmp_path)
+        try:
+            assert store2.get(job_id) is None
+        finally:
+            store2.shutdown()
+    finally:
+        release.set()
         store.shutdown()

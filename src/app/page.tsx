@@ -229,6 +229,7 @@ export default function WorkspacePage() {
     retryFailedPages,
     invalidatePageTranslation,
     replaceBubbleText,
+    markPageDirty,
     cacheRevision: translationCacheRevision,
   } = useTranslation({
     currentPage,
@@ -499,7 +500,9 @@ export default function WorkspacePage() {
             ? b.translated
             : "";
       if (!text) return false;
-      const newText = text.replace(regex, replace);
+      // Function replacer: treat `replace` literally — "$&"/"$1" typed by
+      // the user must not be interpreted as replacement metacharacters.
+      const newText = text.replace(regex, () => replace);
       if (newText === text) return false;
       b.t = newText;
       if (typeof b.translated === "string") b.translated = newText;
@@ -627,6 +630,7 @@ export default function WorkspacePage() {
                 (renderedUrl) => {
                   clearTimeout(timeout);
                   translatedImageCacheRef.current.set(pageUrl, renderedUrl);
+                  markPageDirty(pageUrl);
                   resolve(renderedUrl);
                 },
                 textStyleRef,

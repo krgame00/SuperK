@@ -191,15 +191,24 @@ export const saveProjectSession = async (
     const translatedAssetIds: [string, string][] = [];
     const referencedAssetIds = new Set<string>();
 
-    // Reference every translated page in the session, but only re-encode and
-    // rewrite the (multi-MB) blobs of pages that actually changed since the
-    // previous save. Omitting `dirtyPageUrls` performs a full save.
-    for (const [pageUrl, imageValue] of data.translatedImageCache.entries()) {
+    // Every page that still has bubbles is live even when its rendered image
+    // was evicted from the in-memory LRU — its persisted asset must survive
+    // and stay linked so a reload restores the whole book.
+    const referencedPageUrls = new Set<string>([
+      ...data.translatedImageCache.keys(),
+      ...data.bubbleCache.keys(),
+    ]);
+
+    // Only re-encode and rewrite the (multi-MB) blobs of pages that actually
+    // changed since the previous save. Omitting `dirtyPageUrls` performs a
+    // full save.
+    for (const pageUrl of referencedPageUrls) {
       const assetId = `translated_${encodeURIComponent(pageUrl)}`;
       translatedAssetIds.push([pageUrl, assetId]);
       referencedAssetIds.add(assetId);
 
-      if (!imageValue.startsWith("data:")) continue;
+      const imageValue = data.translatedImageCache.get(pageUrl);
+      if (!imageValue || !imageValue.startsWith("data:")) continue;
       if (dirty && !dirty.has(pageUrl)) continue;
       const blob = dataUrlToBlob(imageValue);
       assetStore.put({

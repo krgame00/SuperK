@@ -33,14 +33,23 @@ export const isDirectoryPickerSupported = (): boolean =>
   typeof window !== "undefined" && typeof window.showDirectoryPicker === "function";
 
 export const getAskExportDirectory = (): boolean => {
-  if (typeof window === "undefined" || !window.localStorage) return false;
-  return window.localStorage.getItem(EXPORT_ASK_DIRECTORY_KEY) === "1";
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return false;
+    return window.localStorage.getItem(EXPORT_ASK_DIRECTORY_KEY) === "1";
+  } catch {
+    // localStorage throws when storage access is blocked entirely.
+    return false;
+  }
 };
 
 export const setAskExportDirectory = (enabled: boolean): void => {
-  if (typeof window === "undefined" || !window.localStorage) return;
-  if (enabled) window.localStorage.setItem(EXPORT_ASK_DIRECTORY_KEY, "1");
-  else window.localStorage.removeItem(EXPORT_ASK_DIRECTORY_KEY);
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return;
+    if (enabled) window.localStorage.setItem(EXPORT_ASK_DIRECTORY_KEY, "1");
+    else window.localStorage.removeItem(EXPORT_ASK_DIRECTORY_KEY);
+  } catch {
+    // Storage blocked — the toggle just won't persist.
+  }
 };
 
 /** Opens the folder picker. Returns null when unavailable or the user

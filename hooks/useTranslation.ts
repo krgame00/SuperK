@@ -291,13 +291,14 @@ export function useTranslation({
           textStyleRef,
           undefined,
           currentKey,
+          () => markPageDirty(currentKey),
         );
       }, 100);
       return () => clearTimeout(timer);
     } else {
       setActiveBubbles((prev) => (prev.length === 0 ? prev : []));
     }
-  }, [currentPage, pages, viewMode]);
+  }, [currentPage, pages, viewMode, markPageDirty]);
 
   // Save status and revision management for session reliability
   const saveRevisionRef = useRef(0);
@@ -335,6 +336,10 @@ export function useTranslation({
     setSaveStatus("saving");
     setSaveError(null);
 
+    // Snapshot the dirty set up front: pages marked dirty while this save is
+    // committing must survive the success reset for the catch-up save.
+    const dirtySnapshot = dirtyPagesRef.current;
+
     try {
       await saveProjectSession(
         {
@@ -345,11 +350,18 @@ export function useTranslation({
           bubbleCache: bubbleCacheRef.current,
           translatedImageCache: translatedImageCacheRef.current,
         },
-        { dirtyPageUrls: dirtyPagesRef.current ?? undefined },
+        { dirtyPageUrls: dirtySnapshot ?? undefined },
       );
 
-      // Everything on disk now matches memory.
-      dirtyPagesRef.current = new Set();
+      // Everything this save wrote is on disk — drop only those pages from
+      // the pending set, keeping anything dirtied mid-save.
+      dirtyPagesRef.current = dirtySnapshot
+        ? new Set(
+            [...(dirtyPagesRef.current ?? [])].filter(
+              (pageUrl) => !dirtySnapshot.has(pageUrl),
+            ),
+          )
+        : new Set();
 
       lastSavedRevisionRef.current = targetRevision;
       if (saveRevisionRef.current === targetRevision) {
@@ -500,7 +512,7 @@ export function useTranslation({
           translatedImageCacheRef.current.set(pages[currentPage], dataUrl);
           markPageDirty(pages[currentPage]);
           setTranslatedImages(new Map(translatedImageCacheRef.current));
-        }, textStyleRef, undefined, pages[currentPage]);
+        }, textStyleRef, undefined, pages[currentPage], () => markPageDirty(pages[currentPage]));
         setTranslationResult("✅ แปลเฉพาะจุดสำเร็จ!");
       }
       completedPagesRef.current.add(pages[currentPage]);
@@ -585,6 +597,7 @@ export function useTranslation({
           textStyleRef,
           undefined,
           pageUrl,
+          () => markPageDirty(pageUrl),
         );
       }
     },
@@ -1246,7 +1259,10 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         }
       }
 
-      if (cancelTranslateAllRef.current) return;
+      if (cancelTranslateAllRef.current) {
+        setTimeout(() => setTranslationResult(null), 1500);
+        return;
+      }
 
       const failedPages = failures.map(({ pageIndex }) => pageIndex + 1);
       setTranslationResult(
@@ -1393,5 +1409,6 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     retryFailedPages,
     invalidatePageTranslation,
     replaceBubbleText,
+    markPageDirty,
   };
 }

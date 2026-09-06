@@ -34,5 +34,5 @@ jobs:
           cache: pip
       - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - run: pip install -r requirements-dev.in
-      - run: pytest tests -q --ignore=tests/test_api.py -m "not model"
+      - run: pytest tests -q -m "not model"
       - run: ruff check app scripts tests

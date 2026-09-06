@@ -83,6 +83,21 @@ export interface OverlayAdjustment {
   fontSizeMultiplier?: number;
 }
 
+// Document-level overlay listeners must not outlive their container —
+// #pageContainer remounts on page switches, orphaning the previous
+// generation's listeners. Registry keyed by container; stale (disconnected)
+// entries are pruned and cleaned up on the next apply.
+const overlayCleanups = new Map<Element, () => void>();
+
+const pruneOverlayCleanups = (): void => {
+  for (const [element, cleanup] of overlayCleanups) {
+    if (!element.isConnected) {
+      cleanup();
+      overlayCleanups.delete(element);
+    }
+  }
+};
+
 export const readOverlayAdjustments = (): Record<string, Record<string, OverlayAdjustment>> => {
   if (typeof window === "undefined" || !window.localStorage) return {};
   try {
@@ -433,6 +448,7 @@ export const applyTranslationOverlay = async (
   textStyleRef?: React.MutableRefObject<OverlayTextStyle>,
   containerOverride?: Element,
   pageKeyOverride?: string,
+  onBubblesMutated?: () => void,
 ) => {
   let container: Element | null | undefined = containerOverride;
   if (!container && viewMode === "offscreen") {
@@ -444,6 +460,10 @@ export const applyTranslationOverlay = async (
   }
 
   if (!container) return;
+
+  // Detach document listeners left behind by overlays whose containers were
+  // removed (page switches remount #pageContainer).
+  pruneOverlayCleanups();
 
   container.querySelectorAll(".tl-overlay,.tl-canvas").forEach((el) => {
     if (typeof (el as unknown as { _cleanupListeners?: () => void })._cleanupListeners === "function") {
@@ -776,6 +796,7 @@ export const applyTranslationOverlay = async (
           renderBubble();
           saveAdjustment();
           if (finalVal !== openingText) {
+            onBubblesMutated?.();
             undoManager.push({
               label: "แก้ไขข้อความ",
               undo: () => {
@@ -834,6 +855,7 @@ export const applyTranslationOverlay = async (
 
       const deleteBubbleWithUndo = () => {
         b.deleted = true;
+        onBubblesMutated?.();
         wrapper.style.display = "none";
         setSelectedBubble(null);
         undoManager.push({
@@ -865,6 +887,7 @@ export const applyTranslationOverlay = async (
         const newMult = Math.max(0.4, Math.min(3.0, Number((oldMult + delta).toFixed(2))));
         if (newMult === oldMult) return;
         b.fontSizeMultiplier = newMult;
+        onBubblesMutated?.();
         renderBubble();
         saveAdjustment();
         undoManager.push({
@@ -1190,7 +1213,9 @@ export const applyTranslationOverlay = async (
         () => {
           const clone = { ...b, id: `${Date.now()}` };
           real.push(clone);
+          bubbles.push(clone);
           saveAdjustment();
+          onBubblesMutated?.();
           paint();
         }
       );
@@ -1220,6 +1245,7 @@ export const applyTranslationOverlay = async (
               outlineConfidence: 1.0,
               source: "manual",
             };
+            onBubblesMutated?.();
             renderBubble();
             saveAdjustment();
           }
@@ -1293,12 +1319,14 @@ export const applyTranslationOverlay = async (
       }
     };
     const handleDocumentKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") setSelectedBubble(null); };
-    document.addEventListener('pointerdown', handleDocumentPointerDown);
-    document.addEventListener('keydown', handleDocumentKeyDown);
-    (tlContainer as unknown as { _cleanupListeners: () => void })._cleanupListeners = () => {
+    const detachDocumentListeners = () => {
       document.removeEventListener('pointerdown', handleDocumentPointerDown);
       document.removeEventListener('keydown', handleDocumentKeyDown);
     };
+    document.addEventListener('pointerdown', handleDocumentPointerDown);
+    document.addEventListener('keydown', handleDocumentKeyDown);
+    (tlContainer as unknown as { _cleanupListeners: () => void })._cleanupListeners = detachDocumentListeners;
+    overlayCleanups.set(container, detachDocumentListeners);
 
     container.appendChild(tlContainer);
 

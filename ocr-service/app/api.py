@@ -53,7 +53,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         try:
-            removed = store.sweep_completed()
+            removed = await asyncio.to_thread(store.sweep_completed)
             if removed:
                 LOGGER.info("startup sweep removed %d old job(s)", removed)
         except Exception:
@@ -77,7 +77,11 @@ def create_app(
             max_upload_bytes=runtime_settings.max_upload_mb * 1024 * 1024,
             max_pixels=runtime_settings.max_image_megapixels * 1_000_000,
         )
-        job_id = store.submit(source_bytes, image.filename or "page")
+        # submit() may run the (disk-I/O heavy) retention sweep — keep it off
+        # the event loop like the upload decode.
+        job_id = await asyncio.to_thread(
+            store.submit, source_bytes, image.filename or "page"
+        )
         return {
             "job_id": job_id,
             "status": JobStatus.QUEUED.value,
@@ -160,6 +164,7 @@ def create_app(
             max_upload_bytes=runtime_settings.max_upload_mb * 1024 * 1024,
             allowed_formats={"PNG"},
             allowed_media_types={"image/png"},
+            max_pixels=runtime_settings.max_image_megapixels * 1_000_000,
         )
         parent = _job_or_404(store, job_id)
         with parent.lock:
