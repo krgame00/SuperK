@@ -67,3 +67,5 @@ original_content.js.txt
 patch-probe.md
 # Nested project (moved to own repo)
 /video-translator-app/
+# ZCode agent session files
+/.zcode/

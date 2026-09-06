@@ -38,6 +38,10 @@ def load_manifest(path: Path) -> dict[str, ModelSpec]:
 
 
 class ModelStore:
+    # Per-socket-operation timeout for model downloads — a stalled connection
+    # must not wedge pipeline construction forever.
+    DOWNLOAD_TIMEOUT_SECONDS = 60.0
+
     def __init__(self, model_dir: Path, manifest: dict[str, ModelSpec]) -> None:
         self.model_dir = model_dir
         self.manifest = manifest
@@ -59,7 +63,9 @@ class ModelStore:
             return target
 
         part = target.with_suffix(f"{target.suffix}.part")
-        with urlopen(spec.url) as response, part.open("wb") as output:
+        with urlopen(
+            spec.url, timeout=self.DOWNLOAD_TIMEOUT_SECONDS
+        ) as response, part.open("wb") as output:
             shutil.copyfileobj(response, output, length=1024 * 1024)
         try:
             self._verify(part, spec)

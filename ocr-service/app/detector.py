@@ -638,7 +638,14 @@ class HybridTextDetector:
                             seed = _binary_text_seed(local_prob, threshold=0.35)
                             candidate = _extract_strokes_from_crop(crop)
                             crop_gray = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
-                            crop_border = np.concatenate([crop_gray[0, :], crop_gray[-1, :], crop_gray[:, 0], crop_gray[:, -1]])
+                            crop_border = np.concatenate(
+                                [
+                                    crop_gray[0, :],
+                                    crop_gray[-1, :],
+                                    crop_gray[:, 0],
+                                    crop_gray[:, -1],
+                                ]
+                            )
                             paddle_bg_val = float(np.median(crop_border))
                             glow_raw = _extract_glow_and_chromatic(crop, paddle_bg_val)
                             candidate = np.maximum(candidate, glow_raw)

@@ -20,6 +20,8 @@ const eslintConfig = defineConfig([
     ".agents/**",
     ".worktrees/**",
     "scratch/**",
+    // Vendored/minified static assets copied by scripts/copy-pdf-worker.mjs
+    "public/**",
   ]),
 ]);
 

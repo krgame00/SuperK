@@ -1,0 +1,26 @@
+# NEVER bake secrets into the image — .env.local holds real API keys
+.env*
+!.env.example
+
+# VCS / tooling
+.git
+.zcode
+.hermes
+.agents
+
+# Dependencies & build output (installed inside the image instead)
+node_modules
+.next
+out
+coverage
+*.tsbuildinfo
+
+# Docs / scratch / tests not needed at runtime
+docs
+scratch
+tests
+*.md
+!README.md
+
+# Local Python service (has its own Dockerfile + context)
+ocr-service

@@ -26,6 +26,7 @@ vi.mock("@/lib/translationOverlay", () => ({
 }));
 
 vi.mock("@/lib/projectStore", () => ({
+  deleteAsset: vi.fn().mockResolvedValue(undefined),
   saveProjectSession: vi.fn().mockResolvedValue(undefined),
   loadProjectSession: vi.fn().mockResolvedValue(null),
   clearProjectSession: vi.fn().mockResolvedValue(undefined),

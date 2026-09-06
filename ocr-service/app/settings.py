@@ -15,5 +15,14 @@ class Settings(BaseSettings):
     cache_dir: Path = Path(".cache")
     max_workers: int = Field(default=1, ge=1)
     max_upload_mb: int = Field(default=80, gt=0)
+    # Completed job asset dirs older than this are swept on startup/submit
+    # (and immediately via POST /v1/jobs/purge).
+    job_retention_hours: float = Field(default=24.0, ge=0)
+    # Wall-clock budget for one cleaning job; a watchdog marks the job failed
+    # when exceeded (the worker thread itself cannot be interrupted).
+    job_timeout_minutes: float = Field(default=15.0, gt=0)
+    # Pixel ceiling checked before decode — compressed bombs pass the byte
+    # limit but would allocate gigabytes of RAM.
+    max_image_megapixels: int = Field(default=64, gt=0)
     ocr_engine: str = Field(default="paddle")
     service_url: AnyHttpUrl = AnyHttpUrl("http://127.0.0.1:8765")

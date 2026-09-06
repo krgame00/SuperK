@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  escapeXml,
   generateComicInfoXml,
   generatePageFilename,
   generateStripFilename,
@@ -57,5 +58,45 @@ describe("generateComicInfoXml", () => {
     expect(xml).toContain("<PageCount>20</PageCount>");
     expect(xml).toContain("<LanguageISO>th</LanguageISO>");
     expect(xml).toContain("<Manga>YesAndRightToLeft</Manga>");
+  });
+});
+
+describe("escapeXml", () => {
+  it("escapes XML special characters", () => {
+    expect(escapeXml(`Tom & Jerry <1> "x" 'y'`)).toBe(
+      "Tom &amp; Jerry &lt;1&gt; &quot;x&quot; &apos;y&apos;",
+    );
+  });
+});
+
+describe("generateComicInfoXml escaping", () => {
+  it("produces valid XML even when title contains XML special characters", () => {
+    const xml = generateComicInfoXml({
+      title: `Tom & Jerry <โจร>"ตอนจบ"`,
+      pageCount: 3,
+      languageISO: "th",
+    });
+    expect(xml).toContain("<Title>Tom &amp; Jerry &lt;โจร&gt;&quot;ตอนจบ&quot;</Title>");
+    expect(xml).not.toContain("<Title>Tom & Jerry");
+    // Round-trips back to the original title when parsed
+    const parsed = new DOMParser().parseFromString(xml, "application/xml");
+    expect(parsed.querySelector("Title")?.textContent).toBe(
+      `Tom & Jerry <โจร>"ตอนจบ"`,
+    );
+    expect(parsed.querySelector("parsererror")).toBeNull();
+  });
+
+  it("escapes series, number, summary and translator too", () => {
+    const xml = generateComicInfoXml({
+      title: "ok",
+      series: "S & S",
+      number: "1<2",
+      summary: "a > b",
+      translator: "N'CMS",
+    });
+    expect(xml).toContain("<Series>S &amp; S</Series>");
+    expect(xml).toContain("<Number>1&lt;2</Number>");
+    expect(xml).toContain("<Summary>a &gt; b</Summary>");
+    expect(xml).toContain("<Translator>N&apos;CMS</Translator>");
   });
 });

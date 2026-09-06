@@ -32,6 +32,14 @@ import { WorkspacePrimaryAction } from "@/components/workspace/WorkspacePrimaryA
 import { WorkspaceAdvancedTools } from "@/components/workspace/WorkspaceAdvancedTools";
 import { generateComicInfoXml } from "@/lib/export/exportManager";
 import {
+  getAskExportDirectory,
+  isDirectoryPickerSupported,
+  pickExportDirectory,
+  saveBlob,
+  type DirectoryHandleLike,
+} from "@/lib/export/saveLocation";
+import { dataUrlToBlob } from "@/lib/projectStore";
+import {
   FindReplaceDialog,
   type ReplaceOptions,
 } from "@/components/editing/FindReplaceDialog";
@@ -116,6 +124,7 @@ export default function WorkspacePage() {
   }, []);
 
   const pageUrls = useMemo(() => pages.map(p => p.url), [pages]);
+  const pageNames = useMemo(() => pages.map(p => p.name), [pages]);
   const {
     cleanPage,
     cleanCurrentPage,
@@ -219,10 +228,12 @@ export default function WorkspacePage() {
     batchFailures,
     retryFailedPages,
     invalidatePageTranslation,
+    replaceBubbleText,
     cacheRevision: translationCacheRevision,
   } = useTranslation({
     currentPage,
     pages: pageUrls,
+    pageNames,
     viewMode: "single",
     preparePageForTranslation,
   });
@@ -472,67 +483,98 @@ export default function WorkspacePage() {
     caseSensitive,
   }: ReplaceOptions) => {
     if (!find) return;
-    let count = 0;
 
+    // Compare the replaced output instead of regex.test() — /g regexes are
+    // stateful under .test(), which silently skips matches on later bubbles.
     const regex = new RegExp(
       find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
       caseSensitive ? "g" : "gi",
     );
-
-    const applyReplace = (b: TranslatedBubble) => {
+    let count = 0;
+    const transform = (b: TranslatedBubble): boolean => {
       const text =
         typeof b.t === "string"
           ? b.t
           : typeof b.translated === "string"
             ? b.translated
             : "";
-      if (text && regex.test(text)) {
-        const newText = text.replace(regex, replace);
-        b.t = newText;
-        if (typeof b.translated === "string") b.translated = newText;
-        count++;
-        return true;
-      }
-      return false;
+      if (!text) return false;
+      const newText = text.replace(regex, replace);
+      if (newText === text) return false;
+      b.t = newText;
+      if (typeof b.translated === "string") b.translated = newText;
+      count++;
+      return true;
     };
 
+    // replaceBubbleText edits the bubble cache in place (bubbles survive) and
+    // re-renders the cached images — invalidatePageTranslation would delete
+    // the very translations we just edited.
     if (scope === "this-page") {
-      setActiveBubbles((prev) => {
-        return prev.map((b) => {
-          const clone = { ...b };
-          applyReplace(clone);
-          return clone;
-        });
-      });
       const currentUrl = pages[currentPage]?.url;
-      if (currentUrl) invalidatePageTranslation(currentUrl);
+      if (currentUrl) {
+        count = replaceBubbleText({
+          pageUrls: [currentUrl],
+          backgroundUrls: {
+            [currentUrl]:
+              cleaningResultsByPage.get(currentUrl)?.cleanUrl ?? currentUrl,
+          },
+          transform,
+        });
+      }
     } else {
-      bubbleCacheRef.current.forEach((bubbles, pageUrl) => {
-        let changed = false;
-        bubbles.forEach((b) => {
-          if (applyReplace(b)) changed = true;
-        });
-        if (changed) invalidatePageTranslation(pageUrl);
-      });
-      setActiveBubbles((prev) => {
-        return prev.map((b) => {
-          const clone = { ...b };
-          applyReplace(clone);
-          return clone;
-        });
+      const pageUrls = [...bubbleCacheRef.current.keys()];
+      count = replaceBubbleText({
+        pageUrls,
+        backgroundUrls: Object.fromEntries(
+          pageUrls.map((url) => [
+            url,
+            cleaningResultsByPage.get(url)?.cleanUrl ?? url,
+          ]),
+        ),
+        transform,
       });
     }
 
-    import("react-hot-toast").then((m) =>
-      m.default(`🔄 แทนที่ข้อความสำเร็จ ${count} จุด`, { duration: 2000 }),
-    );
+    import("react-hot-toast").then((m) => {
+      if (count > 0) {
+        m.default(`🔄 แทนที่ข้อความสำเร็จ ${count} จุด`, { duration: 2000 });
+      } else {
+        m.default("ไม่พบข้อความที่ตรงกับคำค้นหา", { duration: 2000 });
+      }
+    });
   };
 
   const handleDownloadAll = async (format: "zip" | "cbz" | "pdf" | "strip" = "zip") => {
     if (pages.length === 0) return;
     setIsZipping(true);
 
-    const getExportDataUrl = async (pageUrl: string, index: number): Promise<string> => {
+    // Optional destination-folder picker (Chrome/Edge). Unavailable browsers
+    // or a dismissed dialog fall back to the normal download flow.
+    let destDir: DirectoryHandleLike | null = null;
+    if (getAskExportDirectory()) {
+      if (!isDirectoryPickerSupported()) {
+        import("react-hot-toast").then((m) =>
+          m.default("เบราว์เซอร์นี้ไม่รองรับการเลือกโฟลเดอร์ จะดาวน์โหลดตามค่าตั้งต้นแทน", { duration: 3000 }),
+        );
+      } else {
+        destDir = await pickExportDirectory();
+        if (!destDir) {
+          setIsZipping(false);
+          return;
+        }
+      }
+    }
+
+    const failedExportPages: number[] = [];
+    const reportRenderFailures = () => {
+      setTranslationResult(
+        `❌ Export ไม่สำเร็จ: เรนเดอร์คำแปลไม่สำเร็จที่หน้า ${failedExportPages.join(", ")} — ลองใหม่อีกครั้ง`,
+      );
+      setTimeout(() => setTranslationResult(null), 5000);
+    };
+
+    const getExportDataUrl = async (pageUrl: string, index: number): Promise<string | null> => {
       if (
         index === currentPage &&
         workspaceLayer === "translated" &&
@@ -549,44 +591,57 @@ export default function WorkspacePage() {
       const bubbles = bubbleCacheRef.current.get(pageUrl);
       if (bubbles && bubbles.length > 0) {
         setTranslationResult(`⏳ กำลังเตรียมรูปภาพหน้า ${index + 1}/${pages.length}...`);
-        return new Promise<string>((resolve) => {
-          const offscreenContainer = document.getElementById("offscreen-container");
-          const offscreenImg = document.getElementById("offscreen-image") as HTMLImageElement;
+        try {
+          return await new Promise<string>((resolve, reject) => {
+            const offscreenContainer = document.getElementById("offscreen-container");
+            const offscreenImg = document.getElementById("offscreen-image") as HTMLImageElement | null;
 
-          if (!offscreenContainer || !offscreenImg) {
-            resolve(pageUrl);
-            return;
-          }
+            if (!offscreenContainer || !offscreenImg) {
+              reject(new Error("ไม่พบพื้นที่เรนเดอร์สำหรับสร้างภาพ"));
+              return;
+            }
 
-          // Safety timeout (4 seconds) so export never hangs indefinitely
-          const timeout = setTimeout(() => {
-            console.warn(`Offscreen render timed out for page ${index + 1}`);
-            resolve(pageUrl);
-          }, 4000);
+            let timeout: ReturnType<typeof setTimeout> | undefined;
+            // A timeout/image failure must NOT fall back to the raw page —
+            // that silently exports untranslated pages into the book.
+            const fail = (reason: string) => {
+              clearTimeout(timeout);
+              reject(new Error(`เรนเดอร์คำแปลไม่สำเร็จ (${reason})`));
+            };
 
-          offscreenContainer.querySelectorAll(".tl-overlay,.tl-canvas").forEach((el) => el.remove());
+            offscreenContainer.querySelectorAll(".tl-overlay,.tl-canvas").forEach((el) => el.remove());
 
-          offscreenImg.onload = () => {
-            applyTranslationOverlay(
-              bubbles,
-              "offscreen",
-              -1,
-              () => {},
-              (renderedUrl) => {
-                clearTimeout(timeout);
-                translatedImageCacheRef.current.set(pageUrl, renderedUrl);
-                resolve(renderedUrl);
-              },
-              textStyleRef
-            );
-          };
-          offscreenImg.onerror = () => {
-            clearTimeout(timeout);
-            resolve(pageUrl);
-          };
-          offscreenImg.src =
-            cleaningResultsByPage.get(pageUrl)?.cleanUrl ?? pageUrl;
-        });
+            offscreenImg.onload = () => {
+              // Larger pages need proportionally longer to render (30s cap).
+              const megapixels =
+                (offscreenImg.naturalWidth * offscreenImg.naturalHeight) / 1_000_000;
+              timeout = setTimeout(
+                () => fail("หมดเวลา"),
+                Math.min(30_000, 2_000 + Math.round(megapixels * 1_000)),
+              );
+              applyTranslationOverlay(
+                bubbles,
+                "offscreen",
+                -1,
+                () => {},
+                (renderedUrl) => {
+                  clearTimeout(timeout);
+                  translatedImageCacheRef.current.set(pageUrl, renderedUrl);
+                  resolve(renderedUrl);
+                },
+                textStyleRef,
+                undefined,
+                pageUrl,
+              );
+            };
+            offscreenImg.onerror = () => fail("โหลดภาพไม่สำเร็จ");
+            offscreenImg.src =
+              cleaningResultsByPage.get(pageUrl)?.cleanUrl ?? pageUrl;
+          });
+        } catch (err) {
+          console.warn(`Offscreen render failed for page ${index + 1}`, err);
+          return null;
+        }
       }
       return pageUrl;
     };
@@ -600,7 +655,10 @@ export default function WorkspacePage() {
         for (let i = 0; i < pages.length; i++) {
           try {
             const dataUrl = await getExportDataUrl(pages[i].url, i);
-            if (!dataUrl) continue;
+            if (!dataUrl) {
+              failedExportPages.push(i + 1);
+              continue;
+            }
             const img = new Image();
             img.src = dataUrl;
             await new Promise<void>((resolve) => {
@@ -613,7 +671,13 @@ export default function WorkspacePage() {
             }
           } catch (err) {
             console.warn(`Error loading page ${i + 1} for long strip`, err);
+            failedExportPages.push(i + 1);
           }
+        }
+
+        if (failedExportPages.length > 0) {
+          reportRenderFailures();
+          return;
         }
 
         if (loadedImages.length === 0) {
@@ -641,13 +705,17 @@ export default function WorkspacePage() {
             yOffset += item.height;
           }
 
-          const stripDataUrl = stripCanvas.toDataURL("image/jpeg", 0.92);
-          const link = document.createElement("a");
-          link.href = stripDataUrl;
-          link.download = isMulti
+          const stripFilename = isMulti
             ? `SuperK_Webtoon_Strip_Part${String(index).padStart(2, '0')}.jpg`
             : `SuperK_Webtoon_LongStrip.jpg`;
-          link.click();
+          stripCanvas.toBlob(
+            (blob) => {
+              if (!blob) return;
+              void saveBlob(blob, stripFilename, destDir);
+            },
+            "image/jpeg",
+            0.92,
+          );
         };
 
         for (const img of loadedImages) {
@@ -685,7 +753,10 @@ export default function WorkspacePage() {
         for (let i = 0; i < pages.length; i++) {
           try {
             const dataUrl = await getExportDataUrl(pages[i].url, i);
-            if (!dataUrl) continue;
+            if (!dataUrl) {
+              failedExportPages.push(i + 1);
+              continue;
+            }
 
             const img = new Image();
             img.src = dataUrl;
@@ -697,6 +768,7 @@ export default function WorkspacePage() {
 
             if (!img.naturalWidth || !img.naturalHeight) {
               console.warn(`Skipping broken page ${i + 1} for PDF export`);
+              failedExportPages.push(i + 1);
               continue;
             }
 
@@ -716,9 +788,14 @@ export default function WorkspacePage() {
           }
         }
 
+        if (failedExportPages.length > 0) {
+          reportRenderFailures();
+          return;
+        }
+
         if (addedCount > 0) {
           setTranslationResult(`⏳ กำลังบันทึก PDF...`);
-          pdf.save("SuperK_Translations.pdf");
+          await saveBlob(pdf.output("blob"), "SuperK_Translations.pdf", destDir);
           setTranslationResult(`✅ ดาวน์โหลด PDF สำเร็จ! (${addedCount} หน้า)`);
         } else {
           setTranslationResult(`❌ ไม่พบรูปภาพที่สมบูรณ์สำหรับสร้าง PDF`);
@@ -740,7 +817,11 @@ export default function WorkspacePage() {
     for (let i = 0; i < pages.length; i++) {
       try {
         const dataUrl = await getExportDataUrl(pages[i].url, i);
-        if (!dataUrl || !dataUrl.includes(",")) continue;
+        if (!dataUrl) {
+          failedExportPages.push(i + 1);
+          continue;
+        }
+        if (!dataUrl.includes(",")) continue;
         const base64Data = dataUrl.split(",")[1];
         if (!base64Data) continue;
 
@@ -753,6 +834,12 @@ export default function WorkspacePage() {
       } catch (err) {
         console.warn(`Error processing ZIP page ${i + 1}`, err);
       }
+    }
+
+    if (failedExportPages.length > 0) {
+      reportRenderFailures();
+      setIsZipping(false);
+      return;
     }
 
     try {
@@ -768,10 +855,11 @@ export default function WorkspacePage() {
 
         setTranslationResult(`⏳ กำลังสร้างไฟล์ ${format.toUpperCase()}...`);
         const content = await zip.generateAsync({ type: "blob" });
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(content);
-        link.download = format === "cbz" ? "SuperK_Translations.cbz" : "SuperK_Translations.zip";
-        link.click();
+        await saveBlob(
+          content,
+          format === "cbz" ? "SuperK_Translations.cbz" : "SuperK_Translations.zip",
+          destDir,
+        );
         setTranslationResult(`✅ ดาวน์โหลด ${format.toUpperCase()} สำเร็จ! (${zipAddedCount} หน้า)`);
       } else {
         setTranslationResult(`❌ ไม่พบรูปภาพที่สมบูรณ์สำหรับสร้าง ${format.toUpperCase()}`);
@@ -784,6 +872,29 @@ export default function WorkspacePage() {
     } finally {
       setIsZipping(false);
     }
+  };
+
+  const saveCurrentPageImage = async () => {
+    const originalName = pages[currentPage]?.name || "page.png";
+    const extension = originalName.includes('.') ? originalName.split('.').pop() : 'png';
+    const baseName = originalName.includes('.') ? originalName.substring(0, originalName.lastIndexOf('.')) : originalName;
+    const filename = `SuperK_Page_${String(currentPage + 1).padStart(3, '0')}_${baseName}.${extension}`;
+
+    let destDir: DirectoryHandleLike | null = null;
+    if (getAskExportDirectory() && isDirectoryPickerSupported()) {
+      destDir = await pickExportDirectory();
+      if (!destDir) return;
+    }
+    if (destDir) {
+      const dataUrl = downloadTranslatedImage("single", currentPage, "", true);
+      if (dataUrl) {
+        await saveBlob(dataUrlToBlob(dataUrl), filename, destDir);
+        setTranslationResult(`✅ บันทึก ${filename} สำเร็จ!`);
+        setTimeout(() => setTranslationResult(null), 3000);
+      }
+      return;
+    }
+    downloadTranslatedImage("single", currentPage, filename);
   };
 
   const processFiles = async (files: File[]) => {
@@ -841,7 +952,10 @@ export default function WorkspacePage() {
             setImportStatusMessage(`กำลังเปิดไฟล์ PDF: ${file.name}...`);
             const pdfjsLib = await import('pdfjs-dist');
             if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-              pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+              // Local worker copied to /public by scripts/copy-pdf-worker.mjs
+              // (postinstall) — keeps PDF import working offline and avoids
+              // loading code from a third-party CDN at runtime.
+              pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
             }
             const arrayBuffer = await file.arrayBuffer();
             const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -1178,11 +1292,7 @@ export default function WorkspacePage() {
                   }}
                   onExport={(kind) => {
                     if (kind === "image") {
-                      const originalName = pages[currentPage]?.name || "page.png";
-                      const extension = originalName.includes('.') ? originalName.split('.').pop() : 'png';
-                      const baseName = originalName.includes('.') ? originalName.substring(0, originalName.lastIndexOf('.')) : originalName;
-                      const filename = `SuperK_Page_${String(currentPage + 1).padStart(3, '0')}_${baseName}.${extension}`;
-                      downloadTranslatedImage("single", currentPage, filename);
+                      void saveCurrentPageImage();
                     } else {
                       handleDownloadAll(kind);
                     }
@@ -1346,11 +1456,7 @@ export default function WorkspacePage() {
               <div className="text-[10px] font-bold text-muted uppercase tracking-wider px-1 mb-2 flex items-center gap-1.5">📥 ดาวน์โหลด</div>
               <button
                 onClick={() => {
-                  const originalName = pages[currentPage].name;
-                  const extension = originalName.includes('.') ? originalName.split('.').pop() : 'png';
-                  const baseName = originalName.includes('.') ? originalName.substring(0, originalName.lastIndexOf('.')) : originalName;
-                  const filename = `SuperK_Page_${String(currentPage + 1).padStart(3, '0')}_${baseName}.${extension}`;
-                  downloadTranslatedImage("single", currentPage, filename);
+                  void saveCurrentPageImage();
                   setIsMobileMenuOpen(false);
                 }}
                 disabled={activeBubbles.length === 0 || workspaceLayer !== "translated"}

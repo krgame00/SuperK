@@ -37,6 +37,7 @@ vi.mock("@/lib/projectStore", () => ({
   saveProjectSession: vi.fn().mockResolvedValue(undefined),
   loadProjectSession: vi.fn().mockResolvedValue(null),
   clearProjectSession: vi.fn().mockResolvedValue(undefined),
+  deleteAsset: vi.fn().mockResolvedValue(undefined),
 }));
 
 const translatedBubble = {
@@ -414,6 +415,7 @@ test("background batch renders final images by original URL and skips them later
     expect.any(Function),
     expect.any(Object),
     expect.any(HTMLElement),
+    expect.any(String),
   );
 
   let secondBatch!: Promise<void>;
@@ -521,6 +523,7 @@ test("persists translated caches after an inactive batch page completes", async 
             has: expect.any(Function),
           }),
         }),
+        expect.anything(),
       ],
     ]),
   );

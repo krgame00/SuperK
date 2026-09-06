@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import { type GlossaryEntry } from "@/lib/translation/glossary";
-import { Plus, Trash2, BookText, Flame, X, ChevronDown } from "lucide-react";
+import { Plus, Trash2, BookText, Flame, X, ChevronDown, Download } from "lucide-react";
+import { getAskExportDirectory, setAskExportDirectory } from "@/lib/export/saveLocation";
 
 export interface WorkspaceTextStyle {
   fontFamily: string;
@@ -49,6 +50,49 @@ export function SettingsModal({
   const previousActiveElementRef = useRef<HTMLElement | null>(null);
   const [newSource, setNewSource] = useState("");
   const [newTarget, setNewTarget] = useState("");
+  const [isPurging, setIsPurging] = useState(false);
+  const isPurgingBrowserRef = useRef(false);
+  const [askExportDirectory, setAskExportDirectoryState] = useState(
+    () => getAskExportDirectory(),
+  );
+
+  const handlePurgeServerCache = async () => {
+    if (isPurging) return;
+    setIsPurging(true);
+    const toast = (await import("react-hot-toast")).default;
+    try {
+      const res = await fetch("/api/clean/v1/jobs/purge", { method: "POST" });
+      const data = (await res.json().catch(() => ({}))) as { deleted?: number };
+      if (res.ok) {
+        toast.success(`ล้างภาพค้างบนเซิร์ฟเวอร์แล้ว ${data.deleted ?? 0} งาน`);
+      } else {
+        toast.error("ล้างแคชเซิร์ฟเวอร์ไม่สำเร็จ (เซิร์ฟเวอร์คลีนอาจไม่ได้เปิด)");
+      }
+    } catch {
+      toast.error("ล้างแคชเซิร์ฟเวอร์ไม่สำเร็จ (เซิร์ฟเวอร์คลีนอาจไม่ได้เปิด)");
+    } finally {
+      setIsPurging(false);
+    }
+  };
+
+  const handlePurgeBrowserCache = async () => {
+    if (isPurgingBrowserRef.current) return;
+    isPurgingBrowserRef.current = true;
+    const toast = (await import("react-hot-toast")).default;
+    try {
+      const { purgeOrphanAssets } = await import("@/lib/projectStore");
+      const removed = await purgeOrphanAssets();
+      toast.success(
+        removed > 0
+          ? `ลบภาพแปลที่ไม่ถูกใช้แล้ว ${removed} ไฟล์ในเบราว์เซอร์`
+          : "ไม่พบไฟล์แคชที่ไม่ถูกใช้ — พื้นที่สะอาดอยู่แล้ว",
+      );
+    } catch {
+      toast.error("ล้างแคชเบราว์เซอร์ไม่สำเร็จ");
+    } finally {
+      isPurgingBrowserRef.current = false;
+    }
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -359,9 +403,10 @@ export function SettingsModal({
               className="w-full rounded-md border border-surface-hover bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
             />
             <p className="mt-1 text-[10px] leading-relaxed text-muted">
-              By default, the app uses a shared key with limits (5 req/min). To
-              avoid &quot;Quota exceeded&quot; errors (especially in 18+ mode),
-              enter your own free Gemini API key from{" "}
+              The app uses the server key configured in{" "}
+              <code className="text-foreground">.env.local</code>. To avoid
+              &quot;Quota exceeded&quot; errors (especially in 18+ mode), enter
+              your own free Gemini API key from{" "}
               <a
                 href="https://aistudio.google.com/app/apikey"
                 target="_blank"
@@ -372,6 +417,33 @@ export function SettingsModal({
               </a>
               .
             </p>
+          </div>
+
+          <div className="border-t border-surface-hover pt-2">
+            <span className="mb-1 block text-xs font-medium text-muted">
+              Maintenance (ล้างข้อมูลค้าง)
+            </span>
+            <p className="mb-2 text-[10px] leading-relaxed text-muted">
+              ลบภาพที่เซิร์ฟเวอร์คลีนเก็บค้างไว้หลังประมวลผล
+              (ระบบล้างอัตโนมัติเมื่อของเก่าเกิน 24 ชั่วโมง)
+            </p>
+            <button
+              type="button"
+              onClick={() => void handlePurgeServerCache()}
+              disabled={isPurging}
+              aria-label="ล้างภาพค้างบนเซิร์ฟเวอร์คลีน"
+              className="w-full rounded-md border border-surface-hover bg-background px-3 py-2 text-xs font-medium text-foreground transition-colors hover:bg-surface-hover disabled:opacity-50"
+            >
+              {isPurging ? "กำลังล้าง..." : "🧹 ล้างภาพค้างบนเซิร์ฟเวอร์"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handlePurgeBrowserCache()}
+              aria-label="ล้างภาพแปลค้างในพื้นที่เก็บข้อมูลเบราว์เซอร์"
+              className="mt-1.5 w-full rounded-md border border-surface-hover bg-background px-3 py-2 text-xs font-medium text-foreground transition-colors hover:bg-surface-hover"
+            >
+              🗃️ ล้างแคชเบราว์เซอร์ (ภาพที่ไม่ถูกใช้)
+            </button>
           </div>
 
           <div className="border-t border-surface-hover pt-3">
@@ -398,6 +470,40 @@ export function SettingsModal({
                 <span
                   className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
                     nsfwBypassMode ? "translate-x-4" : "translate-x-0"
+                  }`}
+                />
+              </button>
+            </div>
+          </div>
+
+          <div className="border-t border-surface-hover pt-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+                  <Download className="h-3.5 w-3.5 text-primary" />
+                  <span>ถามตำแหน่งบันทึกทุกครั้งตอน Export</span>
+                </label>
+                <p className="mt-0.5 text-[10px] text-muted">
+                  เลือกโฟลเดอร์ปลายทางเองแทนโฟลเดอร์ Downloads (รองรับ Chrome/Edge)
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={askExportDirectory}
+                aria-label="เปิด/ปิดการถามตำแหน่งบันทึกตอน export"
+                onClick={() => {
+                  const next = !askExportDirectory;
+                  setAskExportDirectory(next);
+                  setAskExportDirectoryState(next);
+                }}
+                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                  askExportDirectory ? "bg-primary" : "bg-surface-hover"
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                    askExportDirectory ? "translate-x-4" : "translate-x-0"
                   }`}
                 />
               </button>

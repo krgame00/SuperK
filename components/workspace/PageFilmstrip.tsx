@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useEffect,
   useRef,
   useState,
   type ChangeEvent,
@@ -8,6 +9,7 @@ import {
   type WheelEvent,
 } from "react";
 import { Check, ChevronDown, ChevronUp, Trash2, Upload } from "lucide-react";
+import { generateThumbnail } from "@/lib/thumbnail";
 
 export interface WorkspacePageItem {
   url: string;
@@ -45,6 +47,33 @@ export function PageFilmstrip({
   const [dragPosition, setDragPosition] = useState<"left" | "right" | null>(
     null,
   );
+  // Downscaled thumbnails (~160px) instead of decoding full-res multi-MB
+  // pages for 72px strip items — the big memory sink for long books.
+  const [thumbnailSrcs, setThumbnailSrcs] = useState<Map<string, string>>(
+    () => new Map(),
+  );
+  const thumbnailSrcsRef = useRef(thumbnailSrcs);
+
+  useEffect(() => {
+    let cancelled = false;
+    const generate = async () => {
+      for (const page of pages) {
+        if (cancelled) return;
+        if (thumbnailSrcsRef.current.has(page.url)) continue;
+        // Resolves with the source URL on failure — graceful fallback.
+        const thumb = await generateThumbnail(page.url);
+        if (cancelled) return;
+        const next = new Map(thumbnailSrcsRef.current);
+        next.set(page.url, thumb);
+        thumbnailSrcsRef.current = next;
+        setThumbnailSrcs(next);
+      }
+    };
+    void generate();
+    return () => {
+      cancelled = true;
+    };
+  }, [pages]);
 
   const handleThumbnailWheel = (event: WheelEvent<HTMLDivElement>): void => {
     if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
@@ -203,7 +232,7 @@ export function PageFilmstrip({
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src={page.url}
+                  src={thumbnailSrcs.get(page.url) ?? page.url}
                   alt={`หน้า ${i + 1}: ${page.name}`}
                   className="pointer-events-none h-14 w-auto object-cover sm:h-[72px]"
                 />

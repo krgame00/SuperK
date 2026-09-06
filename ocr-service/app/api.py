@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import io
+import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -26,6 +28,8 @@ from app.schemas import (
 )
 from app.settings import Settings
 
+LOGGER = logging.getLogger(__name__)
+
 SUPPORTED_MEDIA_TYPES = {"image/png", "image/jpeg", "image/webp"}
 SUPPORTED_FORMATS = {"PNG", "JPEG", "WEBP"}
 RETRY_CLEANERS = {"auto", "flat", "opencv", "aot", "anime-lama", "lama-large"}
@@ -42,10 +46,18 @@ def create_app(
         pipeline_factory=factory,
         cache_dir=runtime_settings.cache_dir,
         max_workers=runtime_settings.max_workers,
+        retention_hours=runtime_settings.job_retention_hours,
+        job_timeout_seconds=runtime_settings.job_timeout_minutes * 60.0,
     )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        try:
+            removed = store.sweep_completed()
+            if removed:
+                LOGGER.info("startup sweep removed %d old job(s)", removed)
+        except Exception:
+            LOGGER.exception("startup retention sweep failed")
         yield
         store.shutdown()
 
@@ -63,6 +75,7 @@ def create_app(
         source_bytes = await _validated_upload(
             image,
             max_upload_bytes=runtime_settings.max_upload_mb * 1024 * 1024,
+            max_pixels=runtime_settings.max_image_megapixels * 1_000_000,
         )
         job_id = store.submit(source_bytes, image.filename or "page")
         return {
@@ -70,6 +83,24 @@ def create_app(
             "status": JobStatus.QUEUED.value,
             "stage": JobStage.QUEUED.value,
         }
+
+    @app.post("/v1/jobs/purge")
+    def purge_jobs() -> dict[str, int]:
+        """Manually sweep finished job assets (retention window = 0)."""
+        removed = store.sweep_completed(retention_hours=0.0)
+        return {"deleted": removed}
+
+    @app.delete("/v1/jobs/{job_id}")
+    def delete_job(job_id: str) -> dict[str, str]:
+        _job_or_404(store, job_id)
+        try:
+            store.delete_job(job_id)
+        except RuntimeError:
+            raise HTTPException(
+                status_code=409,
+                detail="Job is still active.",
+            ) from None
+        return {"job_id": job_id, "status": "deleted"}
 
     @app.get("/v1/jobs/{job_id}")
     def get_job(job_id: str, response: Response) -> dict[str, object]:
@@ -156,16 +187,46 @@ async def _validated_upload(
     max_upload_bytes: int,
     allowed_formats: set[str] = SUPPORTED_FORMATS,
     allowed_media_types: set[str] = SUPPORTED_MEDIA_TYPES,
+    max_pixels: int | None = None,
 ) -> bytes:
     if upload.content_type not in allowed_media_types:
         raise HTTPException(status_code=415, detail="Unsupported image type.")
     source_bytes = await upload.read(max_upload_bytes + 1)
     if len(source_bytes) > max_upload_bytes:
         raise HTTPException(status_code=413, detail="Image is too large.")
+    # CPU-bound decode runs in a worker thread — on the event loop it would
+    # serialize every concurrent upload.
+    await asyncio.to_thread(
+        _validate_image_bytes,
+        source_bytes,
+        allowed_formats=allowed_formats,
+        max_pixels=max_pixels,
+    )
+    return source_bytes
+
+
+def _validate_image_bytes(
+    source_bytes: bytes,
+    *,
+    allowed_formats: set[str],
+    max_pixels: int | None,
+) -> None:
     try:
         with Image.open(io.BytesIO(source_bytes)) as image:
+            # Reject oversized dimensions BEFORE decoding — a compressed
+            # bomb passes the byte check but would allocate gigabytes of RAM.
+            if max_pixels is not None and image.width * image.height > max_pixels:
+                raise HTTPException(
+                    status_code=413,
+                    detail="Image dimensions are too large.",
+                )
             image.load()
             image_format = image.format
+    except Image.DecompressionBombError:
+        raise HTTPException(
+            status_code=413,
+            detail="Image dimensions are too large.",
+        ) from None
     except (UnidentifiedImageError, OSError, ValueError):
         raise HTTPException(
             status_code=415,
@@ -173,7 +234,6 @@ async def _validated_upload(
         ) from None
     if image_format not in allowed_formats:
         raise HTTPException(status_code=415, detail="Unsupported image type.")
-    return source_bytes
 
 
 def _job_or_404(store: JobStore, job_id: str):

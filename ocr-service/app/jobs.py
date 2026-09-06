@@ -5,6 +5,7 @@ import io
 import logging
 import shutil
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -124,9 +125,13 @@ class JobStore:
         pipeline_factory: PipelineFactory,
         cache_dir: Path,
         max_workers: int = 1,
+        retention_hours: float = 24.0,
+        job_timeout_seconds: float = 900.0,
     ) -> None:
         self.pipeline_factory = pipeline_factory
         self.cache_dir = cache_dir / "jobs"
+        self.retention_hours = retention_hours
+        self.job_timeout_seconds = job_timeout_seconds
         self.executor = ThreadPoolExecutor(
             max_workers=max_workers,
             thread_name_prefix="superk-cleaner",
@@ -134,11 +139,13 @@ class JobStore:
         self._jobs: dict[str, JobState] = {}
         self._jobs_lock = threading.RLock()
         self._pipeline_instance: Pipeline | None = None
+        self._last_sweep_at = 0.0
         if self.cache_dir.exists():
             for tmp in self.cache_dir.glob(".*.tmp"):
                 shutil.rmtree(tmp, ignore_errors=True)
 
     def submit(self, source_bytes: bytes, filename: str) -> str:
+        self._maybe_sweep()
         job_id = uuid.uuid4().hex
         job = JobState(
             id=job_id,
@@ -223,16 +230,130 @@ class JobStore:
     def shutdown(self) -> None:
         self.executor.shutdown(wait=True, cancel_futures=False)
 
+    # -- Retention / cleanup -------------------------------------------------
+
+    def _active_job_ids(self) -> set[str]:
+        with self._jobs_lock:
+            return {
+                job_id
+                for job_id, job in self._jobs.items()
+                if job.status in (JobStatus.QUEUED, JobStatus.RUNNING)
+            }
+
+    def sweep_completed(self, *, retention_hours: float | None = None) -> int:
+        """Delete finished job asset dirs older than the retention window.
+
+        retention_hours=0 purges every non-active job. Returns how many dirs
+        were removed. Restored (on-disk) jobs that are still inside the window
+        are left untouched so completed work survives a service restart.
+        """
+        hours = self.retention_hours if retention_hours is None else retention_hours
+        if not self.cache_dir.exists():
+            return 0
+        active = self._active_job_ids()
+        cutoff = time.time() - max(hours, 0.0) * 3600.0
+        removed = 0
+        for entry in self.cache_dir.iterdir():
+            if not entry.is_dir() or entry.name.startswith("."):
+                continue
+            if entry.name in active:
+                continue
+            marker = entry / "result.json"
+            try:
+                mtime = (
+                    marker.stat().st_mtime
+                    if marker.is_file()
+                    else entry.stat().st_mtime
+                )
+            except OSError:
+                continue
+            if mtime > cutoff:
+                continue
+            shutil.rmtree(entry, ignore_errors=True)
+            removed += 1
+        self._drop_jobs_with_missing_assets()
+        return removed
+
+    def _drop_jobs_with_missing_assets(self) -> None:
+        with self._jobs_lock:
+            stale = [
+                job_id
+                for job_id, job in self._jobs.items()
+                if job.status is JobStatus.SUCCEEDED
+                and job.asset_dir is not None
+                and not job.asset_dir.exists()
+            ]
+            for job_id in stale:
+                self._jobs.pop(job_id, None)
+
+    def _maybe_sweep(self) -> None:
+        now = time.time()
+        if now - self._last_sweep_at < 3600.0:
+            return
+        self._last_sweep_at = now
+        try:
+            removed = self.sweep_completed()
+            if removed:
+                LOGGER.info("retention sweep removed %d old job(s)", removed)
+        except Exception:
+            LOGGER.exception("retention sweep failed")
+
+    def delete_job(self, job_id: str) -> bool:
+        """Delete one finished job's assets and registry entry."""
+        with self._jobs_lock:
+            job = self._jobs.get(job_id)
+        if job is None:
+            return False
+        with job.lock:
+            if job.status in (JobStatus.QUEUED, JobStatus.RUNNING):
+                raise RuntimeError("job is still active")
+            asset_dir = job.asset_dir
+        if asset_dir is not None:
+            shutil.rmtree(asset_dir, ignore_errors=True)
+        with self._jobs_lock:
+            self._jobs.pop(job_id, None)
+        return True
+
     def _pipeline(self) -> Pipeline:
         if self._pipeline_instance is None:
             self._pipeline_instance = self.pipeline_factory()
         return self._pipeline_instance
+
+    def _start_watchdog(self, job: JobState) -> threading.Timer | None:
+        if self.job_timeout_seconds <= 0:
+            return None
+        timer = threading.Timer(
+            self.job_timeout_seconds,
+            self._fail_on_timeout,
+            args=(job,),
+        )
+        timer.daemon = True
+        timer.start()
+        return timer
+
+    def _fail_on_timeout(self, job: JobState) -> None:
+        # The worker thread cannot be interrupted, but the job stops claiming
+        # to be running and its result is discarded when it does finish.
+        with job.lock:
+            if job.status is not JobStatus.RUNNING:
+                return
+            job.output = None
+            job.source_bytes = b""
+            job.status = JobStatus.FAILED
+            job.error = (
+                "Image cleaning timed out after "
+                f"{self.job_timeout_seconds / 60:.0f} min."
+            )
+            job.elapsed_ms = job._current_elapsed_ms()
+            job.started_at = None
+        LOGGER.error("cleaning job %s timed out", job.id)
 
     def _run(self, job: JobState) -> None:
         with job.lock:
             job.status = JobStatus.RUNNING
             job.stage = JobStage.DETECTING
             job.started_at = perf_counter()
+        watchdog = self._start_watchdog(job)
         try:
             image_rgb = _decode_rgb(job.source_bytes)
             output = self._pipeline().run(
@@ -255,6 +376,8 @@ class JobStore:
             LOGGER.exception("cleaning job %s failed", job.id)
             self._fail(job)
         finally:
+            if watchdog is not None:
+                watchdog.cancel()
             _trim_process_memory()
 
     def _run_retry(
@@ -270,6 +393,7 @@ class JobStore:
             job.status = JobStatus.RUNNING
             job.stage = JobStage.CLEANING
             job.started_at = perf_counter()
+        watchdog = self._start_watchdog(job)
         try:
             with parent.lock:
                 if parent.asset_dir is None or not parent.asset_dir.exists():
@@ -296,6 +420,8 @@ class JobStore:
             LOGGER.exception("retry job %s failed", job.id)
             self._fail(job)
         finally:
+            if watchdog is not None:
+                watchdog.cancel()
             _trim_process_memory()
 
     def _complete(
@@ -339,6 +465,14 @@ class JobStore:
             LOGGER.exception("failed to persist result.json for job %s", job.id)
 
         with job.lock:
+            if job.status is not JobStatus.RUNNING:
+                # A watchdog already failed the job (timeout) — don't let the
+                # late pipeline result resurrect it as succeeded.
+                LOGGER.warning(
+                    "job %s completed after failing; discarding result",
+                    job.id,
+                )
+                return
             job.asset_dir = asset_dir
             job.output = None  # Evict full numpy array to free RAM
             job.result = result

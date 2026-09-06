@@ -559,7 +559,9 @@ def test_detector_extracts_magenta_and_chromatic_strokes_on_dark_background() ->
 
     detector = HybridTextDetector(EmptyCTD(), paddle_engine=MagentaPaddle())
     res = detector.detect(image)
-    assert np.any(res.mask_probability[15:35, 20:60] > 0.5), "Expected paddle magenta detection to update mask probability"
+    assert np.any(
+        res.mask_probability[15:35, 20:60] > 0.5
+    ), "Expected paddle magenta detection to update mask probability"
     assert len(res.blocks) >= 1
 
 

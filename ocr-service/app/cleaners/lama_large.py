@@ -26,15 +26,15 @@ class LamaLargeCleaner:
 
     @classmethod
     def from_model_store(cls, model_store: ModelStore) -> Self:
-        # Prefer anime-lama .pt TorchScript (standalone JIT with embedded FFC graph)
+        # anime-manga-big-lama.pt is a standalone TorchScript JIT with the
+        # FFC graph embedded — the only supported LaMa backend.
         try:
             pt_path = model_store.ensure("anime-lama")
-            if Path(pt_path).exists() and Path(pt_path).stat().st_size > 1000:
-                return cls.from_model_path(pt_path)
-        except Exception:
-            pass
-
-        return cls.from_model_path(model_store.ensure("lama-large"))
+        except Exception as err:
+            raise CleanerUnavailable("anime-lama model is unavailable") from err
+        if Path(pt_path).exists() and Path(pt_path).stat().st_size > 1000:
+            return cls.from_model_path(pt_path)
+        raise CleanerUnavailable("anime-lama model file is missing or invalid")
 
     @classmethod
     def from_model_path(cls, model_path: str | Path) -> Self:
@@ -43,34 +43,15 @@ class LamaLargeCleaner:
         torch = importlib.import_module("torch")
 
         p = Path(model_path)
-        if p.suffix == ".pt" or str(model_path).endswith(".pt"):
-            model = torch.jit.load(str(model_path), map_location="cpu")
-            model.eval()
-            if torch.cuda.is_available():
-                model = model.to("cuda")
-            return cls(model, torch)
-
-        # Fallback for .ckpt
-        try:
-            from app.cleaners.lama_large_arch import build_lama_large
-            gen = build_lama_large()
-            sd = torch.load(str(model_path), map_location="cpu", weights_only=False)
-            gen.load_state_dict(sd.get("gen_state_dict", sd))
-            gen.eval()
-            if torch.cuda.is_available():
-                gen = gen.to("cuda")
-            return cls(gen, torch)
-        except Exception as err:
-            # If ckpt arch fails, try anime-lama .pt
-            parent = p.parent
-            pt_alt = parent / "anime-manga-big-lama.pt"
-            if pt_alt.exists():
-                model = torch.jit.load(str(pt_alt), map_location="cpu")
-                model.eval()
-                if torch.cuda.is_available():
-                    model = model.to("cuda")
-                return cls(model, torch)
-            raise CleanerUnavailable(f"Failed to load lama-large: {err}")
+        if p.suffix != ".pt":
+            raise CleanerUnavailable(
+                f"Unsupported LaMa model format: {p.name} (expected TorchScript .pt)",
+            )
+        model = torch.jit.load(str(p), map_location="cpu")
+        model.eval()
+        if torch.cuda.is_available():
+            model = model.to("cuda")
+        return cls(model, torch)
 
     def clean(
         self,

@@ -9,6 +9,7 @@ import {
   loadAsset,
   loadCleaningResultsMetadata,
   loadProjectSession,
+  purgeOrphanAssets,
   saveAsset,
   saveCleaningResultMetadata,
   saveProjectSession,
@@ -133,3 +134,100 @@ describe("Phase 5: Blob asset store and session persistence", () => {
   });
 });
 
+
+test("dirty save rewrites dirty pages and garbage-collects orphaned assets", async () => {
+  const pages = [
+    { url: "blob:p1", name: "p1.png" },
+    { url: "blob:p2", name: "p2.png" },
+  ];
+  await saveProjectSession({
+    pages,
+    currentPage: 0,
+    bubbleCache: new Map([
+      ["blob:p1", [{ t: "a" }]],
+      ["blob:p2", [{ t: "b" }]],
+    ]),
+    translatedImageCache: new Map([
+      ["blob:p1", "data:image/png;base64,AAAA"],
+      ["blob:p2", "data:image/png;base64,BBBB"],
+    ]),
+  });
+
+  // p2 was removed from the book; p1 changed. The dirty save must not
+  // reference p2 anymore and its orphaned asset must be deleted.
+  await saveProjectSession(
+    {
+      pages: [pages[0]],
+      currentPage: 0,
+      bubbleCache: new Map([["blob:p1", [{ t: "a" }]]]),
+      translatedImageCache: new Map([["blob:p1", "data:image/png;base64,CCCC"]]),
+    },
+    { dirtyPageUrls: new Set(["blob:p1"]) },
+  );
+
+  // NOTE: fake-indexeddb cannot structured-clone jsdom Blobs (content comes
+  // back garbled), so assertions here are on keys, not blob content.
+  const restored = await loadProjectSession();
+  expect(restored?.translatedImageCache.has("blob:p1")).toBe(true);
+  expect(restored?.translatedImageCache.has("blob:p2")).toBe(false);
+  expect(restored?.bubbleCache.has("blob:p2")).toBe(false);
+  expect(await loadAsset("translated_blob%3Ap1")).not.toBeNull();
+  expect(await loadAsset("translated_blob%3Ap2")).toBeNull();
+});
+
+test("dirty save skips unchanged pages (no asset rewrite)", async () => {
+  const pages = [
+    { url: "blob:p1", name: "p1.png" },
+    { url: "blob:p2", name: "p2.png" },
+  ];
+  await saveProjectSession({
+    pages,
+    currentPage: 0,
+    bubbleCache: new Map(),
+    translatedImageCache: new Map([
+      ["blob:p1", "data:image/png;base64,AAAA"],
+      ["blob:p2", "data:image/png;base64,BBBB"],
+    ]),
+  });
+
+  // Delete p2's stored asset, then dirty-save with only p1 dirty. If the
+  // save correctly skips unchanged p2, its asset is NOT rewritten and stays
+  // deleted; p1 must be rewritten.
+  await deleteAsset("translated_blob%3Ap2");
+  await saveProjectSession(
+    {
+      pages,
+      currentPage: 0,
+      bubbleCache: new Map(),
+      translatedImageCache: new Map([
+        ["blob:p1", "data:image/png;base64,CCCC"],
+        ["blob:p2", "data:image/png;base64,BBBB"],
+      ]),
+    },
+    { dirtyPageUrls: new Set(["blob:p1"]) },
+  );
+
+  expect(await loadAsset("translated_blob%3Ap2")).toBeNull();
+  expect(await loadAsset("translated_blob%3Ap1")).not.toBeNull();
+  const restored = await loadProjectSession();
+  expect(restored?.translatedImageCache.has("blob:p1")).toBe(true);
+});
+
+test("purgeOrphanAssets removes only unused translated assets", async () => {
+  // Establish the session first so its referenced assets exist...
+  await saveProjectSession({
+    pages: [{ url: "blob:keep", name: "keep.png" }],
+    currentPage: 0,
+    bubbleCache: new Map(),
+    translatedImageCache: new Map([["blob:keep", "data:image/png;base64,AAAA"]]),
+  });
+  // ...then plant an orphan and an asset with a foreign prefix.
+  await saveAsset("translated_orphan", new Blob(["orphan"]));
+  await saveAsset("other_prefix_keep", new Blob(["keep"]));
+
+  const removed = await purgeOrphanAssets();
+  expect(removed).toBeGreaterThanOrEqual(1);
+  expect(await loadAsset("translated_orphan")).toBeNull();
+  expect(await loadAsset("other_prefix_keep")).not.toBeNull();
+  expect(await loadAsset("translated_blob%3Akeep")).not.toBeNull();
+});

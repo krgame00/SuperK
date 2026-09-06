@@ -60,8 +60,16 @@ describe("requestGemini", () => {
     });
 
     expect(result.keyIndex).toBe(1);
-    expect(String(fetchImpl.mock.calls[0][0])).toContain("key=key-a");
-    expect(String(fetchImpl.mock.calls[1][0])).toContain("key=key-b");
+    // The API key must travel in the x-goog-api-key header, never the URL
+    const headerOf = (index: number): string => {
+      const headers = fetchImpl.mock.calls[index][1]?.headers as Record<string, string>;
+      return headers["x-goog-api-key"];
+    };
+    expect(headerOf(0)).toBe("key-a");
+    expect(headerOf(1)).toBe("key-b");
+    expect(
+      fetchImpl.mock.calls.every(([url]) => !String(url).includes("key-a") && !String(url).includes("key-b")),
+    ).toBe(true);
     expect(fetchImpl.mock.calls.every(([url]) =>
       String(url).includes("/models/model-a:generateContent"),
     )).toBe(true);

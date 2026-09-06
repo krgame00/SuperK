@@ -7,6 +7,40 @@ import type { TextStyleProfile } from "./colorMatching/types";
 
 const ADJ_KEY = "superk:overlay-adjustments";
 
+// next/font registers its families under build-hashed names, so canvas
+// `ctx.font = "16px Itim"` silently falls back to generic sans-serif.
+// Resolve the selected family through the CSS variable next/font set on <html>.
+const CANVAS_FONT_VARS: Record<string, string> = {
+  itim: "--font-itim",
+  prompt: "--font-prompt",
+  kanit: "--font-kanit",
+  sarabun: "--font-sarabun",
+  mitr: "--font-mitr",
+  "chakra petch": "--font-chakra-petch",
+};
+
+export const resolveCanvasFontFamily = (fontFamily?: string): string => {
+  const fallback = fontFamily || "Itim, sans-serif";
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return fallback;
+  }
+  try {
+    const primary = fallback
+      .split(",")[0]
+      .trim()
+      .replace(/^["']|["']$/g, "")
+      .toLowerCase();
+    const varName = CANVAS_FONT_VARS[primary];
+    if (!varName) return fallback;
+    const resolved = getComputedStyle(document.documentElement)
+      .getPropertyValue(varName)
+      .trim();
+    return resolved || fallback;
+  } catch {
+    return fallback;
+  }
+};
+
 /** A translated bubble produced by the LLM / manual editor.
  *  Loose by design: carries optional rendering metadata added at runtime. */
 export interface TranslatedBubble {
@@ -398,6 +432,7 @@ export const applyTranslationOverlay = async (
   onComplete?: (dataUrl: string) => void,
   textStyleRef?: React.MutableRefObject<OverlayTextStyle>,
   containerOverride?: Element,
+  pageKeyOverride?: string,
 ) => {
   let container: Element | null | undefined = containerOverride;
   if (!container && viewMode === "offscreen") {
@@ -407,7 +442,7 @@ export const applyTranslationOverlay = async (
   } else if (!container) {
     container = document.getElementById("pageContainer");
   }
-  
+
   if (!container) return;
 
   container.querySelectorAll(".tl-overlay,.tl-canvas").forEach((el) => {
@@ -427,12 +462,29 @@ export const applyTranslationOverlay = async (
   }
 
   const paint = async () => {
-    await document.fonts.load('bold 16px Itim');
+    // Repaints (duplicate bubble, style change) must replace the previous
+    // layer — otherwise every duplicate click stacks another full overlay
+    // and leaks its document-level listeners.
+    container.querySelectorAll(".tl-overlay,.tl-canvas").forEach((el) => {
+      const cleanup = (el as unknown as { _cleanupListeners?: () => void })._cleanupListeners;
+      if (typeof cleanup === "function") cleanup();
+      el.remove();
+    });
+
+    const currentTextStyle = textStyleRef?.current || { fontFamily: "Itim, sans-serif", textColor: "#000000", textOutline: "#FFFFFF", fontSizeMultiplier: 1.0 };
+    const resolvedFontFam = resolveCanvasFontFamily(currentTextStyle.fontFamily);
+    try {
+      await document.fonts.load(`bold 16px ${resolvedFontFam}`);
+    } catch {
+      // Font loading is best-effort; measurement falls back below.
+    }
     const iw = img.naturalWidth || img.offsetWidth;
     const ih = img.naturalHeight || img.offsetHeight;
     if (!iw || !ih) { setTimeout(paint, 100); return; }
 
-    const pageKey = `page-${currentPage}`;
+    // Adjustments are keyed by page URL — keying by array index re-mapped
+    // every saved position whenever pages were reordered or deleted.
+    const pageKey = pageKeyOverride ?? `page-${currentPage}`;
     const savedAdj = readOverlayAdjustments()[pageKey] || {};
 
     const tlContainer = document.createElement("div");
@@ -545,7 +597,7 @@ export const applyTranslationOverlay = async (
       bCanvas.style.cssText = `display:block; width:100%; height:100%; pointer-events:none;`;
       wrapper.appendChild(bCanvas);
       const ts = textStyleRef?.current || { fontFamily: "Itim, sans-serif", textColor: "#000000", textOutline: "#FFFFFF", fontSizeMultiplier: 1.0 };
-      const fontFam = ts.fontFamily || "Itim, sans-serif";
+      const fontFam = resolvedFontFam;
       const fontMult = ts.fontSizeMultiplier || 1.0;
       const minReadableFs = Math.max(14, getReadableMinimumFontSize(iw));
 
@@ -585,7 +637,7 @@ export const applyTranslationOverlay = async (
         const currentStyle = textStyleRef?.current || ts;
         const text = (b.t || b.translated || "").trim();
         if (!text) return;
-        const currentFontFam = currentStyle.fontFamily || "Itim, sans-serif";
+        const currentFontFam = resolveCanvasFontFamily(currentStyle.fontFamily);
         const bubbleMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
         const currentFontMult = (currentStyle.fontSizeMultiplier || 1.0) * bubbleMult;
         const resolvedStyle = resolveBubbleTextStyle(b, currentStyle);
@@ -1258,8 +1310,10 @@ export const applyTranslationOverlay = async (
     }
   };
 
-  document.fonts.load('1em Itim').then(() => {
-    if (img.complete && img.naturalWidth) paint();
-    else img.onload = paint;
-  });
+  document.fonts
+    .load(`1em ${resolveCanvasFontFamily(textStyleRef?.current?.fontFamily)}`)
+    .then(() => {
+      if (img.complete && img.naturalWidth) paint();
+      else img.onload = paint;
+    });
 };

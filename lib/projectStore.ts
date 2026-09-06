@@ -37,15 +37,17 @@ interface SessionData {
 export function dataUrlToBlob(dataUrl: string): Blob {
   const [header, payload] = dataUrl.split(",");
   const mime = header?.match(/data:([^;]+)/)?.[1] || "image/png";
-  if (typeof Buffer !== "undefined" && typeof Buffer.from === "function") {
-    const buffer = Buffer.from(payload || "", "base64");
-    return new Blob([buffer], { type: mime });
-  }
+  // atob first — it exists in every browser and jsdom, and jsdom's Blob
+  // implementation stringifies Buffer parts into "[object Object]".
   if (typeof atob === "function") {
     const binary = atob(payload || "");
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
     return new Blob([bytes], { type: mime });
+  }
+  if (typeof Buffer !== "undefined" && typeof Buffer.from === "function") {
+    const buffer = Buffer.from(payload || "", "base64");
+    return new Blob([buffer], { type: mime });
   }
   return new Blob([payload || ""], { type: mime });
 }
@@ -170,52 +172,118 @@ export const clearAssets = async (): Promise<void> => {
   }
 };
 
-export const saveProjectSession = async (data: {
-  pages: { url: string; name: string }[];
-  currentPage: number;
-  bubbleCache: Map<string, TranslatedBubble[]>;
-  translatedImageCache: Map<string, string>;
-}): Promise<void> => {
+export const saveProjectSession = async (
+  data: {
+    pages: { url: string; name: string }[];
+    currentPage: number;
+    bubbleCache: Map<string, TranslatedBubble[]>;
+    translatedImageCache: Map<string, string>;
+  },
+  options?: { dirtyPageUrls?: Set<string> },
+): Promise<void> => {
   try {
     const db = await openDB();
     const tx = db.transaction([STORE_NAME, ASSET_STORE_NAME], "readwrite");
     const sessionStore = tx.objectStore(STORE_NAME);
     const assetStore = tx.objectStore(ASSET_STORE_NAME);
 
+    const dirty = options?.dirtyPageUrls;
     const translatedAssetIds: [string, string][] = [];
+    const referencedAssetIds = new Set<string>();
 
-    // Save image Blobs in the assets store instead of giant base64 strings
+    // Reference every translated page in the session, but only re-encode and
+    // rewrite the (multi-MB) blobs of pages that actually changed since the
+    // previous save. Omitting `dirtyPageUrls` performs a full save.
     for (const [pageUrl, imageValue] of data.translatedImageCache.entries()) {
       const assetId = `translated_${encodeURIComponent(pageUrl)}`;
       translatedAssetIds.push([pageUrl, assetId]);
+      referencedAssetIds.add(assetId);
 
-      if (imageValue.startsWith("data:")) {
-        const blob = dataUrlToBlob(imageValue);
-        assetStore.put({
-          id: assetId,
-          mimeType: blob.type || "image/png",
-          blob,
-          createdAt: Date.now(),
-        });
-      }
+      if (!imageValue.startsWith("data:")) continue;
+      if (dirty && !dirty.has(pageUrl)) continue;
+      const blob = dataUrlToBlob(imageValue);
+      assetStore.put({
+        id: assetId,
+        mimeType: blob.type || "image/png",
+        blob,
+        createdAt: Date.now(),
+      });
     }
+
+    // Strip runtime-only fields (functions cannot be structured-cloned)
+    // per bubble instead of JSON-roundtripping the whole record — the old
+    // JSON.parse(JSON.stringify(...)) cloned every original page data URL
+    // on every autosave.
+    const bubbleCache: [string, TranslatedBubble[]][] = Array.from(
+      data.bubbleCache.entries(),
+      ([pageUrl, bubbles]) => [
+        pageUrl,
+        bubbles.map((bubble) => {
+          const rest = { ...bubble };
+          delete rest.render; // runtime-only function; not structured-cloneable
+          return rest as TranslatedBubble;
+        }),
+      ],
+    );
 
     const sessionData: SessionData = {
       id: "latest_session",
       pages: data.pages,
       currentPage: data.currentPage,
-      bubbleCache: Array.from(data.bubbleCache.entries()),
+      bubbleCache,
       translatedAssetIds,
       updatedAt: Date.now(),
     };
 
-    const sanitized = JSON.parse(JSON.stringify(sessionData));
-    sessionStore.put(sanitized);
+    sessionStore.put(sessionData);
+
+    // Garbage-collect translated assets that no longer belong to any page
+    // (invalidated, replaced or removed pages).
+    const keys = await requestResult<IDBValidKey[]>(assetStore.getAllKeys());
+    for (const key of keys) {
+      const assetId = String(key);
+      if (!assetId.startsWith("translated_")) continue;
+      if (referencedAssetIds.has(assetId)) continue;
+      assetStore.delete(assetId);
+    }
 
     await transactionDone(tx);
   } catch (err) {
     console.warn("Failed to save project session to IndexedDB", err);
     throw err;
+  }
+};
+
+export const purgeOrphanAssets = async (): Promise<number> => {
+  try {
+    const db = await openDB();
+    const readTx = db.transaction([STORE_NAME, ASSET_STORE_NAME], "readonly");
+    const data = await requestResult<SessionData | undefined>(
+      readTx.objectStore(STORE_NAME).get("latest_session"),
+    );
+    const keys = await requestResult<IDBValidKey[]>(
+      readTx.objectStore(ASSET_STORE_NAME).getAllKeys(),
+    );
+    await transactionDone(readTx);
+
+    const referenced = new Set(
+      (data?.translatedAssetIds ?? []).map(([, assetId]) => assetId),
+    );
+    const orphans = keys
+      .map(String)
+      .filter((id) => id.startsWith("translated_") && !referenced.has(id));
+    if (orphans.length === 0) return 0;
+
+    const writeTx = db.transaction(ASSET_STORE_NAME, "readwrite");
+    const store = writeTx.objectStore(ASSET_STORE_NAME);
+    for (const assetId of orphans) {
+      store.delete(assetId);
+    }
+    await transactionDone(writeTx);
+    return orphans.length;
+  } catch (err) {
+    console.warn("Failed to purge orphan assets from IndexedDB", err);
+    return 0;
   }
 };
 

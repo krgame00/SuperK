@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Itim, Prompt, Kanit, Sarabun } from "next/font/google";
+import { Inter, Itim, Prompt, Kanit, Sarabun, Mitr, Chakra_Petch } from "next/font/google";
 import "./globals.css";
 
 const inter = Inter({
@@ -28,6 +28,20 @@ const kanitFont = Kanit({
 const sarabunFont = Sarabun({
   weight: ["400", "500", "600", "700"],
   variable: "--font-sarabun",
+  subsets: ["thai", "latin"],
+});
+
+// Offered in SettingsModal for bubble text — must be loaded or the canvas
+// overlay renders the generic fallback instead of the selected family.
+const mitrFont = Mitr({
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-mitr",
+  subsets: ["thai", "latin"],
+});
+
+const chakraPetchFont = Chakra_Petch({
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-chakra-petch",
   subsets: ["thai", "latin"],
 });
 
@@ -62,7 +76,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${itim.variable} ${promptFont.variable} ${kanitFont.variable} ${sarabunFont.variable} h-full antialiased selection:bg-primary/20 selection:text-primary`}
+      className={`${inter.variable} ${itim.variable} ${promptFont.variable} ${kanitFont.variable} ${sarabunFont.variable} ${mitrFont.variable} ${chakraPetchFont.variable} h-full antialiased selection:bg-primary/20 selection:text-primary`}
     >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>

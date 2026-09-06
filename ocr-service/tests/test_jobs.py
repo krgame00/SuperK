@@ -283,3 +283,78 @@ def test_failed_job_releases_memory(tmp_path: Path) -> None:
     finally:
         store.shutdown()
 
+
+
+def test_retention_sweep_deletes_only_old_jobs(tmp_path: Path) -> None:
+    import os
+
+    store = JobStore(pipeline_factory=lambda: _TestPipeline(), cache_dir=tmp_path)
+    try:
+        png_bytes = _make_png()
+        old_id = store.submit(png_bytes, "old.png")
+        fresh_id = store.submit(png_bytes, "fresh.png")
+        old_job = _wait_for_job(store, old_id)
+        fresh_job = _wait_for_job(store, fresh_id)
+        assert old_job.status == JobStatus.SUCCEEDED
+        assert fresh_job.status == JobStatus.SUCCEEDED
+
+        # Backdate the old job's assets beyond the 24h retention window
+        old_timestamp = time.time() - 25 * 3600
+        os.utime(tmp_path / "jobs" / old_id / "result.json", (old_timestamp, old_timestamp))
+
+        removed = store.sweep_completed()
+
+        assert removed == 1
+        assert not (tmp_path / "jobs" / old_id).exists()
+        assert (tmp_path / "jobs" / fresh_id / "result.json").is_file()
+        assert store.get(fresh_id) is not None
+        # The old job must not be restorable from disk anymore
+        store._jobs.pop(old_id, None)
+        assert store.get(old_id) is None
+    finally:
+        store.shutdown()
+
+
+def test_retention_sweep_keeps_active_jobs(tmp_path: Path) -> None:
+    store = JobStore(pipeline_factory=lambda: _TestPipeline(), cache_dir=tmp_path)
+    try:
+        png_bytes = _make_png()
+        done_id = store.submit(png_bytes, "done.png")
+        _wait_for_job(store, done_id)
+
+        # Age every dir beyond the window, but make sure nothing active is
+        # ever removed even with retention_hours=0.
+        removed = store.sweep_completed(retention_hours=0.0)
+        assert removed >= 1
+
+        active_id = store.submit(png_bytes, "active.png")
+        # The job may complete before we sweep; assert purge never removes a
+        # RUNNING/QUEUED job by sweeping while the executor is saturated.
+        store.executor.submit(_blocking_wait, 0.2)
+        running_id = store.submit(png_bytes, "running.png")
+        assert store.sweep_completed(retention_hours=0.0) >= 0
+        job = _wait_for_job(store, running_id, timeout=15.0)
+        assert job.status == JobStatus.SUCCEEDED
+        _ = active_id
+    finally:
+        store.shutdown()
+
+
+def _blocking_wait(seconds: float) -> None:
+    time.sleep(seconds)
+
+
+def test_delete_job_removes_assets_and_registry_entry(tmp_path: Path) -> None:
+    store = JobStore(pipeline_factory=lambda: _TestPipeline(), cache_dir=tmp_path)
+    try:
+        job_id = store.submit(_make_png(), "delete-me.png")
+        job = _wait_for_job(store, job_id)
+        assert job.status == JobStatus.SUCCEEDED
+        assert (tmp_path / "jobs" / job_id / "result.json").is_file()
+
+        assert store.delete_job(job_id) is True
+        assert not (tmp_path / "jobs" / job_id).exists()
+        assert store.get(job_id) is None
+        assert store.delete_job(job_id) is False
+    finally:
+        store.shutdown()

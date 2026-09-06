@@ -132,11 +132,16 @@ export async function requestGemini<T = unknown>(
         let response: Response;
 
         try {
+          // Key travels in a header, not the URL query string — query params
+          // end up in upstream/proxy access logs; the header does not.
           response = await fetchImpl(
-            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
             {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: {
+                "Content-Type": "application/json",
+                "x-goog-api-key": apiKey,
+              },
               body: JSON.stringify(payload),
               signal: controller.signal,
               cache: "no-store",

@@ -363,3 +363,68 @@ def test_api_pipeline_version_invalidates_cache_and_reports_glyph_version(
 
     result = client.get(f"/v1/jobs/{created['job_id']}/result").json()
     assert result["pipeline_version"] == "2.1.0-complete-glyph"
+
+
+def test_purge_endpoint_removes_completed_jobs(tmp_path, png_bytes: bytes) -> None:
+    app = create_app(
+        settings=Settings(cache_dir=tmp_path),
+        pipeline_factory=lambda: _IdentityPipeline(),
+    )
+    with TestClient(app) as client:
+        ids = [
+            client.post(
+                "/v1/jobs",
+                files={"image": (f"page-{i}.png", png_bytes, "image/png")},
+            ).json()["job_id"]
+            for i in range(2)
+        ]
+        for job_id in ids:
+            assert _wait_for_terminal(client, job_id)["status"] == "succeeded"
+
+        response = client.post("/v1/jobs/purge")
+        assert response.status_code == 200
+        assert response.json()["deleted"] >= 2
+
+        for job_id in ids:
+            assert client.get(f"/v1/jobs/{job_id}/result").status_code == 404
+            assert client.get(f"/v1/jobs/{job_id}").status_code == 404
+
+
+def test_delete_endpoint_removes_single_job(tmp_path, png_bytes: bytes) -> None:
+    app = create_app(
+        settings=Settings(cache_dir=tmp_path),
+        pipeline_factory=lambda: _IdentityPipeline(),
+    )
+    with TestClient(app) as client:
+        keep_id = client.post(
+            "/v1/jobs", files={"image": ("keep.png", png_bytes, "image/png")}
+        ).json()["job_id"]
+        kill_id = client.post(
+            "/v1/jobs", files={"image": ("kill.png", png_bytes, "image/png")}
+        ).json()["job_id"]
+        for job_id in (keep_id, kill_id):
+            _wait_for_terminal(client, job_id)
+
+        response = client.delete(f"/v1/jobs/{kill_id}")
+        assert response.status_code == 200
+        assert response.json()["status"] == "deleted"
+        assert client.get(f"/v1/jobs/{kill_id}/result").status_code == 404
+        assert client.delete(f"/v1/jobs/{kill_id}").status_code == 404
+        # The untouched job survives
+        assert client.get(f"/v1/jobs/{keep_id}/result").status_code == 200
+
+
+def test_upload_rejects_oversize_pixel_dimensions(tmp_path) -> None:
+    big = io.BytesIO()
+    Image.new("RGB", (1200, 1200), (255, 255, 255)).save(big, format="PNG")
+    app = create_app(
+        settings=Settings(cache_dir=tmp_path, max_image_megapixels=1),
+        pipeline_factory=lambda: _IdentityPipeline(),
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/jobs",
+            files={"image": ("big.png", big.getvalue(), "image/png")},
+        )
+    assert response.status_code == 413
+    assert "dimensions" in response.json()["detail"]

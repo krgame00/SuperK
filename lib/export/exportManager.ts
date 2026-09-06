@@ -59,19 +59,34 @@ export interface ComicInfoMetadata {
   languageISO?: string;
 }
 
+/** Escapes XML special characters so metadata from filenames (e.g. "Tom &
+ *  Jerry") can't produce invalid ComicInfo.xml that breaks CBZ readers. */
+export function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
 export function generateComicInfoXml(meta: ComicInfoMetadata = {}): string {
-  const title = meta.title || "Manga";
-  const series = meta.series || title;
-  const translator = meta.translator || "SuperK Manga Translator";
-  const languageISO = meta.languageISO || "th";
+  const title = escapeXml(meta.title || "Manga");
+  const series = escapeXml(meta.series || meta.title || "Manga");
+  const translator = escapeXml(meta.translator || "SuperK Manga Translator");
+  const languageISO = escapeXml(meta.languageISO || "th");
+  const number = escapeXml(meta.number || "1");
+  const summary = escapeXml(
+    meta.summary || "Translated with SuperK Manga Translator",
+  );
   const pageCount = meta.pageCount || 1;
 
   return `<?xml version="1.0" encoding="utf-8"?>
 <ComicInfo xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <Title>${title}</Title>
   <Series>${series}</Series>
-  <Number>${meta.number || "1"}</Number>
-  <Summary>${meta.summary || "Translated with SuperK Manga Translator"}</Summary>
+  <Number>${number}</Number>
+  <Summary>${summary}</Summary>
   <Translator>${translator}</Translator>
   <PageCount>${pageCount}</PageCount>
   <LanguageISO>${languageISO}</LanguageISO>

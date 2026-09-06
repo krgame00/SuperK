@@ -1,12 +1,19 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
   getTranslationRetryDelay,
+  isUserCancelledError,
   readTranslationResponse,
   TranslationRequestError,
 } from "@/lib/translation/requestError";
 import { applyTranslationOverlay } from "@/lib/translationOverlay";
 import type { TranslatedBubble } from "@/lib/translationOverlay";
-import { saveProjectSession, loadProjectSession, clearProjectSession } from "@/lib/projectStore";
+import {
+  saveProjectSession,
+  loadProjectSession,
+  clearProjectSession,
+  deleteAsset,
+} from "@/lib/projectStore";
+import { LRUMap } from "@/lib/lruMap";
 import { resolveTranslationOutcome } from "@/lib/translationPipeline";
 import { parseLLMJSON } from "@/lib/parseLLMJSON";
 import { normalizeTranslationPayload } from "@/lib/thaiSpellcheck";
@@ -33,12 +40,16 @@ export interface PreparedTranslationPage {
 interface UseTranslationProps {
   currentPage: number;
   pages: string[];
+  /** Display names matching `pages` order, persisted with saved sessions. */
+  pageNames?: string[];
   viewMode: "single" | "scroll";
   preparePageForTranslation: (
     pageUrl: string,
     pageIndex: number,
   ) => Promise<PreparedTranslationPage>;
 }
+
+const TRANSLATED_IMAGE_CACHE_LIMIT = 40;
 
 export const deduplicateBubbleSFX = (
   bubbles: TranslatedBubble[],
@@ -146,6 +157,7 @@ const enrichBubblesWithColorProfiles = async (
 export function useTranslation({
   currentPage,
   pages,
+  pageNames,
   viewMode,
   preparePageForTranslation,
 }: UseTranslationProps) {
@@ -160,6 +172,9 @@ export function useTranslation({
   } | null>(null);
   const cancelTranslateAllRef = useRef(false);
   const translationOperationLockRef = useRef(false);
+  // Aborts in-flight fetches as soon as the user cancels (or unmounts),
+  // instead of letting the current page run to completion.
+  const translationAbortRef = useRef<AbortController | null>(null);
   const [batchFailures, setBatchFailures] = useState<BatchPageFailure[]>([]);
   const [workflowPhase, setWorkflowPhase] =
     useState<TranslationWorkflowPhase | null>(null);
@@ -223,8 +238,23 @@ export function useTranslation({
 
   // Per-page bubble cache, keyed by image data URL so it survives reordering
   const bubbleCacheRef = useRef<Map<string, TranslatedBubble[]>>(new Map());
-  // Per-page final translated image dataUrl cache
-  const translatedImageCacheRef = useRef<Map<string, string>>(new Map());
+  // Per-page final translated image dataUrl cache — LRU-bounded so very long
+  // books don't hold every rendered page in memory; exports re-render evicted
+  // pages from the bubble cache on demand.
+  const translatedImageCacheRef = useRef<LRUMap<string, string>>(
+    new LRUMap<string, string>(TRANSLATED_IMAGE_CACHE_LIMIT),
+  );
+  // Pages whose translation completed (success or clean-only). Survives LRU
+  // eviction so batch re-runs don't re-translate evicted pages.
+  const completedPagesRef = useRef<Set<string>>(new Set());
+  // Pages whose caches changed since the last successful save. null = the
+  // next save must (re)write everything (first save, session restore...).
+  const dirtyPagesRef = useRef<Set<string> | null>(null);
+  const pendingSaveRevisionRef = useRef<number | null>(null);
+  const markPageDirty = useCallback((pageUrl: string) => {
+    if (!dirtyPagesRef.current) return; // full save pending anyway
+    dirtyPagesRef.current.add(pageUrl);
+  }, []);
   const [translatedImages, setTranslatedImages] = useState<Map<string, string>>(
     new Map(),
   );
@@ -244,6 +274,9 @@ export function useTranslation({
   useEffect(() => {
     if (pages.length === 0) return;
     const currentKey = pages[currentPage];
+    // Refresh the viewed page's LRU recency so it can't be evicted while
+    // the user is looking at it.
+    translatedImageCacheRef.current.get(currentKey);
     const cached = bubbleCacheRef.current.get(currentKey);
     if (cached && cached.length > 0) {
       setActiveBubbles(cached);
@@ -256,6 +289,8 @@ export function useTranslation({
           setTranslationResult,
           undefined,
           textStyleRef,
+          undefined,
+          currentKey,
         );
       }, 100);
       return () => clearTimeout(timer);
@@ -273,25 +308,48 @@ export function useTranslation({
 
   const pagesRef = useRef(pages);
   pagesRef.current = pages;
+  const pageNamesRef = useRef(pageNames);
+  useEffect(() => {
+    pageNamesRef.current = pageNames;
+  }, [pageNames]);
   const currentPageRef = useRef(currentPage);
   currentPageRef.current = currentPage;
+
+  const performSaveRef = useRef<(targetRevision: number) => Promise<boolean>>(
+    async () => false,
+  );
 
   const performSave = useCallback(async (targetRevision: number): Promise<boolean> => {
     const currentPages = pagesRef.current;
     if (currentPages.length === 0) return false;
-    if (isSavingRef.current) return false;
+    if (isSavingRef.current) {
+      // A newer state change arrived mid-save — don't drop it, reschedule.
+      pendingSaveRevisionRef.current = Math.max(
+        pendingSaveRevisionRef.current ?? 0,
+        targetRevision,
+      );
+      return false;
+    }
 
     isSavingRef.current = true;
     setSaveStatus("saving");
     setSaveError(null);
 
     try {
-      await saveProjectSession({
-        pages: currentPages.map((p) => (typeof p === "string" ? { url: p, name: "Page" } : p)),
-        currentPage: currentPageRef.current,
-        bubbleCache: bubbleCacheRef.current,
-        translatedImageCache: translatedImageCacheRef.current,
-      });
+      await saveProjectSession(
+        {
+          pages: currentPages.map(
+            (p, i) => ({ url: p, name: pageNamesRef.current?.[i] || `Page ${i + 1}` }),
+          ),
+          currentPage: currentPageRef.current,
+          bubbleCache: bubbleCacheRef.current,
+          translatedImageCache: translatedImageCacheRef.current,
+        },
+        { dirtyPageUrls: dirtyPagesRef.current ?? undefined },
+      );
+
+      // Everything on disk now matches memory.
+      dirtyPagesRef.current = new Set();
 
       lastSavedRevisionRef.current = targetRevision;
       if (saveRevisionRef.current === targetRevision) {
@@ -309,8 +367,18 @@ export function useTranslation({
       return false;
     } finally {
       isSavingRef.current = false;
+      // A revision arrived while this save was in flight — run the catch-up
+      // save only after the saving lock is released.
+      const pending = pendingSaveRevisionRef.current;
+      if (pending !== null && pending > lastSavedRevisionRef.current) {
+        pendingSaveRevisionRef.current = null;
+        void performSaveRef.current(pending);
+      }
     }
   }, []);
+  useEffect(() => {
+    performSaveRef.current = performSave;
+  }, [performSave]);
 
   const pageUrlsKey = pages.join("|");
 
@@ -338,8 +406,18 @@ export function useTranslation({
     const saved = await loadProjectSession();
     if (!saved) return null;
     bubbleCacheRef.current = saved.bubbleCache;
-    translatedImageCacheRef.current = saved.translatedImageCache;
+    const restoredImages = new LRUMap<string, string>(
+      TRANSLATED_IMAGE_CACHE_LIMIT,
+      (pageUrl) => pageUrl === activePageRef.current,
+    );
+    for (const [pageUrl, dataUrl] of saved.translatedImageCache) {
+      restoredImages.set(pageUrl, dataUrl);
+    }
+    translatedImageCacheRef.current = restoredImages;
     setTranslatedImages(new Map(saved.translatedImageCache));
+    // Restored assets are already persisted under the same deterministic ids
+    dirtyPagesRef.current = new Set();
+    completedPagesRef.current = new Set(saved.bubbleCache.keys());
     lastSavedRevisionRef.current = saveRevisionRef.current;
     setSaveStatus("saved");
     setSaveError(null);
@@ -357,6 +435,8 @@ export function useTranslation({
     bubbleCacheRef.current.clear();
     translatedImageCacheRef.current.clear();
     setTranslatedImages(new Map());
+    dirtyPagesRef.current = null;
+    completedPagesRef.current = new Set();
     saveRevisionRef.current = 0;
     lastSavedRevisionRef.current = 0;
     setSaveStatus("idle");
@@ -412,15 +492,18 @@ export function useTranslation({
       );
       const updatedBubbles = [...activeBubbles, ...coloredNewBubbles];
       bubbleCacheRef.current.set(pages[currentPage], updatedBubbles);
+      markPageDirty(pages[currentPage]);
 
       if (activePageRef.current === pages[currentPage]) {
         setActiveBubbles(updatedBubbles);
         applyTranslationOverlay(updatedBubbles, viewMode, currentPage, setTranslationResult, (dataUrl) => {
           translatedImageCacheRef.current.set(pages[currentPage], dataUrl);
+          markPageDirty(pages[currentPage]);
           setTranslatedImages(new Map(translatedImageCacheRef.current));
-        }, textStyleRef);
+        }, textStyleRef, undefined, pages[currentPage]);
         setTranslationResult("✅ แปลเฉพาะจุดสำเร็จ!");
       }
+      completedPagesRef.current.add(pages[currentPage]);
 
     } catch (error: unknown) {
       setTranslationResult("❌ Error: " + (error instanceof Error ? error.message : String(error)));
@@ -461,6 +544,7 @@ export function useTranslation({
             settled = true;
             cleanup();
             translatedImageCacheRef.current.set(pageUrl, dataUrl);
+            markPageDirty(pageUrl);
             setTranslatedImages(new Map(translatedImageCacheRef.current));
             setCacheRevision((revision) => revision + 1);
             resolve();
@@ -479,6 +563,7 @@ export function useTranslation({
                 complete,
                 textStyleRef,
                 offscreenContainer,
+                pageUrl,
               ),
             )
             .catch(rejectOnce);
@@ -498,10 +583,12 @@ export function useTranslation({
           setTranslationResult,
           undefined,
           textStyleRef,
+          undefined,
+          pageUrl,
         );
       }
     },
-    [viewMode],
+    [viewMode, markPageDirty],
   );
 
 async function readBlobAsDataUrl(blob: Blob): Promise<string> {
@@ -543,6 +630,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
 
       translatedImageCacheRef.current.set(pageUrl, dataUrl);
       bubbleCacheRef.current.set(pageUrl, []);
+      completedPagesRef.current.add(pageUrl);
+      markPageDirty(pageUrl);
       setTranslatedImages(new Map(translatedImageCacheRef.current));
       setCacheRevision((revision) => revision + 1);
       if (activePageRef.current === pageUrl) {
@@ -551,7 +640,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         setShowTranslate(false);
       }
     },
-    [],
+    [markPageDirty],
   );
 
   const performTranslation = async (
@@ -560,10 +649,11 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     pageIndex: number,
     forceNsfwBypass: boolean = false,
     isAutoRetry: boolean = false,
+    signal?: AbortSignal,
   ): Promise<boolean> => {
     try {
       const { recognitionUrl, backgroundUrl } = preparedPage;
-      const resImg = await fetch(recognitionUrl);
+      const resImg = await fetch(recognitionUrl, signal ? { signal } : undefined);
       if (!resImg.ok) throw new Error(`ไม่สามารถโหลดรูปภาพได้ (HTTP ${resImg.status})`);
       const blob = await resImg.blob();
       const actualMimeType = blob.type && blob.type.startsWith('image/') ? blob.type : "image/jpeg";
@@ -622,6 +712,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
                 apiKey: userApiKey,
                 glossary,
               }),
+              signal,
             });
             const data = await readTranslationResponse<{ text: string }>(res);
 
@@ -710,6 +801,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             successCount++;
           } catch (err: unknown) {
             console.warn(`Slice ${i + 1} failed:`, err);
+            if (isUserCancelledError(err)) throw err;
             if (getTranslationRetryDelay(err) !== null) {
               throw err;
             }
@@ -746,6 +838,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           pageIndex,
         );
         bubbleCacheRef.current.set(pageUrl, coloredBubbles);
+        completedPagesRef.current.add(pageUrl);
+        markPageDirty(pageUrl);
 
         if (activePageRef.current === pageUrl) {
           setTranslationResult(`✅ แปล 18+ สำเร็จ! (ได้ ${successCount}/6 ส่วน)`);
@@ -768,8 +862,10 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             apiKey: userApiKey,
             glossary,
           }),
+          signal,
         });
-      } catch {
+      } catch (err) {
+        if (isUserCancelledError(err)) throw err;
         // Network-level failure ("Failed to fetch"): transient, retryable.
         throw new TranslationRequestError(
           "Network error: ลองใหม่อีกครั้ง",
@@ -795,7 +891,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       }
       const typedParsed = parsed as { bubbles?: TranslatedBubble[] } & Record<string, unknown>;
       const normalized = normalizeTranslationPayload(typedParsed);
-      const pageBubbles: TranslatedBubble[] = normalized.bubbles ?? [];
+      let pageBubbles: TranslatedBubble[] = normalized.bubbles ?? [];
 
       if (
         pageBubbles.length === 0
@@ -836,6 +932,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             isRetry: true,
             glossary,
           }),
+          signal,
         });
         const retryData =
           await readTranslationResponse<{ text: string }>(retryRes);
@@ -846,6 +943,11 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           throw new Error("Translation retry response malformed: bubbles array missing.");
         }
         parsed = normalizeTranslationPayload(retryParsed);
+        // The retry replaced the first response — its bubbles are the ones
+        // that must flow into dedupe/outcome below, not the empty first pass.
+        pageBubbles =
+          (parsed as { bubbles?: TranslatedBubble[] } & Record<string, unknown>)
+            .bubbles ?? [];
       }
 
       const filteredParsed = deduplicateBubbleSFX(pageBubbles, 3);
@@ -871,6 +973,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         pageIndex,
       );
       bubbleCacheRef.current.set(pageUrl, coloredBubbles);
+      completedPagesRef.current.add(pageUrl);
+      markPageDirty(pageUrl);
 
       if (activePageRef.current === pageUrl) {
         setTranslationResult("✅ แปลสำเร็จ! ข้อความถูกวาดทับลงบนภาพแล้ว");
@@ -879,7 +983,10 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
 
       return true;
     } catch (error: unknown) {
-      if (activePageRef.current === pageUrl) {
+      if (
+        activePageRef.current === pageUrl
+        && !isUserCancelledError(error)
+      ) {
         setTranslationResult("❌ Error: " + (error instanceof Error ? error.message : String(error)));
       }
       throw error; // Rethrow so the caller can handle 429
@@ -895,6 +1002,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     ) return false;
     translationOperationLockRef.current = true;
     const pageUrl = pages[currentPage];
+    translationAbortRef.current = new AbortController();
+    const signal = translationAbortRef.current.signal;
 
     setIsTranslating(true);
     try {
@@ -912,8 +1021,14 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         pageUrl,
         currentPage,
         nsfwBypassMode,
+        false,
+        signal,
       );
     } catch (error) {
+      if (isUserCancelledError(error)) {
+        setTranslationResult("⏹ ยกเลิกการแปลแล้ว");
+        return false;
+      }
       const message =
         error instanceof Error ? error.message : "ดำเนินการไม่สำเร็จ";
       setTranslationResult(`❌ Error: ${message}`);
@@ -932,11 +1047,13 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       isTranslating ||
       isTranslatingAll
     ) return;
-    translationOperationLockRef.current = true;
-    try {
-      setIsTranslatingAll(true);
-      cancelTranslateAllRef.current = false;
-      const batchStartTime = Date.now();
+      translationOperationLockRef.current = true;
+      try {
+        setIsTranslatingAll(true);
+        cancelTranslateAllRef.current = false;
+        translationAbortRef.current = new AbortController();
+        const signal = translationAbortRef.current.signal;
+        const batchStartTime = Date.now();
       const failures: BatchPageFailure[] = [];
       let quotaFailureMessage: string | null = null;
 
@@ -969,8 +1086,10 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         const i = indicesToProcess[step];
         const pageUrl = pages[i];
 
-        // Skip if already translated (check cache) - only for full batch, not targeted retry
-        if (!isTargetedRetry && translatedImageCacheRef.current.has(pageUrl)) continue;
+        // Skip if the page already finished translating — tracked separately
+        // from the LRU-bounded image cache so evicted pages don't re-run
+        // (and burn API quota). Targeted retry ignores this.
+        if (!isTargetedRetry && completedPagesRef.current.has(pageUrl)) continue;
 
         const currentStep = step + 1;
         const elapsedSec = (Date.now() - batchStartTime) / 1000;
@@ -1038,13 +1157,19 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
               pageUrl,
               i,
               forceNsfw,
+              false,
+              signal,
             );
 
             if (!success) throw new Error("Translation failed");
           } catch (err: unknown) {
             lastTranslationError = err;
+            // User cancellation must not count as a page failure nor retry.
+            if (isUserCancelledError(err)) break;
             const errMsg = err instanceof Error ? err.message : String(err);
-            const retryDelay = getTranslationRetryDelay(err, retries) ?? (retries === 0 ? 3000 : 6000);
+            // null = non-retryable (auth/safety/bad request) — fall through to
+            // the guard below and stop instead of burning 3 attempts per page.
+            const retryDelay = getTranslationRetryDelay(err, retries);
             console.warn(
               `Error on page ${i + 1}, retry ${retries + 1}/3:`,
               errMsg,
@@ -1079,7 +1204,11 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           }
         }
 
-        if (!success && !cancelTranslateAllRef.current) {
+        if (
+          !success
+          && !isUserCancelledError(lastTranslationError)
+          && !cancelTranslateAllRef.current
+        ) {
           const failureItem: BatchPageFailure = {
             pageIndex: i,
             pageUrl,
@@ -1146,16 +1275,82 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
   }, [batchFailures]);
   const cancelTranslateAll = () => {
     cancelTranslateAllRef.current = true;
+    translationAbortRef.current?.abort();
     setTranslationResult("⏹ กำลังยกเลิก...");
   };
+
+  // Unmount: stop in-flight translation work immediately.
+  useEffect(() => () => translationAbortRef.current?.abort(), []);
 
   const invalidatePageTranslation = useCallback((pageUrl: string) => {
     bubbleCacheRef.current.delete(pageUrl);
     translatedImageCacheRef.current.delete(pageUrl);
+    completedPagesRef.current.delete(pageUrl);
     setTranslatedImages(new Map(translatedImageCacheRef.current));
     setCacheRevision((revision) => revision + 1);
     if (activePageRef.current === pageUrl) setActiveBubbles([]);
+    // The persisted blob for this page is orphaned — drop it immediately
+    // (it gets re-put on the next save after a fresh translation).
+    void deleteAsset(`translated_${encodeURIComponent(pageUrl)}`);
   }, []);
+
+  // Find & Replace support: rewrite bubble text in place so the bubble cache
+  // survives (invalidating it would wipe the translations being edited).
+  // Rendered images are re-rendered afterwards so they carry the new text.
+  const replaceBubbleText = useCallback(
+    (options: {
+      pageUrls: string[];
+      backgroundUrls?: Record<string, string>;
+      transform: (bubble: TranslatedBubble) => boolean;
+    }): number => {
+      const targets = options.pageUrls.filter(
+        (pageUrl) => bubbleCacheRef.current.has(pageUrl),
+      );
+      let count = 0;
+      for (const pageUrl of targets) {
+        for (const b of bubbleCacheRef.current.get(pageUrl) ?? []) {
+          if (options.transform(b)) count++;
+        }
+      }
+      if (count === 0) return 0;
+
+      for (const pageUrl of targets) {
+        markPageDirty(pageUrl);
+      }
+      setCacheRevision((revision) => revision + 1);
+
+      // Active page's bubbles share object refs with the cache; a shallow
+      // array copy re-runs b.render() on the live overlay with the new text.
+      const activeUrl = activePageRef.current;
+      if (activeUrl && targets.includes(activeUrl)) {
+        setActiveBubbles((prev) => (prev.length > 0 ? [...prev] : prev));
+      }
+
+      void (async () => {
+        const ordered = [...targets].sort((a, b) =>
+          a === activeUrl ? -1 : b === activeUrl ? 1 : 0,
+        );
+        for (const pageUrl of ordered) {
+          try {
+            await renderAndCacheTranslation(
+              bubbleCacheRef.current.get(pageUrl) ?? [],
+              options.backgroundUrls?.[pageUrl] ?? pageUrl,
+              pageUrl,
+              pagesRef.current.indexOf(pageUrl),
+            );
+          } catch {
+            // Drop the stale image; exports re-render it from the bubbles
+            // instead of shipping the outdated rendering.
+            translatedImageCacheRef.current.delete(pageUrl);
+            setTranslatedImages(new Map(translatedImageCacheRef.current));
+          }
+        }
+      })();
+
+      return count;
+    },
+    [renderAndCacheTranslation, markPageDirty],
+  );
 
   return {
     targetLang, setTargetLang,
@@ -1197,5 +1392,6 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     batchFailures,
     retryFailedPages,
     invalidatePageTranslation,
+    replaceBubbleText,
   };
 }

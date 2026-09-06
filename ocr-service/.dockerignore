@@ -1,0 +1,22 @@
+# Local caches and environments — must never enter the build context
+venv
+.venv
+.cache
+.pytest_cache
+__pycache__
+**/__pycache__
+
+# Model weights are downloaded/verified at runtime via models/manifest.json
+models
+
+# Local debug/test artifacts
+test_*.png
+debug_*.png
+benchmark-results
+
+# Secrets
+.env*
+
+# Repo tooling
+tests
+.git
