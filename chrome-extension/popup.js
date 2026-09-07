@@ -1,67 +1,44 @@
-// SuperK Manga Translator - Popup Logic
-
 document.addEventListener('DOMContentLoaded', async () => {
-  const apiKeyEl = document.getElementById('apiKey');
-  const targetLangEl = document.getElementById('targetLang');
-  const modelPreferenceEl = document.getElementById('modelPreference');
-  const cleanModeEl = document.getElementById('cleanMode');
-  const hfTokenEl = document.getElementById('hfToken');
-  const customInpaintUrlEl = document.getElementById('customInpaintUrl');
-  const btnSave = document.getElementById('btnSave');
-  const statusBadge = document.getElementById('statusBadge');
-
-  // Load saved settings
-  const settings = await chrome.storage.sync.get({
-    apiKey: '',
-    targetLang: 'Thai',
-    modelPreference: 'gemini-3.5-flash-lite',
-    cleanMode: 'auto',
-    hfToken: '',
-    customInpaintUrl: ''
-  });
-
-  apiKeyEl.value = settings.apiKey;
-  targetLangEl.value = settings.targetLang;
-  modelPreferenceEl.value = settings.modelPreference;
-  cleanModeEl.value = settings.cleanMode;
-  if (hfTokenEl) hfTokenEl.value = settings.hfToken || '';
-  if (customInpaintUrlEl) customInpaintUrlEl.value = settings.customInpaintUrl || '';
-
-  updateStatus(settings.apiKey);
-
-  // Save settings
-  btnSave.addEventListener('click', async () => {
-    const apiKey = apiKeyEl.value.trim();
-    const targetLang = targetLangEl.value;
-    const modelPreference = modelPreferenceEl.value;
-    const cleanMode = cleanModeEl.value;
-    const hfToken = hfTokenEl ? hfTokenEl.value.trim() : '';
-    const customInpaintUrl = customInpaintUrlEl ? customInpaintUrlEl.value.trim() : '';
-
-    await chrome.storage.sync.set({
-      apiKey,
-      targetLang,
-      modelPreference,
-      cleanMode,
-      hfToken,
-      customInpaintUrl
-    });
-
-    updateStatus(apiKey);
-
-    btnSave.innerHTML = '<span>✅ บันทึกเรียบร้อย!</span>';
-    setTimeout(() => {
-      btnSave.innerHTML = '<span>💾 บันทึกการตั้งค่า</span>';
-    }, 1500);
-  });
-
-  function updateStatus(apiKey) {
-    if (apiKey) {
-      statusBadge.className = 'status-badge status-ready';
-      statusBadge.innerHTML = '<span>✅ API Key พร้อมใช้งาน</span>';
-    } else {
-      statusBadge.className = 'status-badge status-warn';
-      statusBadge.innerHTML = '<span>⚠️ กรุณากรอก Gemini API Key</span>';
-    }
+  const ids = ['translationMode', 'serverUrl', 'apiKey', 'targetLang', 'modelPreference', 'cleanMode'];
+  const fields = Object.fromEntries(ids.map(id => [id, document.getElementById(id)]));
+  const status = document.getElementById('statusBadge');
+  const save = document.getElementById('btnSave');
+  function report(text, error = false) {
+    status.textContent = text;
+    status.className = error ? 'status-warn' : 'status-ready';
   }
+  function updateMode() {
+    const direct = fields.translationMode.value === 'direct';
+    document.getElementById('directSettings').hidden = !direct;
+    document.getElementById('serverSettings').hidden = direct;
+    fields.serverUrl.disabled = direct;
+    fields.serverUrl.required = !direct;
+    fields.apiKey.required = direct;
+    fields.apiKey.disabled = !direct;
+  }
+  try {
+    const settings = await chrome.storage.sync.get({ translationMode: 'server',
+      serverUrl: 'http://127.0.0.1:3000', apiKey: '', targetLang: 'Thai',
+      modelPreference: 'auto', cleanMode: 'solid' });
+    if (!['solid', 'stroke'].includes(settings.cleanMode)) settings.cleanMode = 'solid';
+    for (const id of ids) fields[id].value = settings[id];
+    updateMode();
+  } catch { report('โหลดการตั้งค่าไม่ได้ กรุณาปิดแล้วเปิดส่วนเสริมอีกครั้ง', true); }
+  fields.translationMode.addEventListener('change', updateMode);
+  document.getElementById('settingsForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    save.disabled = true;
+    try {
+      const settings = Object.fromEntries(ids.map(id => [id, fields[id].value.trim()]));
+      if (settings.translationMode === 'server') settings.serverUrl = SuperKServer.normalizeUrl(settings.serverUrl);
+      if (settings.translationMode === 'direct' && !settings.apiKey) throw new Error('กรุณากรอก Gemini API Key');
+      await chrome.storage.sync.set(settings);
+      report('บันทึกแล้ว คลิกขวาที่ภาพเพื่อเริ่มแปล');
+    } catch (error) { report(error.message || 'บันทึกไม่ได้ กรุณาลองใหม่', true); }
+    finally { save.disabled = false; }
+  });
+  document.getElementById('btnOpen').addEventListener('click', async () => {
+    try { await chrome.tabs.create({ url: SuperKServer.normalizeUrl(fields.serverUrl.value) }); }
+    catch (error) { report(error.message, true); }
+  });
 });

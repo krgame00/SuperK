@@ -1,110 +1,120 @@
-// SuperK Manga Translator - Background Service Worker
+if (typeof importScripts === "function") {
+  importScripts("server.js");
+}
 
-// Create context menu on extension install
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
-    id: "superk-translate-image",
-    title: "🪄 แปลภาพมังงะด้วย SuperK",
-    contexts: ["image"]
+chrome.runtime.onInstalled?.addListener?.(() => {
+  chrome.contextMenus?.create?.({
+    id: "superk-translate-image", title: "🪄 แปลภาพมังงะด้วย SuperK", contexts: ["image"]
   });
 });
 
-// Listen for context menu click
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId === "superk-translate-image" && info.srcUrl && tab?.id) {
-    const imageUrl = info.srcUrl;
-    
-    // Notify content script that translation started
-    try {
-      await chrome.tabs.sendMessage(tab.id, {
-        action: "TRANSLATION_START",
-        imageUrl: imageUrl
-      });
-    } catch (e) {
-      console.warn("Content script not ready, injecting...", e);
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ["content.js"]
-      });
-      await chrome.tabs.sendMessage(tab.id, {
-        action: "TRANSLATION_START",
-        imageUrl: imageUrl
-      });
+const pending = new Set();
+
+async function runTranslationFlow(tabId, frameId, imageUrl) {
+  if (tabId == null || !imageUrl) return;
+  const key = JSON.stringify([tabId, frameId, imageUrl]);
+  if (pending.has(key)) return;
+  pending.add(key);
+  const send = message => chrome.tabs.sendMessage(tabId, { ...message, imageUrl }, { frameId });
+  const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo().catch(() => {}), 20000);
+  try {
+    try { await send({ action: "TRANSLATION_START" }); }
+    catch {
+      const target = { tabId, frameIds: [frameId] };
+      await chrome.scripting.insertCSS({ target, files: ["content.css"] });
+      await chrome.scripting.executeScript({ target, files: ["content.js"] });
+      await send({ action: "TRANSLATION_START" });
+    }
+    const image = await fetchImageAsBase64(imageUrl);
+    const stored = await chrome.storage.sync.get({
+      translationMode: "server", serverUrl: "http://127.0.0.1:3000",
+      apiKey: "", targetLang: "Thai", sourceLang: "auto",
+      modelPreference: "auto", cleanMode: "inpainting"
+    });
+    const synced = await SuperKServer.fetchSettings(stored.serverUrl).catch(() => ({}));
+    const settings = {
+      ...stored,
+      ...synced,
+      apiKey: stored.apiKey || synced.geminiApiKey || "",
+      modelPreference: stored.modelPreference || synced.modelPreference || "auto",
+      cleanMode: stored.cleanMode || synced.cleanMode || "inpainting",
+    };
+
+    let cleanImageBase64 = null;
+    let cleanJobId = null;
+    if (settings.cleanMode === "inpainting") {
+      try {
+        const cleanRes = await SuperKServer.inpaintImage(image, settings);
+        cleanImageBase64 = cleanRes.cleanImageBase64;
+        cleanJobId = cleanRes.jobId;
+      } catch (cleanErr) {
+        throw new Error(`Inpainting ล้มเหลว: ${cleanErr.message || 'ไม่สามารถลบข้อความต้นฉบับได้'}`);
+      }
     }
 
-    // Get settings from Chrome storage
-    const settings = await chrome.storage.sync.get({
-      apiKey: "",
-      targetLang: "Thai",
-      sourceLang: "auto",
-      modelPreference: "gemini-3.5-flash-lite",
-      cleanMode: "auto",
-      hfToken: ""
+    const result = settings.translationMode === "direct"
+      ? await translateImageWithGemini(image.base64, settings, image.mimeType)
+      : await SuperKServer.translate(image, settings);
+    await send({
+      action: "TRANSLATION_SUCCESS",
+      bubbles: result.bubbles,
+      cleanMode: settings.cleanMode,
+      cleanImageBase64,
+      cleanJobId,
+      textStyle: settings.textStyle,
+      isOfflineFallback: synced.isOfflineFallback || false,
     });
+  } catch (error) {
+    await send({ action: "TRANSLATION_ERROR", error: error.message || "แปลภาพไม่สำเร็จ" })
+      .catch(() => console.warn("[SuperK] Tab unavailable:", error.message));
+  } finally {
+    clearInterval(keepAlive);
+    pending.delete(key);
+  }
+}
 
+chrome.contextMenus?.onClicked?.addListener?.(async (info, tab) => {
+  if (info.menuItemId !== "superk-translate-image" || !info.srcUrl || tab?.id == null) return;
+  await runTranslationFlow(tab.id, info.frameId ?? 0, info.srcUrl);
+});
+
+chrome.runtime.onMessage?.addListener?.(async (message, sender) => {
+  if (message.action === "RETRY_TRANSLATE" && sender.tab?.id && message.imageUrl) {
+    await runTranslationFlow(sender.tab.id, sender.frameId ?? 0, message.imageUrl);
+  } else if (message.action === "OPEN_EDITOR" && message.payload) {
     try {
-      // 1. Fetch image and convert to Base64
-      const base64Data = await fetchImageAsBase64(imageUrl);
-
-      // 2. Call Gemini API
-      const result = await translateImageWithGemini(base64Data, settings);
-
-      let inpaintedImage = null;
-
-      // 3. Optional Colab / Hugging Face LaMa AI Inpaint
-      if (settings.customInpaintUrl && result.bubbles?.length > 0) {
-        try {
-          console.log("[SuperK] Requesting Colab LaMa AI Server Inpaint:", settings.customInpaintUrl);
-          inpaintedImage = await callColabInpaintServer(base64Data, result.bubbles, settings.customInpaintUrl);
-        } catch (colabErr) {
-          console.warn("[SuperK] Colab LaMa Inpaint failed, falling back:", colabErr);
-        }
-      } else if (settings.cleanMode === "hf-lama" && settings.hfToken && result.bubbles?.length > 0) {
-        try {
-          console.log("[SuperK] Requesting Hugging Face LaMa AI Inpaint...");
-          inpaintedImage = await callHuggingFaceInpaint(base64Data, result.bubbles, settings.hfToken);
-        } catch (hfErr) {
-          console.warn("[SuperK] HF LaMa Inpaint failed, falling back to Auto Hybrid:", hfErr);
-        }
+      const stored = await chrome.storage.sync.get({ serverUrl: "http://127.0.0.1:3000" });
+      const appendUrl = `${stored.serverUrl}/api/extension/workspace/append`;
+      const res = await fetch(appendUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(message.payload),
+      });
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      const data = await res.json();
+      if (data.editUrl && chrome.tabs?.create) {
+        await chrome.tabs.create({ url: data.editUrl });
       }
-
-      // 4. Send results to content script to overlay
-      chrome.tabs.sendMessage(tab.id, {
-        action: "TRANSLATION_SUCCESS",
-        imageUrl: imageUrl,
-        bubbles: result.bubbles,
-        targetLang: settings.targetLang,
-        inpaintedImage: inpaintedImage
-      });
-
     } catch (err) {
-      console.error("SuperK Translation Failed:", err);
-      chrome.tabs.sendMessage(tab.id, {
-        action: "TRANSLATION_ERROR",
-        imageUrl: imageUrl,
-        error: err.message || "เกิดข้อผิดพลาดในการแปลภาพ"
-      });
+      console.error("[SuperK] Failed to open in editor:", err);
     }
   }
 });
 
-// Helper: Convert Image URL to Base64
 async function fetchImageAsBase64(url) {
-  const response = await fetch(url);
+  if (!/^(https?:|data:image\/)/i.test(url)) {
+    throw new Error("ภาพชนิดนี้ยังไม่รองรับ กรุณาบันทึกภาพแล้วเปิดในเว็บ SuperK");
+  }
+  const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
+  if (!response.ok) throw new Error("โหลดภาพไม่ได้ (HTTP " + response.status + ")");
   const blob = await response.blob();
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64String = reader.result.split(',')[1];
-      resolve(base64String);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
+  if (!blob.type.startsWith("image/")) throw new Error("ลิงก์นี้ไม่ได้ส่งไฟล์ภาพกลับมา");
+  if (blob.size > 20 * 1024 * 1024) throw new Error("ภาพใหญ่เกิน 20 MB กรุณาย่อภาพก่อน");
+  return { base64: await SuperKServer.blobToBase64(blob), mimeType: blob.type };
 }
 
 // Helper: Call Gemini API with model rotation & retries
-async function translateImageWithGemini(base64Data, settings) {
+async function translateImageWithGemini(base64Data, settings, mimeType) {
   const apiKey = settings.apiKey.trim();
   if (!apiKey) {
     throw new Error("กรุณาใส่ Gemini API Key ในเมนู Extension ก่อนใช้งานครับ!");
@@ -153,7 +163,7 @@ Notes:
               { text: prompt },
               {
                 inline_data: {
-                  mime_type: "image/jpeg",
+                  mime_type: mimeType,
                   data: base64Data
                 }
               }
@@ -177,6 +187,7 @@ Notes:
           "Content-Type": "application/json",
           "x-goog-api-key": apiKey
         },
+        signal: AbortSignal.timeout(90000),
         body: JSON.stringify(payload)
       });
 
@@ -195,7 +206,7 @@ Notes:
       if (!text) throw new Error("No output from Gemini API");
 
       const cleanJson = text.replace(/```json/gi, "").replace(/```/g, "").trim();
-      const parsed = JSON.parse(cleanJson);
+      const parsed = SuperKServer.parseResult(cleanJson);
 
       if (!parsed || !Array.isArray(parsed.bubbles)) {
         throw new Error("Invalid response format from AI");
@@ -211,82 +222,64 @@ Notes:
   throw new Error(`การแปลล้มเหลว: ${lastError}`);
 }
 
-// Helper: Call Hugging Face Inpaint API
-async function callHuggingFaceInpaint(base64Data, bubbles, hfToken) {
-  const token = hfToken.trim();
-  if (!token) return null;
+let lastPublishSyncTime = 0;
 
-  const response = await fetch("https://api-inference.huggingface.co/models/Sanster/lama-cleaner-lamacleaner-lama", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      inputs: `data:image/png;base64,${base64Data}`
-    })
-  });
+async function checkPublishedUpdates() {
+  try {
+    const stored = await chrome.storage.sync.get({ serverUrl: "http://127.0.0.1:3000" });
+    const since = lastPublishSyncTime || (Date.now() - 60000);
+    const url = `${stored.serverUrl}/api/extension/publish-back?since=${since}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (Array.isArray(data.updates) && data.updates.length > 0) {
+      for (const update of data.updates) {
+        if (!lastPublishSyncTime || update.updatedAt > lastPublishSyncTime) {
+          lastPublishSyncTime = update.updatedAt;
+        }
 
-  if (!response.ok) {
-    throw new Error(`HF API returned HTTP ${response.status}`);
-  }
+        // 1. Update cache in extension local storage
+        const storageKey = `superk_trans_${update.pageUrl}`;
+        await chrome.storage?.local?.set?.({
+          [storageKey]: {
+            imageUrl: update.pageUrl,
+            bubbles: update.bubbles,
+            cleanMode: "inpainting",
+            cleanImageBase64: update.cleanUrl || null,
+            textStyle: update.textStyle,
+            timestamp: update.updatedAt || Date.now(),
+          },
+        })?.catch?.(() => {});
 
-  const blob = await response.blob();
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-}
-
-// Helper: Call Colab LaMa Inpaint Server
-async function callColabInpaintServer(base64Data, bubbles, colabUrl) {
-  let url = colabUrl.trim();
-  if (!url) return null;
-  if (!url.endsWith('/inpaint')) {
-    url = url.replace(/\/+$/, '') + '/inpaint';
-  }
-
-  const formData = new FormData();
-  const imgBlob = base64ToBlob(base64Data, 'image/png');
-  formData.append('image', imgBlob, 'image.png');
-  const boxes = bubbles ? bubbles.map(b => b.box) : [];
-  formData.append('boxes', JSON.stringify(boxes));
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Bypass-Tunnel-Remainder': 'true',
-      'ngrok-skip-browser-warning': 'true'
-    },
-    body: formData
-  });
-
-  if (!res.ok) {
-    throw new Error(`Colab server returned HTTP ${res.status}`);
-  }
-
-  const blob = await res.blob();
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-}
-
-function base64ToBlob(base64, mimeType) {
-  const byteChars = atob(base64);
-  const byteArrays = [];
-  for (let offset = 0; offset < byteChars.length; offset += 512) {
-    const slice = byteChars.slice(offset, offset + 512);
-    const byteNumbers = new Array(slice.length);
-    for (let i = 0; i < slice.length; i++) {
-      byteNumbers[i] = slice.charCodeAt(i);
+        // 2. Broadcast to tabs
+        if (chrome.tabs?.query) {
+          const tabs = await chrome.tabs.query({});
+          for (const tab of tabs) {
+            if (tab.id != null) {
+              chrome.tabs.sendMessage(tab.id, {
+                action: "UPDATE_OVERLAY",
+                pageUrl: update.pageUrl,
+                originUrl: update.originUrl,
+                bubbles: update.bubbles,
+                textStyle: update.textStyle,
+                cleanUrl: update.cleanUrl,
+              }).catch(() => {});
+            }
+          }
+        }
+      }
+      return data.updates;
     }
-    const byteArray = new Uint8Array(byteNumbers);
-    byteArrays.push(byteArray);
+    return [];
+  } catch {
+    return [];
   }
-  return new Blob(byteArrays, { type: mimeType });
+}
+
+if (typeof setInterval === "function") {
+  setInterval(checkPublishedUpdates, 3000);
+}
+
+if (typeof globalThis !== "undefined") {
+  globalThis.checkPublishedUpdates = checkPublishedUpdates;
 }

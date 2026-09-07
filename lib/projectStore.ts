@@ -26,7 +26,7 @@ export interface StoredAsset {
 
 interface SessionData {
   id: string;
-  pages: { url: string; name: string }[];
+  pages: { url: string; name: string; originUrl?: string }[];
   currentPage: number;
   bubbleCache: [string, TranslatedBubble[]][];
   translatedAssetIds?: [string, string][];
@@ -40,10 +40,14 @@ export function dataUrlToBlob(dataUrl: string): Blob {
   // atob first — it exists in every browser and jsdom, and jsdom's Blob
   // implementation stringifies Buffer parts into "[object Object]".
   if (typeof atob === "function") {
-    const binary = atob(payload || "");
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-    return new Blob([bytes], { type: mime });
+    try {
+      const binary = atob(payload || "");
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+      return new Blob([bytes], { type: mime });
+    } catch {
+      // payload wasn't valid base64 or had padding issues
+    }
   }
   if (typeof Buffer !== "undefined" && typeof Buffer.from === "function") {
     const buffer = Buffer.from(payload || "", "base64");
@@ -174,7 +178,7 @@ export const clearAssets = async (): Promise<void> => {
 
 export const saveProjectSession = async (
   data: {
-    pages: { url: string; name: string }[];
+    pages: { url: string; name: string; originUrl?: string }[];
     currentPage: number;
     bubbleCache: Map<string, TranslatedBubble[]>;
     translatedImageCache: Map<string, string>;
@@ -297,7 +301,7 @@ export const purgeOrphanAssets = async (): Promise<number> => {
 };
 
 export const loadProjectSession = async (): Promise<{
-  pages: { url: string; name: string }[];
+  pages: { url: string; name: string; originUrl?: string }[];
   currentPage: number;
   bubbleCache: Map<string, TranslatedBubble[]>;
   translatedImageCache: Map<string, string>;
@@ -410,6 +414,98 @@ export const loadCleaningResultsMetadata = async (): Promise<
     console.warn("Failed to load cleaning result metadata", err);
     return new Map();
   }
+};
+
+export interface AppendPagePayload {
+  pageUrl: string;
+  name?: string;
+  cleanUrl?: string;
+  bubbles?: TranslatedBubble[];
+  originUrl?: string;
+}
+
+export const appendPageToProjectSession = async (
+  payload: AppendPagePayload,
+): Promise<{ pageIndex: number; totalPages: number }> => {
+  const db = await openDB();
+  const tx = db.transaction([STORE_NAME, ASSET_STORE_NAME], "readwrite");
+  const sessionStore = tx.objectStore(STORE_NAME);
+  const assetStore = tx.objectStore(ASSET_STORE_NAME);
+
+  const rawSession = await requestResult<SessionData | undefined>(
+    sessionStore.get("latest_session"),
+  );
+
+  let pages: { url: string; name: string; originUrl?: string }[] = [];
+  let bubbleCacheMap = new Map<string, TranslatedBubble[]>();
+  let translatedAssetIds: [string, string][] = [];
+
+  if (rawSession && Array.isArray(rawSession.pages)) {
+    pages = [...rawSession.pages];
+    if (Array.isArray(rawSession.bubbleCache)) {
+      bubbleCacheMap = new Map(rawSession.bubbleCache);
+    }
+    if (Array.isArray(rawSession.translatedAssetIds)) {
+      translatedAssetIds = [...rawSession.translatedAssetIds];
+    }
+  }
+
+  let pageIndex = pages.findIndex((p) => p.url === payload.pageUrl);
+  if (pageIndex === -1) {
+    pageIndex = pages.length;
+    pages.push({
+      url: payload.pageUrl,
+      name: payload.name || `Page ${pages.length + 1}`,
+      originUrl: payload.originUrl,
+    });
+  } else if (payload.originUrl) {
+    pages[pageIndex].originUrl = payload.originUrl;
+  }
+
+  if (Array.isArray(payload.bubbles)) {
+    const cleanBubbles = payload.bubbles.map((b) => {
+      const copy = { ...b };
+      delete copy.render;
+      return copy as TranslatedBubble;
+    });
+    bubbleCacheMap.set(payload.pageUrl, cleanBubbles);
+  }
+
+  if (payload.cleanUrl && payload.cleanUrl.startsWith("data:")) {
+    const assetId = `translated_${encodeURIComponent(payload.pageUrl)}`;
+    const blob = dataUrlToBlob(payload.cleanUrl);
+    assetStore.put({
+      id: assetId,
+      mimeType: blob.type || "image/png",
+      blob,
+      createdAt: Date.now(),
+    });
+    const existingAssetIdx = translatedAssetIds.findIndex(
+      ([url]) => url === payload.pageUrl,
+    );
+    if (existingAssetIdx >= 0) {
+      translatedAssetIds[existingAssetIdx] = [payload.pageUrl, assetId];
+    } else {
+      translatedAssetIds.push([payload.pageUrl, assetId]);
+    }
+  }
+
+  const updatedSession: SessionData = {
+    id: "latest_session",
+    pages,
+    currentPage: pageIndex,
+    bubbleCache: Array.from(bubbleCacheMap.entries()),
+    translatedAssetIds,
+    updatedAt: Date.now(),
+  };
+
+  sessionStore.put(updatedSession);
+  await transactionDone(tx);
+
+  return {
+    pageIndex,
+    totalPages: pages.length,
+  };
 };
 
 const transactionDone = (tx: IDBTransaction): Promise<void> =>

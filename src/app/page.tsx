@@ -47,7 +47,7 @@ import { KeyboardShortcutsDialog } from "@/components/editing/KeyboardShortcutsD
 
 export default function WorkspacePage() {
 
-  const [pages, setPages] = useState<{url: string, name: string}[]>([]);
+  const [pages, setPages] = useState<{url: string, name: string, originUrl?: string}[]>([]);
   const [currentPage, setCurrentPage] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const [workspaceLayer, setWorkspaceLayer] =
@@ -381,7 +381,7 @@ export default function WorkspacePage() {
     return result;
   };
 
-  const [savedSessionData, setSavedSessionData] = useState<{ pages: { url: string, name: string }[], currentPage: number } | null>(null);
+  const [savedSessionData, setSavedSessionData] = useState<{ pages: { url: string, name: string, originUrl?: string }[], currentPage: number } | null>(null);
 
   // Check for saved IndexedDB session on mount
   useEffect(() => {
@@ -390,6 +390,46 @@ export default function WorkspacePage() {
         setSavedSessionData({ pages: saved.pages, currentPage: saved.currentPage });
       }
     });
+  }, [restoreSavedSession]);
+
+  // Check for extension workspace handoff parameter (?handoff=hnd_...)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const handoffId = params.get("handoff");
+    if (!handoffId) return;
+
+    // Clean URL query without page reload
+    window.history.replaceState({}, document.title, window.location.pathname);
+
+    (async () => {
+      try {
+        const res = await fetch(`/api/extension/workspace/append?id=${encodeURIComponent(handoffId)}`);
+        if (!res.ok) return;
+        const handoffData = await res.json();
+
+        const { appendPageToProjectSession } = await import("@/lib/projectStore");
+        const appendRes = await appendPageToProjectSession({
+          pageUrl: handoffData.pageUrl,
+          name: handoffData.name || `Extension Page`,
+          cleanUrl: handoffData.cleanUrl,
+          bubbles: handoffData.bubbles,
+          originUrl: handoffData.originUrl,
+        });
+
+        const restored = await restoreSavedSession();
+        if (restored && restored.pages.length > 0) {
+          setPages(restored.pages);
+          setCurrentPage(appendRes.pageIndex);
+          setSavedSessionData(null);
+        }
+        import("react-hot-toast").then((m) =>
+          m.default("✨ นำเข้าภาพจาก Chrome Extension เรียบร้อยแล้ว!", { duration: 2500 })
+        );
+      } catch (err) {
+        console.error("Failed to process extension handoff:", err);
+      }
+    })();
   }, [restoreSavedSession]);
 
   // Keyboard shortcuts refs (to access latest state from event listener closure)
@@ -546,6 +586,42 @@ export default function WorkspacePage() {
         m.default("ไม่พบข้อความที่ตรงกับคำค้นหา", { duration: 2000 });
       }
     });
+  };
+
+  const [isPublishingBack, setIsPublishingBack] = useState(false);
+
+  const handlePublishBackToReadingView = async () => {
+    const page = pages[currentPage];
+    if (!page || !page.originUrl) return;
+
+    setIsPublishingBack(true);
+    try {
+      const cleanUrl = cleaningResultsByPage.get(page.url)?.cleanUrl || translatedImages.get(page.url);
+      const res = await fetch("/api/extension/publish-back", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pageUrl: page.url,
+          originUrl: page.originUrl,
+          bubbles: activeBubbles,
+          textStyle,
+          cleanUrl,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Server returned status ${res.status}`);
+      }
+
+      const toast = (await import("react-hot-toast")).default;
+      toast.success("🚀 ส่งคำแปลที่ปรับแต่งกลับไปยังหน้าอ่านแล้ว!");
+    } catch (err) {
+      console.error("Failed to publish back to reading view:", err);
+      const toast = (await import("react-hot-toast")).default;
+      toast.error("ส่งกลับหน้าอ่านไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
+    } finally {
+      setIsPublishingBack(false);
+    }
   };
 
   const handleDownloadAll = async (format: "zip" | "cbz" | "pdf" | "strip" = "zip") => {
@@ -1302,6 +1378,24 @@ export default function WorkspacePage() {
                     }
                   }}
                 />
+
+                {/* Send Back to Reading View (if page came from extension) */}
+                {pages[currentPage]?.originUrl && (
+                  <button
+                    type="button"
+                    onClick={() => void handlePublishBackToReadingView()}
+                    disabled={isPublishingBack}
+                    aria-label="ส่งคำแปลกลับไปยังหน้าอ่านบนเว็บ"
+                    className="h-8.5 px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm disabled:opacity-50 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+                    title={`ส่งคำแปลกลับไปยัง ${pages[currentPage]?.originUrl}`}
+                  >
+                    {isPublishingBack ? (
+                      <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <span>🚀 ส่งกลับหน้าอ่าน</span>
+                    )}
+                  </button>
+                )}
               </div>
             </>
           )}
@@ -1309,6 +1403,22 @@ export default function WorkspacePage() {
 
         {/* Mobile Header Controls */}
         <div className="flex md:hidden items-center gap-2">
+          {pages[currentPage]?.originUrl && (
+            <button
+              type="button"
+              onClick={() => void handlePublishBackToReadingView()}
+              disabled={isPublishingBack}
+              aria-label="ส่งคำแปลกลับไปยังหน้าอ่านบนเว็บ"
+              className="h-8.5 px-2.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm disabled:opacity-50 cursor-pointer"
+              title="ส่งกลับหน้าอ่าน"
+            >
+              {isPublishingBack ? (
+                <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <span>🚀 ส่งกลับ</span>
+              )}
+            </button>
+          )}
           {pages.length > 0 && (
             <WorkspacePrimaryAction
               state={primaryAction}

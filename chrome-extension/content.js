@@ -1,3 +1,7 @@
+(() => {
+if (globalThis.__superKLoaded) return;
+globalThis.__superKLoaded = true;
+
 // SuperK Manga Translator - Content Script
 
 let activeOverlays = new Map(); // Key: imgUrl or imgElement
@@ -6,9 +10,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "TRANSLATION_START") {
     handleTranslationStart(message.imageUrl);
   } else if (message.action === "TRANSLATION_SUCCESS") {
-    handleTranslationSuccess(message.imageUrl, message.bubbles);
+    handleTranslationSuccess(
+      message.imageUrl,
+      message.bubbles,
+      message.cleanMode,
+      message.cleanImageBase64,
+      message.textStyle
+    );
   } else if (message.action === "TRANSLATION_ERROR") {
     handleTranslationError(message.imageUrl, message.error);
+  } else if (message.action === "UPDATE_OVERLAY" && message.pageUrl) {
+    handlePublishedUpdate(
+      message.pageUrl,
+      message.bubbles,
+      message.cleanUrl,
+      message.textStyle
+    );
   }
 });
 
@@ -47,7 +64,7 @@ function handleTranslationStart(imageUrl) {
 }
 
 // 2. Handle Translation Success (Render Text Overlay)
-function handleTranslationSuccess(imageUrl, bubbles) {
+function handleTranslationSuccess(imageUrl, bubbles, cleanMode, cleanImageBase64, textStyle) {
   const img = findImageElement(imageUrl);
   if (!img) return;
 
@@ -79,12 +96,13 @@ function handleTranslationSuccess(imageUrl, bubbles) {
     height: ${imgRect.height}px;
     pointer-events: none;
     z-index: 99999;
-    font-family: 'Itim', 'FC Subject', sans-serif;
+    font-family: ${textStyle?.fontFamily || "'Itim', 'FC Subject', sans-serif"};
     overflow: hidden;
   `;
 
-  // Log coordinates for debugging
-  console.log('[SuperK] Image rect:', imgRect, 'Bubbles:', bubbles);
+  const layer = document.createElement('div');
+  layer.style.cssText = `position:absolute;top:0;left:0;width:${imgRect.width}px;height:${imgRect.height}px;transform-origin:top left;pointer-events:none`;
+  overlayContainer.appendChild(layer);
 
   // Calculate actual rendered image dimensions in case of object-fit: contain
   const objectFit = window.getComputedStyle(img).objectFit;
@@ -107,64 +125,159 @@ function handleTranslationSuccess(imageUrl, bubbles) {
     }
   }
 
-  // 1. Create clean mask canvas to ERASE original text completely
-  const cleanCanvas = document.createElement('canvas');
-  cleanCanvas.className = 'superk-clean-canvas';
-  cleanCanvas.width = Math.round(imgRect.width);
-  cleanCanvas.height = Math.round(imgRect.height);
-  cleanCanvas.style.cssText = `
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    pointer-events: none;
-    z-index: 1;
-  `;
-  const cctx = cleanCanvas.getContext('2d');
+  // 1. Inpainting clean background or legacy white mask canvas
+  if (cleanImageBase64) {
+    const cleanImg = document.createElement('img');
+    cleanImg.className = 'superk-clean-image';
+    cleanImg.src = cleanImageBase64.startsWith('data:')
+      ? cleanImageBase64
+      : `data:image/png;base64,${cleanImageBase64}`;
+    cleanImg.style.cssText = `
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: ${objectFit || 'fill'};
+      pointer-events: none;
+      z-index: 1;
+    `;
+    layer.appendChild(cleanImg);
+  } else if (cleanMode === 'solid') {
+    const cleanCanvas = document.createElement('canvas');
+    cleanCanvas.className = 'superk-clean-canvas';
+    cleanCanvas.width = Math.round(imgRect.width);
+    cleanCanvas.height = Math.round(imgRect.height);
+    cleanCanvas.style.cssText = `
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 1;
+    `;
+    const cctx = cleanCanvas.getContext('2d');
 
-  // Fill canvas with white masks over original text areas (tight fit inside speech bubbles)
-  bubbles.forEach(b => {
-    if (!b.box || b.box.length !== 4) return;
-    let rawYmin = Math.min(b.box[0], b.box[2]);
-    let rawXmin = Math.min(b.box[1], b.box[3]);
-    let rawYmax = Math.max(b.box[0], b.box[2]);
-    let rawXmax = Math.max(b.box[1], b.box[3]);
+    bubbles.forEach(b => {
+      if (!b.box || b.box.length !== 4) return;
+      let rawYmin = Math.min(b.box[0], b.box[2]);
+      let rawXmin = Math.min(b.box[1], b.box[3]);
+      let rawYmax = Math.max(b.box[0], b.box[2]);
+      let rawXmax = Math.max(b.box[1], b.box[3]);
 
-    // Convert 0-1000 to true pixel coordinates accounting for object-fit
-    const x = offsetX + (rawXmin / 1000) * renderW;
-    const y = offsetY + (rawYmin / 1000) * renderH;
-    const w = ((rawXmax - rawXmin) / 1000) * renderW;
-    const h = ((rawYmax - rawYmin) / 1000) * renderH;
+      const x = offsetX + (rawXmin / 1000) * renderW;
+      const y = offsetY + (rawYmin / 1000) * renderH;
+      const w = ((rawXmax - rawXmin) / 1000) * renderW;
+      const h = ((rawYmax - rawYmin) / 1000) * renderH;
 
-    // Shrink mask slightly to stay inside bubble border
-    const shrink = 0.95;
-    const mx = x + w * (1 - shrink) / 2;
-    const my = y + h * (1 - shrink) / 2;
-    const mw = w * shrink;
-    const mh = h * shrink;
+      const shrink = 0.95;
+      const mx = x + w * (1 - shrink) / 2;
+      const my = y + h * (1 - shrink) / 2;
+      const mw = w * shrink;
+      const mh = h * shrink;
 
-    // Draw rounded rectangle for text removal
-    const radius = Math.min(8, mw / 4, mh / 4);
-    cctx.fillStyle = '#ffffff';
-    cctx.beginPath();
-    cctx.moveTo(mx + radius, my);
-    cctx.lineTo(mx + mw - radius, my);
-    cctx.quadraticCurveTo(mx + mw, my, mx + mw, my + radius);
-    cctx.lineTo(mx + mw, my + mh - radius);
-    cctx.quadraticCurveTo(mx + mw, my + mh, mx + mw - radius, my + mh);
-    cctx.lineTo(mx + radius, my + mh);
-    cctx.quadraticCurveTo(mx, my + mh, mx, my + mh - radius);
-    cctx.lineTo(mx, my + radius);
-    cctx.quadraticCurveTo(mx, my, mx + radius, my);
-    cctx.closePath();
-    cctx.fill();
-  });
+      const radius = Math.min(8, mw / 4, mh / 4);
+      cctx.fillStyle = '#ffffff';
+      cctx.beginPath();
+      cctx.moveTo(mx + radius, my);
+      cctx.lineTo(mx + mw - radius, my);
+      cctx.quadraticCurveTo(mx + mw, my, mx + mw, my + radius);
+      cctx.lineTo(mx + mw, my + mh - radius);
+      cctx.quadraticCurveTo(mx + mw, my + mh, mx + mw - radius, my + mh);
+      cctx.lineTo(mx + radius, my + mh);
+      cctx.quadraticCurveTo(mx, my + mh, mx, my + mh - radius);
+      cctx.lineTo(mx, my + radius);
+      cctx.quadraticCurveTo(mx, my, mx + radius, my);
+      cctx.closePath();
+      cctx.fill();
+    });
 
-  overlayContainer.appendChild(cleanCanvas);
+    layer.appendChild(cleanCanvas);
+  }
+
+function wrapTextAdaptive(text, safeW, safeH, fs, fontFamily, isOval) {
+  let words = [];
+  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+    try {
+      const segmenter = new Intl.Segmenter('th', { granularity: 'word' });
+      words = Array.from(segmenter.segment(text)).map(s => s.segment);
+    } catch {
+      words = text.split(/\s+/);
+    }
+  } else {
+    words = text.split(/\s+/);
+  }
+
+  const tempCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+  const tempCtx = tempCanvas ? tempCanvas.getContext('2d') : null;
+  const measure = (str) => {
+    if (tempCtx && typeof tempCtx.measureText === 'function') {
+      tempCtx.font = `bold ${fs}px ${fontFamily}`;
+      const m = tempCtx.measureText(str);
+      if (m && typeof m.width === 'number') return m.width;
+    }
+    return str.length * (fs * 0.6);
+  };
+
+  const lineH = fs * 1.30;
+  const estLines = Math.max(1, Math.round(safeH / lineH));
+  const getLineMaxW = (lineIdx, totalLines) => {
+    if (!isOval || totalLines <= 1) return safeW;
+    const v = ((lineIdx + 0.5) / totalLines - 0.5) * 2;
+    const chord = Math.sqrt(Math.max(0.2, 1 - v * v));
+    return safeW * chord * 0.95;
+  };
+
+  let best = [text];
+  for (let tryLines = Math.max(1, estLines - 1); tryLines <= estLines + 2; tryLines++) {
+    const lines = [];
+    let cur = '';
+    let lIdx = 0;
+    for (const w of words) {
+      const allowed = getLineMaxW(lIdx, tryLines);
+      const test = cur ? (cur + w) : w;
+      if (measure(test) > allowed && cur) {
+        lines.push(cur);
+        cur = w;
+        lIdx++;
+      } else {
+        cur = test;
+      }
+    }
+    if (cur) lines.push(cur);
+    best = lines;
+    if (lines.length * lineH <= safeH) break;
+  }
+  return best;
+}
+
+function fitTextInBubble(text, width, height, fontFamily, fontSizeMultiplier = 1.0) {
+  const minFs = 12;
+  const maxFs = Math.max(minFs, Math.round(Math.min(height * 0.5, width * 0.5, 48) * fontSizeMultiplier));
+  let best = { fontSize: minFs, lines: [text], lineHeight: minFs * 1.3 };
+
+  for (let fs = maxFs; fs >= minFs; fs--) {
+    const lines = wrapTextAdaptive(text, width * 0.88, height * 0.88, fs, fontFamily, true);
+    const lineH = fs * 1.30;
+    const totalH = lines.length * lineH;
+    if (totalH <= height * 0.90) {
+      return { fontSize: fs, lines, lineHeight: lineH };
+    }
+    if (fs === minFs) {
+      best = { fontSize: fs, lines, lineHeight: lineH };
+    }
+  }
+  return best;
+}
+
+  const textColor = textStyle?.textColor || '#000000';
+  const textOutline = textStyle?.textOutline || '#FFFFFF';
+  const fontFamily = textStyle?.fontFamily || "'Itim', 'FC Subject', sans-serif";
+  const fontSizeMultiplier = textStyle?.fontSizeMultiplier || 1.0;
 
   // 2. Render Thai text bubbles on top of the clean canvas
-  bubbles.forEach((b, idx) => {
+  bubbles.forEach((b) => {
     if (!b.t || !b.box || b.box.length !== 4) return;
     
     let rawYmin = Math.min(b.box[0], b.box[2]);
@@ -177,58 +290,49 @@ function handleTranslationSuccess(imageUrl, bubbles) {
     const origX = offsetX + (rawXmin / 1000) * renderW;
     const origY = offsetY + (rawYmin / 1000) * renderH;
 
-    // Just shrink inward slightly to stay inside the speech bubble
-    const shrink = 0.88;
-    let widthPx = origW * shrink;
-    let heightPx = origH * shrink;
-    const topPx = origY + origH * (1 - shrink) / 2;
-    const leftPx = origX + origW * (1 - shrink) / 2;
-
-    // Clamp to stay within image bounds
-    const clampedLeft = Math.max(2, Math.min(leftPx, imgRect.width - widthPx - 2));
-    const clampedTop = Math.max(2, Math.min(topPx, imgRect.height - heightPx - 2));
+    const fit = fitTextInBubble(b.t, origW, origH, fontFamily, fontSizeMultiplier);
 
     const bubbleEl = document.createElement('div');
     bubbleEl.className = 'superk-text-bubble';
     bubbleEl.style.cssText = `
       position: absolute;
-      top: ${clampedTop.toFixed(0)}px;
-      left: ${clampedLeft.toFixed(0)}px;
-      width: ${widthPx.toFixed(0)}px;
-      min-height: ${heightPx.toFixed(0)}px;
+      top: ${origY.toFixed(0)}px;
+      left: ${origX.toFixed(0)}px;
+      width: ${origW.toFixed(0)}px;
+      min-height: ${origH.toFixed(0)}px;
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
       text-align: center;
       pointer-events: auto;
       cursor: move;
-      color: #000000;
-      font-weight: 800;
-      font-size: clamp(12px, ${Math.max(13, renderW * 0.016)}px, 22px);
-      line-height: 1.35;
+      color: ${textColor};
+      font-family: ${fontFamily};
+      font-weight: bold;
+      font-size: ${fit.fontSize}px;
+      line-height: ${fit.lineHeight}px;
       padding: 0;
       background: transparent;
       border: none;
       box-shadow: none;
       text-shadow: 
-        -2px -2px 0 #fff, 2px -2px 0 #fff, 
-        -2px 2px 0 #fff, 2px 2px 0 #fff,
-        0px 2px 0 #fff, 0px -2px 0 #fff,
-        2px 0px 0 #fff, -2px 0px 0 #fff,
-        -1px -1px 0 #fff, 1px -1px 0 #fff, 
-        -1px 1px 0 #fff, 1px 1px 0 #fff;
+        -1.5px -1.5px 0 ${textOutline}, 1.5px -1.5px 0 ${textOutline}, 
+        -1.5px 1.5px 0 ${textOutline}, 1.5px 1.5px 0 ${textOutline},
+        0px 1.5px 0 ${textOutline}, 0px -1.5px 0 ${textOutline},
+        1.5px 0px 0 ${textOutline}, -1.5px 0px 0 ${textOutline};
       user-select: text;
       word-break: break-word;
       z-index: 2;
     `;
 
-    bubbleEl.innerText = b.t;
+    bubbleEl.textContent = fit.lines.join('\n');
     bubbleEl.contentEditable = "true";
 
     // Enable simple drag to reposition
     makeDraggable(bubbleEl);
 
-    overlayContainer.appendChild(bubbleEl);
+    layer.appendChild(bubbleEl);
   });
 
   // Floating Control Bar
@@ -236,6 +340,9 @@ function handleTranslationSuccess(imageUrl, bubbles) {
   controlBar.className = 'superk-control-bar';
   controlBar.innerHTML = `
     <button class="superk-ctrl-btn" data-action="toggle" title="สลับดูภาพต้นฉบับ">✨ ดูต้นฉบับ</button>
+    <button class="superk-ctrl-btn" data-action="open-editor" title="เปิดแก้ไขใน SuperK Editor">✏️ เปิดใน SuperK</button>
+    <button class="superk-ctrl-btn" data-action="retranslate" title="แปลภาพนี้ใหม่">🔄 แปลใหม่</button>
+    <button class="superk-ctrl-btn" data-action="delete" title="ลบคำแปลออกจากเครื่อง">🗑️ ลบคำแปล</button>
     <button class="superk-ctrl-btn" data-action="close" title="ปิด overlay">✕</button>
   `;
 
@@ -245,18 +352,95 @@ function handleTranslationSuccess(imageUrl, bubbles) {
     e.stopPropagation();
     showingOriginal = !showingOriginal;
     const btn = controlBar.querySelector('[data-action="toggle"]');
+    layer.style.visibility = showingOriginal ? 'hidden' : 'visible';
     if (showingOriginal) {
-      overlayContainer.querySelectorAll('.superk-text-bubble').forEach(el => el.style.display = 'none');
       btn.innerHTML = '👁️ ดูคำแปล';
     } else {
-      overlayContainer.querySelectorAll('.superk-text-bubble').forEach(el => el.style.display = 'flex');
       btn.innerHTML = '✨ ดูต้นฉบับ';
     }
   };
 
+  const openEditorBtn = controlBar.querySelector('[data-action="open-editor"]');
+  if (openEditorBtn) {
+    openEditorBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (typeof chrome !== 'undefined' && chrome?.runtime?.sendMessage) {
+        chrome.runtime.sendMessage({
+          action: 'OPEN_EDITOR',
+          payload: {
+            pageUrl: imageUrl,
+            cleanUrl: cleanImageBase64,
+            bubbles,
+            originUrl: window.location.href,
+          }
+        });
+      }
+    };
+  }
+
+  const storageKey = `superk_trans_${imageUrl}`;
+  controlBar.querySelector('[data-action="retranslate"]').onclick = (e) => {
+    e.stopPropagation();
+    if (typeof chrome !== 'undefined' && chrome?.runtime?.sendMessage) {
+      chrome.runtime.sendMessage({ action: 'RETRY_TRANSLATE', imageUrl });
+    }
+  };
+
+  controlBar.querySelector('[data-action="delete"]').onclick = (e) => {
+    e.stopPropagation();
+    if (typeof chrome !== 'undefined' && chrome?.storage?.local?.remove) {
+      chrome.storage.local.remove(storageKey).catch(() => {});
+    }
+    cleanup();
+  };
+
+  // Persist translation overlay in extension local storage
+  if (typeof chrome !== 'undefined' && chrome?.storage?.local?.set) {
+    chrome.storage.local.set({
+      [storageKey]: {
+        imageUrl,
+        bubbles,
+        cleanMode,
+        cleanImageBase64,
+        textStyle,
+        timestamp: Date.now(),
+      },
+    }).catch(() => {});
+  }
+
+  const baseW = imgRect.width;
+  const baseH = imgRect.height;
+  const updatePosition = () => {
+    const newRect = img.getBoundingClientRect();
+    const win = typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : null);
+    const newScrollX = win ? (win.scrollX || win.pageXOffset || 0) : 0;
+    const newScrollY = win ? (win.scrollY || win.pageYOffset || 0) : 0;
+    overlayContainer.style.top = `${newRect.top + newScrollY}px`;
+    overlayContainer.style.left = `${newRect.left + newScrollX}px`;
+    overlayContainer.style.width = `${newRect.width}px`;
+    overlayContainer.style.height = `${newRect.height}px`;
+
+    if (baseW > 0 && baseH > 0) {
+      const scaleX = newRect.width / baseW;
+      const scaleY = newRect.height / baseH;
+      layer.style.transform = `scale(${scaleX}, ${scaleY})`;
+    }
+  };
+
+  const observer = new MutationObserver(updatePosition);
+  observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+
+  const cleanup = () => {
+    window.removeEventListener('resize', updatePosition);
+    observer.disconnect();
+    overlayContainer.remove();
+    activeOverlays.delete(imageUrl);
+  };
+  activeOverlays.set(imageUrl, cleanup);
+
   controlBar.querySelector('[data-action="close"]').onclick = (e) => {
     e.stopPropagation();
-    overlayContainer.remove();
+    cleanup();
   };
 
   overlayContainer.appendChild(controlBar);
@@ -264,25 +448,11 @@ function handleTranslationSuccess(imageUrl, bubbles) {
   // Append to document.body (not the image wrapper) for reliable positioning
   document.body.appendChild(overlayContainer);
 
-  // Update position on scroll/resize so overlay stays on top of image
-  const updatePosition = () => {
-    const newRect = img.getBoundingClientRect();
-    const newScrollX = window.scrollX || window.pageXOffset;
-    const newScrollY = window.scrollY || window.pageYOffset;
-    overlayContainer.style.top = `${newRect.top + newScrollY}px`;
-    overlayContainer.style.left = `${newRect.left + newScrollX}px`;
-    overlayContainer.style.width = `${newRect.width}px`;
-    overlayContainer.style.height = `${newRect.height}px`;
-  };
-
   window.addEventListener('resize', updatePosition);
-  // Use IntersectionObserver to detect if image moves  
-  const observer = new MutationObserver(updatePosition);
-  observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+
   // Clean up after 2 minutes to prevent memory leaks
   setTimeout(() => {
-    window.removeEventListener('resize', updatePosition);
-    observer.disconnect();
+    cleanup();
   }, 120000);
 
   // Success Toast
@@ -298,17 +468,59 @@ function handleTranslationError(imageUrl, errorMsg) {
   showErrorBadge(img, errorMsg);
 }
 
+// 4. Handle Published Update from SuperK Editor
+function handlePublishedUpdate(pageUrl, bubbles, cleanUrl, textStyle) {
+  const img = findImageElement(pageUrl);
+  if (!img) return;
+
+  const cleanup = activeOverlays.get(pageUrl);
+  if (cleanup) cleanup();
+
+  handleTranslationSuccess(
+    pageUrl,
+    bubbles,
+    "inpainting",
+    cleanUrl || null,
+    textStyle
+  );
+
+  showToast(img, "✨ อัปเดตคำแปลจาก SuperK เรียบร้อยแล้ว!");
+}
+
 // Helper: Show Error Badge
 function showErrorBadge(img, message) {
   const badge = document.createElement('div');
   badge.className = 'superk-status-badge superk-error';
   badge.id = `superk-badge-${hashCode(img.src)}`;
-  badge.innerHTML = `
-    <span>❌ ${message}</span>
-    <button onclick="this.parentElement.remove()">✕</button>
-  `;
+
+  const text = document.createElement('span');
+  text.textContent = `❌ ${message}`;
+
+  const actions = document.createElement('div');
+  actions.className = 'superk-error-actions';
+  actions.style.cssText = 'display:inline-flex;gap:6px;align-items:center;margin-left:8px;';
+
+  const retryBtn = document.createElement('button');
+  retryBtn.className = 'superk-retry-btn';
+  retryBtn.textContent = '🔄 ลองใหม่';
+  retryBtn.setAttribute('data-action', 'retry');
+  retryBtn.style.cssText = 'background:#f59e0b;color:#fff;border:none;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:12px;';
+  retryBtn.addEventListener('click', () => {
+    badge.remove();
+    if (typeof chrome !== 'undefined' && chrome?.runtime?.sendMessage) {
+      chrome.runtime.sendMessage({ action: 'RETRY_TRANSLATE', imageUrl: img.src });
+    }
+  });
+
+  const close = document.createElement('button');
+  close.textContent = '✕';
+  close.setAttribute('aria-label', 'ปิดข้อความแจ้งเตือน');
+  close.addEventListener('click', () => badge.remove());
+
+  actions.append(retryBtn, close);
+  badge.append(text, actions);
   positionBadgeOverImage(img, badge);
-  setTimeout(() => badge.remove(), 6000);
+  setTimeout(() => badge.remove(), 10000);
 }
 
 // Helper: Show Toast
@@ -376,3 +588,35 @@ function hashCode(str) {
   }
   return Math.abs(hash);
 }
+
+function restoreSavedTranslations() {
+  if (typeof chrome === 'undefined' || !chrome?.storage?.local?.get) return;
+  const images = Array.from(document.querySelectorAll('img'));
+  images.forEach(img => {
+    const src = img.src || img.currentSrc;
+    if (!src) return;
+    const key = `superk_trans_${src}`;
+    chrome.storage.local.get(key).then(res => {
+      const saved = res?.[key];
+      if (saved && saved.bubbles && !activeOverlays.has(src)) {
+        handleTranslationSuccess(
+          saved.imageUrl,
+          saved.bubbles,
+          saved.cleanMode,
+          saved.cleanImageBase64,
+          saved.textStyle
+        );
+      }
+    }).catch(() => {});
+  });
+}
+
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => setTimeout(restoreSavedTranslations, 300));
+  } else {
+    setTimeout(restoreSavedTranslations, 100);
+  }
+}
+
+})();

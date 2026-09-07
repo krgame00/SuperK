@@ -1,245 +1,77 @@
 <!DOCTYPE html>
 <html lang="th">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SuperK Manga Translator Settings</title>
-  <style>
-    :root {
-      --bg: #0f172a;
-      --card: #1e293b;
-      --primary: #38bdf8;
-      --primary-hover: #0284c7;
-      --text: #f8fafc;
-      --muted: #94a3b8;
-      --border: #334155;
-      --success: #10b981;
-      --danger: #ef4444;
-    }
-
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-
-    body {
-      width: 320px;
-      padding: 16px;
-      background: var(--bg);
-      color: var(--text);
-      font-family: system-ui, -apple-system, sans-serif;
-      font-size: 13px;
-    }
-
-    .header {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 16px;
-      padding-bottom: 12px;
-      border-bottom: 1px solid var(--border);
-    }
-
-    .logo {
-      font-size: 24px;
-    }
-
-    .title {
-      font-size: 16px;
-      font-weight: 700;
-      background: linear-gradient(135deg, #38bdf8, #818cf8);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-
-    .subtitle {
-      font-size: 11px;
-      color: var(--muted);
-    }
-
-    .form-group {
-      margin-bottom: 14px;
-    }
-
-    label {
-      display: block;
-      font-size: 11px;
-      font-weight: 600;
-      color: var(--muted);
-      margin-bottom: 6px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-
-    input, select {
-      width: 100%;
-      padding: 8px 12px;
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      color: var(--text);
-      font-size: 13px;
-      outline: none;
-      transition: border-color 0.2s;
-    }
-
-    input:focus, select:focus {
-      border-color: var(--primary);
-    }
-
-    .btn-save {
-      width: 100%;
-      padding: 10px;
-      background: var(--primary);
-      color: #0f172a;
-      border: none;
-      border-radius: 8px;
-      font-size: 13px;
-      font-weight: 700;
-      cursor: pointer;
-      transition: background 0.2s, transform 0.1s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-    }
-
-    .btn-save:hover {
-      background: var(--primary-hover);
-    }
-
-    .btn-save:active {
-      transform: scale(0.98);
-    }
-
-    .status-badge {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 6px 10px;
-      border-radius: 6px;
-      font-size: 11px;
-      font-weight: 600;
-      margin-bottom: 14px;
-    }
-
-    .status-ready {
-      background: rgba(16, 185, 129, 0.15);
-      color: var(--success);
-      border: 1px solid rgba(16, 185, 129, 0.3);
-    }
-
-    .status-warn {
-      background: rgba(239, 68, 68, 0.15);
-      color: var(--danger);
-      border: 1px solid rgba(239, 68, 68, 0.3);
-    }
-
-    .guide-box {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 10px;
-      margin-top: 14px;
-      font-size: 11px;
-      color: var(--muted);
-      line-height: 1.5;
-    }
-
-    .guide-title {
-      font-weight: 600;
-      color: var(--text);
-      margin-bottom: 4px;
-    }
-
-    a {
-      color: var(--primary);
-      text-decoration: none;
-    }
-    a:hover {
-      text-decoration: underline;
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SuperK Translator</title>
+<style>
+:root { color-scheme: dark; --bg:#171717; --surface:#262626; --text:#fafafa; --muted:#b5b5b5; --accent:#efa2ba; }
+* { box-sizing:border-box; }
+body { width:350px; margin:0; padding:20px; background:var(--bg); color:var(--text); font:14px/1.55 system-ui,sans-serif; }
+h1 { font-size:20px; margin:0 0 4px; }
+p { margin:0 0 16px; color:var(--muted); }
+label { display:block; margin:14px 0 6px; }
+input,select,button { width:100%; padding:10px; border:1px solid #666; border-radius:6px; background:var(--surface); color:var(--text); font:inherit; }
+input::placeholder { color:var(--muted); }
+button { cursor:pointer; margin-top:16px; }
+button:hover { background:#363636; }
+button:disabled { cursor:wait; opacity:.65; }
+:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+#btnSave { background:var(--accent); color:#171717; border:0; font-weight:650; }
+small { display:block; color:var(--muted); margin-top:6px; font-size:12px; }
+#statusBadge { margin:12px 0 0; overflow-wrap:anywhere; }
+.status-warn { color:#ffaaaa; }
+.status-ready { color:#a7e5bf; }
+.guide { border-top:1px solid #444; margin-top:20px; padding-top:14px; }
+.guide p { margin-bottom:8px; }
+</style>
 </head>
 <body>
-  <div class="header">
-    <div class="logo">🪄</div>
-    <div>
-      <div class="title">SuperK Translator</div>
-      <div class="subtitle">Extension แปลมังงะสดบนหน้าเว็บ</div>
-    </div>
-  </div>
-
-  <div id="statusBadge" class="status-badge status-warn">
-    <span>⚠️ กรุณากรอก Gemini API Key</span>
-  </div>
-
-  <div class="form-group">
-    <label for="apiKey">Gemini API Key</label>
-    <input type="password" id="apiKey" placeholder="AIzaSy..." />
-    <div style="font-size: 10px; color: var(--muted); margin-top: 4px;">
-      รับ API Key ฟรีได้จาก <a href="https://aistudio.google.com/app/apikey" target="_blank">Google AI Studio</a>
-    </div>
-  </div>
-
-  <div class="form-group">
-    <label for="targetLang">ภาษาเป้าหมาย</label>
-    <select id="targetLang">
-      <option value="Thai">ภาษาไทย (Thai)</option>
-      <option value="English">English</option>
-      <option value="Japanese">Japanese</option>
-      <option value="Chinese">Chinese</option>
-    </select>
-  </div>
-
-  <div class="form-group">
-    <label for="modelPreference">โมเดล AI (Model)</label>
-    <select id="modelPreference">
-      <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash Lite (แนะนำ! 500 RPD)</option>
-      <option value="gemini-3.6-flash">Gemini 3.6 Flash (ความแม่นยำสูง)</option>
-      <option value="gemini-3-flash">Gemini 3.0 Flash</option>
-    </select>
-  </div>
-
-  <div class="form-group">
-    <label for="cleanMode">โหมดลบข้อความ (Inpaint Mode)</label>
-    <select id="cleanMode">
-      <option value="auto" selected>⚡ Auto Hybrid (อัตโนมัติ - แนะนำ!)</option>
-      <option value="solid">⚪ Solid Clean (มังงะขาวดำ - ถมขาวเนียน 0ms ฟรี)</option>
-      <option value="inpaint">🎨 Smart Inpaint (เว็บตูนสี - สุ่มสีกลมกลืนฉากหลัง ฟรี)</option>
-      <option value="hf-lama">🦙 Hugging Face LaMa AI (ซ่อมฉากหลังสีเนียนกริบ ฟรี)</option>
-      <option value="stroke">✨ Text Stroke Only (ขอบขาวเนียนโปร่งใส)</option>
-    </select>
-  </div>
-
-  <div class="form-group">
-    <label for="hfToken">Hugging Face Token (เสริมสำหรับ LaMa AI)</label>
-    <input type="password" id="hfToken" placeholder="hf_..." />
-    <div style="font-size: 10px; color: var(--muted); margin-top: 4px;">
-      รับ Access Token ฟรีได้จาก <a href="https://huggingface.co/settings/tokens" target="_blank">Hugging Face Settings</a>
-    </div>
-  </div>
-
-  <div class="form-group">
-    <label for="customInpaintUrl">Colab LaMa Server URL (ทางเลือกที่ 1)</label>
-    <input type="text" id="customInpaintUrl" placeholder="https://xxxx.ngrok-free.app/inpaint" />
-    <div style="font-size: 10px; color: var(--muted); margin-top: 4px;">
-      วาง URL ที่ได้จาก Google Colab เพื่อใช้ LaMa AI GPU ฟรี
-    </div>
-  </div>
-
-  <button id="btnSave" class="btn-save">
-    <span>💾 บันทึกการตั้งค่า</span>
-  </button>
-
-  <div class="guide-box">
-    <div class="guide-title">📌 วิธีใช้งาน:</div>
-    1. เปิดเว็บอ่านมังงะเว็บไหนก็ได้<br>
-    2. <strong>คลิกขวาที่รูปมังงะ</strong><br>
-    3. เลือก <strong>🪄 แปลภาพมังงะด้วย SuperK</strong>
-  </div>
-
-  <script src="popup.js"></script>
+<h1>SuperK Translator</h1>
+<p>แปลภาพมังงะบนเว็บที่คุณกำลังอ่าน</p>
+<form id="settingsForm">
+<label for="translationMode">ระบบแปล</label>
+<select id="translationMode">
+<option value="server">ใช้ระบบ SuperK ของฉัน</option>
+<option value="direct">ใช้ Gemini API Key โดยตรง</option>
+</select>
+<div id="serverSettings">
+<label for="serverUrl">URL ระบบ SuperK</label>
+<input id="serverUrl" type="url" placeholder="http://127.0.0.1:3000" aria-describedby="serverHint">
+<small id="serverHint">เปิดระบบหลักไว้ระหว่างแปล ส่วนเสริมจะใช้คีย์ที่ตั้งไว้บนเซิร์ฟเวอร์</small>
+</div>
+<div id="directSettings" hidden>
+<label for="apiKey">Gemini API Key</label>
+<input id="apiKey" type="password" autocomplete="off" placeholder="AIzaSy...">
+</div>
+<label for="targetLang">แปลเป็นภาษา</label>
+<select id="targetLang">
+<option value="Thai">ไทย</option><option value="English">English</option>
+<option value="Japanese">日本語</option><option value="Chinese">中文</option>
+</select>
+<details style="margin-top:14px"><summary>ตัวเลือกการแปลและแสดงผล</summary>
+<label for="modelPreference">โมเดลแปล</label>
+<select id="modelPreference">
+<option value="auto">อัตโนมัติ</option>
+<option value="gemini-3.5-flash-lite">Gemini 3.5 Flash Lite</option>
+<option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
+<option value="gemini-3-flash">Gemini 3 Flash</option>
+<option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+</select>
+<label for="cleanMode">การแสดงคำแปล</label>
+<select id="cleanMode">
+<option value="solid">ปิดข้อความเดิมด้วยพื้นขาว</option>
+<option value="stroke">วางคำแปลโดยไม่ปิดภาพเดิม</option>
+</select>
+</details>
+<button id="btnSave" type="submit">บันทึกการตั้งค่า</button>
+<p id="statusBadge" role="status" aria-live="polite"></p>
+</form>
+<div class="guide">
+<p>คลิกขวาที่ภาพ → <strong>แปลภาพมังงะด้วย SuperK</strong></p>
+<small>ปุ่ม “ดูต้นฉบับ” ใช้สลับภาพก่อนและหลังแปล รองรับภาพบนเว็บทั่วไป ยกเว้นหน้าที่ Chrome จำกัดการเข้าถึง</small>
+<button id="btnOpen" type="button">เปิดระบบ SuperK</button>
+</div>
+<script src="server.js"></script><script src="popup.js"></script>
 </body>
 </html>

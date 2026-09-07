@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SuperK Manga Translator",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "แปลมังงะภาษาญี่ปุ่น/อังกฤษเป็นภาษาไทยสดๆ บนหน้าเว็บด้วย AI",
   "permissions": [
     "contextMenus",
@@ -10,17 +10,25 @@
     "scripting"
   ],
   "host_permissions": [
-    "<all_urls>",
-    "https://generativelanguage.googleapis.com/*"
+    "http://*/*",
+    "https://*/*"
   ],
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "css": ["content.css"],
-      "js": ["content.js"]
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "all_frames": true
     }
   ],
   "action": {
@@ -35,5 +43,6 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  }
+  },
+  "minimum_chrome_version": "110"
 }

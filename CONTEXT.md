@@ -23,3 +23,11 @@ _Avoid_: Average crop color, foreground color
 **Nearby color profile**:
 A reliable text color profile from a neighboring text region on the same page, used only when the current glyph color cannot be determined confidently.
 _Avoid_: Nearest pixel color, background fallback
+
+**Reading view**:
+The translated manga page shown on its original reading website, where the reader can compare the translation with the original image.
+_Avoid_: Full editor, translation workspace
+
+**Translation workspace**:
+The full editing environment for inspecting and refining a manga page and its translation. Readers enter this workspace from the reading view when detailed editing is needed.
+_Avoid_: Reading overlay, extension popup
