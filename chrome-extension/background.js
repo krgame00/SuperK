@@ -31,18 +31,20 @@ async function runTranslationFlow(tabId, frameId, imageUrl) {
       apiKey: "", targetLang: "Thai", sourceLang: "auto",
       modelPreference: "auto", cleanMode: "inpainting"
     });
-    const synced = await SuperKServer.fetchSettings(stored.serverUrl).catch(() => ({}));
+    const synced = stored.translationMode === "direct"
+      ? {}
+      : await SuperKServer.fetchSettings(stored.serverUrl).catch(() => ({}));
     const settings = {
       ...stored,
       ...synced,
       apiKey: stored.apiKey || synced.geminiApiKey || "",
       modelPreference: stored.modelPreference || synced.modelPreference || "auto",
-      cleanMode: stored.cleanMode || synced.cleanMode || "inpainting",
+      cleanMode: (!synced.isOfflineFallback && synced.cleanMode) ? synced.cleanMode : (stored.cleanMode || "inpainting"),
     };
 
     let cleanImageBase64 = null;
     let cleanJobId = null;
-    if (settings.cleanMode === "inpainting") {
+    if (settings.cleanMode === "inpainting" && settings.translationMode !== "direct") {
       try {
         const cleanRes = await SuperKServer.inpaintImage(image, settings);
         cleanImageBase64 = cleanRes.cleanImageBase64;

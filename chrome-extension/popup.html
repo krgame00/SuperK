@@ -58,8 +58,9 @@ small { display:block; color:var(--muted); margin-top:6px; font-size:12px; }
 <option value="gemini-3-flash">Gemini 3 Flash</option>
 <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
 </select>
-<label for="cleanMode">การแสดงคำแปล</label>
+<label for="cleanMode">การลบข้อความเดิม</label>
 <select id="cleanMode">
+<option value="inpainting" selected>ลบข้อความต้นฉบับเนียนกริบ (Inpainting - แนะนำ)</option>
 <option value="solid">ปิดข้อความเดิมด้วยพื้นขาว</option>
 <option value="stroke">วางคำแปลโดยไม่ปิดภาพเดิม</option>
 </select>

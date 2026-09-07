@@ -16,6 +16,7 @@ function setup(options: { direct?: boolean; failImage?: boolean; failServer?: bo
       return Response.json({
         geminiApiKey: 'test-key',
         modelHierarchy: ['gemini-3.5-flash-lite'],
+        cleanMode: 'solid',
         textStyle: { fontFamily: 'Itim, sans-serif', fontSizeMultiplier: 1.0, textColor: '#000000', textOutline: '#FFFFFF' },
       });
     }

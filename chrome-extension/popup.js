@@ -19,8 +19,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     const settings = await chrome.storage.sync.get({ translationMode: 'server',
       serverUrl: 'http://127.0.0.1:3000', apiKey: '', targetLang: 'Thai',
-      modelPreference: 'auto', cleanMode: 'solid' });
-    if (!['solid', 'stroke'].includes(settings.cleanMode)) settings.cleanMode = 'solid';
+      modelPreference: 'auto', cleanMode: 'inpainting' });
+    if (!['inpainting', 'solid', 'stroke'].includes(settings.cleanMode)) settings.cleanMode = 'inpainting';
     for (const id of ids) fields[id].value = settings[id];
     updateMode();
   } catch { report('โหลดการตั้งค่าไม่ได้ กรุณาปิดแล้วเปิดส่วนเสริมอีกครั้ง', true); }

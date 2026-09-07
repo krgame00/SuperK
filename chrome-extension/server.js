@@ -204,14 +204,23 @@ globalThis.SuperKServer = {
     const cleanAssetPath = resultData.clean_asset || resultData.cleanAsset;
     let cleanImageBase64 = '';
     if (cleanAssetPath) {
-      const assetUrl = cleanAssetPath.startsWith('http')
-        ? cleanAssetPath
-        : `${base}${cleanAssetPath.startsWith('/') ? '' : '/'}${cleanAssetPath}`;
-      const assetRes = await fetch(assetUrl, { signal: AbortSignal.timeout(30000) });
-      if (assetRes.ok) {
-        const assetBlob = await assetRes.blob();
-        cleanImageBase64 = await this.blobToBase64(assetBlob);
+      let assetUrl = cleanAssetPath;
+      if (!assetUrl.startsWith('http')) {
+        const cleanPathNormalized = cleanAssetPath.startsWith('/api/clean')
+          ? cleanAssetPath
+          : `/api/clean${cleanAssetPath.startsWith('/') ? '' : '/'}${cleanAssetPath}`;
+        assetUrl = `${base}${cleanPathNormalized}`;
       }
+      const assetRes = await fetch(assetUrl, { signal: AbortSignal.timeout(30000) });
+      if (!assetRes.ok) {
+        throw new Error(`ไม่สามารถดาวน์โหลดไฟล์ภาพที่ลบข้อความแล้วได้ (HTTP ${assetRes.status})`);
+      }
+      const assetBlob = await assetRes.blob();
+      cleanImageBase64 = await this.blobToBase64(assetBlob);
+    }
+
+    if (!cleanImageBase64) {
+      throw new Error('ไม่ได้รับข้อมูลภาพที่ลบข้อความแล้ว (cleanImageBase64) จากระบบ Inpainting');
     }
 
     return {

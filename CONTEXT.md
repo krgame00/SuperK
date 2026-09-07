@@ -31,3 +31,7 @@ _Avoid_: Full editor, translation workspace
 **Translation workspace**:
 The full editing environment for inspecting and refining a manga page and its translation. Readers enter this workspace from the reading view when detailed editing is needed.
 _Avoid_: Reading overlay, extension popup
+
+**Inpainted clean background**:
+The restored page asset produced by the inpainting pipeline, where detected text glyphs are removed and underlying manga artwork is reconstructed.
+_Avoid_: Blanked background, white mask canvas
