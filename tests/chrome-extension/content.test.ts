@@ -83,4 +83,63 @@ it('renders an actionable error badge with a retry button on translation error',
   }));
 });
 
+it('renders centered loading scrim overlay without mutating img.parentElement.style.position on TRANSLATION_START', () => {
+  const app = setup();
+  const img = document.querySelector('img')!;
+  const initialParentPosition = img.parentElement?.style.position || '';
+
+  app.send({ action: 'TRANSLATION_START' });
+
+  // Verify zero parent style mutation (no unwanted scrollbar)
+  expect(img.parentElement?.style.position).toBe(initialParentPosition);
+
+  // Verify centered loading scrim container on document.body
+  const scrimContainer = document.querySelector<HTMLElement>('.superk-loading-scrim-container')!;
+  expect(scrimContainer).not.toBeNull();
+  expect(scrimContainer.style.position).toBe('absolute');
+  expect(scrimContainer.style.overflow).toBe('hidden');
+  expect(scrimContainer.style.width).toBe('600px');
+  expect(scrimContainer.style.height).toBe('900px');
+
+  // Verify centered loading card and SuperK emblem
+  const card = scrimContainer.querySelector('.superk-loading-card')!;
+  expect(card).not.toBeNull();
+  expect(card.querySelector('.superk-loading-logo')).not.toBeNull();
+  expect(card.querySelector('.superk-loading-ring')).not.toBeNull();
+  expect(card.textContent).toContain('กำลังแปล');
+});
+
+it('activates compact mode for small panels (< 180px) and hides text', () => {
+  const app = setup();
+  app.rect.width = 120;
+  app.rect.height = 150;
+
+  app.send({ action: 'TRANSLATION_START' });
+
+  const scrimContainer = document.querySelector<HTMLElement>('.superk-loading-scrim-container')!;
+  expect(scrimContainer).not.toBeNull();
+  expect(scrimContainer.classList.contains('superk-compact')).toBe(true);
+});
+
+it('cleans up loading scrim when translation succeeds or encounters an error', () => {
+  const app = setup();
+
+  // Start -> loading scrim exists
+  app.send({ action: 'TRANSLATION_START' });
+  expect(document.querySelector('.superk-loading-scrim-container')).not.toBeNull();
+
+  // Success -> loading scrim removed
+  app.send({ action: 'TRANSLATION_SUCCESS', cleanMode: 'stroke', bubbles: [{ t: 'เสร็จสิ้น', box: [0, 0, 50, 50] }] });
+  expect(document.querySelector('.superk-loading-scrim-container')).toBeNull();
+
+  // Start again -> loading scrim exists
+  app.send({ action: 'TRANSLATION_START' });
+  expect(document.querySelector('.superk-loading-scrim-container')).not.toBeNull();
+
+  // Error -> loading scrim removed and error displayed
+  app.send({ action: 'TRANSLATION_ERROR', error: 'ข้อผิดพลาดทดสอบ' });
+  expect(document.querySelector('.superk-loading-scrim-container')).toBeNull();
+  expect(document.querySelector('.superk-error')).not.toBeNull();
+});
+
 

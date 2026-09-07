@@ -103,6 +103,97 @@
   background: rgba(255, 255, 255, 0.98) !important;
 }
 
+/* Centered Loading Scrim Overlay */
+.superk-loading-scrim-container {
+  position: absolute;
+  pointer-events: none;
+  z-index: 99998;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: superkFadeInCenter 0.2s ease-out;
+}
+
+.superk-loading-scrim {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(1.5px);
+  z-index: 1;
+}
+
+.superk-loading-card {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 30px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+  color: #f0f9ff;
+  font-family: 'Itim', sans-serif, system-ui;
+  font-size: 15px;
+  font-weight: 600;
+  animation: superkPopIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.superk-loading-emblem-wrap {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.superk-loading-ring {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border: 2.5px solid rgba(56, 189, 248, 0.25);
+  border-top-color: #38bdf8;
+  border-radius: 50%;
+  animation: superkSpin 0.75s linear infinite;
+}
+
+.superk-loading-logo {
+  width: 15px;
+  height: 15px;
+  animation: superkPulse 1.5s ease-in-out infinite;
+}
+
+.superk-loading-text {
+  letter-spacing: 0.3px;
+  color: #e0f2fe;
+}
+
+/* Compact mode for small panels (< 180px) */
+.superk-loading-scrim-container.superk-compact .superk-loading-card {
+  padding: 6px;
+  border-radius: 50%;
+}
+.superk-loading-scrim-container.superk-compact .superk-loading-text {
+  display: none;
+}
+.superk-loading-scrim-container.superk-compact .superk-loading-emblem-wrap {
+  width: 22px;
+  height: 22px;
+}
+.superk-loading-scrim-container.superk-compact .superk-loading-logo {
+  width: 12px;
+  height: 12px;
+}
+
 @keyframes superkSpin {
   to { transform: rotate(360deg); }
 }
@@ -112,7 +203,22 @@
   to { opacity: 1; transform: translate(-50%, 0); }
 }
 
+@keyframes superkFadeInCenter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes superkPopIn {
+  from { opacity: 0; transform: scale(0.92); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes superkPulse {
+  0%, 100% { transform: scale(0.95); opacity: 0.9; }
+  50% { transform: scale(1.1); opacity: 1; filter: drop-shadow(0 0 4px #38bdf8); }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .superk-status-badge, .superk-spinner { animation: none; }
+  .superk-status-badge, .superk-spinner, .superk-loading-ring, .superk-loading-logo { animation: none; }
   .superk-ctrl-btn { transition: none; }
 }

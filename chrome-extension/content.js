@@ -45,22 +45,89 @@ function findImageElement(imageUrl) {
   return null;
 }
 
-// 1. Handle Translation Start (Show Loading Badge)
+// 1. Handle Translation Start (Show Centered Loading Scrim Overlay)
+function createLoadingScrim(img, imageUrl) {
+  removeExistingLoadingScrim(imageUrl);
+
+  const imgRect = img.getBoundingClientRect();
+  const win = typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : null);
+  const scrollX = win ? (win.scrollX || win.pageXOffset || 0) : 0;
+  const scrollY = win ? (win.scrollY || win.pageYOffset || 0) : 0;
+
+  const container = document.createElement('div');
+  container.className = 'superk-loading-scrim-container';
+  container.dataset.superkLoadingFor = hashCode(imageUrl);
+
+  const isCompact = imgRect.width < 180 || imgRect.height < 180;
+  if (isCompact) {
+    container.classList.add('superk-compact');
+  }
+
+  container.style.cssText = `
+    position: absolute;
+    top: ${imgRect.top + scrollY}px;
+    left: ${imgRect.left + scrollX}px;
+    width: ${imgRect.width}px;
+    height: ${imgRect.height}px;
+    pointer-events: none;
+    z-index: 99998;
+    overflow: hidden;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  `;
+
+  const scrim = document.createElement('div');
+  scrim.className = 'superk-loading-scrim';
+
+  const card = document.createElement('div');
+  card.className = 'superk-loading-card';
+  card.innerHTML = `
+    <div class="superk-loading-emblem-wrap">
+      <div class="superk-loading-ring"></div>
+      <svg class="superk-loading-logo" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" fill="#38bdf8"/>
+      </svg>
+    </div>
+    <span class="superk-loading-text">SuperK กำลังแปลภาพนี้...</span>
+  `;
+
+  container.appendChild(scrim);
+  container.appendChild(card);
+  document.body.appendChild(container);
+
+  const updateLoadingPosition = () => {
+    if (!document.body.contains(container)) {
+      win?.removeEventListener?.('resize', updateLoadingPosition);
+      return;
+    }
+    const newRect = img.getBoundingClientRect();
+    const newScrollX = win ? (win.scrollX || win.pageXOffset || 0) : 0;
+    const newScrollY = win ? (win.scrollY || win.pageYOffset || 0) : 0;
+    container.style.top = `${newRect.top + newScrollY}px`;
+    container.style.left = `${newRect.left + newScrollX}px`;
+    container.style.width = `${newRect.width}px`;
+    container.style.height = `${newRect.height}px`;
+  };
+  win?.addEventListener?.('resize', updateLoadingPosition);
+
+  return container;
+}
+
+function removeExistingLoadingScrim(imageUrl) {
+  const hash = hashCode(imageUrl);
+  const existing = document.querySelectorAll(`.superk-loading-scrim-container[data-superk-loading-for="${hash}"]`);
+  existing.forEach(el => el.remove());
+}
+
 function handleTranslationStart(imageUrl) {
   const img = findImageElement(imageUrl);
   if (!img) return;
 
   removeExistingBadge(img);
-
-  const badge = document.createElement('div');
-  badge.className = 'superk-status-badge superk-loading';
-  badge.id = `superk-badge-${hashCode(imageUrl)}`;
-  badge.innerHTML = `
-    <span class="superk-spinner"></span>
-    <span>SuperK กำลังแปลภาพนี้...</span>
-  `;
-
-  positionBadgeOverImage(img, badge);
+  removeExistingLoadingScrim(imageUrl);
+  createLoadingScrim(img, imageUrl);
 }
 
 // 2. Handle Translation Success (Render Text Overlay)
@@ -69,6 +136,7 @@ function handleTranslationSuccess(imageUrl, bubbles, cleanMode, cleanImageBase64
   if (!img) return;
 
   removeExistingBadge(img);
+  removeExistingLoadingScrim(imageUrl);
 
   if (!bubbles || bubbles.length === 0) {
     showErrorBadge(img, "ไม่พบข้อความในภาพนี้");
@@ -465,6 +533,7 @@ function handleTranslationError(imageUrl, errorMsg) {
   if (!img) return;
 
   removeExistingBadge(img);
+  removeExistingLoadingScrim(imageUrl);
   showErrorBadge(img, errorMsg);
 }
 
@@ -532,22 +601,24 @@ function showToast(img, message) {
   setTimeout(() => toast.remove(), 3000);
 }
 
-// Helper: Position Badge over target image
+// Helper: Position Badge over target image attached cleanly to document.body
 function positionBadgeOverImage(img, badge) {
-  let parent = img.parentElement;
-  if (!parent || window.getComputedStyle(parent).position === 'static') {
-    parent = img.parentNode;
-  }
-  parent.style.position = 'relative';
-  parent.appendChild(badge);
+  const imgRect = img.getBoundingClientRect();
+  const win = typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : null);
+  const scrollX = win ? (win.scrollX || win.pageXOffset || 0) : 0;
+  const scrollY = win ? (win.scrollY || win.pageYOffset || 0) : 0;
+
+  badge.style.position = 'absolute';
+  badge.style.top = `${imgRect.top + scrollY + 12}px`;
+  badge.style.left = `${imgRect.left + scrollX + imgRect.width / 2}px`;
+  badge.style.transform = 'translateX(-50%)';
+  badge.style.zIndex = '100000';
+  document.body.appendChild(badge);
 }
 
 function removeExistingBadge(img) {
-  const parent = img.parentElement;
-  if (parent) {
-    const existing = parent.querySelectorAll('.superk-status-badge');
-    existing.forEach(el => el.remove());
-  }
+  const badges = document.querySelectorAll('.superk-status-badge');
+  badges.forEach(el => el.remove());
 }
 
 // Simple Drag logic for text bubbles
