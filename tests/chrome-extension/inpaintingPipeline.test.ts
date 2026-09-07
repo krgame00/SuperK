@@ -190,4 +190,129 @@ describe('SuperK Extension Inpainting Pipeline (Ticket 02)', () => {
       cleanMode: 'inpainting',
     }), expect.anything());
   });
+
+  it('normalizes relative cleaner asset path /v1/... to /api/clean/v1/... and fails loud on HTTP 404', async () => {
+    const fetchMock = vi.fn(async (url: string, init?: any) => {
+      if (url.includes('/api/clean/v1/jobs') && init?.method === 'POST') {
+        return Response.json({ job_id: 'job-path-norm', status: 'running' });
+      }
+      if (url.includes('/api/clean/v1/jobs/job-path-norm/result')) {
+        return Response.json({
+          job_id: 'job-path-norm',
+          clean_asset: '/v1/jobs/job-path-norm/assets/clean.png',
+        });
+      }
+      if (url === 'http://127.0.0.1:3000/api/clean/v1/jobs/job-path-norm/assets/clean.png') {
+        return new Response('Not Found', { status: 404 });
+      }
+      if (url.includes('/api/clean/v1/jobs/job-path-norm')) {
+        return Response.json({ job_id: 'job-path-norm', status: 'succeeded' });
+      }
+      return Response.json({ error: 'Not found' }, { status: 404 });
+    });
+
+    const context = vm.createContext({
+      fetch: fetchMock,
+      console,
+      URL,
+      FormData,
+      Blob,
+      Uint8Array,
+      btoa,
+      atob,
+      setTimeout,
+      clearTimeout,
+      AbortSignal,
+      Date,
+    });
+
+    vm.runInContext(read('server.js'), context);
+
+    const image = {
+      base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      mimeType: 'image/png',
+    };
+    const settings = { serverUrl: 'http://127.0.0.1:3000' };
+
+    await expect(context.SuperKServer.inpaintImage(image, settings)).rejects.toThrow('HTTP 404');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:3000/api/clean/v1/jobs/job-path-norm/assets/clean.png',
+      expect.anything()
+    );
+  });
+
+  it('bypasses inpainting entirely when translationMode is direct even if cleanMode is inpainting', async () => {
+    let contextMenuListener: any;
+    const sendMessageMock = vi.fn().mockResolvedValue({});
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === 'https://manga.test/direct.png') {
+        return new Response(new Uint8Array([137, 80, 78, 71]), {
+          headers: { 'Content-Type': 'image/png' },
+        });
+      }
+      if (url.includes('generativelanguage.googleapis.com')) {
+        const text = JSON.stringify({ bubbles: [{ t: 'ตรงไปตรงมา', box: [10, 10, 50, 50] }] });
+        return Response.json({
+          candidates: [{ content: { parts: [{ text }] } }],
+        });
+      }
+      return Response.json({ error: 'Unexpected route' }, { status: 500 });
+    });
+
+    const chrome = {
+      runtime: {
+        onInstalled: { addListener: vi.fn() },
+        onMessage: { addListener: vi.fn() },
+        getPlatformInfo: vi.fn().mockResolvedValue({}),
+      },
+      contextMenus: {
+        create: vi.fn(),
+        onClicked: { addListener: vi.fn((fn: any) => { contextMenuListener = fn; }) },
+      },
+      tabs: { sendMessage: sendMessageMock },
+      scripting: { insertCSS: vi.fn(), executeScript: vi.fn() },
+      storage: {
+        sync: {
+          get: vi.fn(async () => ({
+            translationMode: 'direct',
+            apiKey: 'test-direct-key',
+            cleanMode: 'inpainting',
+          })),
+        },
+      },
+    };
+
+    const context = vm.createContext({
+      chrome,
+      fetch: fetchMock,
+      console,
+      URL,
+      FormData,
+      Blob,
+      Uint8Array,
+      btoa,
+      atob,
+      setTimeout,
+      clearTimeout,
+      setInterval: vi.fn(() => 1),
+      clearInterval: vi.fn(),
+      AbortSignal,
+      Date,
+    });
+    context.importScripts = (file: string) => vm.runInContext(read(file), context);
+    vm.runInContext(read('background.js'), context);
+
+    await contextMenuListener({ menuItemId: 'superk-translate-image', srcUrl: 'https://manga.test/direct.png' }, { id: 25 });
+
+    // Verify inpaint cleaner endpoint was NEVER called
+    expect(fetchMock.mock.calls.some(call => (call[0] as string).includes('/api/clean'))).toBe(false);
+
+    // Verify translation succeeded via direct Gemini
+    expect(sendMessageMock).toHaveBeenCalledWith(25, expect.objectContaining({
+      action: 'TRANSLATION_SUCCESS',
+      cleanMode: 'inpainting',
+      cleanImageBase64: null,
+      bubbles: [{ t: 'ตรงไปตรงมา', box: [10, 10, 50, 50] }],
+    }), expect.anything());
+  });
 });
