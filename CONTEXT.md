@@ -35,3 +35,7 @@ _Avoid_: Reading overlay, extension popup
 **Inpainted clean background**:
 The restored page asset produced by the inpainting pipeline, where detected text glyphs are removed and underlying manga artwork is reconstructed.
 _Avoid_: Blanked background, white mask canvas
+
+**Loading scrim overlay**:
+The non-intrusive centered visual container placed precisely over an active manga panel in the reading view while inpainting and translation are underway, providing progress feedback without modifying the host site's layout or DOM styling.
+_Avoid_: Status badge, floating pill, host wrapper
