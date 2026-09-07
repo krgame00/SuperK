@@ -11,3 +11,4 @@
 - [x] Inpainting failure or offline backend renders a clear, non-intrusive error badge on the image with a functional "Retry" button.
 - [x] Crude white mask rectangle code is removed or prevented from activating during normal cleaning failures.
 - [x] Integration tests verify successful inpainting flow and error state rendering with mock cleaning service responses.
+- [x] Inpainting asset proxy path resolution and fail-loud invariant specified in [docs/superpowers/specs/2026-09-08-extension-inpainting-resilience-spec.md](file:///c:/Users/PC/Downloads/manga-translator/docs/superpowers/specs/2026-09-08-extension-inpainting-resilience-spec.md).
