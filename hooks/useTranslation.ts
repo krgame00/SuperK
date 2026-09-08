@@ -20,6 +20,11 @@ import { normalizeTranslationPayload } from "@/lib/thaiSpellcheck";
 import { sampleBubbleRegion } from "@/lib/colorMatching/canvasSampler";
 import { extractTextColors } from "@/lib/colorMatching/sampleTextColors";
 import { type GlossaryEntry } from "@/lib/translation/glossary";
+import {
+  classifyTranslationError,
+  type DiagnosticDetail,
+  type DiagnosticErrorCode,
+} from "@/lib/translation/diagnostics";
 
 export type SaveStatus = "idle" | "saving" | "saved" | "error";
 export type TranslationWorkflowPhase = "cleaning" | "translating";
@@ -29,6 +34,7 @@ export interface BatchPageFailure {
   pageUrl: string;
   stage: "cleaning" | "translation";
   message: string;
+  diagnostic?: DiagnosticDetail;
 }
 
 export interface PreparedTranslationPage {
@@ -1286,14 +1292,25 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           && !isUserCancelledError(lastTranslationError)
           && !cancelTranslateAllRef.current
         ) {
+          const errMsg =
+            lastTranslationError instanceof Error
+              ? lastTranslationError.message
+              : "แปลไม่สำเร็จ";
+          const errStatus =
+            lastTranslationError instanceof TranslationRequestError
+              ? lastTranslationError.status
+              : undefined;
+          const errCode =
+            lastTranslationError instanceof TranslationRequestError
+              ? lastTranslationError.code
+              : undefined;
+
           const failureItem: BatchPageFailure = {
             pageIndex: i,
             pageUrl,
             stage: "translation",
-            message:
-              lastTranslationError instanceof Error
-                ? lastTranslationError.message
-                : "แปลไม่สำเร็จ",
+            message: errMsg,
+            diagnostic: classifyTranslationError(lastTranslationError, errStatus, errCode),
           };
           failures.push(failureItem);
           setBatchFailures((prev) => {

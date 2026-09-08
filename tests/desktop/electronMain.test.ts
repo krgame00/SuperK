@@ -56,6 +56,49 @@ function makeAppMock(): AppMock {
   return mock;
 }
 
+function bootstrapForTest(appMock: AppMock, BrowserWindowMock: ReturnType<typeof makeBrowserWindowMock>) {
+  const sidecar: any = {
+    isReady: false,
+    on: vi.fn(),
+    start: vi.fn(async () => {
+      sidecar.isReady = true;
+      return true;
+    }),
+    stop: vi.fn(async () => {
+      sidecar.isReady = false;
+    }),
+  };
+
+  const workspace: any = {
+    isReady: false,
+    on: vi.fn(),
+    start: vi.fn(async () => {
+      workspace.isReady = true;
+      return true;
+    }),
+    stop: vi.fn(async () => {
+      workspace.isReady = false;
+    }),
+  };
+
+  const splashWindow: any = {
+    close: vi.fn(),
+    isDestroyed: vi.fn(() => false),
+    webContents: { send: vi.fn() },
+  };
+
+  return bootstrap(
+    appMock as unknown as import("electron").App,
+    BrowserWindowMock as unknown as typeof import("electron").BrowserWindow,
+    sidecar,
+    null as any,
+    {
+      workspaceSupervisor: workspace,
+      createSplashWindowFn: vi.fn(() => splashWindow),
+    }
+  );
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("createMainWindow — BrowserWindow factory (Ticket 01)", () => {
@@ -123,7 +166,7 @@ describe("bootstrap — app lifecycle (Ticket 01)", () => {
   });
 
   it("calls app.whenReady() on bootstrap", () => {
-    bootstrap(appMock as unknown as import("electron").App, BrowserWindowMock as unknown as typeof import("electron").BrowserWindow);
+    bootstrapForTest(appMock, BrowserWindowMock);
     expect(appMock.whenReady).toHaveBeenCalled();
   });
 
@@ -131,7 +174,7 @@ describe("bootstrap — app lifecycle (Ticket 01)", () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "win32", configurable: true });
 
-    bootstrap(appMock as unknown as import("electron").App, BrowserWindowMock as unknown as typeof import("electron").BrowserWindow);
+    bootstrapForTest(appMock, BrowserWindowMock);
     await Promise.resolve(); // flush whenReady promise
 
     appMock._events["window-all-closed"]?.();
@@ -144,7 +187,7 @@ describe("bootstrap — app lifecycle (Ticket 01)", () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
 
-    bootstrap(appMock as unknown as import("electron").App, BrowserWindowMock as unknown as typeof import("electron").BrowserWindow);
+    bootstrapForTest(appMock, BrowserWindowMock);
     await Promise.resolve();
 
     appMock._events["window-all-closed"]?.();

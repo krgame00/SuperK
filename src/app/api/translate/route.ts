@@ -164,6 +164,7 @@ export async function POST(req: Request) {
         {
           error:
             "Server missing API Key. Please add GEMINI_API_KEY to .env or enter your own in Settings",
+          code: "MISSING_KEY",
         },
         { status: 500 },
       );
@@ -279,6 +280,7 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           error: `ภาพนี้ถูกปฏิเสธโดยระบบคัดกรองของ Google (เหตุผล: ${data.promptFeedback.blockReason})`,
+          code: "SAFETY_BLOCKED",
         },
         { status: 400 },
       );
@@ -290,7 +292,10 @@ export async function POST(req: Request) {
       candidate?.finishReason === "PROHIBITED_CONTENT"
     ) {
       return NextResponse.json(
-        { error: "เนื้อหาถูกแบนโดยระบบ Safety ของ AI" },
+        {
+          error: "เนื้อหาถูกแบนโดยระบบ Safety ของ AI",
+          code: "SAFETY_BLOCKED",
+        },
         { status: 400 },
       );
     }

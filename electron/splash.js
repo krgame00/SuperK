@@ -25,6 +25,7 @@ const SPLASH_WINDOW_CONFIG = {
   webPreferences: {
     contextIsolation: true,
     nodeIntegration: false,
+    preload: path.join(__dirname, "splashPreload.js"),
   },
 };
 
@@ -53,7 +54,9 @@ class StartupGate {
     this.mainWindow = options.mainWindow;
     this.checkPortsFn = options.checkPortsFn || (async () => null);
     this.startSidecarFn = options.startSidecarFn || (async () => true);
+    this.startWorkspaceFn = options.startWorkspaceFn || null;
     this.checkWorkspaceFn = options.checkWorkspaceFn || (async () => true);
+    this.createMainWindowFn = options.createMainWindowFn || null;
     this.onStepChange = options.onStepChange || (() => {});
   }
 
@@ -94,11 +97,27 @@ class StartupGate {
         return false;
       }
 
-      // 4. Workspace Health
+      // 4. Workspace start + health
       this.setStep("checking-workspace-health");
-      const wsHealthy = await this.checkWorkspaceFn();
-      if (!wsHealthy) {
-        this.sendError("workspace", "Workspace server failed to start.");
+      try {
+        if (this.startWorkspaceFn) {
+          await this.startWorkspaceFn();
+        }
+        const wsHealthy = await this.checkWorkspaceFn();
+        if (!wsHealthy) {
+          this.sendError("workspace", "Workspace server failed to start.");
+          return false;
+        }
+
+        // Create/load the main window only after the loopback workspace is healthy.
+        if (this.createMainWindowFn) {
+          this.mainWindow = await this.createMainWindowFn();
+        }
+      } catch (err) {
+        this.sendError(
+          "workspace",
+          `Workspace server failed to start. ${err.message || ""}`.trim()
+        );
         return false;
       }
 

@@ -1,6 +1,7 @@
 appId: com.superk.mangatranslator
 productName: SuperK
 copyright: "SuperK Manga Translator"
+electronVersion: 44.2.0
 
 # Windows x64 portable target
 win:
@@ -8,36 +9,49 @@ win:
     - target: portable
       arch:
         - x64
-  icon: public/icons/icon.ico
+  icon: ../public/icon-512.png
 
-# Do NOT use asar so the Python venv and model files remain plain files
-# that the Electron main process can spawn via child_process
+# Keep runtime files unpacked so Electron can spawn the local Node/Python
+# services directly from disk.
 asar: false
 
-# Output directory for built artifacts
+# electron-builder is executed with .desktop-stage as its project directory.
+# Keeping the project boundary at the staged package prevents dependency
+# discovery from falling back to the root project's full node_modules tree.
 directories:
-  output: dist/desktop
+  output: ../dist/desktop
 
-# Files to include in the bundle
+# The stage contains only the Electron shell and the exact Next.js standalone
+# runtime. Its package.json intentionally has no production dependencies.
 files:
   - "electron/**"
   - "!electron/**/*.test.*"
-  - ".next/**"
-  - "public/**"
-  - "node_modules/**"
-  - "!node_modules/.cache/**"
+  - ".next/standalone/**"
   - "package.json"
 
-# Extra resources bundled alongside the executable
+# Runtime-only OCR resources live one directory above the staged app.
+# Secrets such as .env files are never copied into these resources.
 extraResources:
-  - from: "ocr-service/"
-    to: "ocr-service"
+  - from: "../.desktop-runtime"
+    to: "ocr-service/runtime"
     filter:
       - "**/*"
       - "!**/__pycache__/**"
       - "!**/*.pyc"
-      - "!.scratch/**"
+      - "!**/*.pyo"
+  - from: "../ocr-service/app"
+    to: "ocr-service/app"
+    filter:
+      - "**/*"
+      - "!**/__pycache__/**"
+      - "!**/*.pyc"
+      - "!**/*.pyo"
+  - from: "../ocr-service/models"
+    to: "ocr-service/models"
+    filter:
+      - "**/*"
+      - "!**/.gitkeep"
 
-# Portable build: no installation, no registry modifications
+# Portable build: no installation or registry modifications.
 portable:
   artifactName: SuperK-Windows-Portable.exe

@@ -10,8 +10,10 @@
  */
 
 const { spawn, exec } = require("child_process");
+const fs = require("fs");
 const path = require("path");
 const { EventEmitter } = require("events");
+const { resolveCacheEnvironment } = require("./cacheRouting");
 
 const DEFAULT_SIDECAR_CONFIG = {
   host: "127.0.0.1",
@@ -32,6 +34,8 @@ class SidecarSupervisor extends EventEmitter {
     this.fetchFn = options.fetchFn || globalThis.fetch;
     this.platform = options.platform || process.platform;
     this.projectRoot = options.projectRoot || path.resolve(__dirname, "..");
+    this.ocrServiceDir = options.ocrServiceDir || path.join(this.projectRoot, "ocr-service");
+    this.existsSync = options.existsSync || fs.existsSync;
 
     this.process = null;
     this.isStopping = false;
@@ -39,11 +43,17 @@ class SidecarSupervisor extends EventEmitter {
   }
 
   getPythonPath() {
-    return path.join(this.projectRoot, "ocr-service", "venv", "Scripts", "python.exe");
+    const candidates = [
+      path.join(this.ocrServiceDir, "runtime", "python.exe"),
+      path.join(this.ocrServiceDir, "venv", "Scripts", "python.exe"),
+      path.join(this.ocrServiceDir, ".venv", "Scripts", "python.exe"),
+    ];
+
+    return candidates.find((candidate) => this.existsSync(candidate)) || candidates[0];
   }
 
   getOcrServiceDir() {
-    return path.join(this.projectRoot, "ocr-service");
+    return this.ocrServiceDir;
   }
 
   start() {
@@ -53,7 +63,11 @@ class SidecarSupervisor extends EventEmitter {
     this.isStopping = false;
     this.isReady = false;
 
-const { resolveCacheEnvironment } = require("./cacheRouting");
+    if (!this.existsSync(pythonExe)) {
+      throw new Error(
+        `Python runtime was not found. Expected ${path.join(cwd, "runtime")}, ${path.join(cwd, "venv")}, or ${path.join(cwd, ".venv")}.`
+      );
+    }
 
     const cacheEnv = resolveCacheEnvironment({
       platform: this.platform,

@@ -19,6 +19,9 @@
 
 # production
 /build
+/dist/desktop/
+/.desktop-stage/
+/.desktop-runtime/
 /.worktrees/
 
 # ocr-service venv & models

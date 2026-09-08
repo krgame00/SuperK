@@ -49,6 +49,11 @@ import {
   getUnconfirmedPages,
   type PageReviewInfo,
 } from "@/lib/export/reviewGate";
+import {
+  TranslationDiagnosticModal,
+  type DiagnosticFailureGroup,
+} from "@/components/workspace/TranslationDiagnosticModal";
+import { DIAGNOSTIC_TAXONOMY } from "@/lib/translation/diagnostics";
 
 export default function WorkspacePage() {
 
@@ -257,6 +262,25 @@ export default function WorkspacePage() {
       });
     },
   });
+
+  const [isDiagnosticModalOpen, setIsDiagnosticModalOpen] = useState(false);
+
+  // Group batch failures by diagnostic taxonomy code for the Diagnostic Modal
+  const diagnosticFailureGroups = useMemo<DiagnosticFailureGroup[]>(() => {
+    if (batchFailures.length === 0) return [];
+    const groupsMap = new Map<string, { diagnostic: any; pages: number[] }>();
+
+    for (const failure of batchFailures) {
+      const diag = failure.diagnostic ?? DIAGNOSTIC_TAXONOMY.UNKNOWN_ERROR;
+      const key = diag.code;
+      if (!groupsMap.has(key)) {
+        groupsMap.set(key, { diagnostic: diag, pages: [] });
+      }
+      groupsMap.get(key)!.pages.push(failure.pageIndex + 1);
+    }
+
+    return Array.from(groupsMap.values());
+  }, [batchFailures]);
 
   const currentPageUrl = pages[currentPage]?.url;
   const translatedImagesMap = translatedImages;
@@ -1776,6 +1800,34 @@ export default function WorkspacePage() {
                     )}
                   </div>
                 )}
+                {batchFailures.length > 0 && (
+                  <div className="mt-1.5 flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg border border-red-500/40 bg-red-500/15 text-xs backdrop-blur-md animate-in fade-in">
+                    <div className="flex items-center gap-2">
+                      <span className="text-red-400 font-semibold">
+                        ❌ แปลไม่สำเร็จ {batchFailures.length} หน้า
+                      </span>
+                      <span className="text-muted text-[11px] hidden sm:inline">
+                        (หน้า {batchFailures.map((f) => f.pageIndex + 1).join(", ")})
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setIsDiagnosticModalOpen(true)}
+                        className="px-2.5 py-1 rounded bg-red-600 hover:bg-red-500 text-white font-medium text-xs transition-colors cursor-pointer shadow-sm"
+                      >
+                        ดูสาเหตุและแก้ไข
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => retryFailedPages()}
+                        className="px-2 py-1 rounded bg-surface-hover hover:bg-surface-active text-foreground text-xs transition-colors cursor-pointer border border-surface-hover"
+                      >
+                        ลองใหม่
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -2056,6 +2108,21 @@ export default function WorkspacePage() {
           </div>
         </div>
       )}
+
+      {/* Diagnostic Taxonomy Modal for Batch Failures */}
+      <TranslationDiagnosticModal
+        isOpen={isDiagnosticModalOpen}
+        onClose={() => setIsDiagnosticModalOpen(false)}
+        failureGroups={diagnosticFailureGroups}
+        onRetryFailedPages={() => {
+          retryFailedPages();
+          setIsDiagnosticModalOpen(false);
+        }}
+        onOpenSettingsApiKey={() => {
+          setIsDiagnosticModalOpen(false);
+          setIsSettingsOpen(true);
+        }}
+      />
     </div>
   );
 }
