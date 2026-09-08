@@ -47,3 +47,16 @@ _Avoid_: Blanked background, white mask canvas
 **Loading scrim overlay**:
 The non-intrusive centered visual container placed precisely over an active manga panel in the reading view while inpainting and translation are underway, providing progress feedback without modifying the host site's layout or DOM styling.
 _Avoid_: Status badge, floating pill, host wrapper
+
+**Desktop application shell**:
+The native Windows host window and process manager that encapsulates the translation workspace into a standalone desktop application window, orchestrates child server lifecycles, and eliminates manual terminal operation.
+_Avoid_: Browser wrapper, web shortcut
+
+**Python sidecar service**:
+The background child process managed by the desktop application shell that hosts local neural network models for text detection, segmentation, and inpainting on local hardware.
+_Avoid_: External cleaner, auxiliary daemon
+
+**Local IPC bridge**:
+The loopback communication layer enabling the desktop shell, internal translation workspace, and browser extension to reliably exchange images, job tokens, and published updates.
+_Avoid_: Remote gateway, cloud webhook
+
