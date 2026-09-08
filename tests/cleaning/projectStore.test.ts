@@ -3,6 +3,7 @@ import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it, test } from "vitest";
 
 import {
+  appendPageToProjectSession,
   clearProjectSession,
   dataUrlToBlob,
   deleteAsset,
@@ -231,3 +232,46 @@ test("purgeOrphanAssets removes only unused translated assets", async () => {
   expect(await loadAsset("other_prefix_keep")).not.toBeNull();
   expect(await loadAsset("translated_blob%3Akeep")).not.toBeNull();
 });
+
+test("preserves originUrl across session save and load", async () => {
+  await saveProjectSession({
+    pages: [
+      {
+        url: "https://manga.example/ch1/p1.jpg",
+        name: "Page 1",
+        originUrl: "https://manga.example/reader/ch1",
+      },
+    ],
+    currentPage: 0,
+    bubbleCache: new Map(),
+    translatedImageCache: new Map(),
+  });
+
+  const session = await loadProjectSession();
+  expect(session).not.toBeNull();
+  expect(session?.pages[0].originUrl).toBe("https://manga.example/reader/ch1");
+});
+
+test("normalizes raw Base64 cleanUrl to Data URL on handoff append and persists asset", async () => {
+  // Pass raw Base64 without data: prefix
+  const rawBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  const pageUrl = "https://manga.example/ch1/p2.jpg";
+
+  await appendPageToProjectSession({
+    pageUrl,
+    cleanUrl: rawBase64,
+    originUrl: "https://manga.example/reader/ch1#p2",
+  });
+
+  const session = await loadProjectSession();
+  expect(session).not.toBeNull();
+  expect(session?.pages.some((p) => p.url === pageUrl)).toBe(true);
+  const appendedPage = session?.pages.find((p) => p.url === pageUrl);
+  expect(appendedPage?.originUrl).toBe("https://manga.example/reader/ch1#p2");
+
+  // Verify asset was created in assetStore and loads back as a valid Data URL
+  expect(session?.translatedImageCache.has(pageUrl)).toBe(true);
+  const loadedDataUrl = session?.translatedImageCache.get(pageUrl);
+  expect(loadedDataUrl).toMatch(/^data:image\/png;base64,/);
+});
+

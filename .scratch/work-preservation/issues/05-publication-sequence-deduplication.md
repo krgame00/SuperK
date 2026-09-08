@@ -4,9 +4,9 @@
 
 **Blocked by:** 04: Preserved Reading-Site Metadata & Handoff Data URL Persistence (P2)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Publication endpoint assigns unique, strictly increasing sequence identifiers to each published translation update.
-- [ ] Publication polling query excludes records with sequence IDs less than or equal to the client's recorded cursor (`id > cursor`).
-- [ ] Extension background worker records the highest applied publication sequence ID and ignores duplicates.
-- [ ] Integration tests verify that repeated polling does not re-apply older publication entries or undo page deletions on the reading site.
+- [x] Publication endpoint assigns unique, strictly increasing sequence identifiers to each published translation update.
+- [x] Publication polling query excludes records with sequence IDs less than or equal to the client's recorded cursor (`id > cursor`).
+- [x] Extension background worker records the highest applied publication sequence ID and ignores duplicates.
+- [x] Integration tests verify that repeated polling does not re-apply older publication entries or undo page deletions on the reading site.

@@ -4,10 +4,10 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Backend cleaning job manager tags assets with project identifiers and removes the 24-hour expiration limitation for active project assets.
-- [ ] Region re-clean and retry successfully reconstruct parent job contexts even after multiple days.
-- [ ] Project deletion endpoint triggers cascading cleanup of associated backend job assets.
-- [ ] Deleting one project never deletes or damages assets belonging to other retained projects.
-- [ ] Unit/Integration tests verify asset retention across time simulation and verify clean cascading deletion.
+- [x] Backend cleaning job manager tags assets with project identifiers and removes the 24-hour expiration limitation for active project assets.
+- [x] Region re-clean and retry successfully reconstruct parent job contexts even after multiple days.
+- [x] Project deletion endpoint triggers cascading cleanup of associated backend job assets.
+- [x] Deleting one project never deletes or damages assets belonging to other retained projects.
+- [x] Unit/Integration tests verify asset retention across time simulation and verify clean cascading deletion.

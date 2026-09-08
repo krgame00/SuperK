@@ -471,9 +471,19 @@ export const appendPageToProjectSession = async (
     bubbleCacheMap.set(payload.pageUrl, cleanBubbles);
   }
 
-  if (payload.cleanUrl && payload.cleanUrl.startsWith("data:")) {
+  let cleanDataUrl = payload.cleanUrl;
+  if (
+    cleanDataUrl &&
+    !cleanDataUrl.startsWith("data:") &&
+    !cleanDataUrl.startsWith("blob:") &&
+    !cleanDataUrl.startsWith("http")
+  ) {
+    cleanDataUrl = `data:image/png;base64,${cleanDataUrl}`;
+  }
+
+  if (cleanDataUrl && cleanDataUrl.startsWith("data:")) {
     const assetId = `translated_${encodeURIComponent(payload.pageUrl)}`;
-    const blob = dataUrlToBlob(payload.cleanUrl);
+    const blob = dataUrlToBlob(cleanDataUrl);
     assetStore.put({
       id: assetId,
       mimeType: blob.type || "image/png",

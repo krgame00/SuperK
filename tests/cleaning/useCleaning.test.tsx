@@ -121,7 +121,7 @@ test("polls until succeeded and stores result for current page", async () => {
   const { result } = renderHook(() =>
     useCleaning({ pages: ["blob:page-1"], currentPage: 0 }),
   );
-  let cleaning!: Promise<void>;
+  let cleaning!: Promise<PageCleaningResult | undefined>;
   act(() => {
     cleaning = result.current.cleanCurrentPage(
       new Blob(["png"], { type: "image/png" }),
@@ -479,7 +479,7 @@ test("cancelled page progress does not return when navigating back", async () =>
       useCleaning({ pages: ["blob:one", "blob:two"], currentPage }),
     { initialProps: { currentPage: 0 } },
   );
-  let cleaning!: Promise<void>;
+  let cleaning!: Promise<PageCleaningResult | undefined>;
   act(() => {
     cleaning = result.current.cleanCurrentPage(
       new Blob(["png"], { type: "image/png" }),

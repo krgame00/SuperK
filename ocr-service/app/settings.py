@@ -16,8 +16,8 @@ class Settings(BaseSettings):
     max_workers: int = Field(default=1, ge=1)
     max_upload_mb: int = Field(default=80, gt=0)
     # Completed job asset dirs older than this are swept on startup/submit
-    # (and immediately via POST /v1/jobs/purge).
-    job_retention_hours: float = Field(default=24.0, ge=0)
+    # (0 disables time-based sweep; assets are retained for the project lifetime).
+    job_retention_hours: float = Field(default=0.0, ge=0)
     # Wall-clock budget for one cleaning job; a watchdog marks the job failed
     # when exceeded (the worker thread itself cannot be interrupted).
     # 0 disables the watchdog.

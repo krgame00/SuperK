@@ -9,13 +9,16 @@ export interface PublishBackPayload {
 }
 
 interface StoredPublication extends PublishBackPayload {
+  seq: number;
   updatedAt: number;
 }
 
+let globalSequenceId = 0;
 const publishedMap = new Map<string, StoredPublication>();
 
 export function _resetPublishedForTest() {
   publishedMap.clear();
+  globalSequenceId = 0;
 }
 
 function isOriginAllowed(origin: string | null): boolean {
@@ -70,9 +73,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid payload: pageUrl required" }, { status: 400 });
     }
 
+    globalSequenceId += 1;
+    const seq = globalSequenceId;
     const updatedAt = Date.now();
     const publication: StoredPublication = {
       ...body,
+      seq,
       updatedAt,
     };
     publishedMap.set(body.pageUrl, publication);
@@ -80,6 +86,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         success: true,
+        seq,
         publishedAt: updatedAt,
       },
       { headers: buildCorsHeaders(origin) }
@@ -98,6 +105,7 @@ export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const pageUrl = url.searchParams.get("pageUrl");
   const sinceParam = url.searchParams.get("since");
+  const sinceSeqParam = url.searchParams.get("sinceSeq");
 
   if (pageUrl) {
     const record = publishedMap.get(pageUrl);
@@ -108,9 +116,12 @@ export async function GET(request: NextRequest) {
   }
 
   const since = sinceParam ? parseInt(sinceParam, 10) : 0;
-  const updates = Array.from(publishedMap.values()).filter(
-    (record) => !since || record.updatedAt >= since
-  );
+  const sinceSeq = sinceSeqParam ? parseInt(sinceSeqParam, 10) : 0;
+  const updates = Array.from(publishedMap.values()).filter((record) => {
+    if (sinceSeq > 0) return record.seq > sinceSeq;
+    if (since > 0) return record.updatedAt > since;
+    return true;
+  });
 
   return NextResponse.json(
     { updates },

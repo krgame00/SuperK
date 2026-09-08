@@ -257,6 +257,29 @@ describe("workspace clean-then-translate integration", () => {
     expect(toolbar().getAttribute("data-layer")).toBe("clean");
   });
 
+  test("failed manual cleaning preserves existing translation without invalidating", async () => {
+    cleanCurrentPage.mockResolvedValue(undefined);
+    await renderRestoredWorkspace();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Clean current page" }),
+    );
+    await waitFor(() => expect(cleanCurrentPage).toHaveBeenCalledTimes(1));
+    expect(invalidatePageTranslation).not.toHaveBeenCalled();
+    expect(toolbar().getAttribute("data-layer")).not.toBe("clean");
+  });
+
+  test("failed mask retry preserves existing translation without invalidating", async () => {
+    retryRegion.mockResolvedValue(undefined);
+    await renderRestoredWorkspace();
+    fireEvent.click(screen.getByRole("button", { name: "Edit mask" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Retry mask region" }),
+    );
+    await waitFor(() => expect(retryRegion).toHaveBeenCalledTimes(1));
+    expect(invalidatePageTranslation).not.toHaveBeenCalled();
+    expect(toolbar().getAttribute("data-layer")).not.toBe("clean");
+  });
+
   test("mask retry invalidates stale translation and selects clean", async () => {
     await renderRestoredWorkspace();
     fireEvent.click(screen.getByRole("button", { name: "Edit mask" }));

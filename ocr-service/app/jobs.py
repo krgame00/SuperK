@@ -84,6 +84,7 @@ class JobState:
     filename: str
     source_bytes: bytes
     parent_id: str | None = None
+    project_id: str | None = None
     status: JobStatus = JobStatus.QUEUED
     stage: JobStage = JobStage.QUEUED
     completed_regions: int = 0
@@ -144,13 +145,19 @@ class JobStore:
             for tmp in self.cache_dir.glob(".*.tmp"):
                 shutil.rmtree(tmp, ignore_errors=True)
 
-    def submit(self, source_bytes: bytes, filename: str) -> str:
+    def submit(
+        self,
+        source_bytes: bytes,
+        filename: str,
+        project_id: str | None = None,
+    ) -> str:
         self._maybe_sweep()
         job_id = uuid.uuid4().hex
         job = JobState(
             id=job_id,
             filename=filename,
             source_bytes=source_bytes,
+            project_id=project_id,
         )
         with self._jobs_lock:
             self._jobs[job_id] = job
@@ -178,6 +185,7 @@ class JobStore:
             filename=filename,
             source_bytes=b"",
             parent_id=parent_id,
+            project_id=parent.project_id,
         )
         with self._jobs_lock:
             self._jobs[job_id] = job
@@ -213,6 +221,12 @@ class JobStore:
             for asset in ["source.png", "clean.png", "mask.png", "review-mask.png", "protected-mask.png"]:
                 if not (job_dir / asset).is_file():
                     return None
+            project_tag = job_dir / "project_id.txt"
+            project_id = (
+                project_tag.read_text(encoding="utf-8").strip()
+                if project_tag.is_file()
+                else None
+            )
             job = JobState(
                 id=job_id,
                 filename="restored.png",
@@ -221,6 +235,7 @@ class JobStore:
                 stage=JobStage.COMPLETE,
                 result=result,
                 asset_dir=job_dir,
+                project_id=project_id,
             )
             self._jobs[job_id] = job
             return job
@@ -248,6 +263,8 @@ class JobStore:
         are left untouched so completed work survives a service restart.
         """
         hours = self.retention_hours if retention_hours is None else retention_hours
+        if retention_hours is None and self.retention_hours <= 0.0:
+            return 0
         if not self.cache_dir.exists():
             return 0
         active = self._active_job_ids()
@@ -257,6 +274,9 @@ class JobStore:
             if not entry.is_dir() or entry.name.startswith("."):
                 continue
             if entry.name in active:
+                continue
+            # Project-tagged assets belong to the project lifetime and are not auto-expired
+            if (entry / "project_id.txt").is_file():
                 continue
             marker = entry / "result.json"
             try:
@@ -303,6 +323,10 @@ class JobStore:
         with self._jobs_lock:
             job = self._jobs.get(job_id)
         if job is None:
+            job_dir = self.cache_dir / job_id
+            if job_dir.is_dir():
+                shutil.rmtree(job_dir, ignore_errors=True)
+                return True
             return False
         with job.lock:
             if job.status in (JobStatus.QUEUED, JobStatus.RUNNING):
@@ -315,6 +339,37 @@ class JobStore:
         with self._jobs_lock:
             self._jobs.pop(job_id, None)
         return True
+
+    def delete_project(self, project_id: str) -> int:
+        """Cascading deletion of all jobs and assets for a project."""
+        if not project_id:
+            return 0
+        target_job_ids: set[str] = set()
+        with self._jobs_lock:
+            for jid, j in self._jobs.items():
+                if j.project_id == project_id:
+                    target_job_ids.add(jid)
+
+        if self.cache_dir.exists():
+            for entry in self.cache_dir.iterdir():
+                if not entry.is_dir() or entry.name.startswith("."):
+                    continue
+                tag = entry / "project_id.txt"
+                if tag.is_file():
+                    try:
+                        if tag.read_text(encoding="utf-8").strip() == project_id:
+                            target_job_ids.add(entry.name)
+                    except OSError:
+                        pass
+
+        removed = 0
+        for jid in target_job_ids:
+            try:
+                if self.delete_job(jid):
+                    removed += 1
+            except Exception:
+                pass
+        return removed
 
     def _pipeline(self) -> Pipeline:
         if self._pipeline_instance is None:
@@ -449,7 +504,7 @@ class JobStore:
             len(output.regions),
             len(output.regions),
         )
-        asset_dir = self._write_assets(job.id, output)
+        asset_dir = self._write_assets(job.id, output, job.project_id)
         height, width = image_shape
         with job.lock:
             source_bytes = job.source_bytes
@@ -522,12 +577,19 @@ class JobStore:
             job.completed_regions = completed
             job.total_regions = total
 
-    def _write_assets(self, job_id: str, output: PipelineOutput) -> Path:
+    def _write_assets(
+        self,
+        job_id: str,
+        output: PipelineOutput,
+        project_id: str | None = None,
+    ) -> Path:
         target = self.cache_dir / job_id
         target.parent.mkdir(parents=True, exist_ok=True)
         temporary = target.parent / f".{job_id}.{uuid.uuid4().hex}.tmp"
         temporary.mkdir()
         try:
+            if project_id:
+                (temporary / "project_id.txt").write_text(project_id, encoding="utf-8")
             Image.fromarray(output.source_image).save(temporary / "source.png")
             Image.fromarray(output.clean_image).save(temporary / "clean.png")
             Image.fromarray(output.mask).save(temporary / "mask.png")

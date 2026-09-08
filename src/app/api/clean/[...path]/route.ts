@@ -19,6 +19,13 @@ export async function POST(
   return forward(request, context, true);
 }
 
+export async function DELETE(
+  request: Request,
+  context: CleanRouteContext,
+): Promise<Response> {
+  return forward(request, context, false);
+}
+
 async function forward(
   request: Request,
   context: CleanRouteContext,

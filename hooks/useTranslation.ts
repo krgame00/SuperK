@@ -42,11 +42,14 @@ interface UseTranslationProps {
   pages: string[];
   /** Display names matching `pages` order, persisted with saved sessions. */
   pageNames?: string[];
+  /** Origin URLs matching `pages` order, persisted with saved sessions. */
+  pageOriginUrls?: (string | undefined)[];
   viewMode: "single" | "scroll";
   preparePageForTranslation: (
     pageUrl: string,
     pageIndex: number,
   ) => Promise<PreparedTranslationPage>;
+  onPageDirtied?: (pageUrl: string) => void;
 }
 
 const TRANSLATED_IMAGE_CACHE_LIMIT = 40;
@@ -158,8 +161,10 @@ export function useTranslation({
   currentPage,
   pages,
   pageNames,
+  pageOriginUrls,
   viewMode,
   preparePageForTranslation,
+  onPageDirtied,
 }: UseTranslationProps) {
   const [isTranslatingAll, setIsTranslatingAll] = useState(false);
   const [translateAllProgress, setTranslateAllProgress] = useState<{
@@ -247,13 +252,27 @@ export function useTranslation({
   // Pages whose translation completed (success or clean-only). Survives LRU
   // eviction so batch re-runs don't re-translate evicted pages.
   const completedPagesRef = useRef<Set<string>>(new Set());
-  // Pages whose caches changed since the last successful save. null = the
-  // next save must (re)write everything (first save, session restore...).
-  const dirtyPagesRef = useRef<Set<string> | null>(null);
+
+  // Monotonic per-page revision tracking for robust autosave concurrency
+  const pageRevisionsRef = useRef<Map<string, number>>(new Map());
+  const lastSavedRevisionsRef = useRef<Map<string, number>>(new Map());
+  const initialSavePendingRef = useRef(true);
   const pendingSaveRevisionRef = useRef<number | null>(null);
-  const markPageDirty = useCallback((pageUrl: string) => {
-    if (!dirtyPagesRef.current) return; // full save pending anyway
-    dirtyPagesRef.current.add(pageUrl);
+
+  const onPageDirtiedRef = useRef(onPageDirtied);
+  useEffect(() => {
+    onPageDirtiedRef.current = onPageDirtied;
+  }, [onPageDirtied]);
+
+  const markPageDirty = useCallback((pageUrl: string, evictRenderCache: boolean = true) => {
+    const nextRev = (pageRevisionsRef.current.get(pageUrl) ?? 0) + 1;
+    pageRevisionsRef.current.set(pageUrl, nextRev);
+    if (evictRenderCache) {
+      translatedImageCacheRef.current.delete(pageUrl);
+      setTranslatedImages(new Map(translatedImageCacheRef.current));
+    }
+    setCacheRevision((rev) => rev + 1);
+    onPageDirtiedRef.current?.(pageUrl);
   }, []);
   const [translatedImages, setTranslatedImages] = useState<Map<string, string>>(
     new Map(),
@@ -313,6 +332,10 @@ export function useTranslation({
   useEffect(() => {
     pageNamesRef.current = pageNames;
   }, [pageNames]);
+  const pageOriginUrlsRef = useRef(pageOriginUrls);
+  useEffect(() => {
+    pageOriginUrlsRef.current = pageOriginUrls;
+  }, [pageOriginUrls]);
   const currentPageRef = useRef(currentPage);
   currentPageRef.current = currentPage;
 
@@ -336,39 +359,72 @@ export function useTranslation({
     setSaveStatus("saving");
     setSaveError(null);
 
-    // Snapshot the dirty set up front: pages marked dirty while this save is
-    // committing must survive the success reset for the catch-up save.
-    const dirtySnapshot = dirtyPagesRef.current;
+    // Ensure all current pages have an initial revision
+    for (const p of currentPages) {
+      if (!pageRevisionsRef.current.has(p)) {
+        pageRevisionsRef.current.set(p, 1);
+      }
+    }
+
+    // Snapshot exact monotonic revision per page at the moment save starts
+    const revisionSnapshot = new Map(pageRevisionsRef.current);
+    const isInitial = initialSavePendingRef.current;
+
+    const dirtyPageUrls = new Set<string>();
+    if (isInitial) {
+      for (const p of currentPages) {
+        dirtyPageUrls.add(p);
+      }
+    } else {
+      for (const [pageUrl, rev] of revisionSnapshot.entries()) {
+        const lastSaved = lastSavedRevisionsRef.current.get(pageUrl) ?? 0;
+        if (rev > lastSaved) {
+          dirtyPageUrls.add(pageUrl);
+        }
+      }
+    }
 
     try {
       await saveProjectSession(
         {
           pages: currentPages.map(
-            (p, i) => ({ url: p, name: pageNamesRef.current?.[i] || `Page ${i + 1}` }),
+            (p, i) => ({
+              url: p,
+              name: pageNamesRef.current?.[i] || `Page ${i + 1}`,
+              originUrl: pageOriginUrlsRef.current?.[i],
+            }),
           ),
           currentPage: currentPageRef.current,
           bubbleCache: bubbleCacheRef.current,
           translatedImageCache: translatedImageCacheRef.current,
         },
-        { dirtyPageUrls: dirtySnapshot ?? undefined },
+        { dirtyPageUrls: isInitial ? undefined : dirtyPageUrls },
       );
 
-      // Everything this save wrote is on disk — drop only those pages from
-      // the pending set, keeping anything dirtied mid-save.
-      dirtyPagesRef.current = dirtySnapshot
-        ? new Set(
-            [...(dirtyPagesRef.current ?? [])].filter(
-              (pageUrl) => !dirtySnapshot.has(pageUrl),
-            ),
-          )
-        : new Set();
+      initialSavePendingRef.current = false;
+
+      // Upon successful persistence, advance lastSavedRevisions to the snapshot revision
+      for (const [pageUrl, snapshotRev] of revisionSnapshot.entries()) {
+        const currentSaved = lastSavedRevisionsRef.current.get(pageUrl) ?? 0;
+        lastSavedRevisionsRef.current.set(pageUrl, Math.max(currentSaved, snapshotRev));
+      }
+
+      // Check if any page was modified while this save was in flight
+      let hasPendingEdits = false;
+      for (const [pageUrl, currentRev] of pageRevisionsRef.current.entries()) {
+        const savedRev = lastSavedRevisionsRef.current.get(pageUrl) ?? 0;
+        if (currentRev > savedRev) {
+          hasPendingEdits = true;
+          break;
+        }
+      }
 
       lastSavedRevisionRef.current = targetRevision;
-      if (saveRevisionRef.current === targetRevision) {
+      if (!hasPendingEdits && saveRevisionRef.current === targetRevision) {
         setSaveStatus("saved");
         setSaveError(null);
       } else {
-        // A newer revision was requested while saving; keep status as saving
+        // Newer revision or in-flight edits arrived; remain saving until debounced catchup fires
         setSaveStatus("saving");
       }
       return true;
@@ -428,7 +484,13 @@ export function useTranslation({
     translatedImageCacheRef.current = restoredImages;
     setTranslatedImages(new Map(saved.translatedImageCache));
     // Restored assets are already persisted under the same deterministic ids
-    dirtyPagesRef.current = new Set();
+    initialSavePendingRef.current = false;
+    pageRevisionsRef.current.clear();
+    lastSavedRevisionsRef.current.clear();
+    for (const key of saved.bubbleCache.keys()) {
+      pageRevisionsRef.current.set(key, 1);
+      lastSavedRevisionsRef.current.set(key, 1);
+    }
     completedPagesRef.current = new Set(saved.bubbleCache.keys());
     lastSavedRevisionRef.current = saveRevisionRef.current;
     setSaveStatus("saved");
@@ -447,7 +509,9 @@ export function useTranslation({
     bubbleCacheRef.current.clear();
     translatedImageCacheRef.current.clear();
     setTranslatedImages(new Map());
-    dirtyPagesRef.current = null;
+    pageRevisionsRef.current.clear();
+    lastSavedRevisionsRef.current.clear();
+    initialSavePendingRef.current = true;
     completedPagesRef.current = new Set();
     saveRevisionRef.current = 0;
     lastSavedRevisionRef.current = 0;
@@ -510,7 +574,7 @@ export function useTranslation({
         setActiveBubbles(updatedBubbles);
         applyTranslationOverlay(updatedBubbles, viewMode, currentPage, setTranslationResult, (dataUrl) => {
           translatedImageCacheRef.current.set(pages[currentPage], dataUrl);
-          markPageDirty(pages[currentPage]);
+          markPageDirty(pages[currentPage], false);
           setTranslatedImages(new Map(translatedImageCacheRef.current));
         }, textStyleRef, undefined, pages[currentPage], () => markPageDirty(pages[currentPage]));
         setTranslationResult("✅ แปลเฉพาะจุดสำเร็จ!");
@@ -556,7 +620,7 @@ export function useTranslation({
             settled = true;
             cleanup();
             translatedImageCacheRef.current.set(pageUrl, dataUrl);
-            markPageDirty(pageUrl);
+            markPageDirty(pageUrl, false);
             setTranslatedImages(new Map(translatedImageCacheRef.current));
             setCacheRevision((revision) => revision + 1);
             resolve();
@@ -644,7 +708,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       translatedImageCacheRef.current.set(pageUrl, dataUrl);
       bubbleCacheRef.current.set(pageUrl, []);
       completedPagesRef.current.add(pageUrl);
-      markPageDirty(pageUrl);
+      markPageDirty(pageUrl, false);
       setTranslatedImages(new Map(translatedImageCacheRef.current));
       setCacheRevision((revision) => revision + 1);
       if (activePageRef.current === pageUrl) {
@@ -852,7 +916,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         );
         bubbleCacheRef.current.set(pageUrl, coloredBubbles);
         completedPagesRef.current.add(pageUrl);
-        markPageDirty(pageUrl);
+        markPageDirty(pageUrl, false);
 
         if (activePageRef.current === pageUrl) {
           setTranslationResult(`✅ แปล 18+ สำเร็จ! (ได้ ${successCount}/6 ส่วน)`);
@@ -987,7 +1051,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       );
       bubbleCacheRef.current.set(pageUrl, coloredBubbles);
       completedPagesRef.current.add(pageUrl);
-      markPageDirty(pageUrl);
+      markPageDirty(pageUrl, false);
 
       if (activePageRef.current === pageUrl) {
         setTranslationResult("✅ แปลสำเร็จ! ข้อความถูกวาดทับลงบนภาพแล้ว");
@@ -1302,6 +1366,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     bubbleCacheRef.current.delete(pageUrl);
     translatedImageCacheRef.current.delete(pageUrl);
     completedPagesRef.current.delete(pageUrl);
+    const nextRev = (pageRevisionsRef.current.get(pageUrl) ?? 0) + 1;
+    pageRevisionsRef.current.set(pageUrl, nextRev);
     setTranslatedImages(new Map(translatedImageCacheRef.current));
     setCacheRevision((revision) => revision + 1);
     if (activePageRef.current === pageUrl) setActiveBubbles([]);

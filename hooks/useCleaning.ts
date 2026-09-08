@@ -276,15 +276,21 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
   );
 
   const cleanCurrentPage = useCallback(
-    async (source: Blob, force: boolean = true): Promise<void> => {
+    async (
+      source: Blob,
+      force: boolean = true,
+    ): Promise<PageCleaningResult | undefined> => {
       const pageUrl = pageUrlRef.current;
-      if (!pageUrl) return;
-      if (!force && resultsRef.current.has(pageUrl)) return;
+      if (!pageUrl) return undefined;
+      if (!force && resultsRef.current.has(pageUrl)) {
+        return resultsRef.current.get(pageUrl);
+      }
       cancelOnPageChangeRef.current = true;
       try {
-        await cleanPage(pageUrl, source, force);
+        return await cleanPage(pageUrl, source, force);
       } catch {
         // CleaningToolbar renders the structured hook error.
+        return undefined;
       } finally {
         cancelOnPageChangeRef.current = false;
       }

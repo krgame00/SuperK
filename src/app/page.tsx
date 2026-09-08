@@ -44,11 +44,19 @@ import {
   type ReplaceOptions,
 } from "@/components/editing/FindReplaceDialog";
 import { KeyboardShortcutsDialog } from "@/components/editing/KeyboardShortcutsDialog";
+import {
+  doesPageRequireReview,
+  getUnconfirmedPages,
+  type PageReviewInfo,
+} from "@/lib/export/reviewGate";
 
 export default function WorkspacePage() {
 
   const [pages, setPages] = useState<{url: string, name: string, originUrl?: string}[]>([]);
   const [currentPage, setCurrentPage] = useState(0);
+  const [confirmedPages, setConfirmedPages] = useState<Set<string>>(new Set());
+  const [unconfirmedReviewPages, setUnconfirmedReviewPages] = useState<PageReviewInfo[] | null>(null);
+  const [pendingExportAction, setPendingExportAction] = useState<(() => void) | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [workspaceLayer, setWorkspaceLayer] =
     useState<WorkspaceLayer>("original");
@@ -152,9 +160,11 @@ export default function WorkspacePage() {
       if (!response.ok) {
         throw new Error(`Failed to load page for cleaning (${response.status}).`);
       }
-      await cleanCurrentPage(await response.blob());
-      invalidatePageTranslation(page.url);
-      setWorkspaceLayer("clean");
+      const cleanResult = await cleanCurrentPage(await response.blob());
+      if (cleanResult) {
+        invalidatePageTranslation(page.url);
+        setWorkspaceLayer("clean");
+      }
     } finally {
       uiOperationLockRef.current = false;
       setIsUiOperationBusy(false);
@@ -235,8 +245,17 @@ export default function WorkspacePage() {
     currentPage,
     pages: pageUrls,
     pageNames,
+    pageOriginUrls: pages.map((p) => p.originUrl),
     viewMode: "single",
     preparePageForTranslation,
+    onPageDirtied: (pageUrl) => {
+      setConfirmedPages((prev) => {
+        if (!prev.has(pageUrl)) return prev;
+        const next = new Set(prev);
+        next.delete(pageUrl);
+        return next;
+      });
+    },
   });
 
   const currentPageUrl = pages[currentPage]?.url;
@@ -369,7 +388,7 @@ export default function WorkspacePage() {
   ) => {
     const result = await retryRegion(regionId, mask, cleaner, action);
     const page = pages[currentPage];
-    if (page) {
+    if (page && result) {
       invalidatePageTranslation(page.url);
       setReviewedPageUrls((current) => {
         const next = new Set(current);
@@ -626,6 +645,24 @@ export default function WorkspacePage() {
 
   const handleDownloadAll = async (format: "zip" | "cbz" | "pdf" | "strip" = "zip") => {
     if (pages.length === 0) return;
+
+    const unconfirmed = getUnconfirmedPages(
+      pages,
+      confirmedPages,
+      cleaningResultsByPage,
+      bubbleCacheRef.current,
+    );
+    if (unconfirmed.length > 0) {
+      setUnconfirmedReviewPages(unconfirmed);
+      setPendingExportAction(() => () => void executeDownloadAll(format));
+      return;
+    }
+
+    await executeDownloadAll(format);
+  };
+
+  const executeDownloadAll = async (format: "zip" | "cbz" | "pdf" | "strip" = "zip") => {
+    if (pages.length === 0) return;
     setIsZipping(true);
 
     // Optional destination-folder picker (Chrome/Edge). Unavailable browsers
@@ -706,7 +743,7 @@ export default function WorkspacePage() {
                 (renderedUrl) => {
                   clearTimeout(timeout);
                   translatedImageCacheRef.current.set(pageUrl, renderedUrl);
-                  markPageDirty(pageUrl);
+                  markPageDirty(pageUrl, false);
                   resolve(renderedUrl);
                 },
                 textStyleRef,
@@ -955,6 +992,23 @@ export default function WorkspacePage() {
   };
 
   const saveCurrentPageImage = async () => {
+    const unconfirmed = getUnconfirmedPages(
+      pages,
+      confirmedPages,
+      cleaningResultsByPage,
+      bubbleCacheRef.current,
+      [currentPage],
+    );
+    if (unconfirmed.length > 0) {
+      setUnconfirmedReviewPages(unconfirmed);
+      setPendingExportAction(() => () => void executeSaveCurrentPageImage());
+      return;
+    }
+
+    await executeSaveCurrentPageImage();
+  };
+
+  const executeSaveCurrentPageImage = async () => {
     const originalName = pages[currentPage]?.name || "page.png";
     const extension = originalName.includes('.') ? originalName.split('.').pop() : 'png';
     const baseName = originalName.includes('.') ? originalName.substring(0, originalName.lastIndexOf('.')) : originalName;
@@ -1700,6 +1754,28 @@ export default function WorkspacePage() {
                   error={cleaningError}
                   className="flex w-full max-w-4xl flex-wrap items-center justify-between gap-2 rounded-xl border border-border/80 bg-surface/90 px-3 py-1.5 shadow-xl backdrop-blur-md transition-all"
                 />
+                {currentPageUrl && doesPageRequireReview(cleaningResultsByPage.get(currentPageUrl), activeBubbles) && (
+                  <div className="mt-1.5 flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-xs backdrop-blur-md">
+                    <span className="flex items-center gap-1.5 text-amber-500 font-medium">
+                      ⚠️ หน้านี้มีจุดคลีนหรือคำแปลที่ต้องการการตรวจทาน
+                    </span>
+                    {confirmedPages.has(currentPageUrl) ? (
+                      <span className="text-emerald-500 font-semibold flex items-center gap-1">
+                        ✅ ยืนยันผลตรวจแล้ว
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setConfirmedPages((prev) => new Set(prev).add(currentPageUrl))
+                        }
+                        className="px-2.5 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white font-semibold transition-colors cursor-pointer"
+                      >
+                        ยืนยันหน้านี้
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1891,6 +1967,95 @@ export default function WorkspacePage() {
         isOpen={isShortcutsOpen}
         onClose={() => setIsShortcutsOpen(false)}
       />
+
+      {/* ── Human Review Confirmation Gate Modal (Ticket 07) ── */}
+      {unconfirmedReviewPages && unconfirmedReviewPages.length > 0 && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+          <div className="bg-surface border border-border shadow-2xl rounded-2xl max-w-lg w-full p-5 flex flex-col gap-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 rounded-xl bg-amber-500/15 text-amber-500 text-xl flex-shrink-0">
+                ⚠️
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-bold text-foreground">
+                  มีหน้าที่ต้องได้รับการยืนยันก่อน Export
+                </h3>
+                <p className="text-xs text-muted mt-1 leading-relaxed">
+                  พบหน้าที่การคลีนหรือการแปลมีความมั่นใจต่ำ ต้องได้รับการตรวจสอบและยืนยันโดยผู้ใช้งานก่อนที่จะสามารถส่งออกไฟล์ได้
+                </p>
+              </div>
+            </div>
+
+            <div className="max-h-60 overflow-y-auto border border-border/60 rounded-xl divide-y divide-border/40 bg-background/50">
+              {unconfirmedReviewPages.map((p) => (
+                <div key={p.pageUrl} className="flex items-center justify-between p-3 text-xs">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-semibold text-foreground">
+                      หน้า {p.pageIndex + 1}
+                    </span>
+                    <span className="text-muted truncate max-w-[150px]">
+                      ({p.pageName})
+                    </span>
+                    <div className="flex items-center gap-1">
+                      {p.hasUncertainCleaning && (
+                        <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 text-[10px] font-medium">
+                          การคลีนไม่แน่นอน
+                        </span>
+                      )}
+                      {p.hasUncertainTranslation && (
+                        <span className="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-500 text-[10px] font-medium">
+                          การแปลความมั่นใจต่ำ
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCurrentPage(p.pageIndex);
+                      setUnconfirmedReviewPages(null);
+                      setPendingExportAction(null);
+                    }}
+                    className="px-2 py-1 rounded border border-border hover:bg-surface text-[11px] font-medium transition-colors cursor-pointer"
+                  >
+                    ไปที่หน้านี้
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-border/50">
+              <button
+                type="button"
+                onClick={() => {
+                  setUnconfirmedReviewPages(null);
+                  setPendingExportAction(null);
+                }}
+                className="px-4 py-2 rounded-xl border border-border hover:bg-surface text-xs font-semibold text-muted hover:text-foreground transition-colors cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmedPages((prev) => {
+                    const next = new Set(prev);
+                    unconfirmedReviewPages.forEach((p) => next.add(p.pageUrl));
+                    return next;
+                  });
+                  const action = pendingExportAction;
+                  setUnconfirmedReviewPages(null);
+                  setPendingExportAction(null);
+                  action?.();
+                }}
+                className="px-4 py-2 rounded-xl bg-primary hover:bg-primary-hover text-primary-content text-xs font-semibold shadow-md transition-colors cursor-pointer"
+              >
+                ยืนยันทุกหน้าและดำเนินการ Export
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

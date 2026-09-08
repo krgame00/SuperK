@@ -225,18 +225,27 @@ Notes:
 }
 
 let lastPublishSyncTime = 0;
+let lastPublishSyncSeq = 0;
 
 async function checkPublishedUpdates() {
   try {
     const stored = await chrome.storage.sync.get({ serverUrl: "http://127.0.0.1:3000" });
-    const since = lastPublishSyncTime || (Date.now() - 60000);
-    const url = `${stored.serverUrl}/api/extension/publish-back?since=${since}`;
+    const query = lastPublishSyncSeq
+      ? `sinceSeq=${lastPublishSyncSeq}`
+      : `since=${lastPublishSyncTime || (Date.now() - 60000)}`;
+    const url = `${stored.serverUrl}/api/extension/publish-back?${query}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
     if (!res.ok) return [];
     const data = await res.json();
     if (Array.isArray(data.updates) && data.updates.length > 0) {
       for (const update of data.updates) {
-        if (!lastPublishSyncTime || update.updatedAt > lastPublishSyncTime) {
+        if (update.seq && update.seq <= lastPublishSyncSeq) {
+          continue; // Skip duplicate or older publication snapshot
+        }
+        if (update.seq && update.seq > lastPublishSyncSeq) {
+          lastPublishSyncSeq = update.seq;
+        }
+        if (update.updatedAt && update.updatedAt > lastPublishSyncTime) {
           lastPublishSyncTime = update.updatedAt;
         }
 

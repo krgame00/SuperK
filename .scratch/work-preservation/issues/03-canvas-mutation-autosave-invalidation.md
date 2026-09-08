@@ -4,10 +4,10 @@
 
 **Blocked by:** 02: Monotonic Per-Page Version Tracking & Autosave Concurrency (P1)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Canvas mutation listeners in the overlay system explicitly call revision-advancing notifications on bubble movement, text input, and style change.
-- [ ] Undo and redo actions increment the page revision number and trigger autosave debounce.
-- [ ] Pre-rendered export image cache for a page is immediately deleted when that page's overlays mutate.
-- [ ] Export manager re-renders from current overlay layout when render cache is missing or invalidated.
-- [ ] Integration tests verify that moving a bubble and immediately exporting outputs an image with the new position, not the cached old position.
+- [x] Canvas mutation listeners in the overlay system explicitly call revision-advancing notifications on bubble movement, text input, and style change.
+- [x] Undo and redo actions increment the page revision number and trigger autosave debounce.
+- [x] Pre-rendered export image cache for a page is immediately deleted when that page's overlays mutate.
+- [x] Export manager re-renders from current overlay layout when render cache is missing or invalidated.
+- [x] Integration tests verify that moving a bubble and immediately exporting outputs an image with the new position, not the cached old position.

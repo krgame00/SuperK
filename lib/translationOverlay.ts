@@ -603,6 +603,7 @@ export const applyTranslationOverlay = async (
           ...(typeof b.fontSizeMultiplier === "number" ? { fontSizeMultiplier: b.fontSizeMultiplier } : {}),
         };
         saveOverlayAdjustments(all);
+        onBubblesMutated?.();
       };
 
       const wrapper = document.createElement("div");
@@ -864,11 +865,13 @@ export const applyTranslationOverlay = async (
             b.deleted = false;
             wrapper.style.display = "block";
             renderBubble();
+            onBubblesMutated?.();
           },
           redo: () => {
             b.deleted = true;
             wrapper.style.display = "none";
             setSelectedBubble(null);
+            onBubblesMutated?.();
           },
         });
       };

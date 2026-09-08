@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -417,4 +418,50 @@ def test_watchdog_fails_timed_out_job_and_discards_late_result(tmp_path: Path) -
             store2.shutdown()
     finally:
         release.set()
+        store.shutdown()
+
+
+def test_project_lifetime_retention_and_cascade_deletion(tmp_path: Path) -> None:
+    store = JobStore(
+        pipeline_factory=lambda: _TestPipeline(),
+        cache_dir=tmp_path,
+        retention_hours=24.0,
+    )
+    try:
+        png_bytes = _make_png()
+        # 1. Submit job tagged with project-alpha
+        alpha_id = store.submit(png_bytes, "alpha.png", project_id="proj-alpha")
+        alpha_job = _wait_for_job(store, alpha_id)
+        assert alpha_job.status == JobStatus.SUCCEEDED
+        assert (tmp_path / "jobs" / alpha_id / "project_id.txt").read_text(encoding="utf-8") == "proj-alpha"
+
+        # 2. Submit job tagged with project-beta
+        beta_id = store.submit(png_bytes, "beta.png", project_id="proj-beta")
+        beta_job = _wait_for_job(store, beta_id)
+        assert beta_job.status == JobStatus.SUCCEEDED
+
+        # 3. Simulate passage of 5 days (beyond 24h retention window)
+        old_time = time.time() - 5 * 86400
+        for jid in (alpha_id, beta_id):
+            os.utime(tmp_path / "jobs" / jid / "result.json", (old_time, old_time))
+
+        # Sweep must NOT delete project-tagged assets
+        removed = store.sweep_completed()
+        assert removed == 0
+        assert (tmp_path / "jobs" / alpha_id).exists()
+        assert (tmp_path / "jobs" / beta_id).exists()
+
+        # 4. Service restart restores project_id and parent context for retry
+        store._jobs.clear()
+        restored_alpha = store.get(alpha_id)
+        assert restored_alpha is not None
+        assert restored_alpha.project_id == "proj-alpha"
+
+        # 5. Cascading deletion of project-alpha: deletes alpha, leaves beta untouched
+        deleted_count = store.delete_project("proj-alpha")
+        assert deleted_count == 1
+        assert not (tmp_path / "jobs" / alpha_id).exists()
+        assert (tmp_path / "jobs" / beta_id).exists()
+        assert store.get(beta_id) is not None
+    finally:
         store.shutdown()

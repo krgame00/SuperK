@@ -4,9 +4,9 @@
 
 **Blocked by:** 02: Monotonic Per-Page Version Tracking & Autosave Concurrency (P1)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Autosave page serialization includes `originUrl` and page metadata alongside image and bubble payloads.
-- [ ] Session restoration reconstructs `originUrl` on each loaded page, keeping the "Send back to reading view" button active and visible.
-- [ ] Handoff ingestion normalizes incoming raw Base64 cleaner assets into valid Data URLs before saving to `projectStore`.
-- [ ] Integration tests in `tests/cleaning/projectStore.test.ts` verify that `originUrl` and clean background Data URLs survive saving and reloading.
+- [x] Autosave page serialization includes `originUrl` and page metadata alongside image and bubble payloads.
+- [x] Session restoration reconstructs `originUrl` on each loaded page, keeping the "Send back to reading view" button active and visible.
+- [x] Handoff ingestion normalizes incoming raw Base64 cleaner assets into valid Data URLs before saving to `projectStore`.
+- [x] Integration tests in `tests/cleaning/projectStore.test.ts` verify that `originUrl` and clean background Data URLs survive saving and reloading.

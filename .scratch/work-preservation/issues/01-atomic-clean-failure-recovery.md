@@ -4,9 +4,9 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Cleaning invocation propagates explicit success or failure state to the caller instead of swallowing errors silently.
-- [ ] Translation bubbles, inpainted clean backgrounds, and pre-rendered export image caches remain completely intact when a re-clean operation fails or throws an error.
-- [ ] Translation caches are evicted if and only if the replacement clean operation completes successfully.
-- [ ] Automated integration test in `tests/translation/` reproduces failed re-clean and verifies that translation bubbles survive without being wiped.
+- [x] Cleaning invocation propagates explicit success or failure state to the caller instead of swallowing errors silently.
+- [x] Translation bubbles, inpainted clean backgrounds, and pre-rendered export image caches remain completely intact when a re-clean operation fails or throws an error.
+- [x] Translation caches are evicted if and only if the replacement clean operation completes successfully.
+- [x] Automated integration test in `tests/translation/` reproduces failed re-clean and verifies that translation bubbles survive without being wiped.
