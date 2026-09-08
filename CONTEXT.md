@@ -60,3 +60,11 @@ _Avoid_: External cleaner, auxiliary daemon
 The loopback communication layer enabling the desktop shell, internal translation workspace, and browser extension to reliably exchange images, job tokens, and published updates.
 _Avoid_: Remote gateway, cloud webhook
 
+**Translation failure diagnostic**:
+The categorized, root-cause assessment of why a manga page could not be translated, distinguishing between missing credentials, quota exhaustion, safety policy blocks, sidecar unreachability, and network timeouts.
+_Avoid_: Generic error, retry message, vague failure
+
+**Actionable resolution prompt**:
+A contextual user guidance and interface action offered directly upon translation failure that allows the user to immediately fix the underlying condition (such as focusing the API key input, triggering comic slicing bypass, or initiating a cooldown retry).
+_Avoid_: Dismissible alert, unguided error toast
+
