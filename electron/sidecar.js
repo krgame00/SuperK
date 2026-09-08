@@ -53,6 +53,14 @@ class SidecarSupervisor extends EventEmitter {
     this.isStopping = false;
     this.isReady = false;
 
+const { resolveCacheEnvironment } = require("./cacheRouting");
+
+    const cacheEnv = resolveCacheEnvironment({
+      platform: this.platform,
+      appRoot: this.projectRoot,
+    });
+    console.log(`[Cache Routing] Active cache root: ${cacheEnv.SUPERK_CACHE_ROOT}`);
+
     this.process = this.spawnFn(
       pythonExe,
       [
@@ -68,6 +76,7 @@ class SidecarSupervisor extends EventEmitter {
         cwd,
         windowsHide: true,
         stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, ...cacheEnv },
       }
     );
 

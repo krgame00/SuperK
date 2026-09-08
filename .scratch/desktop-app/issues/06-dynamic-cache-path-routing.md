@@ -4,10 +4,10 @@
 
 **Blocked by:** 02: Python Sidecar Process Supervision & Clean Shutdown
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] Before spawning the Python sidecar, the main process checks whether `F:\` is accessible using `fs.existsSync('F:\\')`.
-- [ ] If `F:\` is present: creates subdirectories `F:\manga-cache\ocr-jobs`, `F:\manga-cache\paddle`, `F:\manga-cache\torch`, `F:\manga-cache\huggingface`, `F:\manga-cache\temp` if they don't exist, then sets environment variables on the sidecar spawn accordingly.
-- [ ] If `F:\` is absent: all cache dirs default to `<app-dir>\cache\ocr-jobs`, `<app-dir>\cache\torch`, etc., created on first launch.
-- [ ] The active cache root is logged at startup and visible in the Electron DevTools console.
-- [ ] An automated unit test for the cache-path resolver mocks `fs.existsSync` for both the F-drive-present and F-drive-absent cases, and asserts the correct environment variable map is returned in each case.
+- [x] Before spawning the Python sidecar, the main process checks whether `F:\` is accessible using `fs.existsSync('F:\\')`.
+- [x] If `F:\` is present: creates subdirectories `F:\manga-cache\ocr-jobs`, `F:\manga-cache\paddle`, `F:\manga-cache\torch`, `F:\manga-cache\huggingface`, `F:\manga-cache\temp` if they don't exist, then sets environment variables on the sidecar spawn accordingly.
+- [x] If `F:\` is absent: all cache dirs default to `<app-dir>\cache\ocr-jobs`, `<app-dir>\cache\torch`, etc., created on first launch.
+- [x] The active cache root is logged at startup and visible in the Electron DevTools console.
+- [x] An automated unit test for the cache-path resolver mocks `fs.existsSync` for both the F-drive-present and F-drive-absent cases, and asserts the correct environment variable map is returned in each case.
