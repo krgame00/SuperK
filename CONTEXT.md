@@ -4,6 +4,14 @@ This context defines the image regions and visual styles used while cleaning and
 
 ## Language
 
+**Page awaiting review**:
+A manga page with uncertain cleaning or translation results that requires a person's confirmation before export.
+_Avoid_: Failed page, approved page
+
+**Confirmed page revision**:
+The particular image and text of a page that a person has reviewed and accepted for export. Changing either invalidates that confirmation and returns the page to review.
+_Avoid_: Permanently approved page, automatic approval
+
 **Text-removal mask**:
 The pixels that the cleaner is authorized to replace. Uncertain character artwork stays outside this mask even when that leaves small text remnants.
 _Avoid_: Cleaning box, OCR rectangle
