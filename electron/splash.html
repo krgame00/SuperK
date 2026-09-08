@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SuperK Loading</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f172a;
+      color: #f8fafc;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      border: 1px solid #1e293b;
+      border-radius: 12px;
+      overflow: hidden;
+      -webkit-app-region: drag;
+    }
+    .logo {
+      font-size: 2.25rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, #38bdf8, #818cf8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 0.5rem;
+      letter-spacing: -0.5px;
+    }
+    .subtitle {
+      font-size: 0.875rem;
+      color: #94a3b8;
+      margin-bottom: 2rem;
+    }
+    .progress-container {
+      width: 100%;
+      max-width: 320px;
+      background: #1e293b;
+      height: 6px;
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 1rem;
+    }
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #38bdf8, #6366f1);
+      transition: width 0.3s ease;
+      border-radius: 3px;
+    }
+    .status-text {
+      font-size: 0.8125rem;
+      color: #cbd5e1;
+      height: 1.25rem;
+      text-align: center;
+    }
+    .error-box {
+      display: none;
+      background: #450a0a;
+      border: 1px solid #991b1b;
+      color: #fca5a5;
+      padding: 0.75rem 1rem;
+      border-radius: 6px;
+      font-size: 0.8125rem;
+      margin-top: 1rem;
+      text-align: center;
+      max-width: 340px;
+      -webkit-app-region: no-drag;
+    }
+    .retry-btn {
+      display: inline-block;
+      margin-top: 0.5rem;
+      padding: 0.35rem 0.85rem;
+      background: #ef4444;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .retry-btn:hover {
+      background: #dc2626;
+    }
+  </style>
+</head>
+<body>
+  <div class="logo">SuperK</div>
+  <div class="subtitle">Manga Translation Studio</div>
+  <div class="progress-container">
+    <div id="progressBar" class="progress-bar"></div>
+  </div>
+  <div id="statusText" class="status-text">Initializing system...</div>
+  <div id="errorBox" class="error-box">
+    <div id="errorMessage">Startup error occurred.</div>
+    <button id="retryBtn" class="retry-btn">Retry</button>
+  </div>
+
+  <script>
+    const steps = {
+      "checking-ports": { text: "Checking network ports...", percent: 20 },
+      "starting-sidecar": { text: "Starting neural cleaning engine...", percent: 40 },
+      "checking-sidecar-health": { text: "Verifying AI models & GPU...", percent: 65 },
+      "checking-workspace-health": { text: "Connecting to workspace...", percent: 85 },
+      "ready": { text: "Ready!", percent: 100 }
+    };
+
+    if (window.electronAPI) {
+      window.electronAPI.onStep((step) => {
+        const info = steps[step];
+        if (info) {
+          document.getElementById("progressBar").style.width = info.percent + "%";
+          document.getElementById("statusText").innerText = info.text;
+        }
+      });
+
+      window.electronAPI.onError((err) => {
+        document.getElementById("errorMessage").innerText = err.message;
+        document.getElementById("errorBox").style.display = "block";
+      });
+
+      document.getElementById("retryBtn").addEventListener("click", () => {
+        document.getElementById("errorBox").style.display = "none";
+        window.electronAPI.retry();
+      });
+    }
+  </script>
+</body>
+</html>
