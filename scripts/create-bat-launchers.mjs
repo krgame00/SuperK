@@ -135,6 +135,5 @@ const stopBatContent = [
 
 fs.writeFileSync(path.join(rootDir, "start.bat"), startBatContent, "utf8");
 fs.writeFileSync(path.join(rootDir, "stop.bat"), stopBatContent, "utf8");
-fs.writeFileSync(path.join(rootDir, "start.bet"), startBatContent, "utf8");
 
-console.log("Successfully generated start.bat, stop.bat, and start.bet with CRLF!");
+console.log("Successfully generated start.bat and stop.bat with CRLF!");
