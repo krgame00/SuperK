@@ -40,18 +40,34 @@ function createMainWindow(BrowserWindow) {
   return win;
 }
 
+const { checkRequiredPorts, promptPortConflict } = require("./portGuard");
+
 /**
  * Bootstrap the Electron application.
- * Accepts `app`, `BrowserWindow`, and optional `sidecarSupervisor` so tests inject mocks.
+ * Accepts `app`, `BrowserWindow`, optional `sidecarSupervisor`, and optional `dialog` so tests inject mocks.
  * @param {import('electron').App} app
  * @param {typeof import('electron').BrowserWindow} BrowserWindow
  * @param {import('./sidecar').SidecarSupervisor} [sidecarSupervisor]
+ * @param {import('electron').dialog} [dialogModule]
  */
-function bootstrap(app, BrowserWindow, sidecarSupervisor) {
+function bootstrap(app, BrowserWindow, sidecarSupervisor, dialogModule) {
   const supervisor = sidecarSupervisor || new SidecarSupervisor();
+  const dialog = dialogModule || (process.type ? require("electron").dialog : null);
   let mainWindow = null;
 
   app.whenReady().then(async () => {
+    // Pre-flight port check
+    if (dialog) {
+      let conflict = await checkRequiredPorts([3000, 8765]);
+      while (conflict) {
+        const retried = await promptPortConflict(dialog, app, conflict);
+        if (!retried) {
+          return; // app.quit() was called
+        }
+        conflict = await checkRequiredPorts([3000, 8765]);
+      }
+    }
+
     mainWindow = createMainWindow(BrowserWindow);
 
     supervisor.on("unexpected-exit", ({ code }) => {
