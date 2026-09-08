@@ -1,0 +1,43 @@
+appId: com.superk.mangatranslator
+productName: SuperK
+copyright: "SuperK Manga Translator"
+
+# Windows x64 portable target
+win:
+  target:
+    - target: portable
+      arch:
+        - x64
+  icon: public/icons/icon.ico
+
+# Do NOT use asar so the Python venv and model files remain plain files
+# that the Electron main process can spawn via child_process
+asar: false
+
+# Output directory for built artifacts
+directories:
+  output: dist/desktop
+
+# Files to include in the bundle
+files:
+  - "electron/**"
+  - "!electron/**/*.test.*"
+  - ".next/**"
+  - "public/**"
+  - "node_modules/**"
+  - "!node_modules/.cache/**"
+  - "package.json"
+
+# Extra resources bundled alongside the executable
+extraResources:
+  - from: "ocr-service/"
+    to: "ocr-service"
+    filter:
+      - "**/*"
+      - "!**/__pycache__/**"
+      - "!**/*.pyc"
+      - "!.scratch/**"
+
+# Portable build: no installation, no registry modifications
+portable:
+  artifactName: SuperK-Windows-Portable.exe

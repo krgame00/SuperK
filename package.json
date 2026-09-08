@@ -2,6 +2,7 @@
   "name": "manga-translator",
   "version": "0.1.0",
   "private": true,
+  "main": "electron/main.js",
   "scripts": {
     "dev": "next dev -H 127.0.0.1",
     "build": "next build",
@@ -9,7 +10,9 @@
     "postinstall": "node scripts/copy-pdf-worker.mjs",
     "lint": "eslint",
     "test": "vitest run --root .",
-    "test:watch": "vitest --root ."
+    "test:watch": "vitest --root .",
+    "desktop:dev": "electron .",
+    "desktop:build": "next build && electron-builder --win portable"
   },
   "dependencies": {
     "@ducanh2912/next-pwa": "^10.2.9",
@@ -33,6 +36,8 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6.0.4",
+    "electron": "^44.2.0",
+    "electron-builder": "^26.15.3",
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
     "fake-indexeddb": "^6.2.5",

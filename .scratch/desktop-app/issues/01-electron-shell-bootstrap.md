@@ -4,11 +4,11 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] An `electron/` directory exists with a minimal `main.js` that creates a `BrowserWindow` loading `http://127.0.0.1:3000`.
-- [ ] Running `electron .` while `npm run dev` is running in parallel opens the desktop window with the full translation workspace visible and functional.
-- [ ] The window title reads "SuperK — Manga Translator".
-- [ ] Window minimum size is enforced at 1024×700; default size is 1440×900.
-- [ ] Closing the window calls `app.quit()` and exits the Electron process without error.
-- [ ] `electron` and `electron-builder` are added to `devDependencies` in `package.json` with a `"desktop:dev"` script that runs `electron .`.
+- [x] An `electron/` directory exists with a minimal `main.js` that creates a `BrowserWindow` loading `http://127.0.0.1:3000`.
+- [x] Running `electron .` while `npm run dev` is running in parallel opens the desktop window with the full translation workspace visible and functional.
+- [x] The window title reads "SuperK — Manga Translator".
+- [x] Window minimum size is enforced at 1024×700; default size is 1440×900.
+- [x] Closing the window calls `app.quit()` and exits the Electron process without error.
+- [x] `electron` and `electron-builder` are added to `devDependencies` in `package.json` with a `"desktop:dev"` script that runs `electron .`.
