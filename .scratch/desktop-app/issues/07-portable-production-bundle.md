@@ -4,11 +4,11 @@
 
 **Blocked by:** 05: Native Window State Persistence & System Tray, 06: Dynamic Cache Path Routing (F:\ Drive Support)
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] `electron-builder` is configured (in `electron-builder.yml` or `package.json`) to produce a `portable` target for Windows x64 with `asar: false` so the bundled Python environment and model weights remain accessible as plain files.
-- [ ] The build script (`scripts/build-desktop.mjs`) runs `next build`, then `electron-builder --win portable` and outputs `dist/SuperK-Windows-Portable.zip`.
-- [ ] The portable zip contains: `SuperK.exe`, `resources/app/` (Next.js production server), `resources/ocr-service/` (Python `venv/` and pre-downloaded `models/`), and a `cache/` directory placeholder.
-- [ ] Extracting the zip and double-clicking `SuperK.exe` on a clean Windows 10/11 machine (no Node.js, no Python installed system-wide) launches the splash screen, starts both services, and loads the translation workspace successfully.
-- [ ] The existing `start.bat` and `stop.bat` development scripts remain functional and are not removed.
-- [ ] The portable build size is documented in `README.md` (expected ~3–5 GB due to bundled PyTorch and model weights).
+- [x] `electron-builder` is configured (in `electron-builder.yml` or `package.json`) to produce a `portable` target for Windows x64 with `asar: false` so the bundled Python environment and model weights remain accessible as plain files.
+- [x] The build script (`scripts/build-desktop.mjs`) runs `next build`, then `electron-builder --win portable` and outputs `dist/SuperK-Windows-Portable.zip`.
+- [x] The portable zip contains: `SuperK.exe`, `resources/app/` (Next.js production server), `resources/ocr-service/` (Python `venv/` and pre-downloaded `models/`), and a `cache/` directory placeholder.
+- [x] Extracting the zip and double-clicking `SuperK.exe` on a clean Windows 10/11 machine (no Node.js, no Python installed system-wide) launches the splash screen, starts both services, and loads the translation workspace successfully.
+- [x] The existing `start.bat` and `stop.bat` development scripts remain functional and are not removed.
+- [x] The portable build size is documented in `README.md` (expected ~3–5 GB due to bundled PyTorch and model weights).

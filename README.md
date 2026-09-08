@@ -40,6 +40,21 @@
 
 ---
 
+## 🪟 Windows Desktop Application (SuperK Desktop)
+
+คุณสามารถรัน SuperK ในรูปแบบโปรแกรม Windows ได้โดยไม่ต้องเปิดเบราว์เซอร์:
+
+```powershell
+# รัน SuperK ในโหมด Desktop Dev
+npm run desktop:dev
+
+# บิลด์เป็นโปรแกรมพกพา (Self-contained Portable EXE)
+npm run desktop:build
+```
+> **หมายเหตุขนาดไฟล์:** ตัวติดตั้งแบบพกพา (`SuperK-Windows-Portable.exe`) คาดว่าจะมีขนาดประมาณ ~3–5 GB เนื่องจากรวม PyTorch Runtime และโมเดล Local Inpainting ไว้ในตัว
+
+---
+
 ## 🚀 ขั้นตอนการติดตั้งอย่างละเอียด (Step-by-Step Installation)
 
 ### ขั้นตอนที่ 1: ดาวน์โหลด Source Code (Clone Repository)
