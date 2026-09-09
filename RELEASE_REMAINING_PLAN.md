@@ -265,8 +265,8 @@ Artifact ปัจจุบัน:
 - [x] Cleaner/API key/quota recovery verification ผ่าน
 - [x] Code review ไม่มี blocker
 - [x] Final regression ผ่าน
-- [ ] Commit สำเร็จ
+- [x] Commit สำเร็จ (Commit: `eb3552c`)
 
 สถานะปัจจุบัน:
 
-**RELEASE READY (Pending Commit)**
+**RELEASE READY**
