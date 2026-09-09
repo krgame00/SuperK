@@ -242,6 +242,7 @@ export default function WorkspacePage() {
     workflowPhase,
     batchFailures,
     retryFailedPages,
+    quotaCooldownRemainingSeconds,
     invalidatePageTranslation,
     replaceBubbleText,
     markPageDirty,
@@ -2114,14 +2115,18 @@ export default function WorkspacePage() {
         isOpen={isDiagnosticModalOpen}
         onClose={() => setIsDiagnosticModalOpen(false)}
         failureGroups={diagnosticFailureGroups}
-        onRetryFailedPages={() => {
-          retryFailedPages();
-          setIsDiagnosticModalOpen(false);
+        onRetryFailedPages={(groupPages) => {
+          return retryFailedPages(groupPages);
+        }}
+        onEnableNsfwBypassAndRetry={(groupPages) => {
+          setNsfwBypassMode(true);
+          return retryFailedPages(groupPages, { forceNsfw: true });
         }}
         onOpenSettingsApiKey={() => {
           setIsDiagnosticModalOpen(false);
           setIsSettingsOpen(true);
         }}
+        cooldownSeconds={quotaCooldownRemainingSeconds}
       />
     </div>
   );

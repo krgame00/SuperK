@@ -185,7 +185,11 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
         if (job.progress) setProgressState({ pageUrl, value: job.progress });
       }
       if (job.status === "failed") {
-        throw new Error(job.error || "Image cleaning failed.");
+        throw new CleaningClientError(
+          500,
+          job.error || "Image cleaning failed.",
+          "Retry cleaning this page.",
+        );
       }
       return job;
     },

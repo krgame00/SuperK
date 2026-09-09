@@ -3,6 +3,7 @@ import {
   classifyTranslationError,
   DIAGNOSTIC_TAXONOMY,
 } from "../../lib/translation/diagnostics";
+import { parseRetryAfter } from "../../lib/translation/requestError";
 
 describe("Translation Failure Diagnostics Taxonomy", () => {
   it("classifies missing API key correctly", () => {
@@ -52,5 +53,15 @@ describe("Translation Failure Diagnostics Taxonomy", () => {
     );
     expect(res.code).toBe("NETWORK_OR_TIMEOUT");
     expect(res.recommendedAction).toBe("retry_failed");
+  });
+
+  it("normalizes Retry-After seconds, dates, malformed values, and caps", () => {
+    expect(parseRetryAfter("12", 0)).toBe(12_000);
+    expect(parseRetryAfter(new Date(90_000).toUTCString(), 0)).toBe(90_000);
+    expect(parseRetryAfter("not-a-date", 0)).toBe(60_000);
+    expect(parseRetryAfter("   ", 0)).toBe(60_000);
+    expect(parseRetryAfter("-1", 0)).toBe(60_000);
+    expect(parseRetryAfter(new Date(-1_000).toUTCString(), 0)).toBe(60_000);
+    expect(parseRetryAfter("999999", 0)).toBe(15 * 60_000);
   });
 });

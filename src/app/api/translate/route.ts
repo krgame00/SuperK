@@ -268,6 +268,7 @@ export async function POST(req: Request) {
             error: error.message,
             code: error.code,
             retryable: error.retryable,
+            retryAfterMs: error.retryAfterMs,
           },
           { status: error.status },
         );
@@ -431,6 +432,7 @@ async function handleOpenAICompatible({
           error: error.message,
           code: error.code,
           retryable: error.retryable,
+          retryAfterMs: error.retryAfterMs,
         },
         { status: error.status },
       );

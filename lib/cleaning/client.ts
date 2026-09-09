@@ -76,7 +76,16 @@ async function requestJson(
   input: string,
   init: RequestInit = {},
 ): Promise<unknown> {
-  const response = await fetch(input, { ...init, cache: "no-store" });
+  let response: Response;
+  try {
+    response = await fetch(input, { ...init, cache: "no-store" });
+  } catch (error) {
+    throw new CleaningClientError(
+      0,
+      error instanceof Error ? error.message : "Local cleaning service is unavailable.",
+      "Start the local SuperK cleaner and try again.",
+    );
+  }
   let payload: unknown;
   try {
     payload = await response.json();

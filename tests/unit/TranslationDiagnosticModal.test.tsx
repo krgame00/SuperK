@@ -61,4 +61,22 @@ describe("TranslationDiagnosticModal", () => {
     expect(onClose).toHaveBeenCalled();
     expect(onOpenSettingsApiKey).toHaveBeenCalled();
   });
+
+  it("passes only the affected pages to a safety recovery action", async () => {
+    const onEnable = vi.fn();
+    render(
+      <TranslationDiagnosticModal
+        isOpen={true}
+        onClose={vi.fn()}
+        failureGroups={[{
+          diagnostic: DIAGNOSTIC_TAXONOMY.SAFETY_BLOCKED,
+          pages: [2, 4],
+        }]}
+        onEnableNsfwBypassAndRetry={onEnable}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /NSFW Bypass/i }));
+    expect(onEnable).toHaveBeenCalledWith([2, 4]);
+  });
 });

@@ -28,7 +28,7 @@ This generic message provided no diagnostic insight into *why* the pages failed 
    - Displays clear human-readable Thai explanations of the exact root cause.
    - Provides direct, contextual action buttons:
      - `MISSING_KEY` ➔ One-click open Settings modal focused on API Key input.
-     - `QUOTA_EXHAUSTED` ➔ Retry failed pages countdown / add fallback keys suggestion.
+     - `QUOTA_EXHAUSTED` ➔ Honor provider retry timing when available, count down the cooldown, then enable a user-initiated retry for the failed pages. Cooldown expiry does not retry automatically.
      - `SAFETY_BLOCKED` ➔ Toggle Comic Slicing / NSFW Bypass mode and retry.
      - `LOCAL_SIDECAR_OFFLINE` ➔ Restart cleaner service trigger.
 
@@ -39,3 +39,5 @@ This generic message provided no diagnostic insight into *why* the pages failed 
 
 - **Positive**: Eliminates user confusion when batch translation halts; delivers clear actionable steps to unblock translation; automatically resolves API keys from existing environment files in desktop mode; preserves high-level batch UX while exposing granular debugging details on demand.
 - **Trade-offs**: Introduces diagnostic modal UI state and per-page error badge tracking in the translation workspace.
+
+An actionable resolution must perform the operation stated by its label. If the application cannot perform an operation automatically in the current environment, the interface must present accurate manual guidance instead. This clarification was accepted during the Windows desktop release-readiness review on 2026-09-09.

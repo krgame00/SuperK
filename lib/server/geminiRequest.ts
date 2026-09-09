@@ -1,5 +1,6 @@
 import {
   type TranslationObservabilityMeta,
+  parseRetryAfter,
 } from "@/lib/translation/requestError";
 
 export type GeminiErrorCode =
@@ -11,18 +12,21 @@ export class GeminiRequestError extends Error {
   readonly code: GeminiErrorCode;
   readonly status: number;
   readonly retryable: boolean;
+  readonly retryAfterMs?: number;
 
   constructor(
     message: string,
     code: GeminiErrorCode,
     status: number,
     retryable: boolean,
+    retryAfterMs?: number,
   ) {
     super(message);
     this.name = "GeminiRequestError";
     this.code = code;
     this.status = status;
     this.retryable = retryable;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -72,13 +76,21 @@ function upstreamMessage(data: unknown, status: number): string {
 function upstreamError(
   message: string,
   status: number,
+  retryAfterMs?: number,
 ): GeminiRequestError {
   return new GeminiRequestError(
     message,
     status === 429 ? "GEMINI_QUOTA" : "GEMINI_UPSTREAM",
     status,
     status === 429 || status >= 500,
+    retryAfterMs,
   );
+}
+
+function retryAfterMsFromHeaders(headers: Headers): number | undefined {
+  const value = headers.get("retry-after");
+  if (!value) return undefined;
+  return parseRetryAfter(value);
 }
 
 export async function requestGemini<T = unknown>(
@@ -184,6 +196,7 @@ export async function requestGemini<T = unknown>(
         const error = upstreamError(
           upstreamMessage(data, response.status),
           response.status,
+          retryAfterMsFromHeaders(response.headers),
         );
         firstHttpError ??= error;
 
@@ -331,6 +344,7 @@ export async function requestOpenAICompatible<T = unknown>(
     const error = upstreamError(
       upstreamMessage(data, response.status),
       response.status,
+      retryAfterMsFromHeaders(response.headers),
     );
     firstHttpError ??= error;
 

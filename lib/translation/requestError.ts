@@ -74,6 +74,31 @@ interface TranslationErrorBody {
   error?: string;
   code?: string;
   retryable?: boolean;
+  retryAfterMs?: number;
+}
+
+export const DEFAULT_QUOTA_COOLDOWN_MS = 60_000;
+export const MAX_QUOTA_COOLDOWN_MS = 15 * 60_000;
+
+/** Normalize Retry-After seconds or HTTP-date into a bounded client delay. */
+export function parseRetryAfter(
+  value: string | null | undefined,
+  nowMs = Date.now(),
+  fallbackMs = DEFAULT_QUOTA_COOLDOWN_MS,
+): number {
+  const fallback = Math.min(Math.max(fallbackMs, 0), MAX_QUOTA_COOLDOWN_MS);
+  if (!value) return fallback;
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+  const seconds = Number(trimmed);
+  if (Number.isFinite(seconds)) {
+    if (seconds < 0) return fallback;
+    return Math.min(Math.round(seconds * 1000), MAX_QUOTA_COOLDOWN_MS);
+  }
+  const timestamp = Date.parse(trimmed);
+  if (!Number.isFinite(timestamp)) return fallback;
+  if (timestamp <= nowMs) return fallback;
+  return Math.min(timestamp - nowMs, MAX_QUOTA_COOLDOWN_MS);
 }
 
 export class TranslationRequestError extends Error {
@@ -81,12 +106,14 @@ export class TranslationRequestError extends Error {
   readonly category: TranslationErrorCode;
   readonly retryable: boolean;
   readonly status: number;
+  readonly retryAfterMs?: number;
 
   constructor(
     message: string,
     status: number,
     code?: string,
     retryable = false,
+    retryAfterMs?: number,
   ) {
     super(message);
     this.name = "TranslationRequestError";
@@ -94,6 +121,7 @@ export class TranslationRequestError extends Error {
     this.category = normalizeTranslationErrorCode(code || status);
     this.retryable = retryable;
     this.status = status;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -108,6 +136,7 @@ export async function readTranslationResponse<T>(
       response.status,
       error.code,
       error.retryable === true,
+      typeof error.retryAfterMs === "number" ? error.retryAfterMs : undefined,
     );
   }
   return data as T;

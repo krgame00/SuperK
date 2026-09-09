@@ -140,13 +140,6 @@ function shouldKeepStdlib(source, pythonHome) {
 }
 
 const PRUNED_SITE_PACKAGE_ROOTS = new Set([
-  "torch",
-  "torchgen",
-  "functorch",
-  "torchvision",
-  "sympy",
-  "networkx",
-  "mpmath",
   "pip",
   "_pytest",
   "pytest",
@@ -160,11 +153,6 @@ const PRUNED_SITE_PACKAGE_ROOTS = new Set([
 ]);
 
 const PRUNED_DIST_INFO_PREFIXES = [
-  "torch-",
-  "torchvision-",
-  "sympy-",
-  "networkx-",
-  "mpmath-",
   "pip-",
   "pytest-",
   "pytest_cov-",
@@ -250,12 +238,27 @@ function preparePortablePythonRuntime() {
   }
 
   // Validate the copied runtime in-place before spending time on Electron
-  // packaging. Importing app.api exercises the actual sidecar dependency graph.
+  // packaging. Loading and running LaMa catches missing native/runtime pieces
+  // that importing app.api alone cannot detect.
   execFileSync(
     pythonExe,
     [
       "-c",
-      "import fastapi, uvicorn, cv2, numpy, PIL, onnxruntime, huggingface_hub; from app.api import app; print('portable-python-ok')",
+      [
+        "import numpy as np",
+        "import fastapi, uvicorn, cv2, PIL, onnxruntime, huggingface_hub",
+        "from app.cleaners.lama_large import LamaLargeCleaner",
+        "from app.mask_refiner import MaskRegion",
+        "from app.schemas import PixelRect",
+        "model = 'models/anime-manga-big-lama.pt'",
+        "cleaner = LamaLargeCleaner.from_model_path(model)",
+        "image = np.full((192, 192, 3), 255, dtype=np.uint8)",
+        "mask = np.zeros((192, 192), dtype=np.uint8); mask[95:97, 95:97] = 255",
+        "region = MaskRegion(id='desktop-build-probe', rect=PixelRect(x=56, y=56, width=80, height=80), component_ids=(1,), stroke_radius=1)",
+        "result = cleaner.clean(image, mask, region)",
+        "assert result.shape == image.shape and result.dtype == image.dtype",
+        "print('portable-python-lama-ok')",
+      ].join('; '),
     ],
     {
       cwd: ocrServiceDir,

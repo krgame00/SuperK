@@ -26,8 +26,8 @@ export interface TranslationDiagnosticModalProps {
   onClose: () => void;
   failureGroups: DiagnosticFailureGroup[];
   onOpenSettingsApiKey?: () => void;
-  onEnableNsfwBypassAndRetry?: () => void;
-  onRetryFailedPages?: () => void;
+  onEnableNsfwBypassAndRetry?: (pages: number[]) => void | Promise<void>;
+  onRetryFailedPages?: (pages: number[]) => void | Promise<void>;
   cooldownSeconds?: number;
 }
 
@@ -156,9 +156,9 @@ export function TranslationDiagnosticModal({
                   {diagnostic.recommendedAction === "enable_nsfw_bypass" && (
                     <button
                       type="button"
-                      onClick={() => {
+                      onClick={async () => {
+                        await onEnableNsfwBypassAndRetry?.(pages);
                         onClose();
-                        onEnableNsfwBypassAndRetry?.();
                       }}
                       className="inline-flex items-center gap-2 rounded-md bg-orange-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-orange-500 transition-colors shadow-sm"
                     >
@@ -177,9 +177,9 @@ export function TranslationDiagnosticModal({
                       ) : (
                         <button
                           type="button"
-                          onClick={() => {
+                          onClick={async () => {
+                            await onRetryFailedPages?.(pages);
                             onClose();
-                            onRetryFailedPages?.();
                           }}
                           className="inline-flex items-center gap-2 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-500 transition-colors shadow-sm"
                         >
@@ -194,9 +194,9 @@ export function TranslationDiagnosticModal({
                     diagnostic.recommendedAction === "restart_cleaner") && (
                     <button
                       type="button"
-                      onClick={() => {
+                      onClick={async () => {
+                        await onRetryFailedPages?.(pages);
                         onClose();
-                        onRetryFailedPages?.();
                       }}
                       className="inline-flex items-center gap-2 rounded-md bg-surface-hover px-3 py-1.5 text-xs font-medium text-foreground hover:bg-primary hover:text-primary-foreground transition-colors border border-surface-hover"
                     >

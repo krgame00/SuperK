@@ -4,6 +4,7 @@ import {
   isUserCancelledError,
   readTranslationResponse,
   TranslationRequestError,
+  DEFAULT_QUOTA_COOLDOWN_MS,
 } from "@/lib/translation/requestError";
 import { applyTranslationOverlay } from "@/lib/translationOverlay";
 import type { TranslatedBubble } from "@/lib/translationOverlay";
@@ -23,8 +24,8 @@ import { type GlossaryEntry } from "@/lib/translation/glossary";
 import {
   classifyTranslationError,
   type DiagnosticDetail,
-  type DiagnosticErrorCode,
 } from "@/lib/translation/diagnostics";
+import { CleaningClientError } from "@/lib/cleaning/client";
 
 export type SaveStatus = "idle" | "saving" | "saved" | "error";
 export type TranslationWorkflowPhase = "cleaning" | "translating";
@@ -187,8 +188,27 @@ export function useTranslation({
   // instead of letting the current page run to completion.
   const translationAbortRef = useRef<AbortController | null>(null);
   const [batchFailures, setBatchFailures] = useState<BatchPageFailure[]>([]);
+  const [quotaCooldownUntil, setQuotaCooldownUntil] = useState<number | null>(null);
+  const [quotaClockMs, setQuotaClockMs] = useState(() => Date.now());
   const [workflowPhase, setWorkflowPhase] =
     useState<TranslationWorkflowPhase | null>(null);
+
+  useEffect(() => {
+    if (!quotaCooldownUntil) return;
+    setQuotaClockMs(Date.now());
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      if (now >= quotaCooldownUntil) {
+        setQuotaCooldownUntil(null);
+      } else {
+        setQuotaClockMs(now);
+      }
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [quotaCooldownUntil]);
+  const quotaCooldownRemainingSeconds = quotaCooldownUntil
+    ? Math.max(0, Math.ceil((quotaCooldownUntil - quotaClockMs) / 1000))
+    : 0;
 
   const [targetLang, setTargetLang] = useState("Thai");
   const [sourceLang, setSourceLang] = useState("auto");
@@ -1124,7 +1144,10 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     }
   };
 
-  const handleTranslateAll = async (targetIndices?: number[]) => {
+  const handleTranslateAll = async (
+    targetIndices?: number[],
+    options?: { forceNsfw?: boolean },
+  ) => {
     if (
       translationOperationLockRef.current ||
       isTranslating ||
@@ -1141,6 +1164,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       let quotaFailureMessage: string | null = null;
 
       const isTargetedRetry = Array.isArray(targetIndices) && targetIndices.length > 0;
+      const forceNsfwForBatch = options?.forceNsfw === true;
       const indicesToProcess = isTargetedRetry
         ? targetIndices.filter((idx) => idx >= 0 && idx < pages.length)
         : pages.map((_, idx) => idx);
@@ -1199,6 +1223,15 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             pageUrl,
             stage: "cleaning",
             message: error instanceof Error ? error.message : "คลีนไม่สำเร็จ",
+            diagnostic: classifyTranslationError(
+              error,
+              error instanceof CleaningClientError ? error.status : undefined,
+              error instanceof CleaningClientError &&
+              (error.status === 0 || error.status === 502 || error.status === 503 ||
+                /timeout|sidecar|8765|เซิร์ฟเวอร์/i.test(error.message))
+                ? "LOCAL_SIDECAR_OFFLINE"
+                : undefined,
+            ),
           };
           failures.push(failureItem);
           setBatchFailures((prev) => {
@@ -1220,7 +1253,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
 
         let success = false;
         let retries = 0;
-        const forceNsfw = false;
+        const forceNsfw = forceNsfwForBatch;
         let lastTranslationError: unknown;
 
         while (!success && retries < 3 && !cancelTranslateAllRef.current) {
@@ -1250,6 +1283,17 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             // User cancellation must not count as a page failure nor retry.
             if (isUserCancelledError(err)) break;
             const errMsg = err instanceof Error ? err.message : String(err);
+            const isQuotaError =
+              err instanceof TranslationRequestError &&
+              (err.code === "GEMINI_QUOTA" || err.category === "quota");
+            if (isQuotaError) {
+              const cooldownMs = err.retryAfterMs ?? DEFAULT_QUOTA_COOLDOWN_MS;
+              setQuotaCooldownUntil((previous) =>
+                Math.max(previous ?? 0, Date.now() + cooldownMs),
+              );
+              setTranslationResult("โควต้าเต็มชั่วคราว กรุณารอคูลดาวน์แล้วกดลองใหม่");
+              break;
+            }
             // null = non-retryable (auth/safety/bad request) — fall through to
             // the guard below and stop instead of burning 3 attempts per page.
             const retryDelay = getTranslationRetryDelay(err, retries);
@@ -1365,11 +1409,38 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     handleTranslateAllRef.current = handleTranslateAll;
   });
 
-  const retryFailedPages = useCallback(async () => {
+  const retryFailedPages = useCallback(async (
+    pageNumbers?: number[],
+    options?: { forceNsfw?: boolean },
+  ) => {
     if (batchFailures.length === 0) return;
-    const failedIndices = batchFailures.map((f) => f.pageIndex);
-    await handleTranslateAllRef.current(failedIndices);
-  }, [batchFailures]);
+    const selected = pageNumbers?.map((page) => page - 1);
+    const failedIndices = (selected && selected.length > 0
+      ? selected
+      : batchFailures.map((f) => f.pageIndex)
+    ).filter((index) =>
+      batchFailures.some(
+        (failure) => failure.pageIndex === index && pages[index] === failure.pageUrl,
+      ),
+    );
+    if (failedIndices.length === 0) return;
+    if (
+      quotaCooldownUntil &&
+      quotaCooldownUntil > Date.now() &&
+      failedIndices.some((index) =>
+        batchFailures.some(
+          (failure) =>
+            failure.pageIndex === index && failure.diagnostic?.code === "QUOTA_EXHAUSTED",
+        ),
+      )
+    ) {
+      setTranslationResult(
+        `โควต้ายังอยู่ในคูลดาวน์อีก ${Math.ceil((quotaCooldownUntil - Date.now()) / 1000)} วิ`,
+      );
+      return;
+    }
+    await handleTranslateAllRef.current(failedIndices, options);
+  }, [batchFailures, pages, quotaCooldownUntil]);
   const cancelTranslateAll = () => {
     cancelTranslateAllRef.current = true;
     translationAbortRef.current?.abort();
@@ -1490,6 +1561,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     workflowPhase,
     batchFailures,
     retryFailedPages,
+    quotaCooldownUntil,
+    quotaCooldownRemainingSeconds,
     invalidatePageTranslation,
     replaceBubbleText,
     markPageDirty,
