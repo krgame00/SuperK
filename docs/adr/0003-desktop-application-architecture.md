@@ -4,38 +4,49 @@ Date: 2026-09-08
 
 ## Status
 
-Accepted
+Accepted — amended 2026-09-09
 
 ## Context
 
-SuperK Manga Translator currently operates as a dual-process system: a Python FastAPI service (`ocr-service`) running on port `8765` for neural text detection and inpainting, and a Next.js web application running on port `3000`. Users launch these via command-line terminals or batch scripts and interact through a browser tab.
+SuperK Manga Translator operates as a dual-process application layer: a Python FastAPI service on port `8765` for local neural text detection and inpainting, and a Next.js application on port `3000`. The Windows desktop shell is responsible for presenting these capabilities as one application rather than requiring users to manage terminal processes and browser tabs.
 
-Translators and readers requested a single native desktop application (`.exe`) on Windows with its own standalone window, eliminating the need to manage terminal consoles, keep browser tabs open, or configure environments manually.
+The original decision assumed a large packaged PyTorch environment for LaMa. Packaging work later established a smaller relocatable Windows Python runtime and an ONNX-based production path that can preserve the required local AnimeLaMa capability without making PyTorch a mandatory shipped dependency.
 
 ## Decision
 
-1. **Target Platform**:
-   Target Windows 10/11 (x64) as the primary deployment platform.
+1. **Target Platform**
+   Target Windows 10/11 x64 as the primary deployment platform.
 
-2. **Shell Engine (Electron with Embedded Sidecars)**:
-   Adopt Electron to encapsulate the Next.js workspace into a dedicated desktop window. The Electron main process orchestrates the entire application lifecycle:
-   - Spawns the Python `ocr-service` as a background sidecar child process.
-   - Spawns/serves the Next.js application layer.
-   - Displays a native desktop application window with custom menu and system tray controls.
-   - Gracefully terminates all child processes upon window close.
+2. **Shell Engine**
+   Use Electron as the desktop application shell. The Electron main process owns application startup and shutdown, starts the local workspace server and Python sidecar, waits for their readiness, presents the dedicated application window, and performs managed shutdown during normal application exit.
 
-3. **Hybrid Processing Model**:
-   Maintain the hybrid workload architecture:
-   - **Local AI Execution (Offline)**: Neural text detection (PaddleOCR, Manga-Text-Detector) and inpainting (LaMa, AOT, Flat cleaners) execute entirely on the local machine (GPU/CPU) via the Python sidecar.
-   - **Cloud Translation (Online)**: Dialogue comprehension and multi-language translation query the Google Gemini Vision API over HTTPS, requiring an internet connection and user API key.
+3. **Hybrid Processing Model**
+   Preserve the hybrid architecture:
+   - Local text detection, segmentation, and inpainting execute on the user's machine through the Python sidecar.
+   - Gemini translation remains an online operation requiring internet access and an API key.
 
-4. **Distribution Format (Portable All-In-One Bundle)**:
-   Package the application as a standalone portable bundle (`SuperK-Windows-Portable.zip`) containing `SuperK.exe`, the bundled Electron shell, the Next.js runtime, the embedded Python virtual environment, and pre-packaged neural network weights (`models/`). Users can extract and run immediately without administrative installation or first-run model downloads, and can run directly from external drives (e.g., `F:\manga-cache`).
+4. **Windows Local AI Runtime**
+   The production Windows AnimeLaMa path uses ONNX Runtime. DirectML is preferred when available and compatible; CPU execution is the supported fallback. PyTorch is not a mandatory packaged dependency for the Windows release.
 
-5. **Browser Extension Interoperability**:
-   The desktop application retains loopback HTTP listeners on `127.0.0.1:3000` and `127.0.0.1:8765`. The SuperK Chrome reading extension continues to communicate seamlessly with the desktop app without requiring any protocol changes.
+   A release must validate the actual staged production inference path with a real image and mask. DirectML failure alone does not fail a release when the supported CPU path executes successfully. Failure of both supported providers, a missing model, or an unusable production cleaner route blocks release readiness.
+
+5. **Distribution Format**
+   Ship a portable all-in-one Windows artifact containing the Electron shell, Next.js standalone runtime, relocatable Python runtime, required local model assets, and application resources. The user must not need a separate Node, npm, Python, or package installation to launch the program.
+
+6. **Browser Extension Interoperability**
+   Retain loopback listeners on `127.0.0.1:3000` and `127.0.0.1:8765` so the existing browser-extension interoperability model remains compatible.
+
+7. **Process Lifecycle and Abnormal Recovery**
+   Normal close terminates managed child processes through the desktop lifecycle. A forced termination cannot rely on shutdown hooks, so stale-process recovery happens on the next launch. The application may terminate a stale process only when it can verify that process belongs to SuperK; port occupancy alone is never sufficient ownership evidence. Unknown port owners use the port-conflict flow.
 
 ## Consequences
 
-- **Positive**: Single double-click execution; no terminal windows or environment setup required; unified window management; clean process termination prevents zombie servers; seamless Chrome extension compatibility preserved.
-- **Trade-offs**: Portable download size is ~3-5 GB due to embedded PyTorch, PaddlePaddle, and model weights; Electron introduces ~150-250 MB RAM baseline overhead.
+- **Positive**: Users get single-application startup, no manual terminal management, local AI execution, a smaller and more maintainable production runtime than the original mandatory-PyTorch design, GPU acceleration where DirectML is available, and CPU compatibility where it is not.
+- **Positive**: Abnormal relaunch recovery avoids unsafe `taskkill` behavior against unrelated applications that happen to use the same ports.
+- **Trade-off**: The portable artifact remains substantial because Electron, the relocatable Python runtime, ONNX Runtime, and neural model weights are bundled.
+- **Trade-off**: DirectML is an optimization rather than a universal guarantee; some supported systems will execute AnimeLaMa on CPU.
+- **Trade-off**: Hard-kill cleanup may be deferred until the next launch because the terminated Electron process cannot execute normal shutdown code.
+
+## Amendment Note
+
+This amendment supersedes only the earlier requirement that the Windows bundle must retain PyTorch/LaMa as the production inpainting runtime. The accepted desktop-shell, hybrid-processing, portable-distribution, and loopback-interoperability decisions remain in force.

@@ -83,6 +83,36 @@ describe("SidecarSupervisor (Ticket 02)", () => {
     expect(options.cwd).toMatch(/ocr-service/);
   });
 
+  it("records child ownership on spawn and clears it after a successful stop", async () => {
+    const ownershipManager = {
+      record: vi.fn(),
+      clear: vi.fn(),
+    };
+    const supervisor = new SidecarSupervisor({
+      spawnFn: mockSpawn as any,
+      execFn: mockExec as any,
+      fetchFn: mockFetch as any,
+      platform: "win32",
+      ownershipManager,
+    });
+
+    const ready = supervisor.start();
+    await vi.advanceTimersByTimeAsync(500);
+    await ready;
+
+    expect(ownershipManager.record).toHaveBeenCalledWith(
+      "sidecar",
+      expect.objectContaining({
+        pid: 12345,
+        executablePath: expect.stringMatching(/python(\.exe)?$/i),
+        args: expect.arrayContaining(["-m", "uvicorn", "app.api:app", "8765"]),
+      }),
+    );
+
+    await supervisor.stop();
+    expect(ownershipManager.clear).toHaveBeenCalledWith("sidecar");
+  });
+
   it("polls /health endpoint and resolves ready when healthy", async () => {
     const supervisor = new SidecarSupervisor({
       spawnFn: mockSpawn as any,
@@ -124,6 +154,66 @@ describe("SidecarSupervisor (Ticket 02)", () => {
 
     await expect(readyPromise).resolves.toBe(true);
     expect(callCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it("recovers without restart when the sidecar is already healthy", async () => {
+    const supervisor = new SidecarSupervisor({
+      spawnFn: mockSpawn as any,
+      execFn: mockExec as any,
+      fetchFn: mockFetch as any,
+    });
+    const statuses: string[] = [];
+
+    const result = await supervisor.recover((payload: { status: string }) => {
+      statuses.push(payload.status);
+    });
+
+    expect(result).toEqual({ status: "recovered", restarted: false });
+    expect(mockSpawn).not.toHaveBeenCalled();
+    expect(statuses).toEqual(["checking", "recovered"]);
+    expect(supervisor.isReady).toBe(true);
+  });
+
+  it("restarts once and verifies health when the sidecar is unhealthy", async () => {
+    let healthCalls = 0;
+    mockFetch = vi.fn().mockImplementation(async () => {
+      healthCalls += 1;
+      if (healthCalls === 1) throw new Error("connection refused");
+      return { ok: true, json: async () => ({ status: "ok" }) };
+    });
+    const supervisor = new SidecarSupervisor({
+      spawnFn: mockSpawn as any,
+      execFn: mockExec as any,
+      fetchFn: mockFetch as any,
+    });
+    const statuses: string[] = [];
+
+    const recovery = supervisor.recover((payload: { status: string }) => {
+      statuses.push(payload.status);
+    });
+    await vi.advanceTimersByTimeAsync(500);
+
+    await expect(recovery).resolves.toEqual({ status: "recovered", restarted: true });
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    expect(statuses).toEqual(["checking", "restarting", "verifying", "recovered"]);
+  });
+
+  it("reports failure after one restart attempt instead of looping", async () => {
+    mockFetch = vi.fn().mockRejectedValue(new Error("still offline"));
+    const supervisor = new SidecarSupervisor({
+      spawnFn: mockSpawn as any,
+      execFn: mockExec as any,
+      fetchFn: mockFetch as any,
+      config: { initialBackoffMs: 10, maxBackoffMs: 10, timeoutMs: 15 },
+    });
+
+    const recovery = supervisor.recover();
+    await vi.advanceTimersByTimeAsync(30);
+    const result = await recovery;
+
+    expect(result.status).toBe("failed");
+    expect(result.restarted).toBe(true);
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
   });
 
   it("kills sidecar tree using taskkill /PID <pid> /T /F on Windows when stopped", async () => {

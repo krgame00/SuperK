@@ -79,6 +79,19 @@ def create_session_options() -> ort.SessionOptions:
     return options
 
 
+def create_cpu_inference_session(
+    model_path: str | Path,
+    sess_options: ort.SessionOptions | None = None,
+) -> ort.InferenceSession:
+    """Create a fresh CPU-only session for execution-time GPU recovery."""
+    options = sess_options or create_session_options()
+    return ort.InferenceSession(
+        str(model_path),
+        sess_options=options,
+        providers=["CPUExecutionProvider"],
+    )
+
+
 def create_inference_session(
     model_path: str | Path,
     sess_options: ort.SessionOptions | None = None,
@@ -102,9 +115,5 @@ def create_inference_session(
                 providers,
                 exc,
             )
-            return ort.InferenceSession(
-                path_str,
-                sess_options=options,
-                providers=["CPUExecutionProvider"],
-            )
+            return create_cpu_inference_session(path_str, sess_options=options)
         raise

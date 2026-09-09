@@ -479,6 +479,82 @@ test("quota exhaustion aborts before preparing the next page", async () => {
   ]);
 });
 
+test("quota cooldown is group-scoped, expires without auto retry, then manually retries only that group", async () => {
+  vi.useFakeTimers();
+  const pages = ["blob:one", "blob:two"];
+  const preparePageForTranslation = vi.fn(async (url: string) => ({
+    recognitionUrl: url,
+    backgroundUrl: `${url}:clean`,
+  }));
+  let apiCalls = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (pages.includes(url)) return imageResponse();
+    if (url === "/api/translate") {
+      apiCalls += 1;
+      if (apiCalls === 1) {
+        return Response.json(
+          {
+            error: "Gemini quota exhausted",
+            code: "GEMINI_QUOTA",
+            retryable: false,
+            retryAfterMs: 2_000,
+          },
+          { status: 429 },
+        );
+      }
+      return successResponse();
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  const { result } = renderHook(() =>
+    useTranslation({
+      currentPage: 0,
+      pages,
+      viewMode: "single",
+      preparePageForTranslation,
+    }),
+  );
+
+  let firstBatch!: Promise<void>;
+  act(() => {
+    firstBatch = result.current.handleTranslateAll();
+  });
+  await act(async () => {
+    await firstBatch;
+  });
+
+  expect(apiCalls).toBe(1);
+  expect(preparePageForTranslation).toHaveBeenCalledTimes(1);
+  expect(result.current.failureGroups).toHaveLength(1);
+  const failureGroupId = result.current.failureGroups[0].id;
+  expect(result.current.failureGroups[0]).toMatchObject({
+    diagnostic: expect.objectContaining({ code: "QUOTA_EXHAUSTED" }),
+    pageIndices: [0],
+  });
+  expect(result.current.failureGroups[0].cooldownRemainingSeconds).toBeGreaterThan(0);
+
+  await act(async () => {
+    await result.current.retryFailureGroup(failureGroupId);
+  });
+  expect(apiCalls).toBe(1);
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(2_100);
+  });
+  expect(apiCalls).toBe(1); // expiry alone never sends a request
+  expect(result.current.failureGroups[0].cooldownRemainingSeconds).toBe(0);
+
+  await act(async () => {
+    await result.current.retryFailureGroup(failureGroupId);
+  });
+
+  expect(apiCalls).toBe(2);
+  expect(preparePageForTranslation).toHaveBeenCalledTimes(2);
+  expect(result.current.batchFailures).toHaveLength(0);
+});
+
 test("persists translated caches after an inactive batch page completes", async () => {
   vi.useFakeTimers();
   const pages = ["blob:one", "blob:two"];

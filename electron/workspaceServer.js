@@ -61,6 +61,8 @@ class WorkspaceServerSupervisor extends EventEmitter {
     this.projectRoot = options.projectRoot || path.resolve(__dirname, "..");
     this.isPackaged = Boolean(options.isPackaged);
     this.execPath = options.execPath || process.execPath;
+    this.ownershipManager = options.ownershipManager || null;
+    this.ownershipService = options.ownershipService || "workspace";
 
     this.process = null;
     this.isStopping = false;
@@ -144,12 +146,24 @@ class WorkspaceServerSupervisor extends EventEmitter {
       NODE_ENV: this.isPackaged ? "production" : "development",
     };
 
-    this.process = this.spawnFn(this.execPath, this.getLaunchArguments(), {
+    const launchArgs = this.getLaunchArguments();
+    const startedAt = Date.now();
+    this.process = this.spawnFn(this.execPath, launchArgs, {
       cwd: this.projectRoot,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
       env,
     });
+
+    if (this.process?.pid && this.ownershipManager) {
+      this.ownershipManager.record(this.ownershipService, {
+        pid: this.process.pid,
+        executablePath: this.execPath,
+        args: launchArgs,
+        cwd: this.projectRoot,
+        startedAt,
+      });
+    }
 
     if (this.process.stdout) {
       this.process.stdout.on("data", (data) => {
@@ -179,6 +193,7 @@ class WorkspaceServerSupervisor extends EventEmitter {
       }
       this.process = null;
       this.isReady = false;
+      this.ownershipManager?.clear?.(this.ownershipService);
     });
 
     return this.pollHealth();
@@ -220,9 +235,11 @@ class WorkspaceServerSupervisor extends EventEmitter {
     this.isStopping = true;
     const pid = this.process.pid;
 
+    let terminated = true;
     if (this.platform === "win32") {
       await new Promise((resolve) => {
         this.execFn(`taskkill /PID ${pid} /T /F`, (err) => {
+          terminated = !err;
           if (err) {
             console.warn(`[Workspace] taskkill warning: ${err.message}`);
           }
@@ -230,9 +247,16 @@ class WorkspaceServerSupervisor extends EventEmitter {
         });
       });
     } else {
-      this.process.kill("SIGTERM");
+      try {
+        this.process.kill("SIGTERM");
+      } catch {
+        terminated = false;
+      }
     }
 
+    if (terminated) {
+      this.ownershipManager?.clear?.(this.ownershipService);
+    }
     this.process = null;
     this.isReady = false;
   }

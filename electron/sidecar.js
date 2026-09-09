@@ -36,6 +36,8 @@ class SidecarSupervisor extends EventEmitter {
     this.projectRoot = options.projectRoot || path.resolve(__dirname, "..");
     this.ocrServiceDir = options.ocrServiceDir || path.join(this.projectRoot, "ocr-service");
     this.existsSync = options.existsSync || fs.existsSync;
+    this.ownershipManager = options.ownershipManager || null;
+    this.ownershipService = options.ownershipService || "sidecar";
 
     this.process = null;
     this.isStopping = false;
@@ -75,17 +77,20 @@ class SidecarSupervisor extends EventEmitter {
     });
     console.log(`[Cache Routing] Active cache root: ${cacheEnv.SUPERK_CACHE_ROOT}`);
 
+    const launchArgs = [
+      "-m",
+      "uvicorn",
+      "app.api:app",
+      "--host",
+      this.config.host,
+      "--port",
+      String(this.config.port),
+    ];
+    const startedAt = Date.now();
+
     this.process = this.spawnFn(
       pythonExe,
-      [
-        "-m",
-        "uvicorn",
-        "app.api:app",
-        "--host",
-        this.config.host,
-        "--port",
-        String(this.config.port),
-      ],
+      launchArgs,
       {
         cwd,
         windowsHide: true,
@@ -93,6 +98,16 @@ class SidecarSupervisor extends EventEmitter {
         env: { ...process.env, ...cacheEnv },
       }
     );
+
+    if (this.process?.pid && this.ownershipManager) {
+      this.ownershipManager.record(this.ownershipService, {
+        pid: this.process.pid,
+        executablePath: pythonExe,
+        args: launchArgs,
+        cwd,
+        startedAt,
+      });
+    }
 
     if (this.process.stdout) {
       this.process.stdout.on("data", (data) => {
@@ -115,9 +130,58 @@ class SidecarSupervisor extends EventEmitter {
       }
       this.process = null;
       this.isReady = false;
+      this.ownershipManager?.clear?.(this.ownershipService);
     });
 
     return this.pollHealth();
+  }
+
+  async checkHealth() {
+    try {
+      const res = await this.fetchFn(SIDECAR_HEALTH_URL);
+      return Boolean(res && res.ok);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * @param {(payload: {status: string, message?: string}) => void} [onStatus]
+   */
+  async recover(onStatus = () => {}) {
+    onStatus({ status: "checking" });
+
+    if (await this.checkHealth()) {
+      this.isReady = true;
+      onStatus({ status: "recovered" });
+      return { status: "recovered", restarted: false };
+    }
+
+    let restarted = false;
+    try {
+      if (this.process) {
+        await this.stop();
+      }
+
+      onStatus({ status: "restarting" });
+      restarted = true;
+      const readyPromise = this.start();
+      onStatus({ status: "verifying" });
+      await readyPromise;
+
+      if (!this.isReady && !(await this.checkHealth())) {
+        throw new Error("Cleaner did not become healthy after restart");
+      }
+
+      this.isReady = true;
+      onStatus({ status: "recovered" });
+      return { status: "recovered", restarted: true };
+    } catch (error) {
+      this.isReady = false;
+      const message = error instanceof Error ? error.message : String(error);
+      onStatus({ status: "failed", message });
+      return { status: "failed", restarted, message };
+    }
   }
 
   async pollHealth() {
@@ -149,15 +213,18 @@ class SidecarSupervisor extends EventEmitter {
 
   async stop() {
     if (!this.process || !this.process.pid) {
+      this.isReady = false;
       return;
     }
 
     this.isStopping = true;
     const pid = this.process.pid;
 
+    let terminated = true;
     if (this.platform === "win32") {
       await new Promise((resolve) => {
         this.execFn(`taskkill /PID ${pid} /T /F`, (err) => {
+          terminated = !err;
           if (err) {
             console.warn(`[Python Sidecar] taskkill warning: ${err.message}`);
           }
@@ -165,9 +232,16 @@ class SidecarSupervisor extends EventEmitter {
         });
       });
     } else {
-      this.process.kill("SIGTERM");
+      try {
+        this.process.kill("SIGTERM");
+      } catch {
+        terminated = false;
+      }
     }
 
+    if (terminated) {
+      this.ownershipManager?.clear?.(this.ownershipService);
+    }
     this.process = null;
     this.isReady = false;
   }

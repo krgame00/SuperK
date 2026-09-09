@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 // Mock hooks and heavy modules for WorkspacePage
 vi.mock("@/hooks/useCleaning", () => ({
@@ -140,6 +140,62 @@ describe("SettingsModal Accessibility", () => {
     expect(document.activeElement).toBe(trigger);
 
     document.body.removeChild(trigger);
+  });
+
+  it("focuses and selects the API key when opened from missing-key recovery", async () => {
+    render(
+      <SettingsModal
+        {...defaultProps}
+        userApiKey="AIzaSy-existing"
+        focusApiKey={true}
+        onValidateApiKey={vi.fn(async () => ({ ok: true }))}
+      />,
+    );
+
+    const input = screen.getByLabelText(/Gemini API Key/i) as HTMLInputElement;
+    await waitFor(() => expect(document.activeElement).toBe(input));
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(input.value.length);
+  });
+
+  it("keeps Settings open with an inline error when API key validation fails", async () => {
+    const onValidated = vi.fn();
+    render(
+      <SettingsModal
+        {...defaultProps}
+        userApiKey="bad-key"
+        focusApiKey={true}
+        onValidateApiKey={vi.fn(async () => ({
+          ok: false,
+          message: "API Key ใช้งานไม่ได้",
+        }))}
+        onApiKeyValidated={onValidated}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /บันทึกและตรวจสอบ API Key/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("API Key ใช้งานไม่ได้");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(onValidated).not.toHaveBeenCalled();
+  });
+
+  it("marks API key recovery ready after validation without sending translation work", async () => {
+    const onValidated = vi.fn();
+    const onValidate = vi.fn(async () => ({ ok: true, message: "API Key พร้อมใช้งาน" }));
+    render(
+      <SettingsModal
+        {...defaultProps}
+        userApiKey="good-key"
+        focusApiKey={true}
+        onValidateApiKey={onValidate}
+        onApiKeyValidated={onValidated}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /บันทึกและตรวจสอบ API Key/i }));
+    expect(await screen.findByRole("status")).toHaveTextContent("API Key พร้อมใช้งาน");
+    expect(onValidate).toHaveBeenCalledWith("good-key");
+    expect(onValidated).toHaveBeenCalledTimes(1);
   });
 });
 

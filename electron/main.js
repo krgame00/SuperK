@@ -14,6 +14,7 @@ const path = require("path");
 const { SidecarSupervisor } = require("./sidecar");
 const { WorkspaceServerSupervisor } = require("./workspaceServer");
 const { checkRequiredPorts, promptPortConflict } = require("./portGuard");
+const { createDefaultOwnershipManager } = require("./processOwnership");
 const { StartupGate, createSplashWindow } = require("./splash");
 
 const WORKSPACE_URL = "http://127.0.0.1:3000";
@@ -27,6 +28,7 @@ const BASE_WINDOW_CONFIG = {
   webPreferences: {
     contextIsolation: true,
     nodeIntegration: false,
+    preload: path.join(__dirname, "preload.js"),
   },
   backgroundColor: "#111111",
   show: false,
@@ -72,25 +74,42 @@ function bootstrap(
   const sidecarRoot =
     runtimeOptions.sidecarRoot ||
     (app.isPackaged && process.resourcesPath ? process.resourcesPath : projectRoot);
+  const ownershipManager =
+    runtimeOptions.ownershipManager ||
+    (typeof app.getPath === "function"
+      ? createDefaultOwnershipManager(
+          runtimeOptions.ownershipFile ||
+            path.join(app.getPath("userData"), "desktop-child-processes.json"),
+          { platform: runtimeOptions.platform || process.platform }
+        )
+      : null);
 
   const supervisor =
-    sidecarSupervisor || new SidecarSupervisor({ projectRoot: sidecarRoot });
+    sidecarSupervisor ||
+    new SidecarSupervisor({
+      projectRoot: sidecarRoot,
+      ownershipManager,
+    });
   const workspaceSupervisor =
     runtimeOptions.workspaceSupervisor ||
     new WorkspaceServerSupervisor({
       projectRoot,
       isPackaged: Boolean(app.isPackaged),
       execPath: runtimeOptions.execPath || process.execPath,
+      ownershipManager,
     });
 
   const dialog = dialogModule || runtimeOptions.dialog || null;
   const ipcMain = runtimeOptions.ipcMain || null;
   const splashFactory = runtimeOptions.createSplashWindowFn || createSplashWindow;
+  const checkRequiredPortsFn = runtimeOptions.checkRequiredPortsFn || checkRequiredPorts;
+  const promptPortConflictFn = runtimeOptions.promptPortConflictFn || promptPortConflict;
 
   let mainWindow = null;
   let splashWindow = null;
   let startupRunning = false;
   let shuttingDown = false;
+  let ownershipPrepared = false;
 
   const reportServiceCrash = (service, message) => {
     console.error(`[${service}] ${message}`);
@@ -123,13 +142,13 @@ function bootstrap(
 
     if (ports.length === 0) return null;
 
-    let conflict = await checkRequiredPorts(ports);
+    let conflict = await checkRequiredPortsFn(ports);
     while (conflict) {
       if (!dialog) return conflict;
 
-      const retried = await promptPortConflict(dialog, app, conflict);
+      const retried = await promptPortConflictFn(dialog, app, conflict);
       if (!retried) return conflict;
-      conflict = await checkRequiredPorts(ports);
+      conflict = await checkRequiredPortsFn(ports);
     }
 
     return null;
@@ -189,6 +208,19 @@ function bootstrap(
     startupRunning = true;
 
     try {
+      if (!ownershipPrepared && ownershipManager) {
+        const ownershipResults = await ownershipManager.reclaimStaleOwnedProcesses();
+        for (const result of ownershipResults) {
+          console.log(
+            `[Ownership] ${result.service} pid=${result.pid} status=${result.status}`
+          );
+        }
+        ownershipPrepared = true;
+        if (ownershipResults.some((result) => result.status === "reclaimed")) {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+      }
+
       const gate = new StartupGate({
         splashWindow,
         mainWindow,
@@ -225,8 +257,15 @@ function bootstrap(
     });
   };
 
+  const cleanerRecoverHandler = async (event) => {
+    return supervisor.recover((payload) => {
+      event?.sender?.send?.("cleaner:recovery-status", payload);
+    });
+  };
+
   if (ipcMain) {
     ipcMain.on("splash:retry", retryHandler);
+    ipcMain.handle?.("cleaner:recover", cleanerRecoverHandler);
   }
 
   app.whenReady().then(() => {
@@ -255,23 +294,38 @@ function bootstrap(
     });
   });
 
+  let cleanupPromise = null;
   const handleShutdown = () => {
-    if (shuttingDown) return;
+    if (cleanupPromise) return cleanupPromise;
     shuttingDown = true;
 
     if (ipcMain) {
       ipcMain.removeListener?.("splash:retry", retryHandler);
+      ipcMain.removeHandler?.("cleaner:recover");
     }
 
-    Promise.allSettled([
+    cleanupPromise = Promise.allSettled([
       workspaceSupervisor.stop(),
       supervisor.stop(),
     ]).catch((err) => {
       console.error("[Shutdown] Error while stopping child services:", err);
     });
+    return cleanupPromise;
   };
 
-  app.on("before-quit", handleShutdown);
+  let isQuitCleanedUp = false;
+  app.on("before-quit", (event) => {
+    if (isQuitCleanedUp) return;
+    if (event && typeof event.preventDefault === "function") {
+      event.preventDefault();
+      handleShutdown().finally(() => {
+        isQuitCleanedUp = true;
+        app.quit();
+      });
+    } else {
+      handleShutdown();
+    }
+  });
 
   app.on("window-all-closed", () => {
     handleShutdown();

@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   isPortAvailable,
   checkRequiredPorts,
-  killProcessOnPort,
+  promptPortConflict,
   PORT_DIAGNOSTICS,
 } from "../../electron/portGuard";
 
@@ -82,18 +82,41 @@ describe("PortGuard (Ticket 03)", () => {
     expect((collision?.diagnostic as any).serviceName).toContain("Workspace");
   });
 
-  it("kills process on port using PowerShell Get-NetTCPConnection on Windows", async () => {
-    const mockExec = vi.fn((cmd, cb) => cb && cb(null, "OK", ""));
-    const success = await killProcessOnPort(3000, {
-      execFn: mockExec as any,
-      platform: "win32",
-    });
+  it("never kills an unknown port owner and only offers a retry", async () => {
+    vi.useFakeTimers();
+    const dialog = {
+      showMessageBox: vi.fn().mockResolvedValue({ response: 0 }),
+    };
+    const app = { quit: vi.fn() };
 
-    expect(success).toBe(true);
-    expect(mockExec).toHaveBeenCalled();
-    const commandRan = mockExec.mock.calls[0][0];
-    expect(commandRan).toContain("Get-NetTCPConnection");
-    expect(commandRan).toContain("3000");
-    expect(commandRan).toContain("Stop-Process");
+    const retryPromise = promptPortConflict(dialog as any, app as any, {
+      port: 3000,
+      diagnostic: PORT_DIAGNOSTICS[3000],
+    });
+    await vi.advanceTimersByTimeAsync(300);
+
+    await expect(retryPromise).resolves.toBe(true);
+    expect(app.quit).not.toHaveBeenCalled();
+    expect(dialog.showMessageBox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        buttons: ["Retry Port Check", "Exit SuperK"],
+      }),
+    );
+    vi.useRealTimers();
+  });
+
+  it("exits cleanly when the user declines the unknown-port retry", async () => {
+    const dialog = {
+      showMessageBox: vi.fn().mockResolvedValue({ response: 1 }),
+    };
+    const app = { quit: vi.fn() };
+
+    await expect(
+      promptPortConflict(dialog as any, app as any, {
+        port: 8765,
+        diagnostic: PORT_DIAGNOSTICS[8765],
+      }),
+    ).resolves.toBe(false);
+    expect(app.quit).toHaveBeenCalledTimes(1);
   });
 });

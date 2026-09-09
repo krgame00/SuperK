@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   getTranslationRetryDelay,
   isUserCancelledError,
@@ -26,11 +26,16 @@ import {
   type DiagnosticDetail,
 } from "@/lib/translation/diagnostics";
 import { CleaningClientError } from "@/lib/cleaning/client";
+import {
+  buildFailureGroups,
+  extendFailureGroupCooldown,
+} from "@/lib/translation/failureGroups";
 
 export type SaveStatus = "idle" | "saving" | "saved" | "error";
 export type TranslationWorkflowPhase = "cleaning" | "translating";
 
 export interface BatchPageFailure {
+  failureGroupId: string;
   pageIndex: number;
   pageUrl: string;
   stage: "cleaning" | "translation";
@@ -188,27 +193,29 @@ export function useTranslation({
   // instead of letting the current page run to completion.
   const translationAbortRef = useRef<AbortController | null>(null);
   const [batchFailures, setBatchFailures] = useState<BatchPageFailure[]>([]);
-  const [quotaCooldownUntil, setQuotaCooldownUntil] = useState<number | null>(null);
+  const failureGroupSequenceRef = useRef(0);
+  const [quotaCooldownByGroup, setQuotaCooldownByGroup] = useState<Record<string, number>>({});
   const [quotaClockMs, setQuotaClockMs] = useState(() => Date.now());
   const [workflowPhase, setWorkflowPhase] =
     useState<TranslationWorkflowPhase | null>(null);
 
   useEffect(() => {
-    if (!quotaCooldownUntil) return;
+    const hasActiveCooldown = Object.values(quotaCooldownByGroup).some(
+      (expiry) => expiry > Date.now(),
+    );
+    if (!hasActiveCooldown) return;
+
     setQuotaClockMs(Date.now());
     const timer = window.setInterval(() => {
-      const now = Date.now();
-      if (now >= quotaCooldownUntil) {
-        setQuotaCooldownUntil(null);
-      } else {
-        setQuotaClockMs(now);
-      }
+      setQuotaClockMs(Date.now());
     }, 250);
     return () => window.clearInterval(timer);
-  }, [quotaCooldownUntil]);
-  const quotaCooldownRemainingSeconds = quotaCooldownUntil
-    ? Math.max(0, Math.ceil((quotaCooldownUntil - quotaClockMs) / 1000))
-    : 0;
+  }, [quotaCooldownByGroup]);
+
+  const failureGroups = useMemo(
+    () => buildFailureGroups(batchFailures, quotaCooldownByGroup, quotaClockMs),
+    [batchFailures, quotaCooldownByGroup, quotaClockMs],
+  );
 
   const [targetLang, setTargetLang] = useState("Thai");
   const [sourceLang, setSourceLang] = useState("auto");
@@ -1160,6 +1167,9 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         translationAbortRef.current = new AbortController();
         const signal = translationAbortRef.current.signal;
         const batchStartTime = Date.now();
+        const failureOperationId = `batch-${++failureGroupSequenceRef.current}`;
+        const failureGroupIdFor = (diagnostic: DiagnosticDetail) =>
+          `${failureOperationId}:${diagnostic.code}`;
       const failures: BatchPageFailure[] = [];
       let quotaFailureMessage: string | null = null;
 
@@ -1175,6 +1185,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         );
       } else {
         setBatchFailures([]);
+        setQuotaCooldownByGroup({});
       }
 
       const interruptibleDelay = async (ms: number) => {
@@ -1218,20 +1229,26 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         try {
           preparedPage = await preparePageForTranslation(pageUrl, i);
         } catch (error) {
+          const explicitCleaningCode = error instanceof CleaningClientError
+            ? (error.status === 0 || error.status === 502 || error.status === 503 ||
+              /timeout|sidecar|8765|เซิร์ฟเวอร์/i.test(error.message))
+                ? "LOCAL_SIDECAR_OFFLINE"
+                : error.status >= 500
+                  ? "LOCAL_CLEANER_FAILED"
+                  : undefined
+            : undefined;
+          const diagnostic = classifyTranslationError(
+            error,
+            error instanceof CleaningClientError ? error.status : undefined,
+            explicitCleaningCode,
+          );
           const failureItem: BatchPageFailure = {
+            failureGroupId: failureGroupIdFor(diagnostic),
             pageIndex: i,
             pageUrl,
             stage: "cleaning",
             message: error instanceof Error ? error.message : "คลีนไม่สำเร็จ",
-            diagnostic: classifyTranslationError(
-              error,
-              error instanceof CleaningClientError ? error.status : undefined,
-              error instanceof CleaningClientError &&
-              (error.status === 0 || error.status === 502 || error.status === 503 ||
-                /timeout|sidecar|8765|เซิร์ฟเวอร์/i.test(error.message))
-                ? "LOCAL_SIDECAR_OFFLINE"
-                : undefined,
-            ),
+            diagnostic,
           };
           failures.push(failureItem);
           setBatchFailures((prev) => {
@@ -1288,8 +1305,10 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
               (err.code === "GEMINI_QUOTA" || err.category === "quota");
             if (isQuotaError) {
               const cooldownMs = err.retryAfterMs ?? DEFAULT_QUOTA_COOLDOWN_MS;
-              setQuotaCooldownUntil((previous) =>
-                Math.max(previous ?? 0, Date.now() + cooldownMs),
+              const quotaGroupId = `${failureOperationId}:QUOTA_EXHAUSTED`;
+              const nextExpiry = Date.now() + cooldownMs;
+              setQuotaCooldownByGroup((previous) =>
+                extendFailureGroupCooldown(previous, quotaGroupId, nextExpiry),
               );
               setTranslationResult("โควต้าเต็มชั่วคราว กรุณารอคูลดาวน์แล้วกดลองใหม่");
               break;
@@ -1349,12 +1368,18 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
               ? lastTranslationError.code
               : undefined;
 
+          const diagnostic = classifyTranslationError(
+            lastTranslationError,
+            errStatus,
+            errCode,
+          );
           const failureItem: BatchPageFailure = {
+            failureGroupId: failureGroupIdFor(diagnostic),
             pageIndex: i,
             pageUrl,
             stage: "translation",
             message: errMsg,
-            diagnostic: classifyTranslationError(lastTranslationError, errStatus, errCode),
+            diagnostic,
           };
           failures.push(failureItem);
           setBatchFailures((prev) => {
@@ -1424,23 +1449,53 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       ),
     );
     if (failedIndices.length === 0) return;
-    if (
-      quotaCooldownUntil &&
-      quotaCooldownUntil > Date.now() &&
-      failedIndices.some((index) =>
-        batchFailures.some(
-          (failure) =>
-            failure.pageIndex === index && failure.diagnostic?.code === "QUOTA_EXHAUSTED",
-        ),
-      )
-    ) {
+
+    const activeQuotaFailure = batchFailures.find((failure) => {
+      if (!failedIndices.includes(failure.pageIndex)) return false;
+      if (failure.diagnostic?.code !== "QUOTA_EXHAUSTED") return false;
+      return (quotaCooldownByGroup[failure.failureGroupId] ?? 0) > Date.now();
+    });
+    if (activeQuotaFailure) {
+      const expiry = quotaCooldownByGroup[activeQuotaFailure.failureGroupId];
       setTranslationResult(
-        `โควต้ายังอยู่ในคูลดาวน์อีก ${Math.ceil((quotaCooldownUntil - Date.now()) / 1000)} วิ`,
+        `โควต้ายังอยู่ในคูลดาวน์อีก ${Math.ceil((expiry - Date.now()) / 1000)} วิ`,
       );
       return;
     }
+
     await handleTranslateAllRef.current(failedIndices, options);
-  }, [batchFailures, pages, quotaCooldownUntil]);
+  }, [batchFailures, pages, quotaCooldownByGroup]);
+
+  const retryFailureGroup = useCallback(async (
+    failureGroupId: string,
+    options?: { forceNsfw?: boolean },
+  ) => {
+    const groupFailures = batchFailures.filter(
+      (failure) => failure.failureGroupId === failureGroupId,
+    );
+    if (groupFailures.length === 0) return;
+
+    const cooldownUntil = quotaCooldownByGroup[failureGroupId] ?? 0;
+    if (cooldownUntil > Date.now()) {
+      setTranslationResult(
+        `โควต้ายังอยู่ในคูลดาวน์อีก ${Math.ceil((cooldownUntil - Date.now()) / 1000)} วิ`,
+      );
+      return;
+    }
+
+    const pageIndices = groupFailures
+      .filter((failure) => pages[failure.pageIndex] === failure.pageUrl)
+      .map((failure) => failure.pageIndex);
+    if (pageIndices.length === 0) return;
+
+    setQuotaCooldownByGroup((previous) => {
+      if (!(failureGroupId in previous)) return previous;
+      const next = { ...previous };
+      delete next[failureGroupId];
+      return next;
+    });
+    await handleTranslateAllRef.current(pageIndices, options);
+  }, [batchFailures, pages, quotaCooldownByGroup]);
   const cancelTranslateAll = () => {
     cancelTranslateAllRef.current = true;
     translationAbortRef.current?.abort();
@@ -1560,9 +1615,10 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     retrySaveSession,
     workflowPhase,
     batchFailures,
+    failureGroups,
     retryFailedPages,
-    quotaCooldownUntil,
-    quotaCooldownRemainingSeconds,
+    retryFailureGroup,
+    quotaCooldownByGroup,
     invalidatePageTranslation,
     replaceBubbleText,
     markPageDirty,

@@ -1,6 +1,6 @@
 # Manga Translation Workspace
 
-This context defines the image regions and visual styles used while cleaning and translating manga pages.
+This context defines the image regions, visual styles, desktop boundaries, and recovery language used while cleaning and translating manga pages.
 
 ## Language
 
@@ -57,14 +57,37 @@ The background child process managed by the desktop application shell that hosts
 _Avoid_: External cleaner, auxiliary daemon
 
 **Local IPC bridge**:
-The loopback communication layer enabling the desktop shell, internal translation workspace, and browser extension to reliably exchange images, job tokens, and published updates.
+The loopback and desktop communication boundary enabling the desktop shell, internal translation workspace, and browser extension to exchange images, job tokens, health/recovery commands, and published updates.
 _Avoid_: Remote gateway, cloud webhook
 
 **Translation failure diagnostic**:
-The categorized, root-cause assessment of why a manga page could not be translated, distinguishing between missing credentials, quota exhaustion, safety policy blocks, sidecar unreachability, and network timeouts.
+The categorized, root-cause assessment of why a manga page could not be prepared or translated, distinguishing credentials, quota exhaustion, safety policy blocks, local service unavailability, local cleaner failure, and cloud/network failures.
 _Avoid_: Generic error, retry message, vague failure
 
 **Actionable resolution prompt**:
-A contextual user guidance and interface action offered directly upon translation failure that allows the user to immediately fix the underlying condition (such as focusing the API key input, triggering comic slicing bypass, or initiating a cooldown retry).
+A contextual user guidance and interface action offered directly upon translation failure that performs the stated recovery operation or gives truthful manual guidance when automatic recovery is unavailable.
 _Avoid_: Dismissible alert, unguided error toast
 
+**Local sidecar offline failure**:
+A failure where the managed local Python sidecar service itself is unreachable, unhealthy, stopped, or unable to become healthy within the service-health window.
+_Avoid_: Cleaner model error, generic network error
+
+**Local cleaner failure**:
+A failure where the Python sidecar service is reachable but the selected cleaner, model loading, or inference operation fails.
+_Avoid_: Sidecar offline, cloud timeout
+
+**Failure group**:
+A stable diagnostic unit that binds one root cause to the exact affected page set and any recovery state such as cooldown or retry eligibility until that group is resolved or replaced by a later result.
+_Avoid_: Current failures array, transient modal row
+
+**Cleaner recovery operation**:
+A user-initiated recovery action that checks sidecar health, performs at most one managed restart when necessary, verifies health afterwards, and reports whether the cleaner service is ready again without automatically retrying pages.
+_Avoid_: Blind restart, automatic page retry
+
+**Quota cooldown**:
+The absolute wait-until time attached to one quota failure group during which that group's retry action is disabled; expiration enables user-initiated retry but never sends a request by itself.
+_Avoid_: Global retry lock, auto-retry timer
+
+**Owned desktop child process**:
+A workspace or sidecar process for which the desktop application can verify launch ownership strongly enough to reclaim it safely after an abnormal prior termination.
+_Avoid_: Any process using port 3000 or 8765

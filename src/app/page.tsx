@@ -51,9 +51,9 @@ import {
 } from "@/lib/export/reviewGate";
 import {
   TranslationDiagnosticModal,
-  type DiagnosticFailureGroup,
+  type CleanerRecoveryViewState,
 } from "@/components/workspace/TranslationDiagnosticModal";
-import { DIAGNOSTIC_TAXONOMY } from "@/lib/translation/diagnostics";
+import { recoverDesktopCleaner } from "@/lib/desktopBridge";
 
 export default function WorkspacePage() {
 
@@ -75,6 +75,9 @@ export default function WorkspacePage() {
 
   // Settings Modal State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsFocusTarget, setSettingsFocusTarget] = useState<"apiKey" | null>(null);
+  const [apiKeyRecoveryGroupId, setApiKeyRecoveryGroupId] = useState<string | null>(null);
+  const [apiKeyReadyByGroup, setApiKeyReadyByGroup] = useState<Record<string, boolean>>({});
   const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
@@ -241,8 +244,9 @@ export default function WorkspacePage() {
     retrySaveSession,
     workflowPhase,
     batchFailures,
+    failureGroups: diagnosticFailureGroups,
     retryFailedPages,
-    quotaCooldownRemainingSeconds,
+    retryFailureGroup,
     invalidatePageTranslation,
     replaceBubbleText,
     markPageDirty,
@@ -265,23 +269,54 @@ export default function WorkspacePage() {
   });
 
   const [isDiagnosticModalOpen, setIsDiagnosticModalOpen] = useState(false);
+  const [cleanerRecoveryByGroup, setCleanerRecoveryByGroup] = useState<
+    Record<string, CleanerRecoveryViewState>
+  >({});
 
-  // Group batch failures by diagnostic taxonomy code for the Diagnostic Modal
-  const diagnosticFailureGroups = useMemo<DiagnosticFailureGroup[]>(() => {
-    if (batchFailures.length === 0) return [];
-    const groupsMap = new Map<string, { diagnostic: any; pages: number[] }>();
+  const handleRecoverCleaner = useCallback(async (failureGroupId: string) => {
+    setCleanerRecoveryByGroup((previous) => ({
+      ...previous,
+      [failureGroupId]: { status: "checking" },
+    }));
 
-    for (const failure of batchFailures) {
-      const diag = failure.diagnostic ?? DIAGNOSTIC_TAXONOMY.UNKNOWN_ERROR;
-      const key = diag.code;
-      if (!groupsMap.has(key)) {
-        groupsMap.set(key, { diagnostic: diag, pages: [] });
-      }
-      groupsMap.get(key)!.pages.push(failure.pageIndex + 1);
+    const result = await recoverDesktopCleaner((status, message) => {
+      setCleanerRecoveryByGroup((previous) => ({
+        ...previous,
+        [failureGroupId]: { status, message },
+      }));
+    });
+
+    setCleanerRecoveryByGroup((previous) => ({
+      ...previous,
+      [failureGroupId]: {
+        status: result.status,
+        message: result.message,
+      },
+    }));
+  }, []);
+
+  const validateRecoveryApiKey = useCallback(async (apiKey: string) => {
+    try {
+      const response = await fetch("/api/translate/validate-key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        valid?: boolean;
+        message?: string;
+      };
+      return {
+        ok: response.ok && data.valid === true,
+        message: data.message || (response.ok ? undefined : "ตรวจสอบ API Key ไม่สำเร็จ"),
+      };
+    } catch {
+      return {
+        ok: false,
+        message: "เชื่อมต่อเซิร์ฟเวอร์เพื่อตรวจสอบ API Key ไม่สำเร็จ",
+      };
     }
-
-    return Array.from(groupsMap.values());
-  }, [batchFailures]);
+  }, []);
 
   const currentPageUrl = pages[currentPage]?.url;
   const translatedImagesMap = translatedImages;
@@ -2004,6 +2039,17 @@ export default function WorkspacePage() {
         onModelPreferenceChange={setModelPreference}
         userApiKey={userApiKey}
         onUserApiKeyChange={setUserApiKey}
+        focusApiKey={settingsFocusTarget === "apiKey"}
+        onValidateApiKey={validateRecoveryApiKey}
+        onApiKeyValidated={() => {
+          if (apiKeyRecoveryGroupId) {
+            setApiKeyReadyByGroup((previous) => ({
+              ...previous,
+              [apiKeyRecoveryGroupId]: true,
+            }));
+          }
+          setSettingsFocusTarget(null);
+        }}
         glossary={glossary}
         onGlossaryChange={setGlossary}
         nsfwBypassMode={nsfwBypassMode}
@@ -2115,18 +2161,20 @@ export default function WorkspacePage() {
         isOpen={isDiagnosticModalOpen}
         onClose={() => setIsDiagnosticModalOpen(false)}
         failureGroups={diagnosticFailureGroups}
-        onRetryFailedPages={(groupPages) => {
-          return retryFailedPages(groupPages);
-        }}
-        onEnableNsfwBypassAndRetry={(groupPages) => {
+        onRetryFailureGroup={(failureGroupId) => retryFailureGroup(failureGroupId)}
+        onEnableNsfwBypassAndRetry={(failureGroupId) => {
           setNsfwBypassMode(true);
-          return retryFailedPages(groupPages, { forceNsfw: true });
+          return retryFailureGroup(failureGroupId, { forceNsfw: true });
         }}
-        onOpenSettingsApiKey={() => {
+        onOpenSettingsApiKey={(failureGroupId) => {
           setIsDiagnosticModalOpen(false);
+          setApiKeyRecoveryGroupId(failureGroupId);
+          setSettingsFocusTarget("apiKey");
           setIsSettingsOpen(true);
         }}
-        cooldownSeconds={quotaCooldownRemainingSeconds}
+        onRecoverCleaner={handleRecoverCleaner}
+        cleanerRecoveryByGroup={cleanerRecoveryByGroup}
+        apiKeyReadyByGroup={apiKeyReadyByGroup}
       />
     </div>
   );

@@ -150,6 +150,19 @@ const PRUNED_SITE_PACKAGE_ROOTS = new Set([
   "pip_tools",
   "wheel",
   "~nnxruntime",
+  // Build-only / legacy PyTorch model-export stack. Production LamaLarge uses
+  // ONNX Runtime and must not carry these packages in the portable runtime.
+  "torch",
+  "torchgen",
+  "functorch",
+  "torchvision",
+  "sympy",
+  "networkx",
+  "mpmath",
+  "onnx",
+  "onnxscript",
+  "onnx_ir",
+  "ml_dtypes",
 ]);
 
 const PRUNED_DIST_INFO_PREFIXES = [
@@ -160,6 +173,15 @@ const PRUNED_DIST_INFO_PREFIXES = [
   "ruff-",
   "pip_tools-",
   "wheel-",
+  "torch-",
+  "torchvision-",
+  "sympy-",
+  "networkx-",
+  "mpmath-",
+  "onnx-",
+  "onnxscript-",
+  "onnx_ir-",
+  "ml_dtypes-",
 ];
 
 function shouldKeepSitePackage(source, sitePackagesRoot) {
@@ -180,6 +202,47 @@ function shouldKeepSitePackage(source, sitePackagesRoot) {
   if (lowerSegments.includes("tests") || lowerSegments.includes("test")) return false;
 
   return true;
+}
+
+function ensureLamaLargeOnnxModel() {
+  const venvPython = path.join(venvDir, "Scripts", "python.exe");
+  const sourceModel = path.join(ocrServiceDir, "models", "anime-manga-big-lama.pt");
+  const outputModel = path.join(ocrServiceDir, "models", "anime-manga-big-lama.onnx");
+  const exporter = path.join(ocrServiceDir, "scripts", "export_lama_onnx.py");
+
+  if (!fs.existsSync(venvPython)) {
+    throw new Error(`Build Python was not found: ${venvPython}`);
+  }
+  if (!fs.existsSync(sourceModel)) {
+    throw new Error(
+      `LamaLarge TorchScript source model was not found: ${sourceModel}. ` +
+      "Run the model installer with --include-anime-lama or --all first."
+    );
+  }
+
+  execFileSync(
+    venvPython,
+    [
+      exporter,
+      "--source",
+      sourceModel,
+      "--output",
+      outputModel,
+    ],
+    {
+      cwd: ocrServiceDir,
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        PYTHONDONTWRITEBYTECODE: "1",
+      },
+    }
+  );
+
+  if (!fs.existsSync(outputModel) || fs.statSync(outputModel).size <= 1000) {
+    throw new Error(`LamaLarge ONNX export did not produce a usable model: ${outputModel}`);
+  }
+  return outputModel;
 }
 
 function preparePortablePythonRuntime() {
@@ -238,8 +301,8 @@ function preparePortablePythonRuntime() {
   }
 
   // Validate the copied runtime in-place before spending time on Electron
-  // packaging. Loading and running LaMa catches missing native/runtime pieces
-  // that importing app.api alone cannot detect.
+  // packaging. Production LamaLarge must execute through ONNX Runtime without
+  // importing PyTorch; AOT remains the fallback if LamaLarge cannot initialize.
   execFileSync(
     pythonExe,
     [
@@ -250,14 +313,17 @@ function preparePortablePythonRuntime() {
         "from app.cleaners.lama_large import LamaLargeCleaner",
         "from app.mask_refiner import MaskRegion",
         "from app.schemas import PixelRect",
-        "model = 'models/anime-manga-big-lama.pt'",
+        "model = 'models/anime-manga-big-lama.onnx'",
         "cleaner = LamaLargeCleaner.from_model_path(model)",
         "image = np.full((192, 192, 3), 255, dtype=np.uint8)",
-        "mask = np.zeros((192, 192), dtype=np.uint8); mask[95:97, 95:97] = 255",
+        "image[70:125, 70:125] = 32",
+        "mask = np.zeros((192, 192), dtype=np.uint8); mask[88:104, 88:104] = 255",
         "region = MaskRegion(id='desktop-build-probe', rect=PixelRect(x=56, y=56, width=80, height=80), component_ids=(1,), stroke_radius=1)",
         "result = cleaner.clean(image, mask, region)",
         "assert result.shape == image.shape and result.dtype == image.dtype",
-        "print('portable-python-lama-ok')",
+        "assert np.array_equal(result[mask == 0], image[mask == 0])",
+        "assert cleaner.providers",
+        "print('portable-python-lamalarge-onnx-ok providers=' + ','.join(cleaner.providers))",
       ].join('; '),
     ],
     {
@@ -350,9 +416,11 @@ try {
   process.exit(1);
 }
 
-// 3. Portable Python runtime
-console.log("\n[Step 3/4] Preparing relocatable Python OCR runtime...");
+// 3. Production LamaLarge ONNX model + portable Python runtime
+console.log("\n[Step 3/4] Preparing LamaLarge ONNX and relocatable Python OCR runtime...");
 try {
+  const lamaOnnxPath = ensureLamaLargeOnnxModel();
+  console.log(`✓ LamaLarge production model ready (${formatMb(fs.statSync(lamaOnnxPath).size)}).`);
   const runtimeBytes = preparePortablePythonRuntime();
   console.log(`✓ Portable Python runtime validated (${formatMb(runtimeBytes)}).`);
 } catch (err) {

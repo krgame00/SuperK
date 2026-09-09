@@ -51,6 +51,10 @@ extraResources:
     filter:
       - "**/*"
       - "!**/.gitkeep"
+      - "!**/*.pt"
+      - "!**/*.part"
+      - "!**/*.part.data"
+      - "!**/lama-ts2ep-probe*"
 
 # Portable build: no installation or registry modifications.
 portable:

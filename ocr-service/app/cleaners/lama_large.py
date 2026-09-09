@@ -1,57 +1,154 @@
-"""LamaLargeCleaner — High-Precision Manga Inpainting Engine via PyTorch / Big LaMa."""
+"""LamaLargeCleaner — production Big LaMa inpainting through ONNX Runtime.
+
+The shipped Windows runtime intentionally does not require PyTorch. The original
+TorchScript model is a build-time source asset; ``anime-manga-big-lama.onnx``
+is the production model consumed here.
+"""
 from __future__ import annotations
 
-import importlib
-import importlib.util
+from collections.abc import Callable, Sequence
+import logging
 from pathlib import Path
-from typing import Self
+from typing import Protocol, Self, cast
 
 import cv2
 import numpy as np
+from numpy.typing import NDArray
 
 from app.cleaners.aot import _context_bounds, _round_up
 from app.detector import RgbImage
 from app.mask_refiner import BinaryMask, MaskRegion
 from app.model_store import ModelStore
+from app.ort_utils import create_cpu_inference_session, create_inference_session
+
+
+LOGGER = logging.getLogger(__name__)
+DEFAULT_ONNX_FILENAME = "anime-manga-big-lama.onnx"
 
 
 class CleanerUnavailable(RuntimeError):
-    """Raised when an optional cleaner cannot run."""
+    """Raised when the production LamaLarge cleaner cannot run."""
+
+
+class _Session(Protocol):
+    def run(
+        self,
+        output_names: None,
+        input_feed: dict[str, NDArray[np.float32]],
+    ) -> Sequence[np.ndarray]: ...
+
+    def get_providers(self) -> list[str]: ...
 
 
 class LamaLargeCleaner:
-    def __init__(self, model: object, torch_module: object) -> None:
-        self.model = model
-        self.torch = torch_module
+    def __init__(
+        self,
+        session: _Session,
+        *,
+        cpu_session_factory: Callable[[], _Session] | None = None,
+    ) -> None:
+        self.session = session
+        self._cpu_session_factory = cpu_session_factory
+        self._cpu_fallback_used = False
 
     @classmethod
     def from_model_store(cls, model_store: ModelStore) -> Self:
-        # anime-manga-big-lama.pt is a standalone TorchScript JIT with the
-        # FFC graph embedded — the only supported LaMa backend.
-        try:
-            pt_path = model_store.ensure("anime-lama")
-        except Exception as err:
-            raise CleanerUnavailable("anime-lama model is unavailable") from err
-        if Path(pt_path).exists() and Path(pt_path).stat().st_size > 1000:
-            return cls.from_model_path(pt_path)
-        raise CleanerUnavailable("anime-lama model file is missing or invalid")
+        model_path = model_store.model_dir / DEFAULT_ONNX_FILENAME
+        return cls.from_model_path(model_path)
 
     @classmethod
     def from_model_path(cls, model_path: str | Path) -> Self:
-        if importlib.util.find_spec("torch") is None:
-            raise CleanerUnavailable("lama-large requires torch")
-        torch = importlib.import_module("torch")
-
-        p = Path(model_path)
-        if p.suffix != ".pt":
+        path = Path(model_path)
+        if path.suffix.lower() != ".onnx":
             raise CleanerUnavailable(
-                f"Unsupported LaMa model format: {p.name} (expected TorchScript .pt)",
+                f"Unsupported LamaLarge model format: {path.name} (expected ONNX .onnx)",
             )
-        model = torch.jit.load(str(p), map_location="cpu")
-        model.eval()
-        if torch.cuda.is_available():
-            model = model.to("cuda")
-        return cls(model, torch)
+        if not path.exists() or path.stat().st_size <= 1000:
+            raise CleanerUnavailable(
+                f"LamaLarge ONNX model is missing or invalid: {path}",
+            )
+        try:
+            session = create_inference_session(path)
+        except Exception as err:
+            raise CleanerUnavailable(
+                f"Could not initialize LamaLarge ONNX runtime: {err}",
+            ) from err
+        return cls(
+            cast("_Session", session),
+            cpu_session_factory=lambda: cast(
+                "_Session",
+                create_cpu_inference_session(path),
+            ),
+        )
+
+    @classmethod
+    def from_session(
+        cls,
+        session: _Session,
+        *,
+        cpu_session_factory: Callable[[], _Session] | None = None,
+    ) -> Self:
+        return cls(session, cpu_session_factory=cpu_session_factory)
+
+    @property
+    def providers(self) -> list[str]:
+        try:
+            return list(self.session.get_providers())
+        except Exception:
+            return []
+
+    def _run(
+        self,
+        image_rgb: RgbImage,
+        mask: BinaryMask,
+    ) -> RgbImage:
+        if image_rgb.shape[:2] != mask.shape:
+            raise ValueError("image and mask dimensions must match")
+
+        height, width = mask.shape
+        padded_height = _round_up(height, 8)
+        padded_width = _round_up(width, 8)
+
+        image_padded = np.zeros((padded_height, padded_width, 3), np.float32)
+        image_padded[:height, :width] = image_rgb.astype(np.float32) / 255.0
+        mask_padded = np.zeros((padded_height, padded_width), np.float32)
+        mask_padded[:height, :width] = mask > 0
+
+        image_tensor = np.ascontiguousarray(
+            image_padded.transpose(2, 0, 1)[None, ...],
+            dtype=np.float32,
+        )
+        mask_tensor = np.ascontiguousarray(
+            mask_padded[None, None, ...],
+            dtype=np.float32,
+        )
+
+        input_feed = {
+            "image": image_tensor,
+            "mask": mask_tensor,
+        }
+        try:
+            output = self.session.run(None, input_feed)[0]
+        except Exception as err:
+            providers = self.providers
+            can_fallback = (
+                self._cpu_session_factory is not None
+                and not self._cpu_fallback_used
+                and any(provider != "CPUExecutionProvider" for provider in providers)
+            )
+            if not can_fallback:
+                raise
+
+            LOGGER.warning(
+                "LamaLarge execution failed on providers %s (%s). Retrying once on CPU.",
+                providers,
+                err,
+            )
+            self._cpu_fallback_used = True
+            self.session = self._cpu_session_factory()
+            output = self.session.run(None, input_feed)[0]
+        repaired = np.asarray(output, dtype=np.float32).squeeze(0).transpose(1, 2, 0)
+        return (repaired.clip(0, 1) * 255).astype(np.uint8)[:height, :width]
 
     def clean(
         self,
@@ -71,45 +168,7 @@ class LamaLargeCleaner:
         if not np.any(crop_mask):
             return image_rgb.copy()
 
-        height, width = crop_mask.shape
-        padded_height = _round_up(height, 8)
-        padded_width = _round_up(width, 8)
-        image_padded = np.zeros((padded_height, padded_width, 3), np.float32)
-        image_padded[:height, :width] = crop.astype(np.float32) / 255.0
-        mask_padded = np.zeros((padded_height, padded_width), np.float32)
-        mask_padded[:height, :width] = crop_mask > 0
-
-        image_tensor = self.torch.from_numpy(
-            image_padded.transpose(2, 0, 1)[None, ...],
-        )
-        mask_tensor = self.torch.from_numpy(mask_padded[None, None, ...])
-
-        is_cuda = False
-        try:
-            is_cuda = next(self.model.parameters()).is_cuda
-        except Exception:
-            is_cuda = False
-
-        if is_cuda:
-            image_tensor = image_tensor.to("cuda")
-            mask_tensor = mask_tensor.to("cuda")
-
-        with self.torch.inference_mode():
-            output = self.model(image_tensor, mask_tensor)
-
-        repaired = (
-            output.detach()
-            .cpu()
-            .numpy()
-            .squeeze(0)
-            .transpose(1, 2, 0)
-        )
-        del image_tensor, mask_tensor, output
-        if is_cuda:
-            self.torch.cuda.empty_cache()
-
-        repaired = (repaired.clip(0, 1) * 255).astype(np.uint8)[:height, :width]
-
+        repaired = self._run(crop, crop_mask)
         result = image_rgb.copy()
         support = crop_mask > 0
         destination = result[y0:y1, x0:x1]
@@ -125,60 +184,34 @@ class LamaLargeCleaner:
         if not np.any(mask):
             return image_rgb.copy()
 
-        h, w = mask.shape
+        height, width = mask.shape
         scale = 1.0
-        if max(h, w) > max_dim:
-            scale = max_dim / max(h, w)
-            tw = int(round(w * scale / 8) * 8)
-            th = int(round(h * scale / 8) * 8)
-            img_in = cv2.resize(image_rgb, (tw, th), interpolation=cv2.INTER_AREA)
-            mask_in = cv2.resize(mask, (tw, th), interpolation=cv2.INTER_NEAREST)
+        if max(height, width) > max_dim:
+            scale = max_dim / max(height, width)
+            target_width = max(8, int(round(width * scale / 8) * 8))
+            target_height = max(8, int(round(height * scale / 8) * 8))
+            image_input = cv2.resize(
+                image_rgb,
+                (target_width, target_height),
+                interpolation=cv2.INTER_AREA,
+            )
+            mask_input = cv2.resize(
+                mask,
+                (target_width, target_height),
+                interpolation=cv2.INTER_NEAREST,
+            )
         else:
-            tw = _round_up(w, 8)
-            th = _round_up(h, 8)
-            img_in = np.zeros((th, tw, 3), np.uint8)
-            img_in[:h, :w] = image_rgb
-            mask_in = np.zeros((th, tw), np.uint8)
-            mask_in[:h, :w] = mask
+            image_input = image_rgb
+            mask_input = mask
 
-        image_padded = img_in.astype(np.float32) / 255.0
-        mask_padded = (mask_in > 0).astype(np.float32)
-
-        image_tensor = self.torch.from_numpy(
-            image_padded.transpose(2, 0, 1)[None, ...],
-        )
-        mask_tensor = self.torch.from_numpy(mask_padded[None, None, ...])
-
-        is_cuda = False
-        try:
-            is_cuda = next(self.model.parameters()).is_cuda
-        except Exception:
-            is_cuda = False
-
-        if is_cuda:
-            image_tensor = image_tensor.to("cuda")
-            mask_tensor = mask_tensor.to("cuda")
-
-        with self.torch.inference_mode():
-            output = self.model(image_tensor, mask_tensor)
-
-        repaired = (
-            output.detach()
-            .cpu()
-            .numpy()
-            .squeeze(0)
-            .transpose(1, 2, 0)
-        )
-        del image_tensor, mask_tensor, output
-        if is_cuda:
-            self.torch.cuda.empty_cache()
-
+        repaired = self._run(image_input, mask_input)
         if scale != 1.0:
-            repaired_full = cv2.resize(repaired, (w, h), interpolation=cv2.INTER_CUBIC)
-        else:
-            repaired_full = repaired[:h, :w]
+            repaired = cv2.resize(
+                repaired,
+                (width, height),
+                interpolation=cv2.INTER_CUBIC,
+            )
 
-        repaired_u8 = (repaired_full.clip(0, 1) * 255).astype(np.uint8)
         result = image_rgb.copy()
-        result[mask > 0] = repaired_u8[mask > 0]
+        result[mask > 0] = repaired[:height, :width][mask > 0]
         return result

@@ -82,6 +82,41 @@ describe("WorkspaceServerSupervisor", () => {
     expect(options.env.HOSTNAME).toBe("127.0.0.1");
   });
 
+  it("records workspace ownership on spawn and clears it after a successful stop", async () => {
+    const ownershipManager = {
+      record: vi.fn(),
+      clear: vi.fn(),
+    };
+    const supervisor = new WorkspaceServerSupervisor({
+      projectRoot: "C:\\SuperK\\resources\\app",
+      execPath: "C:\\SuperK\\SuperK.exe",
+      isPackaged: true,
+      platform: "win32",
+      spawnFn: spawnFn as any,
+      execFn: execFn as any,
+      fetchFn: fetchFn as any,
+      ownershipManager,
+    });
+
+    const ready = supervisor.start();
+    await vi.advanceTimersByTimeAsync(DEFAULT_WORKSPACE_CONFIG.initialBackoffMs);
+    await ready;
+
+    expect(ownershipManager.record).toHaveBeenCalledWith(
+      "workspace",
+      expect.objectContaining({
+        pid: 24680,
+        executablePath: "C:\\SuperK\\SuperK.exe",
+        args: [
+          path.join("C:\\SuperK\\resources\\app", ".next", "standalone", "server.js"),
+        ],
+      }),
+    );
+
+    await supervisor.stop();
+    expect(ownershipManager.clear).toHaveBeenCalledWith("workspace");
+  });
+
   it("polls the workspace URL until it is healthy", async () => {
     const supervisor = new WorkspaceServerSupervisor({
       spawnFn: spawnFn as any,

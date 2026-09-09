@@ -23,6 +23,9 @@ export interface SettingsModalProps {
   onModelPreferenceChange: (model: string) => void;
   userApiKey: string;
   onUserApiKeyChange: (key: string) => void;
+  focusApiKey?: boolean;
+  onValidateApiKey?: (key: string) => Promise<{ ok: boolean; message?: string }>;
+  onApiKeyValidated?: () => void;
   glossary?: GlossaryEntry[];
   onGlossaryChange?: (glossary: GlossaryEntry[]) => void;
   nsfwBypassMode?: boolean;
@@ -40,6 +43,9 @@ export function SettingsModal({
   onModelPreferenceChange,
   userApiKey,
   onUserApiKeyChange,
+  focusApiKey = false,
+  onValidateApiKey,
+  onApiKeyValidated,
   glossary = [],
   onGlossaryChange,
   nsfwBypassMode = false,
@@ -47,7 +53,12 @@ export function SettingsModal({
 }: SettingsModalProps): ReactElement | null {
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const apiKeyInputRef = useRef<HTMLInputElement>(null);
   const previousActiveElementRef = useRef<HTMLElement | null>(null);
+  const [apiKeyValidation, setApiKeyValidation] = useState<{
+    status: "idle" | "checking" | "valid" | "invalid";
+    message?: string;
+  }>({ status: "idle" });
   const [newSource, setNewSource] = useState("");
   const [newTarget, setNewTarget] = useState("");
   const [isPurging, setIsPurging] = useState(false);
@@ -97,12 +108,49 @@ export function SettingsModal({
   useEffect(() => {
     if (isOpen) {
       previousActiveElementRef.current = document.activeElement as HTMLElement | null;
-      closeRef.current?.focus();
+      setApiKeyValidation({ status: "idle" });
+      if (focusApiKey) {
+        window.requestAnimationFrame(() => {
+          apiKeyInputRef.current?.focus();
+          apiKeyInputRef.current?.select();
+        });
+      } else {
+        closeRef.current?.focus();
+      }
     } else if (previousActiveElementRef.current) {
       previousActiveElementRef.current.focus?.();
       previousActiveElementRef.current = null;
     }
-  }, [isOpen]);
+  }, [isOpen, focusApiKey]);
+
+  const handleValidateApiKey = async () => {
+    if (!onValidateApiKey) return;
+    if (!userApiKey.trim()) {
+      setApiKeyValidation({
+        status: "invalid",
+        message: "กรุณากรอก Gemini API Key ก่อนตรวจสอบ",
+      });
+      apiKeyInputRef.current?.focus();
+      return;
+    }
+
+    setApiKeyValidation({ status: "checking" });
+    const result = await onValidateApiKey(userApiKey.trim());
+    if (result.ok) {
+      setApiKeyValidation({
+        status: "valid",
+        message: result.message || "API Key พร้อมใช้งาน",
+      });
+      onApiKeyValidated?.();
+    } else {
+      setApiKeyValidation({
+        status: "invalid",
+        message: result.message || "API Key ใช้งานไม่ได้ กรุณาตรวจสอบอีกครั้ง",
+      });
+      apiKeyInputRef.current?.focus();
+      apiKeyInputRef.current?.select();
+    }
+  };
 
   const handleAddGlossary = (e: React.FormEvent) => {
     e.preventDefault();
@@ -394,11 +442,19 @@ export function SettingsModal({
               Gemini API Key (Optional)
             </label>
             <input
+              ref={apiKeyInputRef}
               id="settings-api-key"
               aria-label="Gemini API Key"
+              aria-describedby={apiKeyValidation.status === "invalid" ? "settings-api-key-error" : undefined}
+              aria-invalid={apiKeyValidation.status === "invalid"}
               type="password"
               value={userApiKey}
-              onChange={(e) => onUserApiKeyChange(e.target.value)}
+              onChange={(e) => {
+                onUserApiKeyChange(e.target.value);
+                if (apiKeyValidation.status !== "idle") {
+                  setApiKeyValidation({ status: "idle" });
+                }
+              }}
               placeholder="AIzaSy..."
               className="w-full rounded-md border border-surface-hover bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
             />
@@ -417,6 +473,30 @@ export function SettingsModal({
               </a>
               .
             </p>
+            {focusApiKey && onValidateApiKey && (
+              <div className="mt-2 space-y-1.5">
+                <button
+                  type="button"
+                  onClick={() => void handleValidateApiKey()}
+                  disabled={apiKeyValidation.status === "checking"}
+                  className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary-hover disabled:cursor-wait disabled:opacity-60"
+                >
+                  {apiKeyValidation.status === "checking"
+                    ? "กำลังตรวจสอบ API Key..."
+                    : "บันทึกและตรวจสอบ API Key"}
+                </button>
+                {apiKeyValidation.status === "invalid" && (
+                  <p id="settings-api-key-error" role="alert" className="text-xs text-red-400">
+                    {apiKeyValidation.message}
+                  </p>
+                )}
+                {apiKeyValidation.status === "valid" && (
+                  <p role="status" className="text-xs text-emerald-400">
+                    {apiKeyValidation.message}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="border-t border-surface-hover pt-2">

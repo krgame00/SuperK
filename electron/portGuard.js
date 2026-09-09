@@ -4,12 +4,11 @@
  * Responsibilities:
  *  - Checks whether loopback ports (3000, 8765) are available before launching services
  *  - Provides human-readable diagnostic messages for port conflicts
- *  - Safely stops conflicting processes on Windows via PowerShell
- *  - Prompts native dialog with [Kill & Retry] or [Exit]
+ *  - Never terminates a process based on port occupancy alone
+ *  - Prompts native dialog with [Retry Port Check] or [Exit]
  */
 
 const net = require("net");
-const { exec } = require("child_process");
 
 const PORT_DIAGNOSTICS = {
   3000: {
@@ -78,62 +77,38 @@ async function checkRequiredPorts(ports = [3000, 8765], isPortFreeFn = (p) => is
 }
 
 /**
- * Kills the process occupying a specific TCP port.
- * @param {number} port
- * @param {object} options
- * @returns {Promise<boolean>}
- */
-function killProcessOnPort(port, options = {}) {
-  const execFn = options.execFn || exec;
-  const platform = options.platform || process.platform;
-
-  return new Promise((resolve) => {
-    if (platform === "win32") {
-      const psCommand = `powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort ${port} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }"`;
-      execFn(psCommand, (err) => {
-        resolve(!err);
-      });
-    } else {
-      execFn(`lsof -ti:${port} | xargs kill -9`, (err) => {
-        resolve(!err);
-      });
-    }
-  });
-}
-
-/**
- * Shows native confirmation dialog and handles Kill & Retry or Exit.
+ * Shows native confirmation dialog for an unknown port owner.
+ * The user must close the unrelated program themselves; SuperK never kills a
+ * process solely because it owns a required port.
  * @param {import('electron').Dialog} dialog
  * @param {import('electron').App} app
  * @param {{port: number, diagnostic: object}} conflict
- * @returns {Promise<boolean>} returns true if retry succeeded, false if exiting
+ * @returns {Promise<boolean>} returns true to re-check the port, false if exiting
  */
 async function promptPortConflict(dialog, app, conflict) {
   const choice = await dialog.showMessageBox({
     type: "warning",
     title: "SuperK — Port Conflict Detected",
     message: conflict.diagnostic.message,
-    detail: "Would you like to terminate the conflicting process and continue, or exit SuperK?",
-    buttons: ["Kill Conflicting Process & Retry", "Exit SuperK"],
+    detail:
+      "SuperK could not prove that the process using this port belongs to SuperK. Close the other program, then retry the port check, or exit SuperK.",
+    buttons: ["Retry Port Check", "Exit SuperK"],
     defaultId: 0,
     cancelId: 1,
   });
 
   if (choice.response === 0) {
-    await killProcessOnPort(conflict.port);
-    // Wait a brief moment for OS socket recycling
-    await new Promise((r) => setTimeout(r, 600));
+    await new Promise((r) => setTimeout(r, 300));
     return true;
-  } else {
-    app.quit();
-    return false;
   }
+
+  app.quit();
+  return false;
 }
 
 module.exports = {
   isPortAvailable,
   checkRequiredPorts,
-  killProcessOnPort,
   promptPortConflict,
   PORT_DIAGNOSTICS,
 };

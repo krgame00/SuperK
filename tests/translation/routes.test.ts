@@ -16,6 +16,7 @@ import {
 import { resetRateLimits } from "@/lib/server/rateLimiter";
 import { POST as translateImage } from "@/src/app/api/translate/route";
 import { POST as translateText } from "@/src/app/api/translate-text/route";
+import { POST as validateGeminiKey } from "@/src/app/api/translate/validate-key/route";
 
 const originalApiKey = process.env.GEMINI_API_KEY;
 const requestGeminiMock = vi.mocked(requestGemini);
@@ -89,6 +90,66 @@ test("image route keeps the missing API key response", async () => {
   expect(response.status).toBe(500);
   expect(body.error).toContain("Server missing API Key");
   expect(requestGeminiMock).not.toHaveBeenCalled();
+});
+
+test("API key validation accepts a working Gemini key", async () => {
+  requestGeminiMock.mockResolvedValue({
+    data: { candidates: [{ content: { parts: [{ text: "OK" }] } }] },
+    keyIndex: 0,
+    model: "gemini-2.5-flash-lite",
+    meta: {
+      provider: "gemini",
+      model: "gemini-2.5-flash-lite",
+      attemptCount: 1,
+      elapsedMs: 10,
+      fallbackCount: 0,
+    },
+  });
+  const response = await validateGeminiKey(new Request("http://localhost/api/translate/validate-key", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ apiKey: "good-key" }),
+  }));
+
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ valid: true });
+  expect(requestGeminiMock).toHaveBeenCalledWith(
+    expect.objectContaining({ apiKeys: ["good-key"] }),
+  );
+});
+
+test("API key validation keeps a quota-limited but valid key usable", async () => {
+  requestGeminiMock.mockRejectedValue(
+    new GeminiRequestError("quota", "GEMINI_QUOTA", 429, true, 5_000),
+  );
+  const response = await validateGeminiKey(new Request("http://localhost/api/translate/validate-key", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ apiKey: "quota-key" }),
+  }));
+
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    valid: true,
+    message: expect.stringContaining("โควต้า"),
+  });
+});
+
+test("API key validation rejects an unauthorized key", async () => {
+  requestGeminiMock.mockRejectedValue(
+    new GeminiRequestError("invalid key", "GEMINI_UPSTREAM", 403, false),
+  );
+  const response = await validateGeminiKey(new Request("http://localhost/api/translate/validate-key", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ apiKey: "bad-key" }),
+  }));
+
+  expect(response.status).toBe(403);
+  expect(await response.json()).toMatchObject({
+    valid: false,
+    message: expect.stringContaining("API Key ใช้งานไม่ได้"),
+  });
 });
 
 test("image route rejects an oversized request before reading or forwarding it", async () => {

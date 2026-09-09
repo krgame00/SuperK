@@ -8,6 +8,7 @@ export type DiagnosticErrorCode =
   | "QUOTA_EXHAUSTED"
   | "SAFETY_BLOCKED"
   | "LOCAL_SIDECAR_OFFLINE"
+  | "LOCAL_CLEANER_FAILED"
   | "NETWORK_OR_TIMEOUT"
   | "UNKNOWN_ERROR";
 
@@ -59,9 +60,18 @@ export const DIAGNOSTIC_TAXONOMY: Record<DiagnosticErrorCode, DiagnosticDetail> 
     code: "LOCAL_SIDECAR_OFFLINE",
     title: "ระบบคลีนภาพบนเครื่องไม่ตอบสนอง (Port 8765)",
     description:
-      "ไม่สามารถเชื่อมต่อกับ Python Inpainting Service บนเครื่องได้ กรุณาตรวจสอบว่าเซิร์ฟเวอร์เบื้องหลังเปิดอยู่หรือไม่",
+      "ไม่สามารถเชื่อมต่อกับ Python Inpainting Service บนเครื่องได้ กรุณาตรวจสอบหรือกู้คืน Cleaner ก่อนลองหน้าที่ได้รับผลกระทบใหม่",
     recommendedAction: "restart_cleaner",
-    actionLabel: "ตรวจสอบการเชื่อมต่อ",
+    actionLabel: "กู้คืน Cleaner",
+    retryable: true,
+  },
+  LOCAL_CLEANER_FAILED: {
+    code: "LOCAL_CLEANER_FAILED",
+    title: "Cleaner หรือโมเดลประมวลผลไม่สำเร็จ",
+    description:
+      "บริการคลีนบนเครื่องยังตอบสนอง แต่ Cleaner หรือโมเดลที่เลือกโหลดหรือประมวลผลไม่สำเร็จ กรุณาตรวจสอบโมเดล/Runtime แล้วลองหน้ากลุ่มนี้ใหม่",
+    recommendedAction: "retry_failed",
+    actionLabel: "ลองหน้ากลุ่มนี้ใหม่",
     retryable: true,
   },
   NETWORK_OR_TIMEOUT: {
@@ -114,6 +124,9 @@ export function classifyTranslationError(
   if (codeStr === "LOCAL_SIDECAR_OFFLINE") {
     return DIAGNOSTIC_TAXONOMY.LOCAL_SIDECAR_OFFLINE;
   }
+  if (codeStr === "LOCAL_CLEANER_FAILED") {
+    return DIAGNOSTIC_TAXONOMY.LOCAL_CLEANER_FAILED;
+  }
   if (codeStr === "NETWORK_OR_TIMEOUT" || codeStr === "GEMINI_TIMEOUT" || codeStr === "TIMEOUT") {
     return DIAGNOSTIC_TAXONOMY.NETWORK_OR_TIMEOUT;
   }
@@ -162,6 +175,16 @@ export function classifyTranslationError(
     msg.includes("เซิร์ฟเวอร์คลีน")
   ) {
     return DIAGNOSTIC_TAXONOMY.LOCAL_SIDECAR_OFFLINE;
+  }
+  if (
+    msg.includes("cleaner") ||
+    msg.includes("model load") ||
+    msg.includes("model failed") ||
+    msg.includes("inference") ||
+    msg.includes("onnx") ||
+    msg.includes("runtime")
+  ) {
+    return DIAGNOSTIC_TAXONOMY.LOCAL_CLEANER_FAILED;
   }
   if (
     msg.includes("timeout") ||

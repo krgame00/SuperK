@@ -46,6 +46,16 @@ describe("Translation Failure Diagnostics Taxonomy", () => {
     expect(res.recommendedAction).toBe("restart_cleaner");
   });
 
+  it("classifies a reachable sidecar cleaner/model failure separately from offline", () => {
+    const res = classifyTranslationError(
+      new Error("LamaLarge model inference failed"),
+      500,
+      "LOCAL_CLEANER_FAILED",
+    );
+    expect(res.code).toBe("LOCAL_CLEANER_FAILED");
+    expect(res.recommendedAction).toBe("retry_failed");
+  });
+
   it("classifies timeout or network failure correctly", () => {
     const res = classifyTranslationError(
       new Error("Gemini ตอบสนองช้าเกินกำหนด กรุณาลองใหม่หรือเปลี่ยนโมเดล"),

@@ -51,7 +51,7 @@ npm run desktop:dev
 # บิลด์เป็นโปรแกรมพกพา (Self-contained Portable EXE)
 npm run desktop:build
 ```
-> **หมายเหตุขนาดไฟล์:** ตัวติดตั้งแบบพกพา (`SuperK-Windows-Portable.exe`) คาดว่าจะมีขนาดประมาณ ~3–5 GB เนื่องจากรวม PyTorch Runtime และโมเดล Local Inpainting ไว้ในตัว
+> **หมายเหตุขนาดไฟล์:** โปรแกรมแบบพกพา (`SuperK-Windows-Portable.exe`) รวม Electron, Next.js standalone runtime, Python runtime, ONNX Runtime และโมเดล Local Inpainting ไว้ในตัว จึงมีขนาดหลายร้อย MB โดยไม่ต้องติดตั้ง PyTorch แยกสำหรับ Windows production AnimeLaMa path
 
 ---
 
@@ -167,7 +167,7 @@ graph TD
     
     subgraph "Local AI Engine (:8765)"
         FastAPIService --> Detector[Comic Text Detector - CTD ONNX]
-        FastAPIService --> Inpainter[LaMa Large / Anime Big LaMa PyTorch]
+        FastAPIService --> Inpainter[AnimeLaMa ONNX Runtime - DirectML / CPU fallback]
         Detector -->|ตรวจจับพิกัดตัวอักษร| Inpainter
     end
 

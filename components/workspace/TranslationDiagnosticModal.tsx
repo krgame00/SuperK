@@ -11,24 +11,33 @@ import {
   X,
   CheckCircle2,
 } from "lucide-react";
-import {
-  type DiagnosticDetail,
-  type DiagnosticErrorCode,
-} from "@/lib/translation/diagnostics";
+import type { TranslationFailureGroup } from "@/lib/translation/failureGroups";
 
-export interface DiagnosticFailureGroup {
-  diagnostic: DiagnosticDetail;
-  pages: number[]; // 1-indexed page numbers
+export type DiagnosticFailureGroup = TranslationFailureGroup;
+
+export type CleanerRecoveryStatus =
+  | "idle"
+  | "checking"
+  | "restarting"
+  | "verifying"
+  | "recovered"
+  | "failed";
+
+export interface CleanerRecoveryViewState {
+  status: CleanerRecoveryStatus;
+  message?: string;
 }
 
 export interface TranslationDiagnosticModalProps {
   isOpen: boolean;
   onClose: () => void;
   failureGroups: DiagnosticFailureGroup[];
-  onOpenSettingsApiKey?: () => void;
-  onEnableNsfwBypassAndRetry?: (pages: number[]) => void | Promise<void>;
-  onRetryFailedPages?: (pages: number[]) => void | Promise<void>;
-  cooldownSeconds?: number;
+  onOpenSettingsApiKey?: (failureGroupId: string) => void;
+  onEnableNsfwBypassAndRetry?: (failureGroupId: string) => void | Promise<void>;
+  onRetryFailureGroup?: (failureGroupId: string) => void | Promise<void>;
+  onRecoverCleaner?: (failureGroupId: string) => void | Promise<void>;
+  cleanerRecoveryByGroup?: Record<string, CleanerRecoveryViewState>;
+  apiKeyReadyByGroup?: Record<string, boolean>;
 }
 
 export function TranslationDiagnosticModal({
@@ -37,8 +46,10 @@ export function TranslationDiagnosticModal({
   failureGroups,
   onOpenSettingsApiKey,
   onEnableNsfwBypassAndRetry,
-  onRetryFailedPages,
-  cooldownSeconds = 0,
+  onRetryFailureGroup,
+  onRecoverCleaner,
+  cleanerRecoveryByGroup = {},
+  apiKeyReadyByGroup = {},
 }: TranslationDiagnosticModalProps): ReactElement | null {
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -46,9 +57,7 @@ export function TranslationDiagnosticModal({
     if (!isOpen) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-      }
+      if (e.key === "Escape") onClose();
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -68,21 +77,17 @@ export function TranslationDiagnosticModal({
         ref={dialogRef}
         className="w-full max-w-lg overflow-hidden rounded-xl border border-red-500/30 bg-surface shadow-2xl transition-all"
       >
-        {/* Header */}
         <div className="flex items-center justify-between border-b border-surface-hover bg-red-500/10 px-5 py-4">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-red-500/20 text-red-400">
               <AlertTriangle className="h-5 w-5" />
             </div>
             <div>
-              <h2
-                id="diagnostic-modal-title"
-                className="text-base font-semibold text-foreground"
-              >
+              <h2 id="diagnostic-modal-title" className="text-base font-semibold text-foreground">
                 รายงานสาเหตุการแปลไม่สำเร็จ
               </h2>
               <p className="text-xs text-muted">
-                พบข้อผิดพลาดใน {failureGroups.reduce((acc, g) => acc + g.pages.length, 0)} หน้า — ตรวจพบสาเหตุด้านล่าง
+                พบข้อผิดพลาดใน {failureGroups.reduce((acc, group) => acc + group.pages.length, 0)} หน้า — ตรวจพบสาเหตุด้านล่าง
               </p>
             </div>
           </div>
@@ -96,68 +101,82 @@ export function TranslationDiagnosticModal({
           </button>
         </div>
 
-        {/* Content list of failure groups */}
         <div className="max-h-[60vh] overflow-y-auto p-5 space-y-4">
-          {failureGroups.map((group, idx) => {
+          {failureGroups.map((group) => {
             const { diagnostic, pages } = group;
+            const cleanerRecovery = cleanerRecoveryByGroup[group.id] ?? { status: "idle" as const };
+            const cleanerBusy = ["checking", "restarting", "verifying"].includes(cleanerRecovery.status);
 
             return (
               <div
-                key={idx}
+                key={group.id}
+                data-failure-group-id={group.id}
                 className="rounded-lg border border-surface-hover bg-background/60 p-4 space-y-3"
               >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="space-y-1">
-                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-red-400">
-                      {diagnostic.code === "MISSING_KEY" && <Key className="h-3.5 w-3.5" />}
-                      {diagnostic.code === "SAFETY_BLOCKED" && <Flame className="h-3.5 w-3.5" />}
-                      {diagnostic.code === "QUOTA_EXHAUSTED" && <Clock className="h-3.5 w-3.5" />}
-                      {diagnostic.code === "LOCAL_SIDECAR_OFFLINE" && <ServerOff className="h-3.5 w-3.5" />}
-                      {diagnostic.code === "NETWORK_OR_TIMEOUT" && <RotateCw className="h-3.5 w-3.5" />}
-                      <span>{diagnostic.title}</span>
-                    </span>
-                    <p className="text-xs leading-relaxed text-muted">
-                      {diagnostic.description}
-                    </p>
-                  </div>
+                <div className="space-y-1">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-red-400">
+                    {diagnostic.code === "MISSING_KEY" && <Key className="h-3.5 w-3.5" />}
+                    {diagnostic.code === "SAFETY_BLOCKED" && <Flame className="h-3.5 w-3.5" />}
+                    {diagnostic.code === "QUOTA_EXHAUSTED" && <Clock className="h-3.5 w-3.5" />}
+                    {(diagnostic.code === "LOCAL_SIDECAR_OFFLINE" || diagnostic.code === "LOCAL_CLEANER_FAILED") && <ServerOff className="h-3.5 w-3.5" />}
+                    {diagnostic.code === "NETWORK_OR_TIMEOUT" && <RotateCw className="h-3.5 w-3.5" />}
+                    <span>{diagnostic.title}</span>
+                  </span>
+                  <p className="text-xs leading-relaxed text-muted">{diagnostic.description}</p>
                 </div>
 
-                {/* Affected Pages Badge */}
                 <div className="flex items-center gap-2 text-xs">
                   <span className="text-muted">หน้าที่ได้รับผลกระทบ:</span>
                   <div className="flex flex-wrap gap-1">
-                    {pages.map((p) => (
+                    {pages.map((page) => (
                       <span
-                        key={p}
+                        key={page}
                         className="rounded bg-red-500/20 px-1.5 py-0.5 font-mono text-[11px] font-medium text-red-300"
                       >
-                        หน้า {p}
+                        หน้า {page}
                       </span>
                     ))}
                   </div>
                 </div>
 
-                {/* Specific Action Buttons per Taxonomy */}
-                <div className="pt-1">
+                <div className="pt-1 space-y-2">
                   {diagnostic.recommendedAction === "open_settings_api_key" && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onClose();
-                        onOpenSettingsApiKey?.();
-                      }}
-                      className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary-hover transition-colors shadow-sm"
-                    >
-                      <Key className="h-3.5 w-3.5" />
-                      <span>{diagnostic.actionLabel}</span>
-                    </button>
+                    apiKeyReadyByGroup[group.id] ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-400">
+                          <CheckCircle2 className="h-3.5 w-3.5" /> API Key พร้อมใช้งานแล้ว
+                        </span>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await onRetryFailureGroup?.(group.id);
+                            onClose();
+                          }}
+                          className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary-hover transition-colors shadow-sm"
+                        >
+                          <RotateCw className="h-3.5 w-3.5" /> ลองหน้ากลุ่มนี้ใหม่
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onClose();
+                          onOpenSettingsApiKey?.(group.id);
+                        }}
+                        className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary-hover transition-colors shadow-sm"
+                      >
+                        <Key className="h-3.5 w-3.5" />
+                        <span>{diagnostic.actionLabel}</span>
+                      </button>
+                    )
                   )}
 
                   {diagnostic.recommendedAction === "enable_nsfw_bypass" && (
                     <button
                       type="button"
                       onClick={async () => {
-                        await onEnableNsfwBypassAndRetry?.(pages);
+                        await onEnableNsfwBypassAndRetry?.(group.id);
                         onClose();
                       }}
                       className="inline-flex items-center gap-2 rounded-md bg-orange-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-orange-500 transition-colors shadow-sm"
@@ -169,33 +188,74 @@ export function TranslationDiagnosticModal({
 
                   {diagnostic.recommendedAction === "retry_cooldown" && (
                     <div className="flex items-center gap-3">
-                      {cooldownSeconds > 0 ? (
+                      {group.cooldownRemainingSeconds > 0 ? (
                         <span className="flex items-center gap-1.5 text-xs text-amber-400 font-medium">
-                          <Clock className="h-3.5 w-3.5 animate-spin" />
-                          กำลังคูลดาวน์โควต้า ({cooldownSeconds} วิ)...
+                          <Clock className="h-3.5 w-3.5" />
+                          กำลังคูลดาวน์โควต้า ({group.cooldownRemainingSeconds} วิ)...
                         </span>
                       ) : (
                         <button
                           type="button"
                           onClick={async () => {
-                            await onRetryFailedPages?.(pages);
+                            await onRetryFailureGroup?.(group.id);
                             onClose();
                           }}
                           className="inline-flex items-center gap-2 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-500 transition-colors shadow-sm"
                         >
                           <RotateCw className="h-3.5 w-3.5" />
-                          <span>ลองแปลหน้าที่ตกหล่นใหม่ทันที</span>
+                          <span>ลองแปลหน้าที่ตกหล่นใหม่</span>
                         </button>
                       )}
                     </div>
                   )}
 
-                  {(diagnostic.recommendedAction === "retry_failed" ||
-                    diagnostic.recommendedAction === "restart_cleaner") && (
+                  {diagnostic.recommendedAction === "restart_cleaner" && (
+                    <div className="space-y-2">
+                      {cleanerRecovery.status === "recovered" ? (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-400">
+                            <CheckCircle2 className="h-3.5 w-3.5" /> Cleaner พร้อมใช้งานแล้ว
+                          </span>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await onRetryFailureGroup?.(group.id);
+                              onClose();
+                            }}
+                            className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary-hover"
+                          >
+                            <RotateCw className="h-3.5 w-3.5" /> ลองหน้ากลุ่มนี้ใหม่
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={cleanerBusy}
+                          onClick={() => void onRecoverCleaner?.(group.id)}
+                          className="inline-flex items-center gap-2 rounded-md bg-surface-hover px-3 py-1.5 text-xs font-medium text-foreground hover:bg-primary hover:text-primary-foreground disabled:cursor-wait disabled:opacity-60 transition-colors border border-surface-hover"
+                        >
+                          <ServerOff className="h-3.5 w-3.5" />
+                          <span>
+                            {cleanerRecovery.status === "checking" && "กำลังตรวจ Cleaner..."}
+                            {cleanerRecovery.status === "restarting" && "กำลังเริ่ม Cleaner ใหม่..."}
+                            {cleanerRecovery.status === "verifying" && "กำลังยืนยันสถานะ Cleaner..."}
+                            {!cleanerBusy && diagnostic.actionLabel}
+                          </span>
+                        </button>
+                      )}
+                      {cleanerRecovery.status === "failed" && (
+                        <p role="alert" className="text-xs text-red-400">
+                          {cleanerRecovery.message || "กู้คืน Cleaner ไม่สำเร็จ กรุณาตรวจสอบ runtime แล้วลองอีกครั้ง"}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {diagnostic.recommendedAction === "retry_failed" && (
                     <button
                       type="button"
                       onClick={async () => {
-                        await onRetryFailedPages?.(pages);
+                        await onRetryFailureGroup?.(group.id);
                         onClose();
                       }}
                       className="inline-flex items-center gap-2 rounded-md bg-surface-hover px-3 py-1.5 text-xs font-medium text-foreground hover:bg-primary hover:text-primary-foreground transition-colors border border-surface-hover"
@@ -210,10 +270,9 @@ export function TranslationDiagnosticModal({
           })}
         </div>
 
-        {/* Footer */}
         <div className="flex items-center justify-between border-t border-surface-hover bg-background/50 px-5 py-3">
           <span className="text-[11px] text-muted">
-            เคล็ดลับ: คุณสามารถกดลองใหม่เฉพาะหน้าที่ไม่ผ่านได้ตลอดเวลา
+            การกู้คืนบริการหรือคีย์จะไม่ส่งคำขอแปลใหม่จนกว่าคุณจะกดลองใหม่
           </span>
           <button
             type="button"

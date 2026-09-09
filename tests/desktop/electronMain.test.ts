@@ -170,6 +170,116 @@ describe("bootstrap — app lifecycle (Ticket 01)", () => {
     expect(appMock.whenReady).toHaveBeenCalled();
   });
 
+  it("exposes cleaner recovery through IPC and forwards observable status", async () => {
+    const ipcMain = {
+      on: vi.fn(),
+      handle: vi.fn(),
+      removeListener: vi.fn(),
+      removeHandler: vi.fn(),
+    };
+    const sidecar: any = {
+      isReady: true,
+      on: vi.fn(),
+      start: vi.fn(async () => true),
+      stop: vi.fn(async () => undefined),
+      recover: vi.fn(async (onStatus: (payload: unknown) => void) => {
+        onStatus({ status: "checking" });
+        onStatus({ status: "recovered" });
+        return { status: "recovered", restarted: false };
+      }),
+    };
+    const workspace: any = {
+      isReady: true,
+      on: vi.fn(),
+      start: vi.fn(async () => true),
+      stop: vi.fn(async () => undefined),
+    };
+
+    bootstrap(
+      appMock as unknown as import("electron").App,
+      BrowserWindowMock as unknown as typeof import("electron").BrowserWindow,
+      sidecar,
+      null as any,
+      {
+        workspaceSupervisor: workspace,
+        ipcMain,
+        createSplashWindowFn: vi.fn(() => ({
+          close: vi.fn(),
+          isDestroyed: vi.fn(() => false),
+          webContents: { send: vi.fn() },
+        })),
+      },
+    );
+
+    const registration = ipcMain.handle.mock.calls.find(
+      ([channel]) => channel === "cleaner:recover",
+    );
+    expect(registration).toBeDefined();
+    const send = vi.fn();
+    const result = await registration![1]({ sender: { send } });
+
+    expect(sidecar.recover).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenNthCalledWith(1, "cleaner:recovery-status", { status: "checking" });
+    expect(send).toHaveBeenNthCalledWith(2, "cleaner:recovery-status", { status: "recovered" });
+    expect(result).toEqual({ status: "recovered", restarted: false });
+  });
+
+  it("reclaims verified stale children before checking ports or starting services", async () => {
+    const order: string[] = [];
+    appMock.whenReady = vi.fn(() => new Promise(() => {}));
+    const sidecar: any = {
+      isReady: false,
+      on: vi.fn(),
+      start: vi.fn(async () => {
+        order.push("sidecar");
+        sidecar.isReady = true;
+        return true;
+      }),
+      stop: vi.fn(async () => undefined),
+    };
+    const workspace: any = {
+      isReady: false,
+      on: vi.fn(),
+      start: vi.fn(async () => {
+        order.push("workspace");
+        workspace.isReady = true;
+        return true;
+      }),
+      stop: vi.fn(async () => undefined),
+    };
+    const ownershipManager = {
+      reclaimStaleOwnedProcesses: vi.fn(async () => {
+        order.push("reclaim");
+        return [];
+      }),
+    };
+
+    const runtime = bootstrap(
+      appMock as unknown as import("electron").App,
+      BrowserWindowMock as unknown as typeof import("electron").BrowserWindow,
+      sidecar,
+      null as any,
+      {
+        workspaceSupervisor: workspace,
+        ownershipManager,
+        checkRequiredPortsFn: vi.fn(async () => {
+          order.push("ports");
+          return null;
+        }),
+        createSplashWindowFn: vi.fn(() => ({
+          close: vi.fn(),
+          isDestroyed: vi.fn(() => false),
+          webContents: { send: vi.fn() },
+        })),
+      },
+    );
+
+    await runtime.runStartup();
+
+    expect(ownershipManager.reclaimStaleOwnedProcesses).toHaveBeenCalledTimes(1);
+    expect(order.slice(0, 4)).toEqual(["reclaim", "ports", "sidecar", "workspace"]);
+  });
+
   it("calls app.quit() when window-all-closed fires on Windows", async () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "win32", configurable: true });

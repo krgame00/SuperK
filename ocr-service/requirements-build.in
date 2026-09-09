@@ -1,0 +1,5 @@
+# Build-only dependencies for exporting the LamaLarge TorchScript model to ONNX.
+# These packages are intentionally excluded from the shipped Windows runtime.
+torch>=2.13,<2.14; sys_platform == 'win32'
+onnx>=1.22,<2
+onnxscript>=0.7,<0.8
