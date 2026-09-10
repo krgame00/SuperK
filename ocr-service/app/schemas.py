@@ -122,5 +122,6 @@ class CleaningResult(BaseModel):
     review_mask_asset: str
     protected_mask_asset: str
     regions: list[RegionRecord]
-    timings_ms: dict[str, int]
-    pipeline_version: str = "2.1.0-complete-glyph"
+    timings_ms: dict[str, int | float | str]
+    awaiting_review: bool = False
+    pipeline_version: str = "2.2.0-adaptive-roi"

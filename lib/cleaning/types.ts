@@ -30,7 +30,6 @@ export type TextRole =
   | "review";
 
 export type AutomaticAction = "clean" | "preserve";
-
 export type ManualRegionAction = "automatic" | "force-clean" | "protect";
 
 export type ProtectionReason =
@@ -88,5 +87,7 @@ export interface CleaningResult {
   reviewMaskAsset: string;
   protectedMaskAsset: string;
   regions: CleaningRegion[];
-  timingsMs: Record<string, number>;
+  timingsMs: Record<string, number | string>;
+  pipelineVersion?: string;
+  awaitingReview?: boolean;
 }

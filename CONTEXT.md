@@ -44,6 +44,26 @@ _Avoid_: Reading overlay, extension popup
 The restored page asset produced by the inpainting pipeline, where detected text glyphs are removed and underlying manga artwork is reconstructed.
 _Avoid_: Blanked background, white mask canvas
 
+**Prepared-page prefetch**:
+A later manga page whose local preparation and cleaning may complete while an earlier page is still being translated, without starting cloud translation for the later page before its normal turn.
+_Avoid_: Parallel translation, translating ahead
+
+**Adaptive cleaning scope**:
+The decision between localized inpainting regions and full-page inpainting based on the distribution of the text-removal mask and the visual context required for reconstruction, while preserving the same authorized text-removal mask.
+_Avoid_: Arbitrary crop, reduced mask
+
+**Prepared-page identity**:
+The content-aware identity of a locally prepared page revision. A prepared result remains reusable only while its source image revision, text-removal mask revision, and cleaning policy revision still match; translation-only settings do not change this identity.
+_Avoid_: Page URL cache key, page-number cache key
+
+**Batch progress frontier**:
+The earliest page in a batch that is not yet fully ready for the user, used as the primary progress position even when a later page is being prepared concurrently.
+_Avoid_: Cleaner queue position, highest started page
+
+**Page awaiting review**:
+A manga page whose local preparation exhausted its bounded quality-verification path and is withheld from automatic translation until the user reviews or explicitly retries it.
+_Avoid_: Failed batch, automatically translated failure
+
 **Loading scrim overlay**:
 The non-intrusive centered visual container placed precisely over an active manga panel in the reading view while inpainting and translation are underway, providing progress feedback without modifying the host site's layout or DOM styling.
 _Avoid_: Status badge, floating pill, host wrapper

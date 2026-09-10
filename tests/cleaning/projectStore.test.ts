@@ -51,6 +51,33 @@ test("clear session also clears cleaning metadata", async () => {
   expect((await loadCleaningResultsMetadata()).size).toBe(0);
 });
 
+test("does not let an older cleaning revision overwrite newer metadata", async () => {
+  await saveCleaningResultMetadata({
+    pageUrl: "blob:page-1",
+    sourceHash: "new",
+    sourceFingerprint: "source-new",
+    maskFingerprint: "mask-new",
+    pipelineVersion: "2.2.0-adaptive-roi",
+    revision: 2,
+    jobId: "job-new",
+    regions: [],
+    updatedAt: 200,
+  });
+  await saveCleaningResultMetadata({
+    pageUrl: "blob:page-1",
+    sourceHash: "old",
+    sourceFingerprint: "source-old",
+    maskFingerprint: "mask-old",
+    pipelineVersion: "2.1.0-complete-glyph",
+    revision: 1,
+    jobId: "job-old",
+    regions: [],
+    updatedAt: 100,
+  });
+
+  expect((await loadCleaningResultsMetadata()).get("blob:page-1")?.jobId).toBe("job-new");
+});
+
 describe("Phase 5: Blob asset store and session persistence", () => {
   it("saves and loads binary Blobs directly in assets store", async () => {
     const blob = new Blob(["test-image-content"], { type: "image/png" });
@@ -274,4 +301,3 @@ test("normalizes raw Base64 cleanUrl to Data URL on handoff append and persists 
   const loadedDataUrl = session?.translatedImageCache.get(pageUrl);
   expect(loadedDataUrl).toMatch(/^data:image\/png;base64,/);
 });
-

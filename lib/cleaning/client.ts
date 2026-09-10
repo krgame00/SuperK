@@ -155,6 +155,12 @@ function decodeResult(payload: unknown): CleaningResult {
     ),
     regions,
     timingsMs: decodeTimings(raw.timings_ms),
+    // Older sidecars do not send the policy revision. Keep decoding those
+    // responses so restored jobs can be safely rejected as non-reusable by the
+    // hook instead of crashing the client at the API boundary.
+    pipelineVersion:
+      typeof raw.pipeline_version === "string" ? raw.pipeline_version : undefined,
+    awaitingReview: raw.awaiting_review === true,
   };
 }
 
@@ -213,11 +219,12 @@ function decodeStringArray(value: unknown, field: string): string[] {
   return value;
 }
 
-function decodeTimings(value: unknown): Record<string, number> {
+function decodeTimings(value: unknown): Record<string, number | string> {
   if (!isRecord(value)) return {};
   return Object.fromEntries(
     Object.entries(value).filter(
-      (entry): entry is [string, number] => typeof entry[1] === "number",
+      (entry): entry is [string, number | string] =>
+        typeof entry[1] === "number" || typeof entry[1] === "string",
     ),
   );
 }

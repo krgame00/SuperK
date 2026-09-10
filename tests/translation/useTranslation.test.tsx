@@ -1,7 +1,10 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
-import { useTranslation } from "@/hooks/useTranslation";
+import {
+  useTranslation,
+  type PreparedTranslationPage,
+} from "@/hooks/useTranslation";
 import { sampleBubbleRegion } from "@/lib/colorMatching/canvasSampler";
 import { saveProjectSession } from "@/lib/projectStore";
 import { applyTranslationOverlay } from "@/lib/translationOverlay";
@@ -365,6 +368,73 @@ test("cancellation during preparation prevents the next page", async () => {
   expect(result.current.bubbleCacheRef.current.has("blob:two")).toBe(false);
 });
 
+test("late in-flight prefetch completion cannot resume a cancelled batch", async () => {
+  const pages = ["blob:one", "blob:two", "blob:three"];
+  let releaseTranslation!: (response: Response) => void;
+  const translationPending = new Promise<Response>((resolve) => {
+    releaseTranslation = resolve;
+  });
+  let releasePrefetch!: (value: PreparedTranslationPage) => void;
+  const prefetchPending = new Promise<PreparedTranslationPage>((resolve) => {
+    releasePrefetch = resolve;
+  });
+  const preparePageForTranslation = vi.fn((url: string, pageIndex: number) => {
+    if (pageIndex === 1) return prefetchPending;
+    return Promise.resolve({
+      recognitionUrl: url,
+      backgroundUrl: `blob:clean-${pageIndex + 1}`,
+    });
+  });
+  const translateCalls: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (pages.includes(url)) return imageResponse();
+    if (url === "/api/translate") {
+      translateCalls.push(url);
+      return translationPending;
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  const { result } = renderHook(() =>
+    useTranslation({
+      currentPage: 0,
+      pages,
+      viewMode: "single",
+      preparePageForTranslation,
+    }),
+  );
+
+  let batch!: Promise<void>;
+  act(() => {
+    batch = result.current.handleTranslateAll();
+  });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(preparePageForTranslation).toHaveBeenCalledTimes(2);
+
+  act(() => result.current.cancelTranslateAll());
+  releaseTranslation(successResponse());
+  await act(async () => {
+    await batch;
+  });
+
+  releasePrefetch({
+    recognitionUrl: pages[1],
+    backgroundUrl: "blob:clean-2",
+  });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(translateCalls).toHaveLength(1);
+  expect(preparePageForTranslation).toHaveBeenCalledTimes(2);
+  expect(result.current.bubbleCacheRef.current.has(pages[2])).toBe(false);
+});
+
 test("background batch renders final images by original URL and skips them later", async () => {
   vi.useFakeTimers();
   const pages = ["blob:one", "blob:two"];
@@ -429,7 +499,7 @@ test("background batch renders final images by original URL and skips them later
   expect(preparePageForTranslation).toHaveBeenCalledTimes(2);
 });
 
-test("quota exhaustion aborts before preparing the next page", async () => {
+test("quota exhaustion leaves the bounded next-page prefetch unused", async () => {
   const pages = ["blob:one", "blob:two"];
   const preparePageForTranslation = vi.fn(
     async (_url: string, pageIndex: number) => {
@@ -472,7 +542,9 @@ test("quota exhaustion aborts before preparing the next page", async () => {
     await batch;
   });
 
-  expect(preparePageForTranslation).toHaveBeenCalledOnce();
+  // Preparation of N+1 may already be in flight when Gemini reports quota;
+  // it is local work and must not start another cloud request.
+  expect(preparePageForTranslation).toHaveBeenCalledTimes(2);
   expect(result.current.translationResult).toContain("โควต้า");
   expect(result.current.batchFailures).toEqual([
     expect.objectContaining({ pageIndex: 0, stage: "translation" }),
@@ -526,7 +598,7 @@ test("quota cooldown is group-scoped, expires without auto retry, then manually 
   });
 
   expect(apiCalls).toBe(1);
-  expect(preparePageForTranslation).toHaveBeenCalledTimes(1);
+  expect(preparePageForTranslation).toHaveBeenCalledTimes(2);
   expect(result.current.failureGroups).toHaveLength(1);
   const failureGroupId = result.current.failureGroups[0].id;
   expect(result.current.failureGroups[0]).toMatchObject({
@@ -551,7 +623,7 @@ test("quota cooldown is group-scoped, expires without auto retry, then manually 
   });
 
   expect(apiCalls).toBe(2);
-  expect(preparePageForTranslation).toHaveBeenCalledTimes(2);
+  expect(preparePageForTranslation).toHaveBeenCalledTimes(3);
   expect(result.current.batchFailures).toHaveLength(0);
 });
 

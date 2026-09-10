@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from time import perf_counter
@@ -8,6 +9,7 @@ from typing import Protocol
 import cv2
 import numpy as np
 
+from app.adaptive_scope import cluster_mask, decide_adaptive_scope, expanded_cluster
 from app.cleaners.base import Cleaner
 from app.compositor import compose
 from app.detector import DetectionResult, RgbImage
@@ -59,7 +61,8 @@ class PipelineOutput:
     review_mask: BinaryMask
     protected_mask: BinaryMask
     regions: list[RegionRecord]
-    timings_ms: dict[str, int]
+    timings_ms: dict[str, int | float | str]
+    awaiting_review: bool = False
 
 
 BatchScore = Callable[
@@ -143,13 +146,26 @@ class CleaningPipeline:
                 review_mask=review,
                 protected_mask=protection.protected_mask.copy(),
                 regions=[],
-                timings_ms={
+                timings_ms=_with_safety_metrics(
+                    {
                     "detect": detect_ms,
                     "refine": refine_ms,
                     "clean": 0,
                     "verify": 0,
+                    "clean_ms": 0,
+                    "verification_ms": 0,
+                    "adaptive_route": "none",
+                    "roi_cluster_count": 0,
+                    "lama_inference_count": 0,
+                    "escalation_attempts": 0,
                     "total": _elapsed_ms(started),
-                },
+                    },
+                    image_rgb,
+                    image_rgb,
+                    eligible,
+                    protection.protected_mask,
+                    [],
+                ),
             )
 
         score_many = getattr(self.residual_probe, "score_many", None)
@@ -286,13 +302,27 @@ class CleaningPipeline:
             review_mask=review,
             protected_mask=protection.protected_mask.copy(),
             regions=records,
-            timings_ms={
+            timings_ms=_with_safety_metrics(
+                {
                 "detect": detect_ms,
                 "refine": refine_ms,
                 "clean": clean_ms,
                 "verify": verify_ms,
+                "clean_ms": clean_ms,
+                "verification_ms": verify_ms,
+                "adaptive_route": "legacy-region",
+                "roi_cluster_count": 0,
+                "lama_inference_count": 0,
+                "escalation_attempts": 0,
                 "total": _elapsed_ms(started),
-            },
+                },
+                image_rgb,
+                clean_image,
+                eligible,
+                protection.protected_mask,
+                records,
+            ),
+            awaiting_review=_has_awaiting_review(records),
         )
 
     def _build_eligibility(
@@ -345,10 +375,43 @@ class CleaningPipeline:
 
         # Global neural inpainting pass with full image context
         full_lama = self.cleaners.get("lama-large")
-        full_clean = None
-        if full_lama is not None and hasattr(full_lama, "clean_full_image") and np.any(eligible):
+        adaptive_scope = decide_adaptive_scope(eligible, refined.regions)
+        # The optimized scope policy is an internal release-gated feature.
+        # Keep the legacy full-page path as the safe default until benchmark,
+        # memory, and quality evidence has been accepted.
+        adaptive_roi_enabled = (
+            os.getenv("SUPERK_DISABLE_ADAPTIVE_ROI") != "1"
+            and os.getenv("SUPERK_ENABLE_ADAPTIVE_ROI") == "1"
+        )
+        scoped_clean = None
+        lama_inference_count = 0
+        escalation_attempts = 0
+        quality_attempts = 1 if np.any(eligible) else 0
+        adaptive_route = adaptive_scope.mode
+        if full_lama is not None and np.any(eligible):
             stage_started = perf_counter()
-            full_clean = full_lama.clean_full_image(image_rgb, eligible)
+            if not adaptive_roi_enabled and hasattr(full_lama, "clean_full_image"):
+                scoped_clean = full_lama.clean_full_image(image_rgb, eligible)
+                lama_inference_count = 1
+                adaptive_route = "legacy-full-page"
+            elif adaptive_roi_enabled and adaptive_scope.mode == "roi":
+                scoped_clean = image_rgb.copy()
+                clean_roi = getattr(full_lama, "clean_roi", None)
+                for cluster in adaptive_scope.clusters:
+                    active = cluster_mask(eligible, cluster)
+                    if not np.any(active):
+                        continue
+                    if callable(clean_roi):
+                        scoped_clean = clean_roi(scoped_clean, active, cluster.rect)
+                    else:
+                        region = next(
+                            item for item in refined.regions if item.id in cluster.region_ids
+                        )
+                        scoped_clean = full_lama.clean(scoped_clean, active, region)
+                    lama_inference_count += 1
+            elif adaptive_scope.mode != "none" and hasattr(full_lama, "clean_full_image"):
+                scoped_clean = full_lama.clean_full_image(image_rgb, eligible)
+                lama_inference_count = 1
             clean_ms += _elapsed_ms(stage_started)
 
         for index, region in enumerate(refined.regions):
@@ -369,8 +432,8 @@ class CleaningPipeline:
                 raise RuntimeError(f"no cleaner configured for {route.route.value}")
 
             stage_started = perf_counter()
-            if full_clean is not None:
-                repaired = full_clean
+            if scoped_clean is not None:
+                repaired = scoped_clean
             else:
                 repaired = cleaner.clean(clean_image, region_mask, region)
             candidate, support = compose(clean_image, repaired, region_mask)
@@ -415,34 +478,68 @@ class CleaningPipeline:
             residual = residual_scores.get(item.region.id, 0.0)
             damage_score = item.damage_score
             accepted = item.damage_accepted and residual <= 0.18
-            if item.damage_accepted and residual > 0.18:
-                report_pre = verify_region(
-                    image_rgb,
-                    clean_image,
-                    item.mask,
-                    item.support,
-                    item.region,
-                    self.residual_probe,
-                    evidence_envelope=refined.envelope,
-                    protected_edges=refined.protected_edges,
-                )
+            if (
+                item.damage_accepted
+                and residual > 0.18
+                and adaptive_roi_enabled
+                and adaptive_scope.mode == "roi"
+            ):
                 retry_base = clean_image.copy()
                 retry_base[item.support > 0] = image_rgb[item.support > 0]
+                # Context may expand, but writes remain inside the original
+                # authorized support. Residual evidence must never authorize
+                # new text-removal pixels by itself.
                 retry_mask = item.mask.copy()
-                if report_pre.residual_mask is not None and np.any(report_pre.residual_mask > 0):
-                    retry_mask = np.maximum(retry_mask, report_pre.residual_mask)
-                else:
-                    retry_mask = constrained_dilate(retry_mask, protection.protected_mask, 1)
                 retry_mask[protection.protected_mask > 0] = 0
                 if refined.envelope is not None:
                     retry_mask[refined.envelope == 0] = 0
+                # Attempt 2 expands the selected cluster's context while
+                # retaining the original authorized mask support.
+                if quality_attempts >= 3:
+                    clean_image[item.support > 0] = image_rgb[item.support > 0]
+                    records.append(
+                        _record(
+                            item.region,
+                            item.route,
+                            item.confidence,
+                            RegionStatus.NEEDS_REVIEW,
+                            residual,
+                            damage_score,
+                            page,
+                            item.eligibility,
+                        ),
+                    )
+                    _progress(progress_callback, JobStage.VERIFYING, index + 1, total)
+                    continue
+
                 stage_started = perf_counter()
                 fallback_cleaner = self.cleaners.get("lama-large") or item.cleaner
-                repaired = fallback_cleaner.clean(
-                    retry_base,
-                    retry_mask,
-                    item.region,
+                escalation_attempts += 1
+                quality_attempts += 1
+                if fallback_cleaner is full_lama:
+                    lama_inference_count += 1
+                cluster = next(
+                    (
+                        candidate
+                        for candidate in adaptive_scope.clusters
+                        if item.region.id in candidate.region_ids
+                    ),
+                    None,
                 )
+                expanded = (
+                    expanded_cluster(cluster, image_rgb.shape[1], image_rgb.shape[0])
+                    if cluster is not None
+                    else None
+                )
+                clean_roi = getattr(fallback_cleaner, "clean_roi", None)
+                if expanded is not None and callable(clean_roi):
+                    repaired = clean_roi(retry_base, retry_mask, expanded.rect)
+                else:
+                    repaired = fallback_cleaner.clean(
+                        retry_base,
+                        retry_mask,
+                        item.region,
+                    )
                 candidate, retry_support = compose(
                     retry_base,
                     repaired,
@@ -473,8 +570,53 @@ class CleaningPipeline:
                 if accepted:
                     clean_image = candidate
                 else:
-                    restore = (item.support > 0) | (retry_support > 0)
-                    clean_image[restore] = image_rgb[restore]
+                    if (
+                        quality_attempts < 3
+                        and full_lama is not None
+                        and hasattr(full_lama, "clean_full_image")
+                    ):
+                        # Third and final quality attempt uses full-image model context.
+                        escalation_attempts += 1
+                        quality_attempts += 1
+                        lama_inference_count += 1
+                        stage_started = perf_counter()
+                        full_repaired = full_lama.clean_full_image(retry_base, retry_mask)
+                        full_candidate, full_support = compose(
+                            retry_base,
+                            full_repaired,
+                            retry_mask,
+                        )
+                        _restore_protected(
+                            image_rgb,
+                            full_candidate,
+                            full_support,
+                            protection.protected_mask,
+                        )
+                        clean_ms += _elapsed_ms(stage_started)
+                        stage_started = perf_counter()
+                        full_report = verify_region(
+                            retry_base,
+                            full_candidate,
+                            retry_mask,
+                            full_support,
+                            item.region,
+                            self.residual_probe,
+                            evidence_envelope=refined.envelope,
+                            protected_edges=refined.protected_edges,
+                        )
+                        verify_ms += _elapsed_ms(stage_started)
+                        residual = full_report.residual_score
+                        damage_score = full_report.damage_score
+                        accepted = full_report.accepted
+                        if accepted:
+                            clean_image = full_candidate
+                            restore = None
+                        else:
+                            restore = (item.support > 0) | (retry_support > 0) | (full_support > 0)
+                    else:
+                        restore = (item.support > 0) | (retry_support > 0)
+                    if restore is not None:
+                        clean_image[restore] = image_rgb[restore]
             elif not accepted and item.damage_accepted:
                 clean_image[item.support > 0] = image_rgb[item.support > 0]
 
@@ -500,6 +642,7 @@ class CleaningPipeline:
         for region in refined.regions:
             if region.id in cleaned_ids:
                 continue
+
             refined_region_mask = _region_mask(refined.mask, region)
             route = route_region(image_rgb, refined_region_mask, region, self.cleaners)
             records.append(
@@ -520,7 +663,6 @@ class CleaningPipeline:
         records.sort(key=lambda record: record_order[record.id])
         _progress(progress_callback, JobStage.COMPLETE, total, total)
 
-
         return PipelineOutput(
             source_image=image_rgb.copy(),
             clean_image=clean_image,
@@ -528,13 +670,32 @@ class CleaningPipeline:
             review_mask=review,
             protected_mask=protection.protected_mask.copy(),
             regions=records,
-            timings_ms={
+            timings_ms=_with_safety_metrics(
+                {
                 "detect": detect_ms,
                 "refine": refine_ms,
                 "clean": clean_ms,
                 "verify": verify_ms,
+                "clean_ms": clean_ms,
+                "verification_ms": verify_ms,
+                "adaptive_route": adaptive_route,
+                "adaptive_roi": 1 if adaptive_roi_enabled and adaptive_scope.mode == "roi" else 0,
+                "roi_cluster_count": adaptive_scope.cluster_count,
+                "lama_inference_count": lama_inference_count,
+                "escalation_attempts": escalation_attempts,
                 "total": _elapsed_ms(started),
-            },
+                },
+                image_rgb,
+                clean_image,
+                eligible,
+                protection.protected_mask,
+                records,
+            ),
+            awaiting_review=any(
+                record.status is RegionStatus.NEEDS_REVIEW
+                and record.automatic_action is AutomaticAction.CLEAN
+                for record in records
+            ),
         )
 
     def retry_region(
@@ -593,6 +754,7 @@ class CleaningPipeline:
                 protected_mask=protected,
                 regions=updated_records,
                 timings_ms=dict(output.timings_ms),
+                awaiting_review=_has_awaiting_review(updated_records),
             )
 
         if action is ManualRegionAction.AUTOMATIC:
@@ -635,6 +797,7 @@ class CleaningPipeline:
                     protected_mask=output.protected_mask.copy(),
                     regions=updated_records,
                     timings_ms=dict(output.timings_ms),
+                    awaiting_review=_has_awaiting_review(updated_records),
                 )
 
         cleaner_key = {
@@ -719,6 +882,7 @@ class CleaningPipeline:
             protected_mask=protected,
             regions=updated_records,
             timings_ms=timings,
+            awaiting_review=_has_awaiting_review(updated_records),
         )
 
 
@@ -733,6 +897,100 @@ def _region_mask(mask: BinaryMask, region: MaskRegion) -> BinaryMask:
         rect.x : rect.x + rect.width,
     ]
     return output
+
+
+def _has_awaiting_review(records: list[RegionRecord]) -> bool:
+    return any(record.status is RegionStatus.NEEDS_REVIEW for record in records)
+
+
+def _peak_rss_mb() -> float | str:
+    """Return best-effort process RSS for benchmark diagnostics.
+
+    Linux exposes a true process high-water mark through ``resource``. The
+    Windows desktop runtime does not ship that module, so use the native
+    process counter as a clearly labelled current-RSS fallback rather than
+    inventing a peak value.
+    """
+    try:
+        import resource
+
+        value = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        if os.name == "nt":
+            value /= 1024 * 1024
+        else:
+            value /= 1024
+        return round(value, 2)
+    except (ImportError, AttributeError, OSError):
+        pass
+
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class _Counters(ctypes.Structure):
+                _fields_ = [
+                    ("cb", wintypes.DWORD),
+                    ("page_fault_count", wintypes.DWORD),
+                    ("peak_working_set_size", ctypes.c_size_t),
+                    ("working_set_size", ctypes.c_size_t),
+                    ("quota_peak_paged_pool_usage", ctypes.c_size_t),
+                    ("quota_paged_pool_usage", ctypes.c_size_t),
+                    ("quota_peak_non_paged_pool_usage", ctypes.c_size_t),
+                    ("quota_non_paged_pool_usage", ctypes.c_size_t),
+                    ("pagefile_usage", ctypes.c_size_t),
+                    ("peak_pagefile_usage", ctypes.c_size_t),
+                ]
+
+            counters = _Counters()
+            counters.cb = ctypes.sizeof(_Counters)
+            if ctypes.windll.psapi.GetProcessMemoryInfo(
+                ctypes.windll.kernel32.GetCurrentProcess(),
+                ctypes.byref(counters),
+                counters.cb,
+            ):
+                return round(counters.peak_working_set_size / (1024 * 1024), 2)
+        except (AttributeError, OSError, TypeError):
+            pass
+    return "unavailable"
+
+
+def _with_safety_metrics(
+    timings: dict[str, int | float | str],
+    source: RgbImage,
+    clean: RgbImage,
+    eligible: BinaryMask,
+    protected: BinaryMask,
+    records: list[RegionRecord],
+) -> dict[str, int | float | str]:
+    changed = np.any(source != clean, axis=2)
+    authorized = eligible > 0
+    protected_changed = np.any(source != clean, axis=2) & (protected > 0)
+    automatic = [
+        record
+        for record in records
+        if record.automatic_action is AutomaticAction.CLEAN
+    ]
+    residual_passes = [record for record in automatic if record.residual_score <= 0.18]
+    repaired = [record for record in automatic if record.status is RegionStatus.REPAIRED]
+    timings.update(
+        {
+            "changed_pixels_outside_support": int(np.count_nonzero(changed & ~authorized)),
+            "protected_mask_changes": int(np.count_nonzero(protected_changed)),
+            "no_mask_pixel_identity": int(
+                not np.any(eligible) and np.array_equal(source, clean)
+            ),
+            "residual_pass_rate": round(
+                len(residual_passes) / len(automatic), 4,
+            ) if automatic else 1.0,
+            "automatic_pass_rate": round(
+                len(repaired) / len(automatic),
+                4,
+            ) if automatic else 1.0,
+            "peak_rss_mb": _peak_rss_mb(),
+        },
+    )
+    return timings
 
 
 def protected_pixels_unchanged(

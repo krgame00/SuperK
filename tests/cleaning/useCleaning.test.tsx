@@ -66,6 +66,7 @@ const cleaningResult = {
   protectedMaskAsset: "/api/clean/v1/jobs/job-1/assets/protected-mask.png",
   regions: [],
   timingsMs: { total: 10 },
+  pipelineVersion: "2.2.0-adaptive-roi",
 };
 
 beforeEach(() => {
@@ -195,6 +196,49 @@ test("cleanPage returns and reuses a result by original URL", async () => {
   expect(first.cleanUrl).toBe("blob:clean");
   expect(second).toBe(first);
   expect(createCleaningJob).toHaveBeenCalledOnce();
+});
+
+test("cleanPage recomputes when the source bytes change", async () => {
+  vi.mocked(createCleaningJob)
+    .mockResolvedValueOnce({ ...succeededJob, jobId: "job-1" })
+    .mockResolvedValueOnce({ ...succeededJob, jobId: "job-2" });
+  vi.mocked(getCleaningResult).mockImplementation(async (jobId) => ({
+    ...cleaningResult,
+    jobId,
+  }));
+  const { result } = renderHook(() =>
+    useCleaning({ pages: ["blob:one"], currentPage: 0 }),
+  );
+
+  await act(async () => {
+    await result.current.cleanPage("blob:one", new Blob(["png"], { type: "image/png" }));
+    await result.current.cleanPage("blob:one", new Blob(["changed source"], { type: "image/png" }));
+  });
+
+  expect(createCleaningJob).toHaveBeenCalledTimes(2);
+  expect(result.current.currentResult?.jobId).toBe("job-2");
+});
+
+test("cleanPage recomputes an in-memory result from an older pipeline", async () => {
+  vi.mocked(createCleaningJob)
+    .mockResolvedValueOnce({ ...succeededJob, jobId: "job-old" })
+    .mockResolvedValueOnce({ ...succeededJob, jobId: "job-new" });
+  vi.mocked(getCleaningResult).mockImplementation(async (jobId) => ({
+    ...cleaningResult,
+    jobId,
+    pipelineVersion: jobId === "job-old" ? "2.1.0-complete-glyph" : "2.2.0-adaptive-roi",
+  }));
+  const { result } = renderHook(() =>
+    useCleaning({ pages: ["blob:one"], currentPage: 0 }),
+  );
+
+  await act(async () => {
+    await result.current.cleanPage("blob:one", new Blob(["png"], { type: "image/png" }));
+    await result.current.cleanPage("blob:one", new Blob(["png"], { type: "image/png" }));
+  });
+
+  expect(createCleaningJob).toHaveBeenCalledTimes(2);
+  expect(result.current.currentResult?.jobId).toBe("job-new");
 });
 
 test("cleanPage can finish a non-current batch page", async () => {
@@ -525,6 +569,9 @@ test("stale saved job asks for reclean without crashing", async () => {
         {
           pageUrl: "blob:one",
           sourceHash: "a".repeat(64),
+          sourceFingerprint: "13:text/plain;charset=utf-8",
+          maskFingerprint: "13:text/plain;charset=utf-8",
+          pipelineVersion: "2.2.0-adaptive-roi",
           jobId: "missing-job",
           regions: [],
           updatedAt: 1,

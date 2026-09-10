@@ -340,6 +340,21 @@ def aggregate(
         page["eligible_region_count"] for page in pages
     )
     needs_review_count = sum(page["needs_review_count"] for page in pages)
+    route_counts = Counter()
+    adaptive_route_counts = Counter()
+    lama_inference_count = 0
+    escalation_attempts = 0
+    for page in pages:
+        route_counts.update(page.get("route_counts", {}))
+        route = page.get("timings_ms", {}).get("adaptive_route")
+        if route:
+            adaptive_route_counts[route] += 1
+        lama_inference_count += int(
+            page.get("timings_ms", {}).get("lama_inference_count", 0),
+        )
+        escalation_attempts += int(
+            page.get("timings_ms", {}).get("escalation_attempts", 0),
+        )
     text_free = [
         page["text_free_pixel_identical"]
         for page in pages
@@ -362,6 +377,13 @@ def aggregate(
             if total_regions == 0
             else _ratio(needs_review_count, total_regions)
         ),
+        "awaiting_review_page_count": sum(
+            page["needs_review_count"] > 0 for page in pages
+        ),
+        "route_counts": dict(route_counts),
+        "adaptive_route_counts": dict(adaptive_route_counts),
+        "lama_inference_count": lama_inference_count,
+        "escalation_attempts": escalation_attempts,
         "unexpected_unattempted_region_count": sum(
             page["unexpected_unattempted_region_count"]
             for page in pages
@@ -474,6 +496,10 @@ def markdown_report(report: dict[str, Any]) -> str:
             f"- Changed pixels inside protected: "
             f"{summary['changed_pixels_inside_protected']}"
         ),
+        f"- Awaiting-review pages: {summary['awaiting_review_page_count']}",
+        f"- Adaptive routes: {summary['adaptive_route_counts']}",
+        f"- LamaLarge inferences: {summary['lama_inference_count']}",
+        f"- Escalation attempts: {summary['escalation_attempts']}",
         f"- Visual review: {summary['visual_review_pass']}",
         f"- Peak RSS: {summary['peak_rss_mb']:.1f} MB",
         f"- Acceptance: {'PASS' if summary['passed'] else 'FAIL'}",

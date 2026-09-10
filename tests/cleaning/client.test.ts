@@ -52,7 +52,9 @@ test("getCleaningResult decodes snake case and proxies asset paths", async () =>
           protection_reasons: [],
         },
       ],
-      timings_ms: { total: 1234 },
+      timings_ms: { total: 1234, adaptive_route: "roi", roi_cluster_count: 1 },
+      pipeline_version: "2.2.0-adaptive-roi",
+      awaiting_review: false,
     }),
   );
   const result = await getCleaningResult("job-1");
@@ -77,6 +79,9 @@ test("getCleaningResult decodes snake case and proxies asset paths", async () =>
     }),
   );
   expect(result.timingsMs.total).toBe(1234);
+  expect(result.timingsMs.adaptive_route).toBe("roi");
+  expect(result.pipelineVersion).toBe("2.2.0-adaptive-roi");
+  expect(result.awaitingReview).toBe(false);
 });
 
 test("retryCleaningRegion sends selected cleaner and mask", async () => {

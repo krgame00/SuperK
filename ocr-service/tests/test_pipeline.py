@@ -282,6 +282,8 @@ def test_text_free_pipeline_is_pixel_identical() -> None:
     assert np.array_equal(output.clean_image, image)
     assert output.mask.sum() == 0
     assert output.regions == []
+    assert output.timings_ms["no_mask_pixel_identity"] == 1
+    assert output.timings_ms["changed_pixels_outside_support"] == 0
 
 
 def test_pipeline_retries_once_then_restores_failed_region() -> None:

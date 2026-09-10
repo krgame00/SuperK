@@ -528,6 +528,7 @@ class JobStore:
             ),
             regions=output.regions,
             timings_ms=output.timings_ms,
+            awaiting_review=output.awaiting_review,
         )
         try:
             (asset_dir / "result.json").write_text(result.model_dump_json(), encoding="utf-8")

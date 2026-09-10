@@ -181,15 +181,6 @@ export default function WorkspacePage() {
 
   const preparePageForTranslation = useCallback(
     async (pageUrl: string, pageIndex: number) => {
-      const cachedResult = cleaningResultsByPage.get(pageUrl);
-      if (cachedResult) {
-        return {
-          recognitionUrl: pageUrl,
-          backgroundUrl: cachedResult.cleanUrl,
-          maskUrl: cachedResult.maskUrl,
-        };
-      }
-
       const page = pages[pageIndex];
       if (!page || page.url !== pageUrl) {
         throw new Error("Page is no longer available for cleaning.");
@@ -204,9 +195,11 @@ export default function WorkspacePage() {
         recognitionUrl: pageUrl,
         backgroundUrl: result.cleanUrl,
         maskUrl: result.maskUrl,
+        preparedIdentity: result.preparedIdentity,
+        awaitingReview: result.awaitingReview === true,
       };
     },
-    [cleanPage, cleaningResultsByPage, pages],
+    [cleanPage, pages],
   );
 
   const {
@@ -339,13 +332,19 @@ export default function WorkspacePage() {
     isUiOperationBusy || translationBusy || Boolean(cleaningProgress);
   const translateAllStatusText = translateAllProgress
     ? `${translateAllProgress.message}${
-        typeof translateAllProgress.remainingSeconds === "number" && translateAllProgress.current > 1
-          ? ` · ${
-              translateAllProgress.remainingSeconds < 60
-                ? `เหลืออีก ~${Math.ceil(translateAllProgress.remainingSeconds)} วิ`
-                : `เหลืออีก ~${Math.ceil(translateAllProgress.remainingSeconds / 60)} นาที`
-            }`
+        translateAllProgress.secondaryMessage
+          ? ` · ${translateAllProgress.secondaryMessage}`
           : ""
+      }${
+        translateAllProgress.estimating
+          ? " · กำลังประเมินเวลาที่เหลือ..."
+          : typeof translateAllProgress.remainingSeconds === "number"
+            ? ` · ${
+                translateAllProgress.remainingSeconds < 60
+                  ? `เหลืออีก ~${Math.ceil(translateAllProgress.remainingSeconds)} วิ`
+                  : `เหลืออีก ~${Math.ceil(translateAllProgress.remainingSeconds / 60)} นาที`
+              }`
+            : ""
       } (${Math.round((translateAllProgress.current / translateAllProgress.total) * 100)}%)`
     : null;
 
@@ -1582,13 +1581,20 @@ export default function WorkspacePage() {
                       style={{ width: translateAllProgress ? `${(translateAllProgress.current / translateAllProgress.total) * 100}%` : '0%' }}
                     />
                   </div>
-                  {translateAllProgress && translateAllProgress.current > 1 && typeof translateAllProgress.remainingSeconds === 'number' && (
+                  {translateAllProgress?.secondaryMessage && (
+                    <span className="text-[10px] text-primary/80">
+                      {translateAllProgress.secondaryMessage}
+                    </span>
+                  )}
+                  {translateAllProgress?.estimating ? (
+                    <span className="text-[10px] text-muted">กำลังประเมินเวลาที่เหลือ...</span>
+                  ) : translateAllProgress && typeof translateAllProgress.remainingSeconds === 'number' ? (
                     <span className="text-[10px] text-muted">
                       {translateAllProgress.remainingSeconds < 60
                         ? `เหลืออีก ~${Math.ceil(translateAllProgress.remainingSeconds)} วินาที`
                         : `เหลืออีก ~${Math.ceil(translateAllProgress.remainingSeconds / 60)} นาที`}
                     </span>
-                  )}
+                  ) : null}
                   <button
                     onClick={cancelTranslateAll}
                     className="w-full bg-red-500/15 text-red-400 hover:bg-red-500/25 px-4 py-2 rounded-md text-sm font-semibold flex justify-center items-center gap-2 transition-all"

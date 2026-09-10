@@ -12,6 +12,10 @@ const ASSET_STORE_NAME = "assets";
 export interface StoredCleaningResult {
   pageUrl: string;
   sourceHash: string;
+  sourceFingerprint?: string;
+  maskFingerprint?: string;
+  pipelineVersion?: string;
+  revision?: number;
   jobId: string;
   regions: CleaningRegion[];
   updatedAt: number;
@@ -392,7 +396,21 @@ export const saveCleaningResultMetadata = async (
   try {
     const db = await openDB();
     const tx = db.transaction(CLEANING_STORE_NAME, "readwrite");
-    tx.objectStore(CLEANING_STORE_NAME).put(result);
+    const store = tx.objectStore(CLEANING_STORE_NAME);
+    const existing = await requestResult<StoredCleaningResult | undefined>(
+      store.get(result.pageUrl),
+    );
+    const existingRevision = existing?.revision ?? 0;
+    const incomingRevision = result.revision ?? 0;
+    if (
+      existing &&
+      (existingRevision > incomingRevision ||
+        (existingRevision === incomingRevision && existing.updatedAt > result.updatedAt))
+    ) {
+      await transactionDone(tx);
+      return;
+    }
+    store.put(result);
     await transactionDone(tx);
   } catch (err) {
     console.warn("Failed to save cleaning result metadata", err);

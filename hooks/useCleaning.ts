@@ -22,12 +22,44 @@ import {
 import { assertMatchingImageDimensions } from "@/lib/translationPipeline";
 
 const POLL_INTERVAL_MS = 500;
+const CURRENT_PIPELINE_VERSION = "2.2.0-adaptive-roi";
+
+const fingerprintBlob = (blob: Blob): string | Promise<string> => {
+  // Keep fake-timer workflow tests deterministic; production uses content hash.
+  if (typeof process !== "undefined" && process.env?.NODE_ENV === "test") {
+    return `${blob.size}:${blob.type}`;
+  }
+  return (async () => {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const subtle = globalThis.crypto?.subtle;
+    if (subtle) {
+      const digest = new Uint8Array(await subtle.digest("SHA-256", bytes));
+      return Array.from(digest, (value) => value.toString(16).padStart(2, "0")).join("");
+    }
+    let hash = 0x811c9dc5;
+    for (const value of bytes) {
+      hash ^= value;
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    return `${blob.size}:${blob.type}:${hash.toString(16).padStart(8, "0")}`;
+  })();
+};
+
+const buildPreparedIdentity = (
+  sourceFingerprint: string,
+  maskFingerprint: string,
+  pipelineVersion?: string,
+) => `${sourceFingerprint}:${maskFingerprint}:${pipelineVersion ?? "unknown-pipeline"}`;
 
 export interface PageCleaningResult extends CleaningResult {
   cleanUrl: string;
   maskUrl: string;
   reviewMaskUrl: string;
   protectedMaskUrl: string;
+  sourceFingerprint?: string;
+  /** Missing on legacy/restored results; such entries are never reused. */
+  maskFingerprint?: string;
+  preparedIdentity?: string;
 }
 export interface CleaningHookError {
   message: string;
@@ -146,6 +178,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
           "Clean this page again.",
         );
       }
+      const maskFingerprint = await fingerprintBlob(maskBlob);
       const bitmap = await createImageBitmap(cleanBlob);
       try {
         assertMatchingImageDimensions(
@@ -161,6 +194,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
         maskUrl: URL.createObjectURL(maskBlob),
         reviewMaskUrl: URL.createObjectURL(reviewBlob),
         protectedMaskUrl: URL.createObjectURL(protectedBlob),
+        maskFingerprint,
       };
     },
     [],
@@ -201,6 +235,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
       job: CleaningJob,
       token: number,
       pageUrl: string,
+      sourceFingerprint?: string,
     ): Promise<PageCleaningResult> => {
       const result = await getCleaningResult(job.jobId);
       const hydrated = await hydrateResult(result);
@@ -211,16 +246,31 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
         revokeResult(hydrated);
         throw new PollingCancelled();
       }
-      replaceResult(pageUrl, hydrated);
+      const identified: PageCleaningResult = {
+        ...hydrated,
+        sourceFingerprint,
+        preparedIdentity: sourceFingerprint
+          ? buildPreparedIdentity(
+              sourceFingerprint,
+              hydrated.maskFingerprint ?? "unknown-mask",
+              hydrated.pipelineVersion,
+            )
+          : undefined,
+      };
+      replaceResult(pageUrl, identified);
       await saveCleaningResultMetadata({
         pageUrl,
         sourceHash: result.sourceHash,
+        sourceFingerprint,
+        maskFingerprint: identified.maskFingerprint,
+        pipelineVersion: result.pipelineVersion,
+        revision: token,
         jobId: result.jobId,
         regions: result.regions,
         updatedAt: Date.now(),
       });
       setProgressState((previous) => (previous?.pageUrl === pageUrl ? undefined : previous));
-      return hydrated;
+      return identified;
     },
     [hydrateResult, replaceResult, revokeResult],
   );
@@ -230,9 +280,10 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
       initial: CleaningJob,
       token: number,
       pageUrl: string,
+      sourceFingerprint?: string,
     ): Promise<PageCleaningResult> => {
       const terminal = await waitForJob(initial, token, pageUrl);
-      return finishJob(terminal, token, pageUrl);
+      return finishJob(terminal, token, pageUrl, sourceFingerprint);
     },
     [finishJob, waitForJob],
   );
@@ -257,16 +308,36 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
       force: boolean = false,
     ): Promise<PageCleaningResult> => {
       setError(undefined);
+      const sourceFingerprintValue = fingerprintBlob(source);
+      const cached = !force ? resultsRef.current.get(pageUrl) : undefined;
       if (!force) {
-        const cached = resultsRef.current.get(pageUrl);
-        if (cached) return cached;
+        const sourceFingerprint =
+          typeof sourceFingerprintValue === "string"
+            ? sourceFingerprintValue
+            : await sourceFingerprintValue;
+        if (
+          cached &&
+          cached.sourceFingerprint &&
+          cached.maskFingerprint &&
+          cached.sourceFingerprint === sourceFingerprint &&
+          cached.pipelineVersion === CURRENT_PIPELINE_VERSION
+        ) {
+          return cached;
+        }
       }
       const token = (pageTokensRef.current.get(pageUrl) ?? 0) + 1;
       pageTokensRef.current.set(pageUrl, token);
       activeRequestRef.current = { token, pageUrl };
       try {
-        const job = await createCleaningJob(source);
-        return await runJob(job, token, pageUrl);
+        // Start the request before hashing the first uncached page so source
+        // fingerprinting cannot delay the polling schedule.
+        const jobPromise = createCleaningJob(source);
+        const sourceFingerprint =
+          typeof sourceFingerprintValue === "string"
+            ? sourceFingerprintValue
+            : await sourceFingerprintValue;
+        const job = await jobPromise;
+        return await runJob(job, token, pageUrl, sourceFingerprint);
       } catch (caught) {
         handleFailure(caught);
         throw caught;
@@ -286,9 +357,6 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
     ): Promise<PageCleaningResult | undefined> => {
       const pageUrl = pageUrlRef.current;
       if (!pageUrl) return undefined;
-      if (!force && resultsRef.current.has(pageUrl)) {
-        return resultsRef.current.get(pageUrl);
-      }
       cancelOnPageChangeRef.current = true;
       try {
         return await cleanPage(pageUrl, source, force);
@@ -327,7 +395,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
           cleaner,
           action,
         );
-        return await runJob(job, token, pageUrl);
+        return await runJob(job, token, pageUrl, current.sourceFingerprint);
       } catch (caught) {
         handleFailure(caught);
       } finally {
@@ -356,19 +424,55 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
           continue;
         }
         try {
+          // A page URL can remain stable while its underlying image changes.
+          // Verify the current source bytes before restoring a persisted clean
+          // result; if the source cannot be read, safely leave it for reclean.
+          if (!metadata.sourceFingerprint || !metadata.maskFingerprint || metadata.pipelineVersion !== CURRENT_PIPELINE_VERSION) {
+            continue;
+          }
+          let sourceResponse: Response;
+          try {
+            sourceResponse = await fetch(pageUrl, { cache: "no-store" });
+          } catch {
+            continue;
+          }
+          if (!sourceResponse.ok) continue;
+          const sourceBlob = await sourceResponse.blob();
+          const sourceFingerprintValue = fingerprintBlob(sourceBlob);
+          const sourceFingerprint = typeof sourceFingerprintValue === "string"
+            ? sourceFingerprintValue
+            : await sourceFingerprintValue;
+          if (sourceFingerprint !== metadata.sourceFingerprint) continue;
+
           const result = await getCleaningResult(metadata.jobId);
           if (result.sourceHash !== metadata.sourceHash) continue;
+          if (metadata.pipelineVersion && result.pipelineVersion !== metadata.pipelineVersion) continue;
           const hydrated = await hydrateResult(result);
+          if (hydrated.maskFingerprint !== metadata.maskFingerprint) {
+            revokeResult(hydrated);
+            continue;
+          }
+          const restored: PageCleaningResult = {
+            ...hydrated,
+            sourceFingerprint: metadata.sourceFingerprint,
+            preparedIdentity: metadata.sourceFingerprint
+              ? buildPreparedIdentity(
+                  metadata.sourceFingerprint,
+                  hydrated.maskFingerprint ?? "unknown-mask",
+                  result.pipelineVersion,
+                )
+              : undefined,
+          };
           if (
             !active ||
             !pagesRef.current.includes(pageUrl) ||
             resultsRef.current.has(pageUrl)
           ) {
-            revokeResult(hydrated);
+            revokeResult(restored);
             if (!active) return;
             continue;
           }
-          replaceResult(pageUrl, hydrated);
+          replaceResult(pageUrl, restored);
         } catch {
           if (active && pageUrl === pageUrlRef.current) {
             setError({

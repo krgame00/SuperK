@@ -43,10 +43,23 @@ export interface BatchPageFailure {
   diagnostic?: DiagnosticDetail;
 }
 
+export interface BatchPerformanceMetrics {
+  recordedAt: number;
+  wallClockMs: number;
+  pageDurationsMs: number[];
+  medianPageMs?: number;
+  p95PageMs?: number;
+  completedPages: number;
+  failedPages: number;
+  cancelled: boolean;
+}
+
 export interface PreparedTranslationPage {
   recognitionUrl: string;
   backgroundUrl: string;
   maskUrl?: string;
+  preparedIdentity?: string;
+  awaitingReview?: boolean;
 }
 
 interface UseTranslationProps {
@@ -186,6 +199,8 @@ export function useTranslation({
     message: string;
     startTime: number;
     remainingSeconds?: number;
+    secondaryMessage?: string;
+    estimating?: boolean;
   } | null>(null);
   const cancelTranslateAllRef = useRef(false);
   const translationOperationLockRef = useRef(false);
@@ -193,6 +208,8 @@ export function useTranslation({
   // instead of letting the current page run to completion.
   const translationAbortRef = useRef<AbortController | null>(null);
   const [batchFailures, setBatchFailures] = useState<BatchPageFailure[]>([]);
+  const [batchPerformanceMetrics, setBatchPerformanceMetrics] =
+    useState<BatchPerformanceMetrics | null>(null);
   const failureGroupSequenceRef = useRef(0);
   const [quotaCooldownByGroup, setQuotaCooldownByGroup] = useState<Record<string, number>>({});
   const [quotaClockMs, setQuotaClockMs] = useState(() => Date.now());
@@ -1161,23 +1178,70 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       isTranslatingAll
     ) return;
       translationOperationLockRef.current = true;
+      let recordBatchMetrics: ((cancelled: boolean) => void) | undefined;
       try {
         setIsTranslatingAll(true);
         cancelTranslateAllRef.current = false;
         translationAbortRef.current = new AbortController();
         const signal = translationAbortRef.current.signal;
         const batchStartTime = Date.now();
+        setBatchPerformanceMetrics(null);
         const failureOperationId = `batch-${++failureGroupSequenceRef.current}`;
         const failureGroupIdFor = (diagnostic: DiagnosticDetail) =>
           `${failureOperationId}:${diagnostic.code}`;
       const failures: BatchPageFailure[] = [];
+      const pageDurationsMs: number[] = [];
+      let batchMetricsRecorded = false;
+      recordBatchMetrics = (cancelled: boolean) => {
+        if (batchMetricsRecorded) return;
+        batchMetricsRecorded = true;
+        const sorted = [...pageDurationsMs].sort((a, b) => a - b);
+        const percentile = (fraction: number) =>
+          sorted.length === 0
+            ? undefined
+            : sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)];
+        setBatchPerformanceMetrics({
+          recordedAt: Date.now(),
+          wallClockMs: Math.max(0, Date.now() - batchStartTime),
+          pageDurationsMs: [...pageDurationsMs],
+          medianPageMs: percentile(0.5),
+          p95PageMs: percentile(0.95),
+          completedPages: pageDurationsMs.length,
+          failedPages: failures.length,
+          cancelled,
+        });
+        if (typeof localStorage !== "undefined") {
+          try {
+            localStorage.setItem(
+              "superk:batch-performance-metrics",
+              JSON.stringify({
+                recordedAt: Date.now(),
+                wallClockMs: Math.max(0, Date.now() - batchStartTime),
+                pageDurationsMs: [...pageDurationsMs],
+                medianPageMs: percentile(0.5),
+                p95PageMs: percentile(0.95),
+                completedPages: pageDurationsMs.length,
+                failedPages: failures.length,
+                cancelled,
+              } satisfies BatchPerformanceMetrics),
+            );
+          } catch {
+            // Metrics are diagnostic and must never affect translation.
+          }
+        }
+      };
       let quotaFailureMessage: string | null = null;
 
       const isTargetedRetry = Array.isArray(targetIndices) && targetIndices.length > 0;
       const forceNsfwForBatch = options?.forceNsfw === true;
-      const indicesToProcess = isTargetedRetry
+      const candidateIndices = isTargetedRetry
         ? targetIndices.filter((idx) => idx >= 0 && idx < pages.length)
         : pages.map((_, idx) => idx);
+      // Snapshot the work set before starting. Already completed pages are not
+      // part of this batch, so they cannot inflate the frontier or ETA.
+      const indicesToProcess = isTargetedRetry
+        ? candidateIndices
+        : candidateIndices.filter((idx) => !completedPagesRef.current.has(pages[idx]));
 
       if (isTargetedRetry) {
         setBatchFailures((prev) =>
@@ -1199,35 +1263,104 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         }
       };
 
+      type PreparationOutcome =
+        | { ok: true; value: PreparedTranslationPage }
+        | { ok: false; error: unknown };
+      const prepareSafely = async (
+        pageIndex: number,
+      ): Promise<PreparationOutcome> => {
+        try {
+          return {
+            ok: true,
+            value: await preparePageForTranslation(pages[pageIndex], pageIndex),
+          };
+        } catch (error) {
+          return { ok: false, error };
+        }
+      };
+      // Keep the optimized path behind an internal release flag until the
+      // benchmark and quality gates have been accepted. Tests opt in through
+      // NODE_ENV so they continue to exercise the optimized orchestration.
+      const legacyPerformanceMode =
+        typeof window !== "undefined"
+        && window.localStorage.getItem("superk:legacy-performance-mode") === "1";
+      const performancePipelineEnabled =
+        !legacyPerformanceMode
+        && (
+          (typeof process !== "undefined" && process.env?.NODE_ENV === "test")
+          || (typeof window !== "undefined"
+            && window.localStorage.getItem("superk:enable-performance-pipeline") === "1")
+          || (typeof window === "undefined"
+            && typeof process !== "undefined"
+            && process.env?.NEXT_PUBLIC_ENABLE_PERFORMANCE_PIPELINE === "1")
+        );
+      let prefetched:
+        | { pageIndex: number; promise: Promise<PreparationOutcome> }
+        | null = null;
+      const batchReadyPages = new Set<string>();
+      let completedEndToEnd = 0;
+      const recentDurationsMs: number[] = [];
+      const estimateRemainingSeconds = (remainingPages: number) => {
+        if (completedEndToEnd < 2 || recentDurationsMs.length === 0) return undefined;
+        const recent = recentDurationsMs.slice(-5);
+        const average = recent.reduce((sum, value) => sum + value, 0) / recent.length;
+        return (average * remainingPages) / 1000;
+      };
+      const nextEligibleIndex = (afterStep: number): number | undefined => {
+        for (let candidateStep = afterStep + 1; candidateStep < indicesToProcess.length; candidateStep++) {
+          const candidate = indicesToProcess[candidateStep];
+          const candidateUrl = pages[candidate];
+          if (isTargetedRetry || !completedPagesRef.current.has(candidateUrl)) return candidate;
+        }
+        return undefined;
+      };
+      const batchProgressFrontier = () => {
+        const firstUnready = indicesToProcess.findIndex(
+          (candidate) => !batchReadyPages.has(pages[candidate]),
+        );
+        return firstUnready === -1 ? indicesToProcess.length : firstUnready + 1;
+      };
+
       for (let step = 0; step < indicesToProcess.length; step++) {
         if (cancelTranslateAllRef.current) break;
         const i = indicesToProcess[step];
         const pageUrl = pages[i];
 
-        // Skip if the page already finished translating — tracked separately
-        // from the LRU-bounded image cache so evicted pages don't re-run
-        // (and burn API quota). Targeted retry ignores this.
-        if (!isTargetedRetry && completedPagesRef.current.has(pageUrl)) continue;
-
-        const currentStep = step + 1;
-        const elapsedSec = (Date.now() - batchStartTime) / 1000;
-        const remainingSec =
-          currentStep > 1
-            ? (elapsedSec / currentStep) * (indicesToProcess.length - currentStep)
-            : undefined;
+        const pageStartedAt = Date.now();
+        let excludedWaitMs = 0;
+        const remainingPages = indicesToProcess
+          .slice(step)
+          .filter((candidate) => isTargetedRetry || !completedPagesRef.current.has(pages[candidate]))
+          .length;
+        const remainingSec = estimateRemainingSeconds(
+          remainingPages,
+        );
 
         setTranslateAllProgress({
-          current: currentStep,
+          current: batchProgressFrontier(),
           total: indicesToProcess.length,
           status: "cleaning",
           message: `กำลังคลีนหน้า ${i + 1}/${pages.length}`,
           startTime: batchStartTime,
           remainingSeconds: remainingSec,
+          estimating: remainingSec === undefined,
         });
 
         let preparedPage: PreparedTranslationPage;
         try {
-          preparedPage = await preparePageForTranslation(pageUrl, i);
+          const preparation = prefetched?.pageIndex === i
+            ? await prefetched.promise
+            : await prepareSafely(i);
+          if (prefetched?.pageIndex === i) prefetched = null;
+          if (!preparation.ok) throw preparation.error;
+          preparedPage = preparation.value;
+          if (preparedPage.awaitingReview) {
+            throw new CleaningClientError(
+              422,
+              "Page awaiting review after local cleaning verification.",
+              "Review or explicitly retry this page before translation.",
+            );
+          }
         } catch (error) {
           const explicitCleaningCode = error instanceof CleaningClientError
             ? (error.status === 0 || error.status === 502 || error.status === 503 ||
@@ -1259,13 +1392,29 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         }
         if (cancelTranslateAllRef.current) break;
 
+        const nextIndex = nextEligibleIndex(step);
+        if (
+          performancePipelineEnabled
+          && nextIndex !== undefined
+          && !cancelTranslateAllRef.current
+        ) {
+          prefetched = {
+            pageIndex: nextIndex,
+            promise: prepareSafely(nextIndex),
+          };
+        }
+
         setTranslateAllProgress({
-          current: currentStep,
+          current: batchProgressFrontier(),
           total: indicesToProcess.length,
           status: "translating",
           message: `กำลังแปลหน้า ${i + 1}/${pages.length}`,
           startTime: batchStartTime,
           remainingSeconds: remainingSec,
+          secondaryMessage: prefetched
+            ? `กำลังเตรียมหน้า ${prefetched.pageIndex + 1} ล่วงหน้า`
+            : undefined,
+          estimating: remainingSec === undefined,
         });
 
         let success = false;
@@ -1331,7 +1480,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
               && err.code === "GEMINI_QUOTA"
             ) {
               setTranslateAllProgress({
-                current: step + 1,
+                current: batchProgressFrontier(),
                 total: indicesToProcess.length,
                 status: "waiting",
                 message: `รอโควต้า API (${waitSec} วิ)... หน้า ${i + 1}/${pages.length}`,
@@ -1345,7 +1494,9 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
                 `แปลไม่ผ่าน รอ ${waitSec} วิเพื่อลองใหม่... (รอบ ${retries + 1}/3)`,
               );
             }
+            const waitStartedAt = Date.now();
             await interruptibleDelay(retryDelay);
+            excludedWaitMs += Date.now() - waitStartedAt;
             retries++;
           }
         }
@@ -1388,6 +1539,16 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           });
         }
 
+        if (success) {
+          batchReadyPages.add(pageUrl);
+          completedEndToEnd += 1;
+          const durationMs = Math.max(0, Date.now() - pageStartedAt - excludedWaitMs);
+          pageDurationsMs.push(durationMs);
+          // The first completed page includes one-time model/runtime warm-up and
+          // is deliberately excluded from throughput projection.
+          if (completedEndToEnd > 1) recentDurationsMs.push(durationMs);
+        }
+
         if (
           lastTranslationError instanceof TranslationRequestError
           && lastTranslationError.code === "GEMINI_QUOTA"
@@ -1399,7 +1560,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
 
         if (success && step < indicesToProcess.length - 1 && !cancelTranslateAllRef.current) {
           setTranslateAllProgress({
-            current: step + 1,
+            current: batchProgressFrontier(),
             total: indicesToProcess.length,
             status: "cooldown",
             message: `พักโหลด 2 วิ... หน้า ${i + 1}/${pages.length}`,
@@ -1410,6 +1571,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       }
 
       if (cancelTranslateAllRef.current) {
+        recordBatchMetrics(true);
         setTimeout(() => setTranslationResult(null), 1500);
         return;
       }
@@ -1421,8 +1583,10 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             ? "✅ แปลเสร็จเรียบร้อยแล้ว"
             : `⚠️ แปลเสร็จ แต่หน้า ${failedPages.join(", ")} ต้องลองใหม่`),
       );
+      recordBatchMetrics(false);
       setTimeout(() => setTranslationResult(null), 4000);
     } finally {
+      recordBatchMetrics?.(cancelTranslateAllRef.current);
       translationOperationLockRef.current = false;
       setIsTranslatingAll(false);
       setTranslateAllProgress(null);
@@ -1589,6 +1753,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     handleTranslate,
     isTranslatingAll,
     translateAllProgress,
+    batchPerformanceMetrics,
     handleTranslateAll,
     cancelTranslateAll,
     translateCrop,

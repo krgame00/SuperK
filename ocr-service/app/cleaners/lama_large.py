@@ -6,8 +6,8 @@ is the production model consumed here.
 """
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
 import logging
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Protocol, Self, cast
 
@@ -166,6 +166,29 @@ class LamaLargeCleaner:
         crop = image_rgb[y0:y1, x0:x1]
         crop_mask = mask[y0:y1, x0:x1]
         if not np.any(crop_mask):
+            return image_rgb.copy()
+
+        repaired = self._run(crop, crop_mask)
+        result = image_rgb.copy()
+        support = crop_mask > 0
+        destination = result[y0:y1, x0:x1]
+        destination[support] = repaired[support]
+        return result
+
+    def clean_roi(
+        self,
+        image_rgb: RgbImage,
+        mask: BinaryMask,
+        rect,
+    ) -> RgbImage:
+        """Run LamaLarge only inside a precomputed ROI while committing mask pixels only."""
+        x0 = max(0, int(rect.x))
+        y0 = max(0, int(rect.y))
+        x1 = min(image_rgb.shape[1], x0 + int(rect.width))
+        y1 = min(image_rgb.shape[0], y0 + int(rect.height))
+        crop = image_rgb[y0:y1, x0:x1]
+        crop_mask = mask[y0:y1, x0:x1]
+        if crop.size == 0 or not np.any(crop_mask):
             return image_rgb.copy()
 
         repaired = self._run(crop, crop_mask)
