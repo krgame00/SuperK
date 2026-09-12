@@ -35,6 +35,7 @@ describe("nearbyStyleFallback spatial style inheritance", () => {
           outline: "#03045e",
           fillConfidence: 0.92,
           outlineConfidence: 0.88,
+          category: "dialogue",
           source: "auto",
         },
       },
@@ -47,6 +48,7 @@ describe("nearbyStyleFallback spatial style inheritance", () => {
           outline: "#ffffff",
           fillConfidence: 0.40,
           outlineConfidence: 0.50,
+          category: "dialogue",
           source: "global",
         },
       },
@@ -96,6 +98,40 @@ describe("nearbyStyleFallback spatial style inheritance", () => {
     // Should NOT inherit from anchor_top because it is too far
     expect(farBubbleProfile?.source).toBe("global");
     expect(farBubbleProfile?.fill).toBe("#000000");
+  });
+
+  it("does not inherit style across different text style categories", () => {
+    const bubbles: TranslatedBubble[] = [
+      {
+        id: "dialogue-anchor",
+        box: [100, 100, 220, 320],
+        styleProfile: {
+          fill: "#111111",
+          outline: "#ffffff",
+          category: "dialogue",
+          fillConfidence: 0.95,
+          outlineConfidence: 0.90,
+          source: "auto",
+        },
+      },
+      {
+        id: "sfx-target",
+        box: [230, 120, 300, 220],
+        styleProfile: {
+          fill: "#000000",
+          outline: "#ffffff",
+          category: "sfx",
+          fillConfidence: 0.30,
+          outlineConfidence: 0.30,
+          source: "global",
+        },
+      },
+    ];
+
+    const result = applyNearbyStyleFallbacks(bubbles);
+
+    expect(result[1].styleProfile?.source).toBe("global");
+    expect(result[1].styleProfile?.fill).toBe("#000000");
   });
 
   it("handles empty or deleted bubbles gracefully", () => {

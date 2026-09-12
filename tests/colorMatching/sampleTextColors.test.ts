@@ -68,7 +68,7 @@ describe("sampleTextColors color extraction engine", () => {
     expect(profile.fillConfidence).toBeGreaterThan(0.75);
   });
 
-  it("extracts black text with white outline from a white speech balloon", () => {
+  it("preserves plain black dialogue on a white speech balloon without inventing an outline", () => {
     // 20x20 balloon: white background, black text in center
     const sample = createSyntheticRegion(20, 20, (x, y) => {
       // Background: White
@@ -80,7 +80,24 @@ describe("sampleTextColors color extraction engine", () => {
 
     const profile = extractTextColors(sample);
     expect(profile.fill).toBe("#000000");
-    expect(profile.outline).toBe("#ffffff");
+    expect(profile.hasOutline).toBe(false);
+    expect(profile.outlineWidthRatio).toBe(0);
+    expect(profile.fillConfidence).toBeGreaterThan(0.7);
+    expect(profile.confidenceBand).toBe("high");
+    expect(profile.source).toBe("auto");
+  });
+
+  it("preserves plain white dialogue on a dark region without inventing an outline", () => {
+    const sample = createSyntheticRegion(20, 20, (x, y) => {
+      if (x < 4 || x > 16 || y < 4 || y > 16) return [20, 20, 20, 255];
+      if (x >= 8 && x <= 12 && y >= 8 && y <= 12) return [255, 255, 255, 255];
+      return [35, 35, 35, 255];
+    });
+
+    const profile = extractTextColors(sample);
+    expect(profile.fill).toBe("#ffffff");
+    expect(profile.hasOutline).toBe(false);
+    expect(profile.outlineWidthRatio).toBe(0);
     expect(profile.fillConfidence).toBeGreaterThan(0.7);
     expect(profile.source).toBe("auto");
   });
@@ -176,5 +193,99 @@ describe("sampleTextColors color extraction engine", () => {
     expect(profile.fillConfidence).toBeLessThan(0.65);
     expect(profile.fill).toBe("#000000");
     expect(profile.outline).toBe("#ffffff");
+    expect(profile.confidenceBand).toBe("low");
+    expect(profile.fallbackReason).toBe("low-confidence");
+  });
+
+  it("extracts high-confidence directional vertical gradient on SFX lettering", () => {
+    // 40x40 region: dark background (20, 20, 20)
+    // Centered SFX text glyph: x: 10..30, y: 10..30
+    // Top half (y: 10..19): vivid orange (255, 102, 0)
+    // Bottom half (y: 20..30): vivid yellow (255, 204, 0)
+    const sample = createSyntheticRegion(40, 40, (x, y) => {
+      if (x < 10 || x > 30 || y < 10 || y > 30) return [20, 20, 20, 255];
+      if (y < 20) return [255, 102, 0, 255];
+      return [255, 204, 0, 255];
+    });
+
+    const profile = extractTextColors(sample);
+    expect(profile.source).toBe("auto");
+    expect(profile.fillGradient).toBeDefined();
+    expect(profile.fillGradient?.angleDeg).toBe(90);
+    expect(profile.fillGradient?.stops.length).toBe(2);
+    expect(profile.fillGradient?.stops[0].color).toBe("#ff6600");
+    expect(profile.fillGradient?.stops[1].color).toBe("#ffcc00");
+  });
+
+  it("suppresses gradient and falls back to dominant solid color for ambiguous multicolor speckles", () => {
+    // 40x40 region: dark background (20, 20, 20)
+    // Centered glyph: alternating orange (255, 102, 0) and cyan (0, 204, 255) pixels
+    // in a checkerboard pattern without spatial progression
+    const sample = createSyntheticRegion(40, 40, (x, y) => {
+      if (x < 10 || x > 30 || y < 10 || y > 30) return [20, 20, 20, 255];
+      return (x + y) % 2 === 0 ? [255, 102, 0, 255] : [0, 204, 255, 255];
+    });
+
+    const profile = extractTextColors(sample);
+    expect(profile.source).toBe("auto");
+    // Must NOT fabricate a gradient when colors are speckled without spatial progression
+    expect(profile.fillGradient).toBeUndefined();
+    expect(["#ff6600", "#00ccff"]).toContain(profile.fill);
+  });
+
+  it("extracts high-confidence diffuse glow on decorative text", () => {
+    // 40x40 region: dark background (25, 25, 25)
+    // White core: x: 14..26, y: 14..26
+    // Symmetrical cyan glow ring: x: 10..30, y: 10..30
+    const sample = createSyntheticRegion(40, 40, (x, y) => {
+      if (x >= 14 && x <= 26 && y >= 14 && y <= 26) return [255, 255, 255, 255];
+      if (x >= 10 && x <= 30 && y >= 10 && y <= 30) return [0, 225, 255, 255];
+      return [25, 25, 25, 255];
+    });
+
+    const profile = extractTextColors(sample);
+    expect(profile.fill).toBe("#ffffff");
+    expect(profile.glow).toBeDefined();
+    expect(profile.glow?.color).toBe("#00e1ff");
+    expect(profile.glow?.blurRatio).toBeGreaterThan(0);
+    expect(profile.glow?.offsetXRatio).toBe(0);
+    expect(profile.glow?.offsetYRatio).toBe(0);
+  });
+
+  it("extracts high-confidence drop shadow when dark pixels are offset to one side", () => {
+    // 40x40 region: light background (240, 240, 240)
+    // Red core: x: 10..22, y: 10..22
+    // Dark shadow offset down-right: x: 16..28, y: 16..28 (not covering top-left)
+    const sample = createSyntheticRegion(40, 40, (x, y) => {
+      // Foreground text core takes precedence
+      if (x >= 10 && x <= 22 && y >= 10 && y <= 22) return [255, 30, 30, 255];
+      // Dark shadow strictly to the bottom-right
+      if (x >= 16 && x <= 28 && y >= 16 && y <= 28) return [25, 25, 25, 255];
+      return [240, 240, 240, 255];
+    });
+
+    const profile = extractTextColors(sample);
+    expect(profile.fill).toBe("#ff1e1e");
+    expect(profile.shadow).toBeDefined();
+    expect(profile.shadow?.offsetXRatio).toBeGreaterThan(0);
+    expect(profile.shadow?.offsetYRatio).toBeGreaterThan(0);
+  });
+
+  it("suppresses decorative effects and outlines on ordinary monochrome dialogue", () => {
+    // 40x40 region: white speech balloon (255, 255, 255)
+    // Black text core: x: 14..26, y: 14..26 (10, 10, 10)
+    // Anti-aliasing ring: x: 13..27, y: 13..27 (120, 120, 120)
+    const sample = createSyntheticRegion(40, 40, (x, y) => {
+      if (x >= 14 && x <= 26 && y >= 14 && y <= 26) return [10, 10, 10, 255];
+      if (x >= 13 && x <= 27 && y >= 13 && y <= 27) return [120, 120, 120, 255];
+      return [255, 255, 255, 255];
+    });
+
+    const profile = extractTextColors(sample);
+    expect(profile.fill).toBe("#000000");
+    expect(profile.hasOutline).toBe(false);
+    expect(profile.fillGradient).toBeUndefined();
+    expect(profile.glow).toBeUndefined();
+    expect(profile.shadow).toBeUndefined();
   });
 });

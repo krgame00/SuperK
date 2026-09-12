@@ -1,7 +1,10 @@
 import {
   clampConfidence,
   createDefaultStyleProfile,
+  getStyleConfidenceBand,
   type ColorSampleRegion,
+  type TextGradientStyle,
+  type TextShadowStyle,
   type TextStyleProfile,
 } from "./types";
 
@@ -26,6 +29,53 @@ export function rgbToHex(r: number, g: number, b: number): string {
   return `#${hr}${hg}${hb}`.toLowerCase();
 }
 
+function estimateOutlineWidthRatio(fillPixels: number, outlinePixels: number): number {
+  if (fillPixels <= 0 || outlinePixels <= 0) return 0;
+  const total = fillPixels + outlinePixels;
+  const innerLinearScale = Math.sqrt(fillPixels / total);
+  // Approximate stroke thickness relative to the outer glyph diameter.
+  return Math.max(0.02, Math.min(0.30, (1 - innerLinearScale) / 2));
+}
+
+function finalizeRecoveredProfile(
+  profile: Omit<TextStyleProfile, "source" | "fillConfidence" | "confidenceBand"> & {
+    source?: TextStyleProfile["source"];
+    fillConfidence?: number;
+    confidenceBand?: TextStyleProfile["confidenceBand"];
+  },
+  baseConfidence: number,
+  evidenceStrength: number,
+): TextStyleProfile {
+  let confidence = clampConfidence(baseConfidence);
+  let band = getStyleConfidenceBand(confidence);
+  let refinementAttempted = false;
+
+  if (band === "medium") {
+    refinementAttempted = true;
+    const evidence = clampConfidence(evidenceStrength);
+    if (evidence >= 0.65) {
+      confidence = clampConfidence(confidence + Math.min(0.14, (evidence - 0.55) * 0.35));
+      band = getStyleConfidenceBand(confidence);
+    }
+  }
+
+  const source = band === "high" ? "auto" : "global";
+  return {
+    ...profile,
+    fillConfidence: confidence,
+    outlineConfidence: Math.min(profile.outlineConfidence ?? confidence, confidence),
+    confidenceBand: band,
+    refinementAttempted,
+    source,
+    fallbackReason:
+      source === "global"
+        ? band === "medium"
+          ? "medium-unresolved"
+          : "low-confidence"
+        : undefined,
+  };
+}
+
 export interface ColorBucket {
   r: number;
   g: number;
@@ -33,6 +83,12 @@ export interface ColorBucket {
   chroma: number;
   count: number;
   centerScore: number;
+  sumX?: number;
+  sumY?: number;
+  minX?: number;
+  maxX?: number;
+  minY?: number;
+  maxY?: number;
 }
 
 export interface ColorCluster {
@@ -42,6 +98,12 @@ export interface ColorCluster {
   chroma: number;
   count: number;
   centerScore: number;
+  sumX?: number;
+  sumY?: number;
+  minX?: number;
+  maxX?: number;
+  minY?: number;
+  maxY?: number;
 }
 
 export function clusterBuckets(
@@ -71,6 +133,12 @@ export function clusterBuckets(
       matched.chroma = Math.max(matched.chroma, b.chroma);
       matched.count += b.count;
       matched.centerScore += b.centerScore;
+      matched.sumX = (matched.sumX ?? 0) + (b.sumX ?? 0);
+      matched.sumY = (matched.sumY ?? 0) + (b.sumY ?? 0);
+      matched.minX = Math.min(matched.minX ?? (b.minX ?? 0), b.minX ?? 0);
+      matched.maxX = Math.max(matched.maxX ?? (b.maxX ?? 0), b.maxX ?? 0);
+      matched.minY = Math.min(matched.minY ?? (b.minY ?? 0), b.minY ?? 0);
+      matched.maxY = Math.max(matched.maxY ?? (b.maxY ?? 0), b.maxY ?? 0);
     } else {
       clusters.push({
         r: b.r,
@@ -79,11 +147,74 @@ export function clusterBuckets(
         chroma: b.chroma,
         count: b.count,
         centerScore: b.centerScore,
+        sumX: b.sumX,
+        sumY: b.sumY,
+        minX: b.minX,
+        maxX: b.maxX,
+        minY: b.minY,
+        maxY: b.maxY,
       });
     }
   }
 
   return clusters;
+}
+
+export function detectDirectionalGradient(
+  clusters: ColorCluster[],
+  totalChromatic: number,
+): TextGradientStyle | undefined {
+  const valid = clusters.filter((c) => c.count >= 4 && c.chroma >= 25);
+  if (valid.length < 2) return undefined;
+
+  const sorted = [...valid].sort((a, b) => b.count - a.count);
+  const c1 = sorted[0];
+  const c2 = sorted[1];
+
+  const dist = colorDistance(c1.r, c1.g, c1.b, c2.r, c2.g, c2.b);
+  if (dist < 35) return undefined;
+
+  // The two clusters must account for at least 50% of chromatic pixels.
+  if ((c1.count + c2.count) < totalChromatic * 0.50) return undefined;
+
+  const meanX1 = (c1.sumX ?? 0) / c1.count;
+  const meanY1 = (c1.sumY ?? 0) / c1.count;
+  const meanX2 = (c2.sumX ?? 0) / c2.count;
+  const meanY2 = (c2.sumY ?? 0) / c2.count;
+
+  const spanY = Math.max(1, Math.max(c1.maxY ?? 0, c2.maxY ?? 0) - Math.min(c1.minY ?? 0, c2.minY ?? 0));
+  const spanX = Math.max(1, Math.max(c1.maxX ?? 0, c2.maxX ?? 0) - Math.min(c1.minX ?? 0, c2.minX ?? 0));
+
+  const dy = (meanY2 - meanY1) / spanY;
+  const dx = (meanX2 - meanX1) / spanX;
+
+  // Vertical gradient (top to bottom)
+  if (Math.abs(dy) >= 0.20 && Math.abs(dy) >= Math.abs(dx) * 1.2) {
+    const top = dy > 0 ? c1 : c2;
+    const bottom = dy > 0 ? c2 : c1;
+    return {
+      angleDeg: 90,
+      stops: [
+        { offset: 0, color: rgbToHex(top.r, top.g, top.b) },
+        { offset: 1, color: rgbToHex(bottom.r, bottom.g, bottom.b) },
+      ],
+    };
+  }
+
+  // Horizontal gradient (left to right)
+  if (Math.abs(dx) >= 0.20 && Math.abs(dx) >= Math.abs(dy) * 1.2) {
+    const left = dx > 0 ? c1 : c2;
+    const right = dx > 0 ? c2 : c1;
+    return {
+      angleDeg: 0,
+      stops: [
+        { offset: 0, color: rgbToHex(left.r, left.g, left.b) },
+        { offset: 1, color: rgbToHex(right.r, right.g, right.b) },
+      ],
+    };
+  }
+
+  return undefined;
 }
 
 function discardBorderConnectedComponents(
@@ -218,6 +349,28 @@ export function extractTextColors(
   let whiteCount = 0;
   let darkInkCount = 0;
   let maskedPixelCount = 0;
+  let foregroundAlphaSum = 0;
+
+  let chromaticSumX = 0;
+  let chromaticSumY = 0;
+  let chromaticMinX = Infinity;
+  let chromaticMaxX = -Infinity;
+  let chromaticMinY = Infinity;
+  let chromaticMaxY = -Infinity;
+
+  let darkInkSumX = 0;
+  let darkInkSumY = 0;
+  let darkInkMinX = Infinity;
+  let darkInkMaxX = -Infinity;
+  let darkInkMinY = Infinity;
+  let darkInkMaxY = -Infinity;
+
+  let whiteSumX = 0;
+  let whiteSumY = 0;
+  let whiteMinX = Infinity;
+  let whiteMaxX = -Infinity;
+  let whiteMinY = Infinity;
+  let whiteMaxY = -Infinity;
 
   const chromaticBuckets = new Map<string, ColorBucket>();
 
@@ -261,6 +414,7 @@ export function extractTextColors(
       const saturation = maxVal > 0 ? chroma / maxVal : 0;
       const lum = 0.299 * r + 0.587 * g + 0.114 * b;
       totalFgCount++;
+      foregroundAlphaSum += rgba[idx + 3];
 
       // Real manga colored text has high saturation (>= 40%) or high chroma (>= 70)
       // This strictly rejects pale skin tones, paper texture, and neutral shadows
@@ -268,6 +422,13 @@ export function extractTextColors(
 
       if (isMangaColoredText) {
         chromaticCount++;
+        chromaticSumX += x;
+        chromaticSumY += y;
+        chromaticMinX = Math.min(chromaticMinX, x);
+        chromaticMaxX = Math.max(chromaticMaxX, x);
+        chromaticMinY = Math.min(chromaticMinY, y);
+        chromaticMaxY = Math.max(chromaticMaxY, y);
+
         const qr = Math.floor(r / 16) * 16 + 8;
         const qg = Math.floor(g / 16) * 16 + 8;
         const qb = Math.floor(b / 16) * 16 + 8;
@@ -286,13 +447,44 @@ export function extractTextColors(
           existing.chroma = Math.max(existing.chroma, chroma);
           existing.count++;
           existing.centerScore += centerWeight;
+          existing.sumX = (existing.sumX ?? 0) + x;
+          existing.sumY = (existing.sumY ?? 0) + y;
+          existing.minX = Math.min(existing.minX ?? x, x);
+          existing.maxX = Math.max(existing.maxX ?? x, x);
+          existing.minY = Math.min(existing.minY ?? y, y);
+          existing.maxY = Math.max(existing.maxY ?? y, y);
         } else {
-          chromaticBuckets.set(key, { r, g, b, chroma, count: 1, centerScore: centerWeight });
+          chromaticBuckets.set(key, {
+            r,
+            g,
+            b,
+            chroma,
+            count: 1,
+            centerScore: centerWeight,
+            sumX: x,
+            sumY: y,
+            minX: x,
+            maxX: x,
+            minY: y,
+            maxY: y,
+          });
         }
       } else if (lum >= 210) {
         whiteCount++;
+        whiteSumX += x;
+        whiteSumY += y;
+        whiteMinX = Math.min(whiteMinX, x);
+        whiteMaxX = Math.max(whiteMaxX, x);
+        whiteMinY = Math.min(whiteMinY, y);
+        whiteMaxY = Math.max(whiteMaxY, y);
       } else if (lum <= 65) {
         darkInkCount++;
+        darkInkSumX += x;
+        darkInkSumY += y;
+        darkInkMinX = Math.min(darkInkMinX, x);
+        darkInkMaxX = Math.max(darkInkMaxX, x);
+        darkInkMinY = Math.min(darkInkMinY, y);
+        darkInkMaxY = Math.max(darkInkMaxY, y);
       }
     }
   }
@@ -309,7 +501,9 @@ export function extractTextColors(
       opacity: 1.0,
       fillConfidence: 0.35,
       outlineConfidence: 0.35,
+      confidenceBand: "low",
       source: "global",
+      fallbackReason: "low-confidence",
     };
   }
 
@@ -320,70 +514,134 @@ export function extractTextColors(
     ? clampConfidence(0.55 + Math.min(0.45, maskPurity))
     : 0.95;
 
-  // 3. Manga Archetype Detection: Chromatic Text & Glowing Outlines
+  const sourceOpacity = clampConfidence(
+    foregroundAlphaSum / Math.max(1, totalFgCount * 255),
+  );
+
+  // 3. Manga archetype detection, preserving source outline presence instead of
+  // inventing a readability stroke.
   const hasStrongChromatic = chromaticCount >= Math.max(6, totalFgCount * 0.025);
   const chromaticClusters = clusterBuckets(Array.from(chromaticBuckets.values()), 36);
   const topChromatic = chromaticClusters.sort((a, b) => (b.count * (1 + b.chroma / 80)) - (a.count * (1 + a.chroma / 80)))[0];
 
   if (hasStrongChromatic && topChromatic) {
     const chromHex = rgbToHex(topChromatic.r, topChromatic.g, topChromatic.b);
+    const fillGradient = detectDirectionalGradient(chromaticClusters, chromaticCount);
 
-    // Case 3A: White core text with vibrant chromatic outline/glow (e.g. White text with Pink/Red/Purple/Cyan stroke)
+    // White core + vivid chromatic contour is strong evidence of a real outline/glow.
     if (whiteCount >= Math.max(8, totalFgCount * 0.08)) {
-      return {
-        fill: "#ffffff",
-        outline: chromHex,
-        outlineWidth: 1.25,
-        opacity: 1.0,
-        fillConfidence: autoConfidence,
-        outlineConfidence: autoConfidence,
-        source: "auto",
-      };
+      const outlineRatio = estimateOutlineWidthRatio(whiteCount, chromaticCount);
+      const isDiffuseGlow = outlineRatio >= 0.08 && chromaticCount >= 8;
+      const glowEffect: TextShadowStyle | undefined = isDiffuseGlow
+        ? {
+            color: chromHex,
+            opacity: 0.85,
+            blurRatio: Math.max(0.15, Math.min(0.35, outlineRatio * 1.5)),
+            offsetXRatio: 0,
+            offsetYRatio: 0,
+          }
+        : undefined;
+
+      return finalizeRecoveredProfile(
+        {
+          fill: "#ffffff",
+          outline: chromHex,
+          hasOutline: true,
+          outlineWidthRatio: outlineRatio,
+          outlineWidth: 1.0,
+          opacity: sourceOpacity,
+          outlineConfidence: autoConfidence,
+          glow: glowEffect,
+          fillGradient,
+        },
+        autoConfidence,
+        (whiteCount + chromaticCount) / Math.max(1, totalFgCount),
+      );
     }
 
-    // Case 3B: Solid Chromatic Text (e.g. Red handwriting, Pink thoughts, Blue SFX)
-    let outlineHex = "#ffffff";
-    if (darkInkCount >= Math.max(4, totalFgCount * 0.03) && bgLum >= 120) {
-      outlineHex = "#0a0a0a";
-    } else if (bgLum < 128) {
-      outlineHex = "#ffffff";
+    // Solid chromatic lettering gets a dark outline only when dark contour pixels
+    // are actually present. A light/dark background alone must not create a stroke.
+    const hasDarkOutline = darkInkCount >= Math.max(4, totalFgCount * 0.03);
+    let shadowEffect: TextShadowStyle | undefined;
+    let isDropShadow = false;
+
+    if (hasDarkOutline && chromaticCount > 0 && darkInkCount > 0) {
+      const chromMeanX = chromaticSumX / chromaticCount;
+      const chromMeanY = chromaticSumY / chromaticCount;
+      const darkMeanX = darkInkSumX / darkInkCount;
+      const darkMeanY = darkInkSumY / darkInkCount;
+
+      const spanW = Math.max(1, chromaticMaxX - chromaticMinX);
+      const spanH = Math.max(1, chromaticMaxY - chromaticMinY);
+
+      const offsetX = (darkMeanX - chromMeanX) / spanW;
+      const offsetY = (darkMeanY - chromMeanY) / spanH;
+      const offsetDist = Math.hypot(offsetX, offsetY);
+
+      if (offsetDist >= 0.10) {
+        isDropShadow = true;
+        shadowEffect = {
+          color: "#1e1e1e",
+          opacity: 0.85,
+          blurRatio: 0.15,
+          offsetXRatio: Math.max(0.04, Math.min(0.40, Math.round(offsetX * 100) / 100)),
+          offsetYRatio: Math.max(0.04, Math.min(0.40, Math.round(offsetY * 100) / 100)),
+        };
+      }
     }
-    return {
-      fill: chromHex,
-      outline: outlineHex,
-      outlineWidth: 1.0,
-      opacity: 1.0,
-      fillConfidence: autoConfidence,
-      outlineConfidence: clampConfidence(autoConfidence - 0.05),
-      source: "auto",
-    };
+
+    const hasRealOutline = hasDarkOutline && !isDropShadow;
+    return finalizeRecoveredProfile(
+      {
+        fill: chromHex,
+        outline: hasRealOutline ? "#0a0a0a" : chromHex,
+        hasOutline: hasRealOutline,
+        outlineWidthRatio: hasRealOutline
+          ? estimateOutlineWidthRatio(chromaticCount, darkInkCount)
+          : 0,
+        outlineWidth: hasRealOutline ? 1.0 : 0,
+        opacity: sourceOpacity,
+        outlineConfidence: clampConfidence(autoConfidence - 0.05),
+        fillGradient,
+        shadow: shadowEffect,
+      },
+      autoConfidence,
+      (chromaticCount + (hasDarkOutline ? darkInkCount : 0)) / Math.max(1, totalFgCount),
+    );
   }
 
-  // 4. Manga Archetype Detection: High-Contrast Monochrome Speech Bubbles
+  // 4. High-contrast monochrome dialogue. With only one foreground ink family,
+  // preserve the absence of an outline instead of forcing white/black stroke.
   if (bgLum >= 135 && darkInkCount >= 4) {
-    // Standard Black Dialogue on White/Light Bubble -> Strictly #000000 fill with #ffffff outline
-    return {
-      fill: "#000000",
-      outline: "#ffffff",
-      outlineWidth: 1.0,
-      opacity: 1.0,
-      fillConfidence: autoConfidence,
-      outlineConfidence: autoConfidence,
-      source: "auto",
-    };
+    return finalizeRecoveredProfile(
+      {
+        fill: "#000000",
+        outline: "#000000",
+        hasOutline: false,
+        outlineWidthRatio: 0,
+        outlineWidth: 0,
+        opacity: sourceOpacity,
+        outlineConfidence: autoConfidence,
+      },
+      autoConfidence,
+      darkInkCount / Math.max(1, totalFgCount),
+    );
   }
 
   if (bgLum <= 90 && whiteCount >= 4) {
-    // Dark/Night Bubble or Dark Panel -> Strictly #ffffff fill with #000000 outline
-    return {
-      fill: "#ffffff",
-      outline: "#000000",
-      outlineWidth: 1.0,
-      opacity: 1.0,
-      fillConfidence: autoConfidence,
-      outlineConfidence: autoConfidence,
-      source: "auto",
-    };
+    return finalizeRecoveredProfile(
+      {
+        fill: "#ffffff",
+        outline: "#ffffff",
+        hasOutline: false,
+        outlineWidthRatio: 0,
+        outlineWidth: 0,
+        opacity: sourceOpacity,
+        outlineConfidence: autoConfidence,
+      },
+      autoConfidence,
+      whiteCount / Math.max(1, totalFgCount),
+    );
   }
 
   // 5. Multi-pass Distance Transform Core / Contour Extraction
@@ -508,20 +766,18 @@ export function extractTextColors(
       return b.centerScore - a.centerScore;
     });
 
-  let outlineHex = "";
-  let outlineConfidence = 0.80;
-  let outlineWidth = 1.0;
+  const hasOutline = candidateOutlines.length > 0;
+  let outlineHex = fillHex;
+  let outlineConfidence = 0.85;
+  let outlineWidth = 0;
+  let outlineWidthRatio = 0;
 
-  if (candidateOutlines.length > 0) {
+  if (hasOutline) {
     const topOutline = candidateOutlines[0];
     outlineHex = rgbToHex(topOutline.r, topOutline.g, topOutline.b);
     outlineConfidence = 0.92;
-    outlineWidth = maxDist >= 3 ? 1.25 : 1.0;
-  } else {
-    const fillLum = 0.299 * fillR + 0.587 * fillG + 0.114 * fillB;
-    outlineHex = fillLum < 128 ? "#ffffff" : "#000000";
-    outlineConfidence = 0.85;
     outlineWidth = 1.0;
+    outlineWidthRatio = estimateOutlineWidthRatio(topCore.count, topOutline.count);
   }
 
   const contrastFromBg = colorDistance(fillR, fillG, fillB, bgR, bgG, bgB);
@@ -530,16 +786,22 @@ export function extractTextColors(
     fillConfidence = Math.min(fillConfidence, 0.55);
   }
 
+  const totalCoreCount = Math.max(1, sortedCore.reduce((sum, c) => sum + c.count, 0));
+  const corePurity = topCore.count / totalCoreCount;
   fillConfidence = Math.min(fillConfidence, autoConfidence);
   outlineConfidence = Math.min(outlineConfidence, autoConfidence);
 
-  return {
-    fill: fillHex,
-    outline: outlineHex,
-    outlineWidth,
-    opacity: 1.0,
-    fillConfidence: clampConfidence(fillConfidence),
-    outlineConfidence: clampConfidence(outlineConfidence),
-    source: fillConfidence >= 0.60 ? "auto" : "global",
-  };
+  return finalizeRecoveredProfile(
+    {
+      fill: fillHex,
+      outline: outlineHex,
+      hasOutline,
+      outlineWidthRatio,
+      outlineWidth,
+      opacity: sourceOpacity,
+      outlineConfidence: clampConfidence(outlineConfidence),
+    },
+    fillConfidence,
+    Math.min(corePurity, contrastFromBg / 120),
+  );
 }

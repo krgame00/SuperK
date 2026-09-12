@@ -2,7 +2,10 @@ import { undoManager } from "./undoManager";
 import { resolveBubbleTextStyle } from "./colorMatching/resolveTextStyle";
 import { sampleBubbleRegion } from "./colorMatching/canvasSampler";
 import { extractTextColors } from "./colorMatching/sampleTextColors";
-import { applyNearbyStyleFallbacks } from "./colorMatching/nearbyStyleFallback";
+import {
+  applyNearbyStyleFallbacks,
+  inferTextStyleCategory,
+} from "./colorMatching/nearbyStyleFallback";
 import type { TextStyleProfile } from "./colorMatching/types";
 
 const ADJ_KEY = "superk:overlay-adjustments";
@@ -544,7 +547,12 @@ export const applyTranslationOverlay = async (
         if (!b.styleProfile && b.box && b.box.length === 4 && !b.isInvalidBox) {
           const sample = sampleBubbleRegion(img, b.box);
           if (sample) {
-            b.styleProfile = extractTextColors(sample);
+            const profile = extractTextColors(sample);
+            profile.category = inferTextStyleCategory(b);
+            if (profile.source === "global" && !profile.fallbackReason) {
+              profile.fallbackReason = "low-confidence";
+            }
+            b.styleProfile = profile;
           }
         }
       });
@@ -664,7 +672,6 @@ export const applyTranslationOverlay = async (
         const resolvedStyle = resolveBubbleTextStyle(b, currentStyle);
         const textColor = resolvedStyle.textColor;
         const outlineColor = resolvedStyle.textOutline;
-        const outlineWidthScale = resolvedStyle.outlineWidth || 1.0;
         const opacity = resolvedStyle.opacity ?? 1.0;
 
         const targetMinFs = Math.max(14, Math.round(getReadableMinimumFontSize(iw) * 0.75));
@@ -687,14 +694,47 @@ export const applyTranslationOverlay = async (
         ctx.textBaseline = "middle";
         ctx.font = `bold ${fontSize}px ${currentFontFam}`;
         ctx.strokeStyle = outlineColor;
-        ctx.lineWidth = Math.max(2, Math.round(fontSize * 0.16 * outlineWidthScale));
-        
+        ctx.lineWidth = resolvedStyle.hasOutline
+          ? Math.max(1, fontSize * resolvedStyle.outlineWidthRatio)
+          : 0;
+
+        let fillPaint: string | CanvasGradient = textColor;
+        const gradient = resolvedStyle.fillGradient;
+        if (gradient && gradient.stops.length >= 2) {
+          const angle = (gradient.angleDeg * Math.PI) / 180;
+          const half = Math.max(currentBw, currentBh) / 2;
+          const cx = currentBw / 2;
+          const cy = currentBh / 2;
+          const dx = Math.cos(angle) * half;
+          const dy = Math.sin(angle) * half;
+          const canvasGradient = ctx.createLinearGradient(cx - dx, cy - dy, cx + dx, cy + dy);
+          for (const stop of gradient.stops) {
+            canvasGradient.addColorStop(Math.max(0, Math.min(1, stop.offset)), stop.color);
+          }
+          fillPaint = canvasGradient;
+        }
+
+        const visualEffect = resolvedStyle.glow ?? resolvedStyle.shadow;
+        if (visualEffect) {
+          ctx.shadowColor = visualEffect.color;
+          ctx.shadowBlur = Math.max(0, fontSize * visualEffect.blurRatio);
+          ctx.shadowOffsetX = fontSize * visualEffect.offsetXRatio;
+          ctx.shadowOffsetY = fontSize * visualEffect.offsetYRatio;
+        } else {
+          ctx.shadowColor = "rgba(0,0,0,0)";
+          ctx.shadowBlur = 0;
+          ctx.shadowOffsetX = 0;
+          ctx.shadowOffsetY = 0;
+        }
+
         const totalH = (lines.length - 1) * lineH;
         const startY = (currentBh / 2) - (totalH / 2);
         lines.forEach((l, i) => {
           const yPos = startY + i * lineH;
-          ctx.strokeText(l, currentBw / 2, yPos);
-          ctx.fillStyle = textColor;
+          if (resolvedStyle.hasOutline && ctx.lineWidth > 0) {
+            ctx.strokeText(l, currentBw / 2, yPos);
+          }
+          ctx.fillStyle = fillPaint;
           ctx.fillText(l, currentBw / 2, yPos);
         });
       };
@@ -1241,18 +1281,55 @@ export const applyTranslationOverlay = async (
           const resolved = resolveBubbleTextStyle(b, textStyleRef?.current || ts);
           const newColor = prompt("ใส่รหัสสีข้อความ (เช่น #000000, #ffffff, #ef4444, #ff3399):", resolved.textColor);
           if (newColor) {
+            const existing = b.styleProfile;
             b.styleProfile = {
+              ...(existing ?? {}),
               fill: newColor,
               outline: resolved.textOutline,
+              hasOutline: resolved.hasOutline,
+              outlineWidth: resolved.outlineWidth,
+              outlineWidthRatio: resolved.outlineWidthRatio,
+              opacity: resolved.opacity,
               fillConfidence: 1.0,
               outlineConfidence: 1.0,
+              confidenceBand: "high",
+              refinementAttempted: existing?.refinementAttempted,
               source: "manual",
+              category: existing?.category ?? inferTextStyleCategory(b),
+              fillGradient: existing?.fillGradient,
+              shadow: existing?.shadow,
+              glow: existing?.glow,
+              fallbackReason: undefined,
+              nearbySourceId: undefined,
             };
             onBubblesMutated?.();
             renderBubble();
             saveAdjustment();
           }
         }
+      );
+
+      const originalStyleBtn = createToolBtn(
+        "กลับไปใช้สไตล์ต้นฉบับอัตโนมัติ",
+        `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/></svg>`,
+        () => {
+          let recovered: TextStyleProfile | undefined;
+          if (b.box && b.box.length === 4 && !b.isInvalidBox) {
+            const sample = sampleBubbleRegion(img, b.box);
+            if (sample) {
+              recovered = extractTextColors(sample);
+              recovered.category = inferTextStyleCategory(b);
+              if (recovered.source === "global" && !recovered.fallbackReason) {
+                recovered.fallbackReason = "low-confidence";
+              }
+            }
+          }
+          b.styleProfile = recovered;
+          applyNearbyStyleFallbacks(real);
+          onBubblesMutated?.();
+          renderBubble();
+          saveAdjustment();
+        },
       );
 
       // Background Fill / Inpaint Button
@@ -1303,6 +1380,7 @@ export const applyTranslationOverlay = async (
       toolbar.appendChild(createDivider());
       toolbar.appendChild(editBtn);
       toolbar.appendChild(colorBtn);
+      toolbar.appendChild(originalStyleBtn);
       toolbar.appendChild(fillBtn);
       toolbar.appendChild(duplicateBtn);
       toolbar.appendChild(copyBtn);

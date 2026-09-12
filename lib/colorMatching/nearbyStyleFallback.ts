@@ -1,5 +1,5 @@
 import type { TranslatedBubble } from "@/lib/translationOverlay";
-import type { TextStyleProfile } from "./types";
+import type { TextStyleCategory, TextStyleProfile } from "./types";
 
 export interface NearbyFallbackOptions {
   minConfidenceThreshold?: number;
@@ -24,53 +24,98 @@ export function calculateBoxDistance(box1?: number[], box2?: number[]): number {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
+function normalizeCategory(value: unknown): TextStyleCategory | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  if (["dialogue", "dialog", "speech", "bubble"].includes(normalized)) return "dialogue";
+  if (["narration", "narrator", "caption", "monologue", "thought"].includes(normalized)) return "narration";
+  if (["sfx", "sound", "sound-effect", "sound_effect", "effect", "decorative"].includes(normalized)) return "sfx";
+  return null;
+}
+
+/**
+ * Resolve the semantic visual class using explicit profile metadata first, then
+ * common translation payload fields. Unknown is intentionally not guessed from
+ * spatial proximity because cross-kind inheritance is worse than global fallback.
+ */
+export function inferTextStyleCategory(bubble: TranslatedBubble): TextStyleCategory {
+  const profileCategory = normalizeCategory(bubble.styleProfile?.category);
+  if (profileCategory) return profileCategory;
+
+  const booleanSfx = bubble.isSfx === true || bubble.is_sfx === true || bubble.sfx === true;
+  if (booleanSfx) return "sfx";
+  const booleanNarration =
+    bubble.isNarration === true || bubble.is_narration === true || bubble.narration === true;
+  if (booleanNarration) return "narration";
+
+  const candidates = [
+    bubble.styleCategory,
+    bubble.category,
+    bubble.type,
+    bubble.kind,
+    bubble.role,
+    bubble.textType,
+    bubble.text_type,
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeCategory(candidate);
+    if (normalized) return normalized;
+  }
+
+  return "unknown";
+}
+
 /**
  * Enriches low-confidence bubbles with style inheritance from spatially nearby
- * high-confidence bubbles on the same page (Section 9 in Style Preservation Plan).
+ * high-confidence bubbles on the same page, but only within the same known text
+ * style category (Dialogue, Narration/Caption, or SFX/Decorative).
  */
 export function applyNearbyStyleFallbacks(
   bubbles: TranslatedBubble[],
   options: NearbyFallbackOptions = {},
 ): TranslatedBubble[] {
   const minConfidence = options.minConfidenceThreshold ?? 0.60;
-  const maxDistance = options.maxDistanceThreshold ?? 350; // 35% of page dimension in 0-1000 scale
+  const maxDistance = options.maxDistanceThreshold ?? 350;
 
-  // 1. Gather all high-confidence anchor styles
   const highConfidenceAnchors: Array<{
     bubble: TranslatedBubble;
     profile: TextStyleProfile;
+    category: TextStyleCategory;
   }> = [];
 
   for (const b of bubbles) {
     if (b.deleted) continue;
     const profile = b.styleProfile as TextStyleProfile | undefined;
+    const category = inferTextStyleCategory(b);
     if (
       profile &&
+      category !== "unknown" &&
       (profile.source === "manual" ||
-        (profile.source === "auto" && (profile.fillConfidence ?? 1.0) >= 0.70))
+        (profile.source === "auto" && (profile.fillConfidence ?? 1.0) >= 0.80))
     ) {
-      highConfidenceAnchors.push({ bubble: b, profile });
+      highConfidenceAnchors.push({ bubble: b, profile, category });
     }
   }
 
-  // 2. Apply fallback to low-confidence or unstyled bubbles
   for (const b of bubbles) {
     if (b.deleted) continue;
     const profile = b.styleProfile as TextStyleProfile | undefined;
+    const targetCategory = inferTextStyleCategory(b);
     const isLowConfidence =
       !profile ||
       profile.source === "global" ||
       (profile.fillConfidence ?? 0) < minConfidence;
 
-    if (isLowConfidence && highConfidenceAnchors.length > 0) {
-      let nearestAnchor: {
-        bubble: TranslatedBubble;
-        profile: TextStyleProfile;
-      } | null = null;
+    if (
+      isLowConfidence &&
+      targetCategory !== "unknown" &&
+      highConfidenceAnchors.length > 0
+    ) {
+      let nearestAnchor: (typeof highConfidenceAnchors)[number] | null = null;
       let minDistance = Infinity;
 
       for (const anchor of highConfidenceAnchors) {
-        if (anchor.bubble === b) continue;
+        if (anchor.bubble === b || anchor.category !== targetCategory) continue;
         const dist = calculateBoxDistance(b.box, anchor.bubble.box);
         if (dist < minDistance && dist <= maxDistance) {
           minDistance = dist;
@@ -80,14 +125,18 @@ export function applyNearbyStyleFallbacks(
 
       if (nearestAnchor) {
         b.styleProfile = {
-          fill: nearestAnchor.profile.fill,
-          outline: nearestAnchor.profile.outline,
-          outlineWidth: nearestAnchor.profile.outlineWidth ?? 1.0,
-          opacity: nearestAnchor.profile.opacity ?? 1.0,
-          fillConfidence: 0.75, // inherited confidence
-          outlineConfidence: nearestAnchor.profile.outlineConfidence ?? 0.75,
+          ...nearestAnchor.profile,
+          fillConfidence: Math.max(0.70, Math.min(0.79, nearestAnchor.profile.fillConfidence ?? 0.75)),
+          outlineConfidence: Math.max(
+            0.70,
+            Math.min(0.79, nearestAnchor.profile.outlineConfidence ?? 0.75),
+          ),
           source: "fallback",
-          nearbySourceId: nearestAnchor.bubble.id ? String(nearestAnchor.bubble.id) : undefined,
+          category: targetCategory,
+          nearbySourceId: nearestAnchor.bubble.id
+            ? String(nearestAnchor.bubble.id)
+            : undefined,
+          fallbackReason: "nearby",
         };
       }
     }

@@ -43,7 +43,9 @@ describe("Manga Real-World Color Scenarios", () => {
     expect(profile.fill).toBe("#ffffff");
     // Outline MUST be the vivid red, NOT skin tone or dark suit!
     expect(profile.outline).toBe("#f01428");
-    expect(profile.outlineWidth).toBeGreaterThanOrEqual(1.0);
+    expect(profile.hasOutline).toBe(true);
+    expect(profile.outlineWidthRatio).toBeGreaterThan(0);
+    expect(profile.outlineWidthRatio).toBeLessThanOrEqual(0.30);
     expect(profile.source).toBe("auto");
   });
 
@@ -58,7 +60,8 @@ describe("Manga Real-World Color Scenarios", () => {
 
     const profile = extractTextColors(sample);
     expect(profile.fill).toBe("#e61e2d");
-    expect(profile.outline).toBe("#ffffff");
+    expect(profile.outline).toBe("#e61e2d");
+    expect(profile.hasOutline).toBe(false);
     expect(profile.source).toBe("auto");
   });
 
@@ -79,7 +82,8 @@ describe("Manga Real-World Color Scenarios", () => {
     const profile = extractTextColors(sample);
     // Fill MUST be pure Black #000000, NOT skin tone!
     expect(profile.fill).toBe("#000000");
-    expect(profile.outline).toBe("#ffffff");
+    expect(profile.outline).toBe("#000000");
+    expect(profile.hasOutline).toBe(false);
     expect(profile.source).toBe("auto");
   });
 
