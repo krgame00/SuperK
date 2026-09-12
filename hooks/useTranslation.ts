@@ -20,6 +20,11 @@ import { parseLLMJSON } from "@/lib/parseLLMJSON";
 import { normalizeTranslationPayload } from "@/lib/thaiSpellcheck";
 import { sampleBubbleRegion } from "@/lib/colorMatching/canvasSampler";
 import { extractTextColors } from "@/lib/colorMatching/sampleTextColors";
+import {
+  applyNearbyStyleFallbacks,
+  inferTextStyleCategory,
+} from "@/lib/colorMatching/nearbyStyleFallback";
+import type { TextStyleProfile } from "@/lib/colorMatching/types";
 import { type GlossaryEntry } from "@/lib/translation/glossary";
 import {
   classifyTranslationError,
@@ -95,6 +100,40 @@ export const deduplicateBubbleSFX = (
   return result;
 };
 
+import { preserveManualStyleProfiles } from "@/lib/colorMatching/resolveTextStyle";
+export { preserveManualStyleProfiles };
+
+export function sendDesktopNotification(title: string, body: string): void {
+  if (typeof window === "undefined") return;
+
+  // 1. Electron Desktop IPC notification
+  const desktopApi = (
+    window as unknown as {
+      superkDesktop?: {
+        notify?: (payload: { title: string; body: string }) => void;
+      };
+    }
+  ).superkDesktop;
+
+  if (typeof desktopApi?.notify === "function") {
+    try {
+      desktopApi.notify({ title, body });
+      return;
+    } catch {
+      // Fallback to Web Notification if IPC fails
+    }
+  }
+
+  // 2. Web Notification fallback
+  if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+    try {
+      new Notification(title, { body });
+    } catch {
+      // Ignore notification errors in restricted environments
+    }
+  }
+}
+
 const waitForImageReady = (src: string, timeoutMs = 3000): Promise<HTMLImageElement> =>
   new Promise((resolve, reject) => {
     if (typeof Image === "undefined") {
@@ -160,22 +199,28 @@ const waitForImageReady = (src: string, timeoutMs = 3000): Promise<HTMLImageElem
 const enrichBubblesWithColorProfiles = async (
   bubbles: TranslatedBubble[],
   recognitionUrl: string,
-  maskUrl?: string,
 ): Promise<TranslatedBubble[]> => {
   if (!bubbles || bubbles.length === 0 || !recognitionUrl) return bubbles;
   try {
     const img = await waitForImageReady(recognitionUrl, 2000);
-    const maskImg = maskUrl
-      ? await waitForImageReady(maskUrl, 2000).catch(() => undefined)
-      : undefined;
     for (const b of bubbles) {
       if (b.styleProfile && b.styleProfile.source === "manual") continue;
       if (!b.box || b.box.length < 4 || b.isInvalidBox) continue;
-      const sample = sampleBubbleRegion(img, b.box, maskImg);
+
+      // Sample the original pre-clean image only. The cleaning mask is a
+      // text-removal mask, not a glyph mask, and using it here can leak skin,
+      // clothing, or background colors into the recovered source style.
+      const sample = sampleBubbleRegion(img, b.box);
       if (sample) {
-        b.styleProfile = extractTextColors(sample);
+        const profile = extractTextColors(sample);
+        profile.category = inferTextStyleCategory(b);
+        if (profile.source === "global" && !profile.fallbackReason) {
+          profile.fallbackReason = "low-confidence";
+        }
+        b.styleProfile = profile;
       }
     }
+    applyNearbyStyleFallbacks(bubbles);
   } catch (err) {
     console.warn("Failed to sample color profiles for bubbles:", err);
   }
@@ -954,8 +999,12 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           return true;
         }
 
-        const coloredBubbles = await enrichBubblesWithColorProfiles(
+        const styledBubbles = preserveManualStyleProfiles(
           outcome.bubbles,
+          bubbleCacheRef.current.get(pageUrl) ?? [],
+        );
+        const coloredBubbles = await enrichBubblesWithColorProfiles(
+          styledBubbles,
           recognitionUrl,
         );
         await renderAndCacheTranslation(
@@ -1088,10 +1137,13 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         return true;
       }
 
-      const coloredBubbles = await enrichBubblesWithColorProfiles(
+      const styledBubbles = preserveManualStyleProfiles(
         outcome.bubbles,
+        bubbleCacheRef.current.get(pageUrl) ?? [],
+      );
+      const coloredBubbles = await enrichBubblesWithColorProfiles(
+        styledBubbles,
         recognitionUrl,
-        preparedPage.maskUrl,
       );
       await renderAndCacheTranslation(
         coloredBubbles,
@@ -1178,6 +1230,17 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       isTranslatingAll
     ) return;
       translationOperationLockRef.current = true;
+      if (
+        typeof window !== "undefined" &&
+        typeof Notification !== "undefined" &&
+        Notification.permission === "default"
+      ) {
+        try {
+          Notification.requestPermission().catch(() => {});
+        } catch {
+          // Ignore permission prompt errors
+        }
+      }
       let recordBatchMetrics: ((cancelled: boolean) => void) | undefined;
       try {
         setIsTranslatingAll(true);
@@ -1354,7 +1417,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           if (prefetched?.pageIndex === i) prefetched = null;
           if (!preparation.ok) throw preparation.error;
           preparedPage = preparation.value;
-          if (preparedPage.awaitingReview) {
+          if (preparedPage.awaitingReview && !isTargetedRetry) {
             throw new CleaningClientError(
               422,
               "Page awaiting review after local cleaning verification.",
@@ -1577,13 +1640,14 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       }
 
       const failedPages = failures.map(({ pageIndex }) => pageIndex + 1);
-      setTranslationResult(
+      const finalResultText =
         quotaFailureMessage
           ?? (failedPages.length === 0
             ? "✅ แปลเสร็จเรียบร้อยแล้ว"
-            : `⚠️ แปลเสร็จ แต่หน้า ${failedPages.join(", ")} ต้องลองใหม่`),
-      );
+            : `⚠️ แปลเสร็จ แต่หน้า ${failedPages.join(", ")} ต้องลองใหม่`);
+      setTranslationResult(finalResultText);
       recordBatchMetrics(false);
+      sendDesktopNotification("SuperK — Manga Translator", finalResultText);
       setTimeout(() => setTranslationResult(null), 4000);
     } finally {
       recordBatchMetrics?.(cancelTranslateAllRef.current);

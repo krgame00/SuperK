@@ -258,18 +258,23 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
           : undefined,
       };
       replaceResult(pageUrl, identified);
-      await saveCleaningResultMetadata({
-        pageUrl,
-        sourceHash: result.sourceHash,
-        sourceFingerprint,
-        maskFingerprint: identified.maskFingerprint,
-        pipelineVersion: result.pipelineVersion,
-        revision: token,
-        jobId: result.jobId,
-        regions: result.regions,
-        updatedAt: Date.now(),
-      });
-      setProgressState((previous) => (previous?.pageUrl === pageUrl ? undefined : previous));
+      try {
+        await saveCleaningResultMetadata({
+          pageUrl,
+          sourceHash: result.sourceHash,
+          sourceFingerprint,
+          maskFingerprint: identified.maskFingerprint,
+          pipelineVersion: result.pipelineVersion,
+          revision: token,
+          jobId: result.jobId,
+          regions: result.regions,
+          updatedAt: Date.now(),
+        });
+      } catch (saveErr) {
+        console.warn("Failed to persist cleaning result metadata:", saveErr);
+      } finally {
+        setProgressState((previous) => (previous?.pageUrl === pageUrl ? undefined : previous));
+      }
       return identified;
     },
     [hydrateResult, replaceResult, revokeResult],

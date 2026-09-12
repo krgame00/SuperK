@@ -23,7 +23,8 @@ sys.path.insert(0, str(SERVICE_ROOT))
 from app.cleaners.anime_lama import AnimeLamaCleaner
 from app.cleaners.aot import AotCleaner
 from app.cleaners.flat import FlatCleaner, GradientCleaner
-from app.detector import TextDetector
+from app.cleaners.lama_large import LamaLargeCleaner
+from app.detector import HybridTextDetector, TextDetector
 from app.model_store import ModelStore
 from app.pipeline import CleaningPipeline, PipelineOutput
 from app.residual_probe import CompositeResidualProbe
@@ -47,6 +48,23 @@ def build_pipeline(service_root: Path, cleaner_name: str) -> CleaningPipeline:
         service_root / "models",
         service_root / "models" / "manifest.json",
     )
+    if cleaner_name == "lama-large":
+        detector = HybridTextDetector.from_model_store(model_store)
+        lama_large = LamaLargeCleaner.from_model_store(model_store)
+        aot = AotCleaner(model_store)
+        return CleaningPipeline(
+            detector=detector,
+            cleaners={
+                CleanerRoute.FLAT: lama_large,
+                CleanerRoute.GRADIENT: lama_large,
+                CleanerRoute.ARTWORK: lama_large,
+                "lama-large": lama_large,
+                "anime-lama": lama_large,
+                "aot": aot,
+            },
+            residual_probe=CompositeResidualProbe(detector),
+        )
+
     detector = TextDetector(model_store)
     aot = AotCleaner(model_store)
     artwork = (
@@ -54,15 +72,21 @@ def build_pipeline(service_root: Path, cleaner_name: str) -> CleaningPipeline:
         if cleaner_name == "anime-lama"
         else aot
     )
+    cleaners = {
+        CleanerRoute.FLAT: FlatCleaner(),
+        CleanerRoute.GRADIENT: GradientCleaner(),
+        CleanerRoute.ARTWORK: artwork,
+        "aot": aot,
+        cleaner_name: artwork,
+    }
+    if cleaner_name == "anime-lama":
+        # Benchmark the same LamaLarge surface used by the adaptive pipeline;
+        # without this alias the benchmark silently exercises only per-region
+        # cleaning and cannot compare ROI against full-page inference.
+        cleaners["lama-large"] = artwork
     return CleaningPipeline(
         detector=detector,
-        cleaners={
-            CleanerRoute.FLAT: FlatCleaner(),
-            CleanerRoute.GRADIENT: GradientCleaner(),
-            CleanerRoute.ARTWORK: artwork,
-            "aot": aot,
-            cleaner_name: artwork,
-        },
+        cleaners=cleaners,
         residual_probe=CompositeResidualProbe(detector),
     )
 
@@ -596,7 +620,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--protected-manifest", type=Path, required=True)
     parser.add_argument("--visual-review", type=Path, required=True)
-    parser.add_argument("--cleaner", choices=("aot", "anime-lama"), default="aot")
+    parser.add_argument(
+        "--cleaner",
+        choices=("aot", "anime-lama", "lama-large"),
+        default="aot",
+    )
     parser.add_argument(
         "--regression-page",
         type=Path,

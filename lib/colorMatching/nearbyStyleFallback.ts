@@ -30,12 +30,26 @@ function normalizeCategory(value: unknown): TextStyleCategory | null {
   if (["dialogue", "dialog", "speech", "bubble"].includes(normalized)) return "dialogue";
   if (["narration", "narrator", "caption", "monologue", "thought"].includes(normalized)) return "narration";
   if (["sfx", "sound", "sound-effect", "sound_effect", "effect", "decorative"].includes(normalized)) return "sfx";
+  if (
+    [
+      "overlay_subtitle",
+      "overlay-subtitle",
+      "subtitle",
+      "sub",
+      "overlay",
+      "bottom_overlay",
+      "bottom-overlay",
+    ].includes(normalized)
+  ) {
+    return "overlay_subtitle";
+  }
   return null;
 }
 
 /**
  * Resolve the semantic visual class using explicit profile metadata first, then
- * common translation payload fields. Unknown is intentionally not guessed from
+ * common translation payload fields, followed by geometric inference for wide,
+ * shallow bottom-overlay subtitles. Unknown is intentionally not guessed from
  * spatial proximity because cross-kind inheritance is worse than global fallback.
  */
 export function inferTextStyleCategory(bubble: TranslatedBubble): TextStyleCategory {
@@ -47,6 +61,13 @@ export function inferTextStyleCategory(bubble: TranslatedBubble): TextStyleCateg
   const booleanNarration =
     bubble.isNarration === true || bubble.is_narration === true || bubble.narration === true;
   if (booleanNarration) return "narration";
+  const booleanSubtitle =
+    bubble.isSubtitle === true ||
+    bubble.is_subtitle === true ||
+    bubble.subtitle === true ||
+    bubble.isOverlay === true ||
+    bubble.is_overlay === true;
+  if (booleanSubtitle) return "overlay_subtitle";
 
   const candidates = [
     bubble.styleCategory,
@@ -60,6 +81,18 @@ export function inferTextStyleCategory(bubble: TranslatedBubble): TextStyleCateg
   for (const candidate of candidates) {
     const normalized = normalizeCategory(candidate);
     if (normalized) return normalized;
+  }
+
+  // Geometric inference for wide shallow regions at the bottom of the page/panel
+  if (bubble.box && Array.isArray(bubble.box) && bubble.box.length >= 4) {
+    const [ymin, xmin, ymax, xmax] = bubble.box;
+    const height = Math.max(1, ymax - ymin);
+    const width = Math.max(1, xmax - xmin);
+    const aspectRatio = width / height;
+    const isBottomLocated = ymin >= 600 || (ymax > 650 && ymin >= 500);
+    if (aspectRatio >= 2.5 && isBottomLocated) {
+      return "overlay_subtitle";
+    }
   }
 
   return "unknown";
@@ -87,11 +120,13 @@ export function applyNearbyStyleFallbacks(
     if (b.deleted) continue;
     const profile = b.styleProfile as TextStyleProfile | undefined;
     const category = inferTextStyleCategory(b);
+    const isAdmitted = !profile || profile.evidenceState === "admitted" || profile.evidenceState === undefined;
     if (
       profile &&
       category !== "unknown" &&
+      profile.evidenceState !== "rejected" &&
       (profile.source === "manual" ||
-        (profile.source === "auto" && (profile.fillConfidence ?? 1.0) >= 0.80))
+        (profile.source === "auto" && isAdmitted && (profile.fillConfidence ?? 1.0) >= 0.80))
     ) {
       highConfidenceAnchors.push({ bubble: b, profile, category });
     }
@@ -116,6 +151,12 @@ export function applyNearbyStyleFallbacks(
 
       for (const anchor of highConfidenceAnchors) {
         if (anchor.bubble === b || anchor.category !== targetCategory) continue;
+
+        // Ensure anchor style remains legible for target category
+        if (targetCategory === "overlay_subtitle" && anchor.profile.hasOutline === false) {
+          continue;
+        }
+
         const dist = calculateBoxDistance(b.box, anchor.bubble.box);
         if (dist < minDistance && dist <= maxDistance) {
           minDistance = dist;

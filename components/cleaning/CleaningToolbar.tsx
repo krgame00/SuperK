@@ -1,4 +1,4 @@
-import { Brush, Eraser } from "lucide-react";
+import { ArrowDown, ArrowUp, Brush, ChevronDown, ChevronUp, Eraser } from "lucide-react";
 
 import type { CleaningHookError } from "@/hooks/useCleaning";
 import type { CleaningProgress } from "@/lib/cleaning/types";
@@ -16,6 +16,9 @@ interface CleaningToolbarProps {
   progress?: CleaningProgress;
   error?: CleaningHookError;
   className?: string;
+  position?: "top" | "bottom";
+  onTogglePosition?: () => void;
+  onCollapse?: () => void;
 }
 
 const primaryLayers: Array<{
@@ -41,6 +44,9 @@ export function CleaningToolbar({
   progress,
   error,
   className,
+  position = "top",
+  onTogglePosition,
+  onCollapse,
 }: CleaningToolbarProps) {
   const isRunning = Boolean(progress);
   return (
@@ -135,6 +141,42 @@ export function CleaningToolbar({
           <Brush className="h-3.5 w-3.5 text-muted" aria-hidden="true" />
           <span>แก้ Mask</span>
         </button>
+
+        {(onTogglePosition || onCollapse) && (
+          <div className="flex items-center gap-1 border-l border-border/80 pl-1.5 ml-0.5">
+            {onTogglePosition && (
+              <button
+                type="button"
+                onClick={onTogglePosition}
+                title={position === "top" ? "ย้ายแถบไปด้านล่าง" : "ย้ายแถบไปด้านบน"}
+                aria-label={position === "top" ? "ย้ายแถบไปด้านล่าง" : "ย้ายแถบไปด้านบน"}
+                className="inline-flex h-8.5 w-8.5 items-center justify-center rounded-lg border border-border/80 bg-surface text-muted transition-all duration-150 hover:bg-surface-hover hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background cursor-pointer"
+              >
+                {position === "top" ? (
+                  <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
+                ) : (
+                  <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
+                )}
+              </button>
+            )}
+
+            {onCollapse && (
+              <button
+                type="button"
+                onClick={onCollapse}
+                title="ย่อแถบเครื่องมือ (กด B)"
+                aria-label="ย่อแถบเครื่องมือ"
+                className="inline-flex h-8.5 w-8.5 items-center justify-center rounded-lg border border-border/80 bg-surface text-muted transition-all duration-150 hover:bg-surface-hover hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background cursor-pointer"
+              >
+                {position === "top" ? (
+                  <ChevronUp className="h-4 w-4" aria-hidden="true" />
+                ) : (
+                  <ChevronDown className="h-4 w-4" aria-hidden="true" />
+                )}
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </section>
   );

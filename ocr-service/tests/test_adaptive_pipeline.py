@@ -11,15 +11,15 @@ def adaptive_opt_in(test: T) -> T:
     """Opt into the release-gated path for one test, then restore the env."""
     @wraps(test)
     def wrapped(*args: object, **kwargs: object) -> object:
-        previous = os.environ.get("SUPERK_ENABLE_ADAPTIVE_ROI")
-        os.environ["SUPERK_ENABLE_ADAPTIVE_ROI"] = "1"
+        previous = os.environ.get("SUPERK_ENABLE_ADAPTIVE_ROI_V2")
+        os.environ["SUPERK_ENABLE_ADAPTIVE_ROI_V2"] = "1"
         try:
             return test(*args, **kwargs)
         finally:
             if previous is None:
-                os.environ.pop("SUPERK_ENABLE_ADAPTIVE_ROI", None)
+                os.environ.pop("SUPERK_ENABLE_ADAPTIVE_ROI_V2", None)
             else:
-                os.environ["SUPERK_ENABLE_ADAPTIVE_ROI"] = previous
+                os.environ["SUPERK_ENABLE_ADAPTIVE_ROI_V2"] = previous
 
     return wrapped  # type: ignore[return-value]
 
@@ -182,11 +182,15 @@ def test_adaptive_roi_kill_switch_uses_legacy_full_page_path() -> None:
     mask[280:330, 200:270] = 255
     regions = [region("one", 200, 280, 70, 50)]
     lama = RecordingLama()
+    previous = os.environ.get("SUPERK_DISABLE_ADAPTIVE_ROI")
     os.environ["SUPERK_DISABLE_ADAPTIVE_ROI"] = "1"
     try:
         output = make_pipeline(mask, regions, lama).run(image)
     finally:
-        os.environ.pop("SUPERK_DISABLE_ADAPTIVE_ROI", None)
+        if previous is None:
+            os.environ.pop("SUPERK_DISABLE_ADAPTIVE_ROI", None)
+        else:
+            os.environ["SUPERK_DISABLE_ADAPTIVE_ROI"] = previous
 
     assert lama.roi_calls == []
     assert lama.full_calls == 1

@@ -22,6 +22,11 @@ const stageDir = path.join(projectRoot, ".desktop-stage");
 const portableRuntimeDir = path.join(projectRoot, ".desktop-runtime");
 const ocrServiceDir = path.join(projectRoot, "ocr-service");
 const venvDir = path.join(ocrServiceDir, "venv");
+const buildInstaller = process.argv.includes("--installer");
+const windowsTarget = buildInstaller ? "nsis" : "portable";
+const windowsArtifactName = buildInstaller
+  ? "SuperK-Windows-Setup.exe"
+  : "SuperK-Windows-Portable.exe";
 
 function formatMb(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -339,7 +344,9 @@ function preparePortablePythonRuntime() {
   return directorySize(portableRuntimeDir);
 }
 
-console.log("=== Building SuperK Windows Desktop Application ===");
+console.log(
+  `=== Building SuperK Windows Desktop ${buildInstaller ? "Installer" : "Portable Application"} ===`
+);
 
 // 1. Next.js production build
 console.log("\n[Step 1/4] Building Next.js production bundle...");
@@ -429,12 +436,12 @@ try {
 }
 
 // 4. Electron Builder
-console.log("\n[Step 4/4] Running electron-builder for Windows portable target...");
+console.log(`\n[Step 4/4] Running electron-builder for Windows ${windowsTarget} target...`);
 try {
   const builderCli = path.join(projectRoot, "node_modules", "electron-builder", "cli.js");
   execFileSync(
     process.execPath,
-    [builderCli, "--win", "portable", "--config", path.join(projectRoot, "electron-builder.yml")],
+    [builderCli, "--win", windowsTarget, "--config", path.join(projectRoot, "electron-builder.yml")],
     {
       cwd: stageDir,
       stdio: "inherit",
@@ -447,11 +454,11 @@ try {
 }
 
 const distDir = path.join(projectRoot, "dist", "desktop");
-const portableExe = path.join(distDir, "SuperK-Windows-Portable.exe");
-if (fs.existsSync(portableExe)) {
-  const bytes = fs.statSync(portableExe).size;
-  console.log(`\n🎉 SuperK portable bundle created: ${portableExe}`);
-  console.log(`   Portable EXE size: ${formatMb(bytes)}`);
+const windowsArtifact = path.join(distDir, windowsArtifactName);
+if (fs.existsSync(windowsArtifact)) {
+  const bytes = fs.statSync(windowsArtifact).size;
+  console.log(`\n🎉 SuperK Windows ${buildInstaller ? "installer" : "portable bundle"} created: ${windowsArtifact}`);
+  console.log(`   EXE size: ${formatMb(bytes)}`);
 } else if (fs.existsSync(distDir)) {
   console.log(`\n✓ Desktop distribution created at: ${distDir}`);
 }

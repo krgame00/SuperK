@@ -4,7 +4,7 @@
  * Manages the lifecycle of the Python OCR/inpainting service child process:
  *  - Spawns uvicorn as a hidden background process
  *  - Pipes stdout/stderr
- *  - Health checks http://127.0.0.1:8765/health with backoff
+ *  - Health checks the configured loopback /health endpoint with backoff
  *  - Uses taskkill /PID <pid> /T /F on Windows for clean tree shutdown
  *  - Emits 'unexpected-exit' if the process dies unexpectedly
  */
@@ -56,6 +56,14 @@ class SidecarSupervisor extends EventEmitter {
 
   getOcrServiceDir() {
     return this.ocrServiceDir;
+  }
+
+  getBaseUrl() {
+    return `http://${this.config.host}:${this.config.port}`;
+  }
+
+  getHealthUrl() {
+    return `${this.getBaseUrl()}/health`;
   }
 
   start() {
@@ -138,7 +146,7 @@ class SidecarSupervisor extends EventEmitter {
 
   async checkHealth() {
     try {
-      const res = await this.fetchFn(SIDECAR_HEALTH_URL);
+      const res = await this.fetchFn(this.getHealthUrl());
       return Boolean(res && res.ok);
     } catch {
       return false;
@@ -194,7 +202,7 @@ class SidecarSupervisor extends EventEmitter {
       await new Promise((r) => setTimeout(r, delay));
 
       try {
-        const res = await this.fetchFn(SIDECAR_HEALTH_URL);
+        const res = await this.fetchFn(this.getHealthUrl());
         if (res && res.ok) {
           this.isReady = true;
           return true;

@@ -9,4 +9,7 @@ contextBridge.exposeInMainWorld("superkDesktop", {
     ipcRenderer.on("cleaner:recovery-status", handler);
     return () => ipcRenderer.removeListener("cleaner:recovery-status", handler);
   },
+  notify(payload) {
+    ipcRenderer.send("desktop:notify", payload);
+  },
 });

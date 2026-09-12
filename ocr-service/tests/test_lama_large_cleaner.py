@@ -41,6 +41,17 @@ class _Session:
         return [np.full_like(inputs["image"], self.value, dtype=np.float32)]
 
 
+class _EchoSession(_Session):
+    def __init__(self) -> None:
+        super().__init__(["CPUExecutionProvider"])
+        self.last_inputs: dict[str, np.ndarray] | None = None
+
+    def run(self, _outputs: None, inputs: dict[str, np.ndarray]) -> list[np.ndarray]:
+        self.calls += 1
+        self.last_inputs = inputs
+        return [inputs["image"].copy()]
+
+
 def test_lama_large_uses_primary_session_when_execution_succeeds() -> None:
     primary = _Session(["DmlExecutionProvider", "CPUExecutionProvider"])
     fallback_calls = 0
@@ -108,3 +119,54 @@ def test_lama_large_does_not_loop_when_cpu_retry_fails() -> None:
     assert primary.calls == 1
     assert cpu.calls == 1
     assert fallback_calls == 1
+
+
+def test_lama_large_packs_odd_sized_inputs_directly_into_padded_nchw() -> None:
+    session = _EchoSession()
+    image = np.arange(17 * 19 * 3, dtype=np.uint8).reshape(17, 19, 3)
+    mask = np.zeros((17, 19), dtype=np.uint8)
+    mask[4:9, 5:11] = 255
+
+    output = LamaLargeCleaner.from_session(session).clean_full_image(
+        image,
+        mask,
+        max_dim=64,
+    )
+
+    assert session.last_inputs is not None
+    image_tensor = session.last_inputs["image"]
+    mask_tensor = session.last_inputs["mask"]
+    assert image_tensor.shape == (1, 3, 24, 24)
+    assert mask_tensor.shape == (1, 1, 24, 24)
+    assert image_tensor.dtype == np.float32
+    assert mask_tensor.dtype == np.float32
+    np.testing.assert_array_equal(image_tensor[0, :, 17:, :], 0)
+    np.testing.assert_array_equal(image_tensor[0, :, :, 19:], 0)
+    np.testing.assert_array_equal(mask_tensor[0, 0, 17:, :], 0)
+    np.testing.assert_array_equal(mask_tensor[0, 0, :, 19:], 0)
+    np.testing.assert_allclose(
+        image_tensor[0, :, :17, :19],
+        image.transpose(2, 0, 1).astype(np.float32) / 255.0,
+        rtol=0,
+        atol=0,
+    )
+    np.testing.assert_array_equal(mask_tensor[0, 0, :17, :19], mask > 0)
+    np.testing.assert_array_equal(output[mask == 0], image[mask == 0])
+
+
+def test_legacy_buffer_fallback_produces_the_same_result(monkeypatch) -> None:
+    image, mask = _inputs()
+    optimized = LamaLargeCleaner.from_session(_EchoSession()).clean_full_image(
+        image,
+        mask,
+        max_dim=64,
+    )
+
+    monkeypatch.setenv("SUPERK_LEGACY_LAMA_BUFFERS", "1")
+    legacy = LamaLargeCleaner.from_session(_EchoSession()).clean_full_image(
+        image,
+        mask,
+        max_dim=64,
+    )
+
+    np.testing.assert_array_equal(optimized, legacy)

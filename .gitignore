@@ -48,6 +48,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+*.log
+test_err.log
+pythonw_err.log
+electron_out.log
 
 # env files (can opt-in for committing if needed)
 .env*

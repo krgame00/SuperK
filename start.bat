@@ -2,15 +2,12 @@
 chcp 65001 > nul
 cd /d "%~dp0"
 
-title SuperK Manga Translator - Desktop Launcher
+set "ELECTRON_EXE=%~dp0node_modules\electron\dist\electron.exe"
 
-echo =====================================================================
-echo          SuperK - Manga Translator (Desktop Application)
-echo =====================================================================
-echo.
-echo [INFO] กำลังเปิด SuperK Desktop...
-echo [INFO] ระบบจะจัดการ Next.js (:3000) และ OCR Service (:8765) ให้อัตโนมัติ
-echo.
+if exist "%~dp0SuperK.vbs" if exist "%ELECTRON_EXE%" (
+    start "" wscript.exe "%~dp0SuperK.vbs"
+    exit /b 0
+)
 
 call "%~dp0start-desktop.bat"
 exit /b %errorlevel%

@@ -30,6 +30,28 @@ describe("stable translation failure groups", () => {
     ]);
   });
 
+  it("keeps the concrete failure messages for diagnostics", () => {
+    const failures = [
+      {
+        failureGroupId: "batch-7:PROVIDER_RESPONSE_INVALID",
+        pageIndex: 1,
+        diagnostic: DIAGNOSTIC_TAXONOMY.PROVIDER_RESPONSE_INVALID,
+        message: "Translation response malformed: invalid JSON.",
+      },
+      {
+        failureGroupId: "batch-7:PROVIDER_RESPONSE_INVALID",
+        pageIndex: 4,
+        diagnostic: DIAGNOSTIC_TAXONOMY.PROVIDER_RESPONSE_INVALID,
+        message: "Translation retry response malformed: bubbles array missing.",
+      },
+    ];
+
+    expect(buildFailureGroups(failures, {}, 1_000)[0].messages).toEqual([
+      "Translation response malformed: invalid JSON.",
+      "Translation retry response malformed: bubbles array missing.",
+    ]);
+  });
+
   it("does not merge a later operation into an older group with the same cause", () => {
     const failures = [
       {

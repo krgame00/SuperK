@@ -63,6 +63,7 @@ class WorkspaceServerSupervisor extends EventEmitter {
     this.execPath = options.execPath || process.execPath;
     this.ownershipManager = options.ownershipManager || null;
     this.ownershipService = options.ownershipService || "workspace";
+    this.runtimeEnv = { ...(options.runtimeEnv || {}) };
 
     this.process = null;
     this.isStopping = false;
@@ -102,26 +103,64 @@ class WorkspaceServerSupervisor extends EventEmitter {
     return `http://${this.config.host}:${this.config.port}`;
   }
 
+  setRuntimeEnv(values = {}) {
+    Object.assign(this.runtimeEnv, values);
+  }
+
   getEntryPoint() {
-    if (this.isPackaged) {
-      return path.join(this.projectRoot, ".next", "standalone", "server.js");
+    const standalonePath = path.join(this.projectRoot, ".next", "standalone", "server.js");
+    if (this.isPackaged || (!process.env.SUPERK_FORCE_DEV && this.fsModule.existsSync(standalonePath))) {
+      return standalonePath;
     }
     return path.join(this.projectRoot, "node_modules", "next", "dist", "bin", "next");
   }
 
   getLaunchArguments() {
-    if (this.isPackaged) {
-      return [this.getEntryPoint()];
+    const entry = this.getEntryPoint();
+    if (entry.endsWith("server.js")) {
+      return [entry];
     }
 
     return [
-      this.getEntryPoint(),
+      entry,
       "dev",
       "-H",
       this.config.host,
       "-p",
       String(this.config.port),
     ];
+  }
+
+  ensureStandaloneAssets() {
+    const standaloneDir = path.join(this.projectRoot, ".next", "standalone");
+    if (!this.fsModule.existsSync(standaloneDir)) return;
+
+    const publicSrc = path.join(this.projectRoot, "public");
+    const publicDest = path.join(standaloneDir, "public");
+    if (this.fsModule.existsSync(publicSrc) && !this.fsModule.existsSync(publicDest)) {
+      try {
+        if (typeof this.fsModule.cpSync === "function") {
+          this.fsModule.cpSync(publicSrc, publicDest, { recursive: true });
+        }
+      } catch (err) {
+        console.warn("[Workspace] Could not sync public to standalone:", err.message);
+      }
+    }
+
+    const staticSrc = path.join(this.projectRoot, ".next", "static");
+    const staticDest = path.join(standaloneDir, ".next", "static");
+    if (this.fsModule.existsSync(staticSrc) && !this.fsModule.existsSync(staticDest)) {
+      try {
+        if (typeof this.fsModule.mkdirSync === "function") {
+          this.fsModule.mkdirSync(path.dirname(staticDest), { recursive: true });
+        }
+        if (typeof this.fsModule.cpSync === "function") {
+          this.fsModule.cpSync(staticSrc, staticDest, { recursive: true });
+        }
+      } catch (err) {
+        console.warn("[Workspace] Could not sync static to standalone:", err.message);
+      }
+    }
   }
 
   start() {
@@ -136,17 +175,23 @@ class WorkspaceServerSupervisor extends EventEmitter {
     this.startupError = null;
 
     const fileEnv = this.loadProjectEnv();
+    const launchArgs = this.getLaunchArguments();
+    const isStandalone = launchArgs[0]?.endsWith("server.js");
+
+    if (isStandalone) {
+      this.ensureStandaloneAssets();
+    }
 
     const env = {
       ...process.env,
       ...fileEnv,
+      ...this.runtimeEnv,
       ELECTRON_RUN_AS_NODE: "1",
       PORT: String(this.config.port),
       HOSTNAME: this.config.host,
-      NODE_ENV: this.isPackaged ? "production" : "development",
+      NODE_ENV: (this.isPackaged || isStandalone) ? "production" : "development",
     };
 
-    const launchArgs = this.getLaunchArguments();
     const startedAt = Date.now();
     this.process = this.spawnFn(this.execPath, launchArgs, {
       cwd: this.projectRoot,

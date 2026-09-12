@@ -129,6 +129,24 @@ describe("SidecarSupervisor (Ticket 02)", () => {
     expect(mockFetch).toHaveBeenCalledWith(SIDECAR_HEALTH_URL);
   });
 
+  it("uses the configured dynamic port for launch and health checks", async () => {
+    const supervisor = new SidecarSupervisor({
+      config: { port: 8766 },
+      spawnFn: mockSpawn as any,
+      execFn: mockExec as any,
+      fetchFn: mockFetch as any,
+    });
+
+    const readyPromise = supervisor.start();
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(readyPromise).resolves.toBe(true);
+
+    const [, args] = mockSpawn.mock.calls[0];
+    expect(args).toContain("8766");
+    expect(mockFetch).toHaveBeenCalledWith("http://127.0.0.1:8766/health");
+    expect(supervisor.getBaseUrl()).toBe("http://127.0.0.1:8766");
+  });
+
   it("retries health check with backoff when first attempt fails then succeeds", async () => {
     let callCount = 0;
     mockFetch = vi.fn().mockImplementation(async () => {

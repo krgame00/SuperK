@@ -44,6 +44,28 @@ describe("TranslationDiagnosticModal", () => {
     expect(screen.getByText("หน้า 5")).toBeDefined();
   });
 
+  it("shows the concrete error detail instead of hiding it behind an unknown label", () => {
+    const malformed = {
+      ...group(
+        "batch-10:PROVIDER_RESPONSE_INVALID",
+        DIAGNOSTIC_TAXONOMY.PROVIDER_RESPONSE_INVALID,
+        [5, 8],
+      ),
+      messages: ["Translation response malformed: invalid JSON."],
+    };
+
+    render(
+      <TranslationDiagnosticModal
+        isOpen={true}
+        onClose={vi.fn()}
+        failureGroups={[malformed]}
+      />,
+    );
+
+    expect(screen.getByText("AI ตอบกลับมาในรูปแบบไม่สมบูรณ์")).toBeDefined();
+    expect(screen.getByText("Translation response malformed: invalid JSON.")).toBeDefined();
+  });
+
   it("passes the stable group id to API key recovery", () => {
     const onOpenSettingsApiKey = vi.fn();
     const onClose = vi.fn();

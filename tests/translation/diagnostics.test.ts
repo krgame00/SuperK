@@ -65,6 +65,71 @@ describe("Translation Failure Diagnostics Taxonomy", () => {
     expect(res.recommendedAction).toBe("retry_failed");
   });
 
+  it("classifies malformed AI payloads as provider response failures instead of unknown", () => {
+    const res = classifyTranslationError(
+      new Error("Translation response malformed: invalid JSON."),
+      502,
+      "PROVIDER_RESPONSE_INVALID",
+    );
+    expect(res.code).toBe("PROVIDER_RESPONSE_INVALID");
+    expect(res.recommendedAction).toBe("retry_failed");
+    expect(res.retryable).toBe(true);
+  });
+
+  it("classifies translation image loading failures instead of unknown", () => {
+    const res = classifyTranslationError(new Error("โหลดรูปภาพไม่สำเร็จ"));
+    expect(res.code).toBe("IMAGE_LOAD_FAILED");
+    expect(res.recommendedAction).toBe("retry_failed");
+  });
+
+  it("classifies upstream and transport failures instead of unknown", () => {
+    expect(
+      classifyTranslationError(
+        new Error("Bad Gateway"),
+        503,
+        "GEMINI_UPSTREAM",
+      ).code,
+    ).toBe("NETWORK_OR_TIMEOUT");
+    expect(
+      classifyTranslationError(
+        new Error("Network error"),
+        0,
+        "NETWORK",
+      ).code,
+    ).toBe("NETWORK_OR_TIMEOUT");
+    expect(
+      classifyTranslationError(new Error("Internal Server Error"), 500).code,
+    ).toBe("NETWORK_OR_TIMEOUT");
+  });
+
+  it("keeps auth precedence when Gemini reports a generic upstream code with 403", () => {
+    const res = classifyTranslationError(
+      new Error("Permission denied"),
+      403,
+      "GEMINI_UPSTREAM",
+    );
+    expect(res.code).toBe("MISSING_KEY");
+    expect(res.recommendedAction).toBe("open_settings_api_key");
+  });
+
+  it("classifies page awaiting review / 422 cleaning verification as CLEANING_REVIEW_REQUIRED", () => {
+    const res1 = classifyTranslationError(
+      new Error("Page awaiting review after local cleaning verification."),
+      422,
+      "CLEANING_REVIEW_REQUIRED",
+    );
+    expect(res1.code).toBe("CLEANING_REVIEW_REQUIRED");
+    expect(res1.recommendedAction).toBe("retry_failed");
+    expect(res1.actionLabel).toBe("ยืนยันและดำเนินการแปลต่อ");
+    expect(res1.retryable).toBe(true);
+
+    const res2 = classifyTranslationError(
+      new Error("Page awaiting review after local cleaning verification."),
+      422,
+    );
+    expect(res2.code).toBe("CLEANING_REVIEW_REQUIRED");
+  });
+
   it("normalizes Retry-After seconds, dates, malformed values, and caps", () => {
     expect(parseRetryAfter("12", 0)).toBe(12_000);
     expect(parseRetryAfter(new Date(90_000).toUTCString(), 0)).toBe(90_000);

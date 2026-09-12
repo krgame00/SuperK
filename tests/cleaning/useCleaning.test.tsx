@@ -143,6 +143,32 @@ test("polls until succeeded and stores result for current page", async () => {
   );
 });
 
+test("clears progress and returns cleaning result even if saveCleaningResultMetadata rejects", async () => {
+  vi.mocked(saveCleaningResultMetadata).mockRejectedValueOnce(
+    new Error("IndexedDB write timeout or transaction deadlocked"),
+  );
+  vi.mocked(createCleaningJob).mockResolvedValue(queuedJob);
+  vi.mocked(getCleaningJob).mockResolvedValue(succeededJob);
+  vi.mocked(getCleaningResult).mockResolvedValue(cleaningResult);
+  const { result } = renderHook(() =>
+    useCleaning({ pages: ["blob:page-1"], currentPage: 0 }),
+  );
+  let cleaning!: Promise<PageCleaningResult>;
+  act(() => {
+    cleaning = result.current.cleanPage(
+      "blob:page-1",
+      new Blob(["png"], { type: "image/png" }),
+    );
+  });
+  let pageResult!: PageCleaningResult;
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1000);
+    pageResult = await cleaning;
+  });
+  expect(pageResult?.jobId).toBe("job-1");
+  expect(result.current.progress).toBeUndefined();
+});
+
 test("page change aborts polling", async () => {
   vi.mocked(createCleaningJob).mockResolvedValue(queuedJob);
   const { result, rerender } = renderHook(

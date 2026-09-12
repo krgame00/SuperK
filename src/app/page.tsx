@@ -10,7 +10,7 @@ import {
   applyTranslationOverlay,
   type TranslatedBubble,
 } from "@/lib/translationOverlay";
-import { Upload, Download, Flame, Eye, EyeOff, Undo2, Redo2, GalleryVertical, RectangleHorizontal, Menu, X, Settings, FileArchive, BookOpen, FileText, Sparkles, Loader2, Check, AlertCircle, RefreshCw } from "lucide-react";
+import { Upload, Download, Flame, Eye, EyeOff, Undo2, Redo2, GalleryVertical, RectangleHorizontal, Menu, X, Settings, FileArchive, BookOpen, FileText, Sparkles, Loader2, Check, AlertCircle, RefreshCw, ArrowDown, ArrowUp, ChevronDown, ChevronUp, Eraser } from "lucide-react";
 import { undoManager } from "@/lib/undoManager";
 import JSZip from "jszip";
 import { useCleaning } from "@/hooks/useCleaning";
@@ -30,9 +30,14 @@ import { SettingsModal } from "@/components/workspace/SettingsModal";
 import { WorkspaceExportMenu } from "@/components/workspace/WorkspaceExportMenu";
 import { WorkspacePrimaryAction } from "@/components/workspace/WorkspacePrimaryAction";
 import { WorkspaceAdvancedTools } from "@/components/workspace/WorkspaceAdvancedTools";
-import { generateComicInfoXml } from "@/lib/export/exportManager";
+import {
+  generateArchiveFilename,
+  generateComicInfoXml,
+  generateStripFilename,
+} from "@/lib/export/exportManager";
 import {
   getAskExportDirectory,
+  getOrPickExportDirectory,
   isDirectoryPickerSupported,
   pickExportDirectory,
   saveBlob,
@@ -87,6 +92,44 @@ export default function WorkspacePage() {
   const [canRedo, setCanRedo] = useState(false);
   const [isFocusMode, setIsFocusMode] = useState(false);
   const [isFocusToolbarVisible, setIsFocusToolbarVisible] = useState(false);
+  const [toolbarPosition, setToolbarPosition] = useState<"top" | "bottom">("top");
+  const [isToolbarCollapsed, setIsToolbarCollapsed] = useState(false);
+
+  // Restore toolbar preferences from localStorage
+  useEffect(() => {
+    try {
+      const savedPos = localStorage.getItem("manga_clean_toolbar_position");
+      if (savedPos === "top" || savedPos === "bottom") {
+        setToolbarPosition(savedPos);
+      }
+      const savedCollapsed = localStorage.getItem("manga_clean_toolbar_collapsed");
+      if (savedCollapsed !== null) {
+        setIsToolbarCollapsed(savedCollapsed === "true");
+      }
+    } catch {
+      // ignore localStorage errors (e.g. incognito/disabled)
+    }
+  }, []);
+
+  const toggleToolbarPosition = useCallback(() => {
+    setToolbarPosition((prev) => {
+      const next = prev === "top" ? "bottom" : "top";
+      try {
+        localStorage.setItem("manga_clean_toolbar_position", next);
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  const toggleToolbarCollapsed = useCallback(() => {
+    setIsToolbarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("manga_clean_toolbar_collapsed", String(next));
+      } catch {}
+      return next;
+    });
+  }, []);
 
   // Reset focus toolbar visibility whenever entering focus mode
   useEffect(() => {
@@ -116,10 +159,12 @@ export default function WorkspacePage() {
         }
       } else if (e.key === "b" || e.key === "B") {
         if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+          e.preventDefault();
           setIsFocusMode((focus) => {
             if (focus) {
-              e.preventDefault();
               setIsFocusToolbarVisible((prev) => !prev);
+            } else {
+              toggleToolbarCollapsed();
             }
             return focus;
           });
@@ -357,6 +402,18 @@ export default function WorkspacePage() {
     translateAllStatusText ??
     (isFocusMode && !isFocusToolbarVisible ? cleaningStatusText : null) ??
     translationResult;
+
+  // Auto-dismiss transient translation / export completion messages after 4 seconds
+  useEffect(() => {
+    if (!translationResult) return;
+    if (translationResult.startsWith("⏳") || translationResult.startsWith("กำลัง")) return;
+
+    const timer = setTimeout(() => {
+      setTranslationResult(null);
+    }, 4000);
+
+    return () => clearTimeout(timer);
+  }, [translationResult, setTranslationResult]);
 
   const handleTranslateCurrent = useCallback(async (): Promise<boolean> => {
     if (
@@ -733,7 +790,7 @@ export default function WorkspacePage() {
           m.default("เบราว์เซอร์นี้ไม่รองรับการเลือกโฟลเดอร์ จะดาวน์โหลดตามค่าตั้งต้นแทน", { duration: 3000 }),
         );
       } else {
-        destDir = await pickExportDirectory();
+        destDir = await getOrPickExportDirectory();
         if (!destDir) {
           setIsZipping(false);
           return;
@@ -881,13 +938,17 @@ export default function WorkspacePage() {
             yOffset += item.height;
           }
 
-          const stripFilename = isMulti
-            ? `SuperK_Webtoon_Strip_Part${String(index).padStart(2, '0')}.jpg`
-            : `SuperK_Webtoon_LongStrip.jpg`;
+          const stripFilename = generateStripFilename(index, chunkIndex > 1 ? chunkIndex : 1, pages);
           stripCanvas.toBlob(
             (blob) => {
               if (!blob) return;
-              void saveBlob(blob, stripFilename, destDir);
+              void saveBlob(blob, stripFilename, destDir).then((savedName) => {
+                if (savedName && savedName !== stripFilename) {
+                  import("react-hot-toast").then((m) =>
+                    m.default.success(`บันทึกเป็น "${savedName}" (พบไฟล์ชื่อซ้ำ)`),
+                  );
+                }
+              });
             },
             "image/jpeg",
             0.92,
@@ -970,9 +1031,21 @@ export default function WorkspacePage() {
         }
 
         if (addedCount > 0) {
+          const pdfFilename = generateArchiveFilename("pdf", pages);
           setTranslationResult(`⏳ กำลังบันทึก PDF...`);
-          await saveBlob(pdf.output("blob"), "SuperK_Translations.pdf", destDir);
-          setTranslationResult(`✅ ดาวน์โหลด PDF สำเร็จ! (${addedCount} หน้า)`);
+          const savedName = await saveBlob(pdf.output("blob"), pdfFilename, destDir);
+          const wasRenamed = savedName !== pdfFilename;
+          const folderLabel = destDir?.name ? ` ใน "${destDir.name}"` : "";
+          setTranslationResult(
+            wasRenamed
+              ? `✅ บันทึก ${savedName}${folderLabel} สำเร็จ! (พบชื่อซ้ำ จึงเปลี่ยนชื่อให้อัตโนมัติ)`
+              : `✅ ดาวน์โหลด PDF${folderLabel} สำเร็จ! (${addedCount} หน้า)`
+          );
+          if (wasRenamed) {
+            import("react-hot-toast").then((m) =>
+              m.default.success(`บันทึกเป็น "${savedName}"${folderLabel} (พบไฟล์ชื่อซ้ำ)`),
+            );
+          }
         } else {
           setTranslationResult(`❌ ไม่พบรูปภาพที่สมบูรณ์สำหรับสร้าง PDF`);
         }
@@ -1029,14 +1102,22 @@ export default function WorkspacePage() {
           zip.file("ComicInfo.xml", xml);
         }
 
+        const archiveFilename = generateArchiveFilename(format, pages);
         setTranslationResult(`⏳ กำลังสร้างไฟล์ ${format.toUpperCase()}...`);
         const content = await zip.generateAsync({ type: "blob" });
-        await saveBlob(
-          content,
-          format === "cbz" ? "SuperK_Translations.cbz" : "SuperK_Translations.zip",
-          destDir,
+        const savedName = await saveBlob(content, archiveFilename, destDir);
+        const wasRenamed = savedName !== archiveFilename;
+        const folderLabel = destDir?.name ? ` ใน "${destDir.name}"` : "";
+        setTranslationResult(
+          wasRenamed
+            ? `✅ บันทึก ${savedName}${folderLabel} สำเร็จ! (พบชื่อซ้ำ จึงเปลี่ยนชื่อให้อัตโนมัติ)`
+            : `✅ ดาวน์โหลด ${format.toUpperCase()}${folderLabel} สำเร็จ! (${zipAddedCount} หน้า)`
         );
-        setTranslationResult(`✅ ดาวน์โหลด ${format.toUpperCase()} สำเร็จ! (${zipAddedCount} หน้า)`);
+        if (wasRenamed) {
+          import("react-hot-toast").then((m) =>
+            m.default.success(`บันทึกเป็น "${savedName}"${folderLabel} (พบไฟล์ชื่อซ้ำ)`),
+          );
+        }
       } else {
         setTranslationResult(`❌ ไม่พบรูปภาพที่สมบูรณ์สำหรับสร้าง ${format.toUpperCase()}`);
       }
@@ -1075,14 +1156,25 @@ export default function WorkspacePage() {
 
     let destDir: DirectoryHandleLike | null = null;
     if (getAskExportDirectory() && isDirectoryPickerSupported()) {
-      destDir = await pickExportDirectory();
+      destDir = await getOrPickExportDirectory();
       if (!destDir) return;
     }
     if (destDir) {
       const dataUrl = downloadTranslatedImage("single", currentPage, "", true);
       if (dataUrl) {
-        await saveBlob(dataUrlToBlob(dataUrl), filename, destDir);
-        setTranslationResult(`✅ บันทึก ${filename} สำเร็จ!`);
+        const savedName = await saveBlob(dataUrlToBlob(dataUrl), filename, destDir);
+        const wasRenamed = savedName !== filename;
+        const folderLabel = destDir.name ? ` ใน "${destDir.name}"` : "";
+        setTranslationResult(
+          wasRenamed
+            ? `✅ บันทึก ${savedName}${folderLabel} สำเร็จ! (พบชื่อซ้ำ จึงเปลี่ยนชื่อให้อัตโนมัติ)`
+            : `✅ บันทึก ${filename}${folderLabel} สำเร็จ!`
+        );
+        if (wasRenamed) {
+          import("react-hot-toast").then((m) =>
+            m.default.success(`บันทึกเป็น "${savedName}"${folderLabel} (พบไฟล์ชื่อซ้ำ)`),
+          );
+        }
         setTimeout(() => setTranslationResult(null), 3000);
       }
       return;
@@ -1780,12 +1872,27 @@ export default function WorkspacePage() {
 
         {workflowMessage && (!isFocusMode || !isFocusToolbarVisible) && (
           <div
-            className={`fixed left-1/2 -translate-x-1/2 z-40 bg-surface/90 backdrop-blur-md border border-primary/30 text-foreground px-4 py-1.5 rounded-full text-xs font-semibold shadow-lg animate-in fade-in slide-in-from-top-2 duration-300 flex items-center gap-2 max-w-[90vw] truncate transition-all ${
-              isFocusMode ? "top-3" : "top-16"
+            onClick={() => {
+              if (translationResult) {
+                setTranslationResult(null);
+              }
+            }}
+            role="status"
+            aria-live="polite"
+            className={`fixed left-1/2 -translate-x-1/2 z-40 bg-surface/90 backdrop-blur-md border border-primary/30 text-foreground px-4 py-1.5 rounded-full text-xs font-semibold shadow-lg animate-in fade-in slide-in-from-top-2 duration-300 flex items-center gap-2 max-w-[90vw] truncate transition-all cursor-pointer hover:bg-surface select-none ${
+              isFocusMode
+                ? "top-3"
+                : toolbarPosition === "top"
+                  ? isToolbarCollapsed ? "top-20 sm:top-22" : "top-24 sm:top-26"
+                  : "top-16"
             }`}
+            title="คลิกเพื่อปิดการแจ้งเตือน"
           >
             <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse shrink-0" />
             <span className="truncate">{workflowMessage}</span>
+            {translationResult && (
+              <span className="ml-1 text-muted hover:text-foreground text-xs leading-none">&times;</span>
+            )}
           </div>
         )}
 
@@ -1799,76 +1906,196 @@ export default function WorkspacePage() {
                   : "px-1 pb-20 sm:pb-22"
             }`}
           >
-            {/* Cleaning Toolbar: Floating at the top on all screen sizes so it never pushes the canvas */}
+            {/* Cleaning Toolbar: Floating at top or bottom with collapse support */}
             <div
-              className={`w-full absolute top-2.5 left-1/2 -translate-x-1/2 z-30 flex justify-center pointer-events-none px-2 transition-all duration-300 ease-out ${
+              className={`w-full absolute ${
+                toolbarPosition === "top"
+                  ? "top-2.5"
+                  : isFocusMode
+                    ? "bottom-3 sm:bottom-4"
+                    : isThumbnailsCollapsed
+                      ? "bottom-9 sm:bottom-10"
+                      : "bottom-23 sm:bottom-25"
+              } left-1/2 -translate-x-1/2 z-30 flex justify-center pointer-events-none px-2 transition-all duration-300 ease-out ${
                 isFocusMode && !isFocusToolbarVisible
-                  ? "-translate-y-24 opacity-0 pointer-events-none max-h-0 py-0 overflow-hidden"
+                  ? `${toolbarPosition === "top" ? "-translate-y-24" : "translate-y-24"} opacity-0 pointer-events-none max-h-0 py-0 overflow-hidden`
                   : "translate-y-0 opacity-100 py-0"
               }`}
             >
-              <div className="pointer-events-auto max-w-full">
-                <CleaningToolbar
-                  hasPage={pages.length > 0 && !operationBusy}
-                  hasResult={Boolean(currentCleaningResult)}
-                  hasTranslated={hasCurrentTranslation}
-                  layer={workspaceLayer}
-                  onClean={() => void handleCleanCurrentPage()}
-                  onEditMask={() => setIsMaskEditorOpen(true)}
-                  onLayerChange={setWorkspaceLayer}
-                  progress={cleaningProgress}
-                  error={cleaningError}
-                  className="flex w-full max-w-4xl flex-wrap items-center justify-between gap-2 rounded-xl border border-border/80 bg-surface/90 px-3 py-1.5 shadow-xl backdrop-blur-md transition-all"
-                />
-                {currentPageUrl && doesPageRequireReview(cleaningResultsByPage.get(currentPageUrl), activeBubbles) && (
-                  <div className="mt-1.5 flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-xs backdrop-blur-md">
-                    <span className="flex items-center gap-1.5 text-amber-500 font-medium">
-                      ⚠️ หน้านี้มีจุดคลีนหรือคำแปลที่ต้องการการตรวจทาน
-                    </span>
-                    {confirmedPages.has(currentPageUrl) ? (
-                      <span className="text-emerald-500 font-semibold flex items-center gap-1">
-                        ✅ ยืนยันผลตรวจแล้ว
+              <div
+                className={`pointer-events-auto max-w-full flex ${
+                  toolbarPosition === "bottom" ? "flex-col-reverse" : "flex-col"
+                } items-center gap-1.5`}
+              >
+                {isToolbarCollapsed ? (
+                  <div
+                    className="flex items-center gap-1.5 rounded-full border border-border/80 bg-surface/90 px-3 py-1.5 shadow-xl backdrop-blur-md transition-all hover:bg-surface"
+                    role="region"
+                    aria-label="แถบเครื่องมือแบบย่อ"
+                  >
+                    <button
+                      type="button"
+                      onClick={toggleToolbarCollapsed}
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground hover:text-primary transition-colors cursor-pointer"
+                      title="ขยายแถบเครื่องมือ (กด B)"
+                      aria-label="ขยายแถบเครื่องมือ (กด B)"
+                    >
+                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 text-primary">
+                        <Eraser className="h-3 w-3" />
                       </span>
-                    ) : (
+                      <span className="font-semibold text-xs capitalize text-foreground">
+                        {workspaceLayer}
+                      </span>
+                      {toolbarPosition === "top" ? (
+                        <ChevronDown className="h-3.5 w-3.5 text-muted" />
+                      ) : (
+                        <ChevronUp className="h-3.5 w-3.5 text-muted" />
+                      )}
+                    </button>
+
+                    {currentPageUrl &&
+                      !confirmedPages.has(currentPageUrl) &&
+                      doesPageRequireReview(
+                        cleaningResultsByPage.get(currentPageUrl),
+                        activeBubbles,
+                      ) && (
+                        <button
+                          type="button"
+                          onClick={toggleToolbarCollapsed}
+                          className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-500 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-full hover:bg-amber-500/20 transition-colors cursor-pointer"
+                          title="หน้านี้ต้องการการตรวจทาน (คลิกเพื่อดู)"
+                        >
+                          <span>⚠️ ตรวจทาน</span>
+                        </button>
+                      )}
+
+                    {batchFailures.length > 0 && (
                       <button
                         type="button"
-                        onClick={() =>
-                          setConfirmedPages((prev) => new Set(prev).add(currentPageUrl))
-                        }
-                        className="px-2.5 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white font-semibold transition-colors cursor-pointer"
+                        onClick={toggleToolbarCollapsed}
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-red-400 bg-red-500/10 border border-red-500/30 px-2 py-0.5 rounded-full hover:bg-red-500/20 transition-colors cursor-pointer"
+                        title={`แปลไม่สำเร็จ ${batchFailures.length} หน้า (คลิกเพื่อดู)`}
                       >
-                        ยืนยันหน้านี้
+                        <span>❌ {batchFailures.length}</span>
                       </button>
                     )}
+
+                    <div className="h-3.5 w-px bg-border/60 mx-0.5" />
+
+                    <button
+                      type="button"
+                      onClick={toggleToolbarPosition}
+                      className="inline-flex h-6 w-6 items-center justify-center rounded-full text-muted hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
+                      title={
+                        toolbarPosition === "top"
+                          ? "ย้ายแถบไปด้านล่าง"
+                          : "ย้ายแถบไปด้านบน"
+                      }
+                      aria-label={
+                        toolbarPosition === "top"
+                          ? "ย้ายแถบไปด้านล่าง"
+                          : "ย้ายแถบไปด้านบน"
+                      }
+                    >
+                      {toolbarPosition === "top" ? (
+                        <ArrowDown className="h-3 w-3" />
+                      ) : (
+                        <ArrowUp className="h-3 w-3" />
+                      )}
+                    </button>
+
+                    <kbd className="hidden sm:inline-flex px-1.5 py-0.5 text-[10px] font-semibold bg-background/80 rounded border border-border/60 text-muted">
+                      B
+                    </kbd>
                   </div>
-                )}
-                {batchFailures.length > 0 && (
-                  <div className="mt-1.5 flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg border border-red-500/40 bg-red-500/15 text-xs backdrop-blur-md animate-in fade-in">
-                    <div className="flex items-center gap-2">
-                      <span className="text-red-400 font-semibold">
-                        ❌ แปลไม่สำเร็จ {batchFailures.length} หน้า
-                      </span>
-                      <span className="text-muted text-[11px] hidden sm:inline">
-                        (หน้า {batchFailures.map((f) => f.pageIndex + 1).join(", ")})
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => setIsDiagnosticModalOpen(true)}
-                        className="px-2.5 py-1 rounded bg-red-600 hover:bg-red-500 text-white font-medium text-xs transition-colors cursor-pointer shadow-sm"
-                      >
-                        ดูสาเหตุและแก้ไข
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => retryFailedPages()}
-                        className="px-2 py-1 rounded bg-surface-hover hover:bg-surface-active text-foreground text-xs transition-colors cursor-pointer border border-surface-hover"
-                      >
-                        ลองใหม่
-                      </button>
-                    </div>
-                  </div>
+                ) : (
+                  <>
+                    <CleaningToolbar
+                      hasPage={pages.length > 0 && !operationBusy}
+                      hasResult={Boolean(currentCleaningResult)}
+                      hasTranslated={hasCurrentTranslation}
+                      layer={workspaceLayer}
+                      onClean={() => void handleCleanCurrentPage()}
+                      onEditMask={() => setIsMaskEditorOpen(true)}
+                      onLayerChange={setWorkspaceLayer}
+                      progress={cleaningProgress}
+                      error={cleaningError}
+                      position={toolbarPosition}
+                      onTogglePosition={toggleToolbarPosition}
+                      onCollapse={toggleToolbarCollapsed}
+                      className="flex w-full max-w-4xl flex-wrap items-center justify-between gap-2 rounded-xl border border-border/80 bg-surface/90 px-3 py-1.5 shadow-xl backdrop-blur-md transition-all"
+                    />
+                    {currentPageUrl &&
+                      !confirmedPages.has(currentPageUrl) &&
+                      doesPageRequireReview(
+                        cleaningResultsByPage.get(currentPageUrl),
+                        activeBubbles,
+                      ) && (
+                        <div className="w-full flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-xs backdrop-blur-md shadow-md animate-in fade-in">
+                          <span className="flex items-center gap-1.5 text-amber-500 font-medium">
+                            ⚠️ หน้านี้มีจุดคลีนหรือคำแปลที่ต้องการการตรวจทาน
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setConfirmedPages((prev) =>
+                                  new Set(prev).add(currentPageUrl),
+                                )
+                              }
+                              className="px-2.5 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white font-semibold transition-colors cursor-pointer"
+                            >
+                              ยืนยันหน้านี้
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setConfirmedPages((prev) =>
+                                  new Set(prev).add(currentPageUrl),
+                                )
+                              }
+                              className="text-muted hover:text-foreground p-1 rounded transition-colors cursor-pointer text-xs"
+                              title="ปิดการแจ้งเตือน"
+                              aria-label="ปิดการแจ้งเตือน"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    {batchFailures.length > 0 && (
+                      <div className="w-full flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg border border-red-500/40 bg-red-500/15 text-xs backdrop-blur-md shadow-md animate-in fade-in">
+                        <div className="flex items-center gap-2">
+                          <span className="text-red-400 font-semibold">
+                            ❌ แปลไม่สำเร็จ {batchFailures.length} หน้า
+                          </span>
+                          <span className="text-muted text-[11px] hidden sm:inline">
+                            (หน้า{" "}
+                            {batchFailures
+                              .map((f) => f.pageIndex + 1)
+                              .join(", ")}
+                            )
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setIsDiagnosticModalOpen(true)}
+                            className="px-2.5 py-1 rounded bg-red-600 hover:bg-red-500 text-white font-medium text-xs transition-colors cursor-pointer shadow-sm"
+                          >
+                            ดูสาเหตุและแก้ไข
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => retryFailedPages()}
+                            className="px-2 py-1 rounded bg-surface-hover hover:bg-surface-active text-foreground text-xs transition-colors cursor-pointer border border-surface-hover"
+                          >
+                            ลองใหม่
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>

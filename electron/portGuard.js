@@ -55,6 +55,35 @@ function isPortAvailable(port, host = "127.0.0.1", customCreateServer = net.crea
 }
 
 /**
+ * Finds the first available loopback port, starting at the preferred port.
+ * Desktop production uses this to coexist with local dev servers instead of
+ * forcing users to stop unrelated applications that happen to use 3000/8765.
+ * @param {number} preferredPort
+ * @param {string} host
+ * @param {(port: number, host: string) => Promise<boolean>} [isPortFreeFn]
+ * @param {number} maxAttempts
+ * @returns {Promise<number>}
+ */
+async function findAvailablePort(
+  preferredPort,
+  host = "127.0.0.1",
+  isPortFreeFn = (port, candidateHost) => isPortAvailable(port, candidateHost),
+  maxAttempts = 100
+) {
+  for (let offset = 0; offset < maxAttempts; offset += 1) {
+    const port = preferredPort + offset;
+    if (port > 65535) break;
+    if (await isPortFreeFn(port, host)) {
+      return port;
+    }
+  }
+
+  throw new Error(
+    `No available port found from ${preferredPort} within ${maxAttempts} attempts.`
+  );
+}
+
+/**
  * Checks a list of ports and returns the first occupied port info, or null if all are free.
  * @param {number[]} ports
  * @param {(port: number) => Promise<boolean>} [isPortFreeFn]
@@ -108,6 +137,7 @@ async function promptPortConflict(dialog, app, conflict) {
 
 module.exports = {
   isPortAvailable,
+  findAvailablePort,
   checkRequiredPorts,
   promptPortConflict,
   PORT_DIAGNOSTICS,

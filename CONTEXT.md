@@ -28,9 +28,45 @@ _Avoid_: Tattoo candidate, likely mark
 The separately detected fill and outline colors of a glyph. A profile is usable only when its glyph evidence is sufficiently reliable.
 _Avoid_: Average crop color, foreground color
 
+**Source text style profile**:
+The source-faithful visual style recovered from original glyph evidence, including fill color, whether an outline exists, outline color and relative thickness, opacity, and any confidently detected gradient, shadow, or glow.
+_Avoid_: Readability preset, global text style, average crop style
+
+**Style confidence band**:
+The confidence tier assigned to a recovered source text style: high confidence is eligible for faithful rendering only after its source evidence is validated, medium confidence must be re-analyzed before fallback, and low confidence must not be treated as exact source style.
+_Avoid_: Generic OCR confidence, arbitrary score
+
+**Source style evidence gate**:
+The validation boundary that decides whether a recovered Source text style profile is supported by the visible text itself rather than surrounding artwork or background. Passing the gate requires trustworthy text-local evidence and sufficient visual separation from the local background.
+_Avoid_: Confidence score alone, raw crop acceptance, background-color guess
+
+**Text style category**:
+The semantic visual class of a source text region used to constrain style inheritance, at minimum Dialogue, Narration / Panel Caption, SFX / Decorative, or Overlay Subtitle. Panel captions are authored narration inside the manga layout; Overlay Subtitles are wide, usually line-like text placed directly over artwork rather than inside a speech balloon or narration panel.
+_Avoid_: Ambiguous Caption, nearest bubble type, color family
+
+**Readable fallback style**:
+An adaptive safe text style used when source-style evidence is invalid or insufficient. It is selected against the actual Inpainted clean background under the Translated glyph footprint rather than from a fixed white-text preset, and it always includes an outline. The system evaluates multiple conservative fill/outline pairs, considers both broad readability and weak local regions, prefers dark fill on white or near-white balloons, and may escalate from normal outline to thicker outline and then controlled shadow/halo. Automatic background plates are a last-resort Overlay Subtitle behavior only.
+_Avoid_: Fixed white fallback, source text style profile, guessed source color, silent style inheritance
+
+**Translated glyph footprint**:
+The page area actually occupied by the laid-out translated glyphs plus the small margin needed to evaluate outline or readability separation. Adaptive Readable decisions sample the Inpainted clean background against this footprint instead of treating the whole OCR box as the readability surface.
+_Avoid_: Entire OCR box, source glyph mask, text-removal mask
+
+**Readability gate**:
+The automatic validation that decides whether a candidate text style remains legible over the actual background. It considers multiple locations across the Translated glyph footprint, including both broad contrast and weak local regions; the current behavioral target is roughly 4.5:1 across most sampled areas while avoiding materially weak local regions around 3:1 when a stronger safe candidate is available.
+_Avoid_: Average crop brightness, source confidence score, Manual style enforcement
+
+**Manual style override**:
+A user-owned text style that automation may warn about but must not modify until the user explicitly returns the region to Auto or Readable behavior.
+_Avoid_: Temporary auto style, gate-corrected manual style
+
+**Source-faithful rendering**:
+Rendering translated text from a validated Source text style profile. Source fidelity takes precedence only when the profile passes the Source style evidence gate and remains legible against its local background; otherwise the system uses a Readable fallback style. If a validated source has no outline, no outline is introduced automatically.
+_Avoid_: Forced contrast mode, always-outlined text, unvalidated source fidelity
+
 **Nearby color profile**:
-A reliable text color profile from a neighboring text region on the same page, used only when the current glyph color cannot be determined confidently.
-_Avoid_: Nearest pixel color, background fallback
+A validated source text style profile from a neighboring text region on the same page, eligible for fallback only when the regions share a compatible Text style category, the neighboring profile passes the Source style evidence gate, and the current glyph style cannot be determined confidently.
+_Avoid_: Nearest pixel color, cross-category style inheritance, background fallback
 
 **Reading view**:
 The translated manga page shown on its original reading website, where the reader can compare the translation with the original image.

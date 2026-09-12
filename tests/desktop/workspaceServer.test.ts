@@ -82,6 +82,54 @@ describe("WorkspaceServerSupervisor", () => {
     expect(options.env.HOSTNAME).toBe("127.0.0.1");
   });
 
+  it("prefers standalone/server.js in unpackaged mode when the build is present", () => {
+    const fsMock = {
+      existsSync: vi.fn((p: string) => p.endsWith(path.join(".next", "standalone", "server.js"))),
+      readFileSync: vi.fn().mockReturnValue(""),
+    };
+    const supervisor = new WorkspaceServerSupervisor({
+      projectRoot: "C:\\SuperK",
+      execPath: "C:\\SuperK\\electron.exe",
+      isPackaged: false,
+      fsModule: fsMock as any,
+      spawnFn: spawnFn as any,
+      execFn: execFn as any,
+      fetchFn: fetchFn as any,
+    });
+
+    supervisor.start();
+
+    const [, args, options] = spawnFn.mock.calls[0];
+    expect(args).toEqual([
+      path.join("C:\\SuperK", ".next", "standalone", "server.js"),
+    ]);
+    expect(options.env.NODE_ENV).toBe("production");
+  });
+
+  it("supports a dynamic workspace port and runtime cleaner URL override", () => {
+    const supervisor = new WorkspaceServerSupervisor({
+      projectRoot: "C:\\SuperK\\resources\\app",
+      execPath: "C:\\SuperK\\SuperK.exe",
+      isPackaged: true,
+      config: { port: 3001 },
+      runtimeEnv: {
+        SUPERK_CLEANER_URL: "http://127.0.0.1:8766",
+        OCR_SERVICE_URL: "http://127.0.0.1:8766",
+      },
+      spawnFn: spawnFn as any,
+      execFn: execFn as any,
+      fetchFn: fetchFn as any,
+    });
+
+    supervisor.start();
+
+    const [, , options] = spawnFn.mock.calls[0];
+    expect(options.env.PORT).toBe("3001");
+    expect(options.env.SUPERK_CLEANER_URL).toBe("http://127.0.0.1:8766");
+    expect(options.env.OCR_SERVICE_URL).toBe("http://127.0.0.1:8766");
+    expect(supervisor.getWorkspaceUrl()).toBe("http://127.0.0.1:3001");
+  });
+
   it("records workspace ownership on spawn and clears it after a successful stop", async () => {
     const ownershipManager = {
       record: vi.fn(),

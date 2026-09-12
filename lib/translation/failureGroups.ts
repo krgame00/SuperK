@@ -7,6 +7,7 @@ export interface FailureGroupSource {
   failureGroupId: string;
   pageIndex: number;
   diagnostic?: DiagnosticDetail;
+  message?: string;
 }
 
 export interface TranslationFailureGroup {
@@ -14,6 +15,7 @@ export interface TranslationFailureGroup {
   diagnostic: DiagnosticDetail;
   pages: number[];
   pageIndices: number[];
+  messages?: string[];
   cooldownUntil?: number;
   cooldownRemainingSeconds: number;
 }
@@ -44,6 +46,9 @@ export function buildFailureGroups(
         existing.pageIndices.push(failure.pageIndex);
         existing.pages.push(failure.pageIndex + 1);
       }
+      if (failure.message && !existing.messages?.includes(failure.message)) {
+        existing.messages = [...(existing.messages ?? []), failure.message];
+      }
       continue;
     }
 
@@ -53,6 +58,7 @@ export function buildFailureGroups(
       diagnostic,
       pages: [failure.pageIndex + 1],
       pageIndices: [failure.pageIndex],
+      messages: failure.message ? [failure.message] : [],
       ...(cooldownUntil ? { cooldownUntil } : {}),
       cooldownRemainingSeconds: cooldownUntil
         ? Math.max(0, Math.ceil((cooldownUntil - nowMs) / 1000))

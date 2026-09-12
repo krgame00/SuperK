@@ -80,7 +80,14 @@ class WindowStateManager {
 }
 
 function createTrayManager(options = {}) {
-  const { tray, Menu, mainWindow, onExit, openHealthUrl } = options;
+  const { tray, Menu, onExit, openHealthUrl } = options;
+
+  const getWindow = () => {
+    if (typeof options.getMainWindow === "function") {
+      return options.getMainWindow();
+    }
+    return options.mainWindow;
+  };
 
   const updateMenu = (hasError = false) => {
     tray.setToolTip(hasError ? "SuperK — Service Error" : "SuperK — Running");
@@ -89,9 +96,10 @@ function createTrayManager(options = {}) {
       {
         label: "Open Workspace",
         click: () => {
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.show();
-            mainWindow.focus();
+          const win = getWindow();
+          if (win && !win.isDestroyed()) {
+            win.show();
+            win.focus();
           }
         },
       },
@@ -119,9 +127,10 @@ function createTrayManager(options = {}) {
   updateMenu(false);
 
   tray.on("double-click", () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.show();
-      mainWindow.focus();
+    const win = getWindow();
+    if (win && !win.isDestroyed()) {
+      win.show();
+      win.focus();
     }
   });
 

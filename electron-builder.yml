@@ -3,7 +3,8 @@ productName: SuperK
 copyright: "SuperK Manga Translator"
 electronVersion: 44.2.0
 
-# Windows x64 portable target
+# Windows x64 default target. The build script can override this with NSIS
+# when `npm run desktop:installer` is used.
 win:
   target:
     - target: portable
@@ -59,3 +60,15 @@ extraResources:
 # Portable build: no installation or registry modifications.
 portable:
   artifactName: SuperK-Windows-Portable.exe
+
+# Assisted Windows installer used by `npm run desktop:installer`.
+# It installs SuperK normally and creates Start Menu + Desktop shortcuts.
+nsis:
+  artifactName: SuperK-Windows-Setup.exe
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: SuperK
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false

@@ -320,6 +320,23 @@ def _rewrite_irfft_for_ort(model: object) -> int:
     return rewritten
 
 
+def _strip_reshape_allowzero(model: object) -> int:
+    """Remove allowzero attributes from Reshape nodes.
+
+    PyTorch dynamo exporter attaches allowzero=1 to ONNX Reshape nodes by default.
+    onnxruntime-directml rejects allowzero=1 with E_INVALIDARG (80070057), which causes
+    silent fallbacks to CPU. Removing the attribute enables DirectML GPU acceleration.
+    """
+    stripped = 0
+    for node in model.graph.node:
+        if node.op_type == "Reshape":
+            for attr in list(node.attribute):
+                if attr.name == "allowzero":
+                    node.attribute.remove(attr)
+                    stripped += 1
+    return stripped
+
+
 def _export_with_ts2ep(model: object, image: object, mask: object, output: Path) -> None:
     import torch
     from torch._export.converter import TS2EPConverter
@@ -388,6 +405,7 @@ def export_model(source: Path, output: Path, *, force: bool = False) -> None:
     rewritten = _rewrite_irfft_for_ort(graph)
     if rewritten == 0:
         raise SystemExit("Exported LamaLarge graph contained no IRFFT nodes to rewrite")
+    stripped = _strip_reshape_allowzero(graph)
     onnx.checker.check_model(graph)
     onnx.save(graph, str(temporary))
 
@@ -434,7 +452,7 @@ def export_model(source: Path, output: Path, *, force: bool = False) -> None:
     print(
         "Exported LamaLarge ONNX: "
         f"{output} ({output.stat().st_size / 1024 / 1024:.1f} MB, "
-        f"IRFFT rewrites {rewritten}, max abs error {max_abs_error:.6f})",
+        f"IRFFT rewrites {rewritten}, stripped allowzero {stripped}, max abs error {max_abs_error:.6f})",
     )
 
 

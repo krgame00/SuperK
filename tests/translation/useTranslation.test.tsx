@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import {
   useTranslation,
+  sendDesktopNotification,
   type PreparedTranslationPage,
 } from "@/hooks/useTranslation";
 import { sampleBubbleRegion } from "@/lib/colorMatching/canvasSampler";
@@ -139,7 +140,7 @@ test("reads Original pixels and renders translated bubbles onto Clean", async ()
   ).toBe("blob:clean");
 });
 
-test("passes the cleaning mask to automatic text color sampling", async () => {
+test("does not treat the cleaning mask as glyph evidence for automatic text color sampling", async () => {
   const pages = ["blob:original"];
   const preparePageForTranslation = vi.fn().mockResolvedValue({
     recognitionUrl: "blob:original",
@@ -169,9 +170,106 @@ test("passes the cleaning mask to automatic text color sampling", async () => {
   expect(vi.mocked(sampleBubbleRegion)).toHaveBeenCalledWith(
     expect.any(HTMLImageElement),
     translatedBubble.box,
-    expect.objectContaining({ src: "blob:glyph-mask" }),
   );
 });
+test("keeps translation successful when source-style sampling fails", async () => {
+  const pages = ["blob:original"];
+  const preparePageForTranslation = vi.fn().mockResolvedValue({
+    recognitionUrl: "blob:original",
+    backgroundUrl: "blob:clean",
+  });
+  vi.mocked(sampleBubbleRegion).mockImplementationOnce(() => {
+    throw new Error("style sampler failed");
+  });
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url === "blob:original") return imageResponse();
+    if (url === "/api/translate") return successResponse();
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  const { result } = renderHook(() =>
+    useTranslation({
+      currentPage: 0,
+      pages,
+      viewMode: "single",
+      preparePageForTranslation,
+    }),
+  );
+
+  await act(async () => {
+    expect(await result.current.handleTranslate()).toBe(true);
+  });
+
+  expect(applyTranslationOverlay).toHaveBeenCalled();
+  expect(result.current.bubbleCacheRef.current.get("blob:original")?.length).toBe(1);
+});
+
+test("re-translation preserves a manual source-style override", async () => {
+  const pages = ["blob:original"];
+  const preparePageForTranslation = vi.fn().mockResolvedValue({
+    recognitionUrl: "blob:original",
+    backgroundUrl: "blob:clean",
+  });
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url === "blob:original") return imageResponse();
+    if (url === "/api/translate") return successResponse();
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  const { result } = renderHook(() =>
+    useTranslation({
+      currentPage: 0,
+      pages,
+      viewMode: "single",
+      preparePageForTranslation,
+    }),
+  );
+
+  await act(async () => {
+    expect(await result.current.handleTranslate()).toBe(true);
+  });
+  const cached = result.current.bubbleCacheRef.current.get("blob:original")!;
+  cached[0].styleProfile = {
+    fill: "#123456",
+    outline: "#654321",
+    hasOutline: true,
+    outlineWidthRatio: 0.11,
+    opacity: 0.8,
+    fillGradient: {
+      angleDeg: 90,
+      stops: [
+        { offset: 0, color: "#123456" },
+        { offset: 1, color: "#abcdef" },
+      ],
+    },
+    fillConfidence: 1,
+    outlineConfidence: 1,
+    confidenceBand: "high",
+    source: "manual",
+    category: "dialogue",
+  };
+
+  await act(async () => {
+    expect(await result.current.handleTranslate()).toBe(true);
+  });
+
+  expect(result.current.bubbleCacheRef.current.get("blob:original")?.[0].styleProfile)
+    .toMatchObject({
+      fill: "#123456",
+      outline: "#654321",
+      hasOutline: true,
+      outlineWidthRatio: 0.11,
+      opacity: 0.8,
+      source: "manual",
+      category: "dialogue",
+      fillGradient: {
+        angleDeg: 90,
+      },
+    });
+});
+
 test("keeps translation caches keyed by the original URL", async () => {
   const pages = ["blob:original"];
   const preparePageForTranslation = vi.fn().mockResolvedValue({
@@ -272,6 +370,46 @@ test("batch skips a cleaning failure and continues", async () => {
     expect.objectContaining({ pageIndex: 1, stage: "cleaning" }),
   ]);
   expect(result.current.bubbleCacheRef.current.has("blob:three")).toBe(true);
+});
+
+test("batch translation continues when source-style sampling fails", async () => {
+  vi.useFakeTimers();
+  const pages = ["blob:one", "blob:two"];
+  const preparePageForTranslation = vi.fn(async (url: string) => ({
+    recognitionUrl: url,
+    backgroundUrl: `blob:clean-${url.split(":")[1]}`,
+  }));
+  vi.mocked(sampleBubbleRegion)
+    .mockImplementationOnce(() => { throw new Error("style sampler failed"); })
+    .mockImplementationOnce(() => { throw new Error("style sampler failed"); });
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (pages.includes(url)) return imageResponse();
+    if (url === "/api/translate") return successResponse();
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  const { result } = renderHook(() =>
+    useTranslation({
+      currentPage: 0,
+      pages,
+      viewMode: "single",
+      preparePageForTranslation,
+    }),
+  );
+
+  let batch!: Promise<void>;
+  act(() => {
+    batch = result.current.handleTranslateAll();
+  });
+  await act(async () => {
+    await vi.runAllTimersAsync();
+    await batch;
+  });
+
+  expect(result.current.batchFailures).toEqual([]);
+  expect(result.current.bubbleCacheRef.current.has("blob:one")).toBe(true);
+  expect(result.current.bubbleCacheRef.current.has("blob:two")).toBe(true);
 });
 
 test("translation retry reuses one prepared URL", async () => {
@@ -627,6 +765,64 @@ test("quota cooldown is group-scoped, expires without auto retry, then manually 
   expect(result.current.batchFailures).toHaveLength(0);
 });
 
+test("flags awaitingReview pages for review, but explicit retry proceeds with translation", async () => {
+  vi.useFakeTimers();
+  const pages = ["blob:one"];
+  const preparePageForTranslation = vi.fn(async (url: string) => ({
+    recognitionUrl: url,
+    backgroundUrl: `${url}-clean`,
+    awaitingReview: true,
+  }));
+
+  let apiCalls = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (pages.includes(url)) return imageResponse();
+    if (url === "/api/translate") {
+      apiCalls += 1;
+      return successResponse();
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  const { result } = renderHook(() =>
+    useTranslation({
+      currentPage: 0,
+      pages,
+      viewMode: "single",
+      preparePageForTranslation,
+    }),
+  );
+
+  let batch!: Promise<void>;
+  act(() => {
+    batch = result.current.handleTranslateAll();
+  });
+  await act(async () => {
+    await vi.runAllTimersAsync();
+    await batch;
+  });
+
+  // Awaiting review halted the initial batch without spending Gemini API quota
+  expect(apiCalls).toBe(0);
+  expect(result.current.failureGroups).toHaveLength(1);
+  expect(result.current.failureGroups[0]).toMatchObject({
+    diagnostic: expect.objectContaining({ code: "CLEANING_REVIEW_REQUIRED" }),
+    pageIndices: [0],
+  });
+
+  // Explicit retry (user confirmed) proceeds with translation using the cleaned image
+  const failureGroupId = result.current.failureGroups[0].id;
+  await act(async () => {
+    const retryPromise = result.current.retryFailureGroup(failureGroupId);
+    await vi.runAllTimersAsync();
+    await retryPromise;
+  });
+
+  expect(apiCalls).toBe(1);
+  expect(result.current.batchFailures).toHaveLength(0);
+});
+
 test("persists translated caches after an inactive batch page completes", async () => {
   vi.useFakeTimers();
   const pages = ["blob:one", "blob:two"];
@@ -924,5 +1120,34 @@ test("does not mark as saved when a new revision arrives while saving", async ()
   });
 
   expect(result.current.saveStatus).toBe("saved");
+});
+
+test("sendDesktopNotification forwards to superkDesktop.notify when running in Electron desktop app", () => {
+  const notifyMock = vi.fn();
+  (window as any).superkDesktop = { notify: notifyMock };
+
+  sendDesktopNotification("SuperK — Manga Translator", "✅ แปลเสร็จเรียบร้อยแล้ว");
+
+  expect(notifyMock).toHaveBeenCalledWith({
+    title: "SuperK — Manga Translator",
+    body: "✅ แปลเสร็จเรียบร้อยแล้ว",
+  });
+
+  delete (window as any).superkDesktop;
+});
+
+test("sendDesktopNotification uses Web Notification when permission is granted", () => {
+  const originalNotification = globalThis.Notification;
+  const mockNotification = vi.fn();
+  (mockNotification as any).permission = "granted";
+  globalThis.Notification = mockNotification as any;
+
+  sendDesktopNotification("SuperK — Manga Translator", "✅ แปลเสร็จเรียบร้อยแล้ว");
+
+  expect(mockNotification).toHaveBeenCalledWith("SuperK — Manga Translator", {
+    body: "✅ แปลเสร็จเรียบร้อยแล้ว",
+  });
+
+  globalThis.Notification = originalNotification;
 });
 

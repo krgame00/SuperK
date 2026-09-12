@@ -320,13 +320,27 @@ Against a fresh pre-optimization baseline on the same machine/runtime/input:
 
 ### Current benchmark blocker
 
-The committed 30-page benchmark manifest references source images previously resolved under:
+The requested corpus root is:
 
 ```text
-F:\Doujin\Download
+F:\SuperKC
 ```
 
-Those 30 source pages were not available during the latest run, producing:
+The root now contains 42 images, including 8 English pages. Because these
+images do not yet have an accepted original-only review manifest, the run was
+performed as exploratory evidence with a temporary manifest. The optimized
+path was slower and used more memory on this corpus:
+
+```text
+Legacy median/p95:    18,083 / 28,957 ms   RSS 2,393.5 MB
+Optimized median/p95: 24,983 / 38,636 ms   RSS 3,608.0 MB
+Delta:                +38.15% / +33.43%    RSS +50.74%
+```
+
+The release gate remains blocked; visual-review evidence is empty and the
+optimized path does not meet the performance or memory thresholds. A valid
+release run must still use a reviewed, hash-matched corpus. If the root is
+empty or the manifest does not match, the runner produces:
 
 ```text
 RuntimeError: unable to resolve 30 manifest pages
@@ -338,8 +352,8 @@ Do **not** fabricate a speedup number.
 
 Preferred order:
 
-1. Locate the exact original corpus by its manifest hashes if still available locally.
-2. If unavailable, restore/copy the exact corpus from its known source location.
+1. Place the exact reviewed corpus under `F:\SuperKC` and verify its manifest hashes.
+2. If the original corpus is unavailable, restore/copy it into that requested root.
 3. Only if the original corpus is permanently unavailable, create a new fixed benchmark corpus and record a **new baseline before further tuning**, then use that corpus consistently for before/after measurements.
 
 The performance ticket cannot be marked fully accepted until a valid comparable baseline exists.

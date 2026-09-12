@@ -261,6 +261,8 @@ test("image prompt translates story text and excludes interface labels", async (
   expect(prompt).toContain("IGNORE interface text");
   expect(prompt).toContain("HUD");
   expect(prompt).toContain("watermarks");
+  expect(prompt).toContain("styleCategory: dialogue, narration, or sfx");
+  expect(prompt).toContain('"styleCategory":"dialogue"');
   expect(prompt).toContain(
     "Narration may appear without a speech bubble",
   );

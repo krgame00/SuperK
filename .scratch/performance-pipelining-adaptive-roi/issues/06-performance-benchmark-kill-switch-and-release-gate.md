@@ -4,9 +4,11 @@
 
 **Blocked by:** 01: Prepared-page Identity & Reusable Clean Asset; 02: Bounded N+1 Clean/Translate Pipelining; 03: Quality-First Adaptive ROI Cleaning; 04: Bounded ROI Escalation & Page Awaiting Review; 05: Truthful Batch Progress & Rolling ETA.
 
-**Status:** blocked (benchmark corpus and Python test runner unavailable)
+**Status:** blocked (exploratory corpus is not release-reviewed; optimized path fails performance and memory gates)
 
-**Evidence (2026-09-10):** optimized behavior is release-gated and disabled by default. Internal opt-in flags are `SUPERK_ENABLE_ADAPTIVE_ROI` for the service and `superk:enable-performance-pipeline` for bounded prefetch; `SUPERK_DISABLE_ADAPTIVE_ROI` and `superk:legacy-performance-mode` retain diagnostic fallbacks. TypeScript, full frontend regression, Python compilation, and deterministic adaptive checks pass, but the committed 30-page source corpus is unavailable and the bundled Python runtime has no `pytest`; no speedup or memory claim is recorded.
+**Evidence (2026-09-10):** optimized behavior is release-gated and disabled by default. A new exploratory run used the same 42 pages (including 8 English pages) from `F:\SuperKC` for both modes. Legacy median/p95 were `18,083/28,957 ms` with peak RSS `2,393.5 MB`; optimized median/p95 were `24,983/38,636 ms` with peak RSS `3,608.0 MB` (+38.15% median time, +33.43% p95, +50.74% RSS). Residual/automatic pass stayed `96.5%`, changed pixels outside support and inside protected stayed `0`, and awaiting-review pages stayed `7`; visual review evidence is empty, so this is exploratory evidence and the release gate remains blocked.
+
+**Regression safety update (2026-09-11):** the failed experiment is now harder-gated so stale debug settings cannot accidentally reactivate it. Production falls back to legacy full-page cleaning and sequential batch orchestration unless new explicit experimental flags are set: `SUPERK_ENABLE_ADAPTIVE_ROI_V2=1` and `superk:experimental-performance-pipeline-v2=1` (or `NEXT_PUBLIC_ENABLE_PERFORMANCE_PIPELINE_V2=1`). When Adaptive ROI is disabled, the production pipeline now skips Adaptive-scope clustering entirely. Workspace preparation also reuses validated in-memory clean results directly and avoids re-fetching/re-hashing immutable Blob/data sources. The legacy diagnostic disables remain available.
 
 - [ ] Capture a fresh pre-optimization baseline using the existing reviewed 30-page cleaning corpus on the same machine, runtime, model set, and input identities used for the optimized comparison.
 - [ ] Retain the protected corpus and existing human visual-review requirements as part of release evidence.

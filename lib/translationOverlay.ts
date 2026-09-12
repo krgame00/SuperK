@@ -1,6 +1,9 @@
 import { undoManager } from "./undoManager";
-import { resolveBubbleTextStyle } from "./colorMatching/resolveTextStyle";
-import { sampleBubbleRegion } from "./colorMatching/canvasSampler";
+import {
+  recomputeAdaptiveReadableOnLayoutCommit,
+  resolveBubbleTextStyle,
+} from "./colorMatching/resolveTextStyle";
+import { sampleBubbleRegion, sampleRectRegion } from "./colorMatching/canvasSampler";
 import { extractTextColors } from "./colorMatching/sampleTextColors";
 import {
   applyNearbyStyleFallbacks,
@@ -480,7 +483,6 @@ export const applyTranslationOverlay = async (
 
   const real = bubbles.filter(b => b && !b.deleted && (b.t || b.translated) && (b.t ?? b.translated ?? "").trim());
   if (real.length === 0) {
-    setTranslationResult("❌ ไม่พบข้อความที่แปลได้ในหน้านี้");
     return;
   }
 
@@ -516,8 +518,6 @@ export const applyTranslationOverlay = async (
     container.appendChild(tlContainer);
 
     let fallbackY2 = 10;
-
-    setTranslationResult("✨ วางข้อความแปลเสร็จเรียบร้อย!");
 
     let selectedBubbleWrapper: HTMLElement | null = null;
     const setSelectedBubble = (wrapper: HTMLElement | null) => {
@@ -611,6 +611,19 @@ export const applyTranslationOverlay = async (
           ...(typeof b.fontSizeMultiplier === "number" ? { fontSizeMultiplier: b.fontSizeMultiplier } : {}),
         };
         saveOverlayAdjustments(all);
+
+        if (img && (img.naturalWidth > 0 || img.width > 0)) {
+          const sample = sampleRectRegion(img, {
+            x: currentBx,
+            y: currentBy,
+            width: currentBw,
+            height: currentBh,
+          });
+          if (sample) {
+            recomputeAdaptiveReadableOnLayoutCommit(b, sample);
+          }
+        }
+
         onBubblesMutated?.();
       };
 

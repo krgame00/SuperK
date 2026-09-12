@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Parse LLM JSON output that may contain markdown fences, commentary/preamble,
  * trailing commas, truncated closing braces, or trailing garbage text.
  * Returns the parsed object, or null when nothing parses.
@@ -28,17 +28,66 @@ export function parseLLMJSON(text: string): unknown {
   return tryParseCandidates(base);
 }
 
+function sanitizeControlCharsInStrings(str: string): string {
+  let inString = false;
+  let escaped = false;
+  let result = "";
+  for (let i = 0; i < str.length; i++) {
+    const char = str[i];
+    if (escaped) {
+      result += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      result += char;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      result += char;
+      continue;
+    }
+    if (inString) {
+      if (char === "\n") {
+        result += "\\n";
+        continue;
+      }
+      if (char === "\r") {
+        result += "\\r";
+        continue;
+      }
+      if (char === "\t") {
+        result += "\\t";
+        continue;
+      }
+    }
+    result += char;
+  }
+  return result;
+}
+
 function tryParseCandidates(raw: string): unknown {
   if (!raw) return null;
   const noTrailingCommas = raw.replace(/,\s*([\]}])/g, "$1");
+  const sanitized = sanitizeControlCharsInStrings(raw);
+  const sanitizedNoCommas = sanitizeControlCharsInStrings(noTrailingCommas);
 
-  const candidates: string[] = [raw, noTrailingCommas];
+  const candidates: string[] = [raw, noTrailingCommas, sanitized, sanitizedNoCommas];
 
   const lastBrace = noTrailingCommas.lastIndexOf("}");
   if (lastBrace !== -1) {
     candidates.push(noTrailingCommas.substring(0, lastBrace + 1));
     candidates.push(noTrailingCommas.substring(0, lastBrace + 1) + "]}");
+    candidates.push(sanitizedNoCommas.substring(0, lastBrace + 1));
+    candidates.push(sanitizedNoCommas.substring(0, lastBrace + 1) + "]}");
   }
+
+  // Truncated tail recovery
+  candidates.push(sanitizedNoCommas + "]}");
+  candidates.push(sanitizedNoCommas + "\"}]}");
+  candidates.push(sanitizedNoCommas + "}");
 
   const trimmedTail = noTrailingCommas.replace(/[^}]*$/, "");
   if (trimmedTail && trimmedTail !== noTrailingCommas) {

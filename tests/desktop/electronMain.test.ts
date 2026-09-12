@@ -13,13 +13,25 @@ import { createMainWindow, bootstrap, WORKSPACE_URL, BASE_WINDOW_CONFIG } from "
 // ── Mock helpers ───────────────────────────────────────────────────────────────
 
 function makeWindowMock() {
+  const listeners: Record<string, ((...args: unknown[]) => void)[]> = {};
   return {
     loadURL: vi.fn(),
     show: vi.fn(),
+    hide: vi.fn(),
+    destroy: vi.fn(),
+    close: vi.fn(),
+    focus: vi.fn(),
+    isDestroyed: vi.fn(() => false),
     once: vi.fn((event: string, cb: () => void) => {
       if (event === "ready-to-show") cb(); // trigger immediately
     }),
-    on: vi.fn(),
+    on: vi.fn((event: string, cb: (...args: unknown[]) => void) => {
+      if (!listeners[event]) listeners[event] = [];
+      listeners[event].push(cb);
+    }),
+    emit: (event: string, ...args: unknown[]) => {
+      listeners[event]?.forEach((cb) => cb(...args));
+    },
   };
 }
 
@@ -39,7 +51,7 @@ function makeBrowserWindowMock(windowInstance: ReturnType<typeof makeWindowMock>
 type AppMock = {
   quit: ReturnType<typeof vi.fn>;
   on: ReturnType<typeof vi.fn>;
-  whenReady: ReturnType<typeof vi.fn>;
+  whenReady: ReturnType<typeof vi.fn> & (() => Promise<unknown>);
   _events: Record<string, (...args: unknown[]) => void>;
 };
 
@@ -56,7 +68,11 @@ function makeAppMock(): AppMock {
   return mock;
 }
 
-function bootstrapForTest(appMock: AppMock, BrowserWindowMock: ReturnType<typeof makeBrowserWindowMock>) {
+function bootstrapForTest(
+  appMock: AppMock,
+  BrowserWindowMock: ReturnType<typeof makeBrowserWindowMock>,
+  extraOpts: Record<string, unknown> = {}
+) {
   const sidecar: any = {
     isReady: false,
     on: vi.fn(),
@@ -95,6 +111,8 @@ function bootstrapForTest(appMock: AppMock, BrowserWindowMock: ReturnType<typeof
     {
       workspaceSupervisor: workspace,
       createSplashWindowFn: vi.fn(() => splashWindow),
+      checkRequiredPortsFn: vi.fn(async () => null),
+      ...extraOpts,
     }
   );
 }
@@ -280,6 +298,80 @@ describe("bootstrap — app lifecycle (Ticket 01)", () => {
     expect(order.slice(0, 4)).toEqual(["reclaim", "ports", "sidecar", "workspace"]);
   });
 
+  it("auto-selects free ports in packaged mode and loads the dynamic workspace URL", async () => {
+    appMock.whenReady = vi.fn(() => new Promise(() => {}));
+    (appMock as any).isPackaged = true;
+
+    const sidecar: any = {
+      isReady: false,
+      config: { host: "127.0.0.1", port: 8765 },
+      on: vi.fn(),
+      getBaseUrl: vi.fn(() => {
+        return `http://${sidecar.config.host}:${sidecar.config.port}`;
+      }),
+      start: vi.fn(async function () {
+        sidecar.isReady = true;
+        return true;
+      }),
+      stop: vi.fn(async () => {
+        sidecar.isReady = false;
+      }),
+    };
+    const workspace: any = {
+      isReady: false,
+      config: { host: "127.0.0.1", port: 3000 },
+      runtimeEnv: {},
+      on: vi.fn(),
+      getWorkspaceUrl: vi.fn(() => {
+        return `http://${workspace.config.host}:${workspace.config.port}`;
+      }),
+      setRuntimeEnv: vi.fn((values: Record<string, string>) => {
+        Object.assign(workspace.runtimeEnv, values);
+      }),
+      start: vi.fn(async function () {
+        workspace.isReady = true;
+        return true;
+      }),
+      stop: vi.fn(async () => {
+        workspace.isReady = false;
+      }),
+    };
+    const findAvailablePortFn = vi.fn(async (preferred: number) => {
+      if (preferred === 3000) return 3001;
+      if (preferred === 8765) return 8766;
+      return preferred;
+    });
+    const checkRequiredPortsFn = vi.fn(async () => null);
+
+    const runtime = bootstrap(
+      appMock as unknown as import("electron").App,
+      BrowserWindowMock as unknown as typeof import("electron").BrowserWindow,
+      sidecar,
+      null as any,
+      {
+        workspaceSupervisor: workspace,
+        findAvailablePortFn,
+        checkRequiredPortsFn,
+        createSplashWindowFn: vi.fn(() => ({
+          close: vi.fn(),
+          isDestroyed: vi.fn(() => false),
+          webContents: { send: vi.fn() },
+        })),
+      },
+    );
+
+    await expect(runtime.runStartup()).resolves.toBe(true);
+
+    expect(workspace.config.port).toBe(3001);
+    expect(sidecar.config.port).toBe(8766);
+    expect(workspace.setRuntimeEnv).toHaveBeenCalledWith({
+      SUPERK_CLEANER_URL: "http://127.0.0.1:8766",
+      OCR_SERVICE_URL: "http://127.0.0.1:8766",
+    });
+    expect(checkRequiredPortsFn).toHaveBeenCalledWith([3001, 8766]);
+    expect(windowMock.loadURL).toHaveBeenCalledWith("http://127.0.0.1:3001");
+  });
+
   it("calls app.quit() when window-all-closed fires on Windows", async () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "win32", configurable: true });
@@ -319,7 +411,117 @@ describe("Constants (Ticket 01)", () => {
       height: 900,
       minWidth: 1024,
       minHeight: 700,
-      webPreferences: { contextIsolation: true, nodeIntegration: false },
+      webPreferences: { contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
     });
+  });
+
+  it("disables background timer throttling in webPreferences for full-speed background execution", () => {
+    expect(BASE_WINDOW_CONFIG.webPreferences.backgroundThrottling).toBe(false);
+  });
+});
+
+describe("Background Execution & System Tray", () => {
+  let windowMock: ReturnType<typeof makeWindowMock>;
+  let BrowserWindowMock: ReturnType<typeof makeBrowserWindowMock>;
+  let appMock: AppMock;
+
+  beforeEach(() => {
+    windowMock = makeWindowMock();
+    BrowserWindowMock = makeBrowserWindowMock(windowMock);
+    appMock = makeAppMock();
+  });
+
+  it("initializes system tray on app ready and destroys it on shutdown", async () => {
+    const mockTrayInstance = {
+      setToolTip: vi.fn(),
+      setContextMenu: vi.fn(),
+      on: vi.fn(),
+      destroy: vi.fn(),
+    };
+    const MockTray = vi.fn(function () {
+      return mockTrayInstance;
+    }) as any;
+    const MockMenu = {
+      buildFromTemplate: vi.fn((items) => items),
+    };
+
+    const runtime = bootstrapForTest(appMock, BrowserWindowMock, {
+      Tray: MockTray,
+      Menu: MockMenu,
+    });
+
+    await appMock.whenReady();
+    expect(MockTray as any).toHaveBeenCalled();
+    expect(mockTrayInstance.setToolTip).toHaveBeenCalledWith("SuperK — Running");
+
+    // Before quit should destroy tray icon
+    appMock._events["before-quit"]?.();
+    expect(mockTrayInstance.destroy).toHaveBeenCalled();
+  });
+
+  it("intercepts window close event to hide to tray instead of terminating app", async () => {
+    appMock.whenReady = vi.fn(() => new Promise(() => {}));
+    const mockTrayInstance = {
+      setToolTip: vi.fn(),
+      setContextMenu: vi.fn(),
+      on: vi.fn(),
+      destroy: vi.fn(),
+    };
+    const MockTray = vi.fn(function () {
+      return mockTrayInstance;
+    }) as any;
+    const MockMenu = {
+      buildFromTemplate: vi.fn((items) => items),
+    };
+
+    const runtime = bootstrapForTest(appMock, BrowserWindowMock, {
+      Tray: MockTray,
+      Menu: MockMenu,
+    });
+
+    await runtime.runStartup();
+
+    const preventDefault = vi.fn();
+    windowMock.emit("close", { preventDefault });
+
+    expect(preventDefault).toHaveBeenCalled();
+    expect(windowMock.hide).toHaveBeenCalled();
+  });
+
+  it("handles desktop:notify IPC to trigger native OS notification", async () => {
+    const ipcMain = {
+      on: vi.fn(),
+      handle: vi.fn(),
+      removeListener: vi.fn(),
+      removeHandler: vi.fn(),
+    };
+    const mockNotificationInstance = {
+      on: vi.fn(),
+      show: vi.fn(),
+    };
+    const MockNotification = vi.fn(function (opts: unknown) {
+      return mockNotificationInstance;
+    }) as unknown as { new (opts: unknown): typeof mockNotificationInstance; isSupported: () => boolean };
+    MockNotification.isSupported = vi.fn(() => true);
+
+    bootstrapForTest(appMock, BrowserWindowMock, {
+      ipcMain,
+      Notification: MockNotification,
+    });
+
+    const notifyListener = ipcMain.on.mock.calls.find(
+      ([channel]) => channel === "desktop:notify"
+    )?.[1];
+    expect(notifyListener).toBeDefined();
+
+    notifyListener({}, { title: "SuperK Manga Translator", body: "แปลเสร็จแล้ว" });
+
+    expect(MockNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "SuperK Manga Translator",
+        body: "แปลเสร็จแล้ว",
+      })
+    );
+    expect(mockNotificationInstance.show).toHaveBeenCalled();
   });
 });

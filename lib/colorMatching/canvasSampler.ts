@@ -174,3 +174,59 @@ export function sampleBubbleRegion(
     return null;
   }
 }
+
+/**
+ * Samples an arbitrary pixel rectangle from an image or canvas element.
+ */
+export function sampleRectRegion(
+  image: HTMLImageElement | HTMLCanvasElement,
+  rect: PixelRect,
+): ColorSampleRegion | null {
+  try {
+    const naturalWidth =
+      "naturalWidth" in image ? image.naturalWidth || image.width : image.width;
+    const naturalHeight =
+      "naturalHeight" in image ? image.naturalHeight || image.height : image.height;
+
+    if (!naturalWidth || !naturalHeight) return null;
+    const clampedRect: PixelRect = {
+      x: Math.max(0, Math.min(naturalWidth - 1, Math.floor(rect.x))),
+      y: Math.max(0, Math.min(naturalHeight - 1, Math.floor(rect.y))),
+      width: Math.max(1, Math.min(naturalWidth - Math.max(0, rect.x), Math.ceil(rect.width))),
+      height: Math.max(1, Math.min(naturalHeight - Math.max(0, rect.y), Math.ceil(rect.height))),
+    };
+
+    const canvas = document.createElement("canvas");
+    canvas.width = clampedRect.width;
+    canvas.height = clampedRect.height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+
+    if (typeof ctx.drawImage === "function") {
+      ctx.drawImage(
+        image,
+        clampedRect.x,
+        clampedRect.y,
+        clampedRect.width,
+        clampedRect.height,
+        0,
+        0,
+        clampedRect.width,
+        clampedRect.height,
+      );
+    }
+
+    if (typeof ctx.getImageData !== "function") return null;
+    const imgData = ctx.getImageData(0, 0, clampedRect.width, clampedRect.height);
+    if (!imgData?.data) return null;
+
+    return {
+      width: clampedRect.width,
+      height: clampedRect.height,
+      rgba: imgData.data,
+    };
+  } catch {
+    return null;
+  }
+}
+

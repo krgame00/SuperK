@@ -13,9 +13,25 @@
 const path = require("path");
 const { SidecarSupervisor } = require("./sidecar");
 const { WorkspaceServerSupervisor } = require("./workspaceServer");
-const { checkRequiredPorts, promptPortConflict } = require("./portGuard");
+const {
+  checkRequiredPorts,
+  findAvailablePort,
+  promptPortConflict,
+} = require("./portGuard");
 const { createDefaultOwnershipManager } = require("./processOwnership");
 const { StartupGate, createSplashWindow } = require("./splash");
+const {
+  WindowStateManager,
+  createTrayManager,
+  DEFAULT_BOUNDS,
+} = require("./windowState");
+
+let electronModule = null;
+try {
+  electronModule = require("electron");
+} catch {
+  // Ignored in test environments without electron binary
+}
 
 const WORKSPACE_URL = "http://127.0.0.1:3000";
 
@@ -29,6 +45,7 @@ const BASE_WINDOW_CONFIG = {
     contextIsolation: true,
     nodeIntegration: false,
     preload: path.join(__dirname, "preload.js"),
+    backgroundThrottling: false,
   },
   backgroundColor: "#111111",
   show: false,
@@ -41,16 +58,30 @@ const BASE_WINDOW_CONFIG = {
  * revealed only after the startup gate has completed.
  */
 function createMainWindow(BrowserWindow, options = {}) {
-  const win = new BrowserWindow(BASE_WINDOW_CONFIG);
+  const bounds = options.bounds || {};
+  const config = {
+    ...BASE_WINDOW_CONFIG,
+    ...bounds,
+    webPreferences: {
+      ...BASE_WINDOW_CONFIG.webPreferences,
+      ...(bounds.webPreferences || {}),
+    },
+  };
+  const win = new BrowserWindow(config);
   const showOnReady = options.showOnReady !== false;
   const shouldLoad = options.load !== false;
+  const workspaceUrl = options.workspaceUrl || WORKSPACE_URL;
+
+  if (bounds.isMaximized && typeof win.maximize === "function") {
+    win.maximize();
+  }
 
   if (showOnReady) {
     win.once("ready-to-show", () => win.show());
   }
 
   if (shouldLoad) {
-    win.loadURL(WORKSPACE_URL);
+    win.loadURL(workspaceUrl);
   }
 
   return win;
@@ -103,13 +134,69 @@ function bootstrap(
   const ipcMain = runtimeOptions.ipcMain || null;
   const splashFactory = runtimeOptions.createSplashWindowFn || createSplashWindow;
   const checkRequiredPortsFn = runtimeOptions.checkRequiredPortsFn || checkRequiredPorts;
+  const findAvailablePortFn = runtimeOptions.findAvailablePortFn || findAvailablePort;
   const promptPortConflictFn = runtimeOptions.promptPortConflictFn || promptPortConflict;
+  const autoSelectPorts =
+    runtimeOptions.autoSelectPorts !== undefined
+      ? Boolean(runtimeOptions.autoSelectPorts)
+      : Boolean(app.isPackaged);
+
+  const TrayClass =
+    runtimeOptions.Tray !== undefined ? runtimeOptions.Tray : electronModule?.Tray;
+  const MenuClass =
+    runtimeOptions.Menu !== undefined ? runtimeOptions.Menu : electronModule?.Menu;
+  const NotificationClass =
+    runtimeOptions.Notification !== undefined
+      ? runtimeOptions.Notification
+      : electronModule?.Notification;
+  const shellModule =
+    runtimeOptions.shell !== undefined ? runtimeOptions.shell : electronModule?.shell;
+
+  const windowStateManager =
+    runtimeOptions.windowStateManager ||
+    (typeof app.getPath === "function"
+      ? new WindowStateManager({
+          configPath:
+            runtimeOptions.windowStateFile ||
+            path.join(app.getPath("userData"), "window-state.json"),
+        })
+      : null);
 
   let mainWindow = null;
   let splashWindow = null;
+  let trayManager = null;
+  let isQuitting = false;
   let startupRunning = false;
   let shuttingDown = false;
   let ownershipPrepared = false;
+
+  const trayIconPath =
+    runtimeOptions.trayIconPath ||
+    path.join(projectRoot, "public", "favicon.ico");
+
+  const initTray = () => {
+    if (trayManager || !TrayClass || !MenuClass) return;
+    try {
+      const tray = new TrayClass(trayIconPath);
+      trayManager = createTrayManager({
+        tray,
+        Menu: MenuClass,
+        getMainWindow: () => mainWindow,
+        onExit: () => {
+          isQuitting = true;
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.close?.();
+          }
+          app.quit();
+        },
+        openHealthUrl: (url) => {
+          shellModule?.openExternal?.(url);
+        },
+      });
+    } catch (err) {
+      console.error("[Tray] Could not initialize tray:", err);
+    }
+  };
 
   const reportServiceCrash = (service, message) => {
     console.error(`[${service}] ${message}`);
@@ -135,10 +222,85 @@ function bootstrap(
     );
   });
 
+  const getWorkspaceUrl = () => {
+    if (typeof workspaceSupervisor.getWorkspaceUrl === "function") {
+      return workspaceSupervisor.getWorkspaceUrl();
+    }
+    const host = workspaceSupervisor.config?.host || "127.0.0.1";
+    const port = workspaceSupervisor.config?.port || 3000;
+    return `http://${host}:${port}`;
+  };
+
+  const getSidecarBaseUrl = () => {
+    if (typeof supervisor.getBaseUrl === "function") {
+      return supervisor.getBaseUrl();
+    }
+    const host = supervisor.config?.host || "127.0.0.1";
+    const port = supervisor.config?.port || 8765;
+    return `http://${host}:${port}`;
+  };
+
+  const prepareRuntimePorts = async () => {
+    if (!autoSelectPorts) return;
+
+    const workspaceHost = workspaceSupervisor.config?.host || "127.0.0.1";
+    const sidecarHost = supervisor.config?.host || "127.0.0.1";
+    const preferredWorkspacePort = workspaceSupervisor.config?.port || 3000;
+    const preferredSidecarPort = supervisor.config?.port || 8765;
+
+    if (!workspaceSupervisor.isReady) {
+      const workspacePort = await findAvailablePortFn(
+        preferredWorkspacePort,
+        workspaceHost
+      );
+      if (workspaceSupervisor.config) {
+        workspaceSupervisor.config.port = workspacePort;
+      }
+      if (workspacePort !== preferredWorkspacePort) {
+        console.log(
+          `[Ports] Workspace port ${preferredWorkspacePort} is busy; using ${workspacePort}.`
+        );
+      }
+    }
+
+    if (!supervisor.isReady) {
+      const sidecarPort = await findAvailablePortFn(
+        preferredSidecarPort,
+        sidecarHost
+      );
+      if (supervisor.config) {
+        supervisor.config.port = sidecarPort;
+      }
+      if (sidecarPort !== preferredSidecarPort) {
+        console.log(
+          `[Ports] Cleaner port ${preferredSidecarPort} is busy; using ${sidecarPort}.`
+        );
+      }
+    }
+
+    const cleanerUrl = getSidecarBaseUrl();
+    const serviceEnv = {
+      SUPERK_CLEANER_URL: cleanerUrl,
+      OCR_SERVICE_URL: cleanerUrl,
+    };
+    if (typeof workspaceSupervisor.setRuntimeEnv === "function") {
+      workspaceSupervisor.setRuntimeEnv(serviceEnv);
+    } else {
+      workspaceSupervisor.runtimeEnv = {
+        ...(workspaceSupervisor.runtimeEnv || {}),
+        ...serviceEnv,
+      };
+    }
+  };
+
   const resolvePortConflicts = async () => {
     const ports = [];
-    if (!workspaceSupervisor.isReady) ports.push(3000);
-    if (!supervisor.isReady) ports.push(8765);
+    if (!workspaceSupervisor.isReady) {
+      ports.push(workspaceSupervisor.config?.port || 3000);
+    }
+    if (!supervisor.isReady) {
+      ports.push(supervisor.config?.port || 8765);
+    }
 
     if (ports.length === 0) return null;
 
@@ -159,12 +321,40 @@ function bootstrap(
       return mainWindow;
     }
 
+    const workspaceUrl = getWorkspaceUrl();
+    const savedBounds = windowStateManager ? windowStateManager.getBounds() : null;
     const win = createMainWindow(BrowserWindow, {
       showOnReady: false,
       load: false,
+      workspaceUrl,
+      bounds: savedBounds || undefined,
     });
 
     mainWindow = win;
+
+    if (windowStateManager) {
+      const saveState = () => {
+        if (!win.isDestroyed()) {
+          const isMaximized = typeof win.isMaximized === "function" ? win.isMaximized() : false;
+          const currentBounds = typeof win.getBounds === "function" ? win.getBounds() : {};
+          windowStateManager.saveState({
+            ...currentBounds,
+            isMaximized,
+          });
+        }
+      };
+      win.on?.("resize", saveState);
+      win.on?.("move", saveState);
+    }
+
+    win.on?.("close", (event) => {
+      if (!isQuitting && trayManager) {
+        if (event && typeof event.preventDefault === "function") {
+          event.preventDefault();
+        }
+        win.hide?.();
+      }
+    });
 
     try {
       // Do not gate desktop startup on BrowserWindow.loadURL() fully resolving.
@@ -184,7 +374,7 @@ function bootstrap(
       });
 
       const loadFailed = new Promise((_, reject) => {
-        Promise.resolve(win.loadURL(WORKSPACE_URL)).catch(reject);
+        Promise.resolve(win.loadURL(workspaceUrl)).catch(reject);
       });
 
       await Promise.race([rendererReady, loadFailed]);
@@ -192,7 +382,7 @@ function bootstrap(
     } catch (err) {
       if (mainWindow === win) mainWindow = null;
       win.destroy?.();
-      throw new Error(`Failed to load ${WORKSPACE_URL}: ${err.message}`);
+      throw new Error(`Failed to load ${workspaceUrl}: ${err.message}`);
     }
   };
 
@@ -208,6 +398,7 @@ function bootstrap(
     startupRunning = true;
 
     try {
+      initTray();
       if (!ownershipPrepared && ownershipManager) {
         const ownershipResults = await ownershipManager.reclaimStaleOwnedProcesses();
         for (const result of ownershipResults) {
@@ -220,6 +411,8 @@ function bootstrap(
           await new Promise((resolve) => setTimeout(resolve, 300));
         }
       }
+
+      await prepareRuntimePorts();
 
       const gate = new StartupGate({
         splashWindow,
@@ -263,12 +456,40 @@ function bootstrap(
     });
   };
 
+  const notifyHandler = (_event, payload = {}) => {
+    if (!NotificationClass) return;
+    const isSupported =
+      typeof NotificationClass.isSupported === "function"
+        ? NotificationClass.isSupported()
+        : true;
+    if (!isSupported) return;
+
+    try {
+      const notif = new NotificationClass({
+        title: payload.title || "SuperK — Manga Translator",
+        body: payload.body || "",
+        icon: trayIconPath,
+      });
+      notif.on?.("click", () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.show?.();
+          mainWindow.focus?.();
+        }
+      });
+      notif.show?.();
+    } catch (err) {
+      console.error("[Notification] Failed to display notification:", err);
+    }
+  };
+
   if (ipcMain) {
     ipcMain.on("splash:retry", retryHandler);
+    ipcMain.on("desktop:notify", notifyHandler);
     ipcMain.handle?.("cleaner:recover", cleanerRecoverHandler);
   }
 
   app.whenReady().then(() => {
+    initTray();
     splashWindow = splashFactory(BrowserWindow);
 
     runStartup().catch(async (err) => {
@@ -298,9 +519,16 @@ function bootstrap(
   const handleShutdown = () => {
     if (cleanupPromise) return cleanupPromise;
     shuttingDown = true;
+    isQuitting = true;
+
+    if (trayManager) {
+      trayManager.destroy?.();
+      trayManager = null;
+    }
 
     if (ipcMain) {
       ipcMain.removeListener?.("splash:retry", retryHandler);
+      ipcMain.removeListener?.("desktop:notify", notifyHandler);
       ipcMain.removeHandler?.("cleaner:recover");
     }
 
@@ -315,6 +543,7 @@ function bootstrap(
 
   let isQuitCleanedUp = false;
   app.on("before-quit", (event) => {
+    isQuitting = true;
     if (isQuitCleanedUp) return;
     if (event && typeof event.preventDefault === "function") {
       event.preventDefault();
@@ -339,6 +568,7 @@ function bootstrap(
     getWorkspaceSupervisor: () => workspaceSupervisor,
     getMainWindow: () => mainWindow,
     getSplashWindow: () => splashWindow,
+    getTrayManager: () => trayManager,
     runStartup,
   };
 }
@@ -351,6 +581,21 @@ module.exports = {
 };
 
 if (process.type === "browser" && process.versions.electron) {
-  const { app, BrowserWindow, dialog, ipcMain } = require("electron");
-  bootstrap(app, BrowserWindow, undefined, dialog, { ipcMain });
+  const {
+    app,
+    BrowserWindow,
+    dialog,
+    ipcMain,
+    Tray,
+    Menu,
+    Notification,
+    shell,
+  } = require("electron");
+  bootstrap(app, BrowserWindow, undefined, dialog, {
+    ipcMain,
+    Tray,
+    Menu,
+    Notification,
+    shell,
+  });
 }

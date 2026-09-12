@@ -5,14 +5,15 @@
   "main": "electron/main.js",
   "scripts": {
     "dev": "next dev -H 127.0.0.1",
-    "build": "next build",
+    "build": "next build && node scripts/sync-standalone-assets.mjs",
     "start": "next start -H 127.0.0.1",
     "postinstall": "node scripts/copy-pdf-worker.mjs",
     "lint": "eslint",
     "test": "vitest run --root .",
     "test:watch": "vitest --root .",
     "desktop:dev": "electron .",
-    "desktop:build": "node scripts/build-desktop.mjs"
+    "desktop:build": "node scripts/build-desktop.mjs",
+    "desktop:installer": "node scripts/build-desktop.mjs --installer"
   },
   "dependencies": {
     "@ducanh2912/next-pwa": "^10.2.9",

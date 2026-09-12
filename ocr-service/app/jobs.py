@@ -54,7 +54,6 @@ class PipelineFactory(Protocol):
 def _trim_process_memory() -> None:
     try:
         import gc
-        import sys
 
         gc.collect()
         try:
@@ -64,16 +63,6 @@ def _trim_process_memory() -> None:
                 torch.cuda.empty_cache()
         except Exception:
             pass
-
-        if sys.platform == "win32":
-            import ctypes
-
-            kernel32 = ctypes.WinDLL("kernel32")
-            psapi = ctypes.WinDLL("psapi")
-            h = kernel32.GetCurrentProcess()
-            psapi.EmptyWorkingSet.argtypes = [ctypes.c_void_p]
-            psapi.EmptyWorkingSet.restype = ctypes.c_bool
-            psapi.EmptyWorkingSet(h)
     except Exception:
         pass
 

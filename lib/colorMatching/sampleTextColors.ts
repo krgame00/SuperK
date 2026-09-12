@@ -3,6 +3,8 @@ import {
   createDefaultStyleProfile,
   getStyleConfidenceBand,
   type ColorSampleRegion,
+  type EvidenceAdmissionState,
+  type StyleFallbackReason,
   type TextGradientStyle,
   type TextShadowStyle,
   type TextStyleProfile,
@@ -42,6 +44,8 @@ function finalizeRecoveredProfile(
     source?: TextStyleProfile["source"];
     fillConfidence?: number;
     confidenceBand?: TextStyleProfile["confidenceBand"];
+    evidenceState?: EvidenceAdmissionState;
+    fallbackReason?: StyleFallbackReason;
   },
   baseConfidence: number,
   evidenceStrength: number,
@@ -59,7 +63,19 @@ function finalizeRecoveredProfile(
     }
   }
 
-  const source = band === "high" ? "auto" : "global";
+  const isRejected = profile.evidenceState === "rejected" || band === "low";
+  const source = isRejected
+    ? (profile.evidenceState === "rejected" ? "fallback" : "global")
+    : (band === "high" ? "auto" : "global");
+
+  const evidenceState: EvidenceAdmissionState =
+    profile.evidenceState ?? (source === "auto" ? "admitted" : "unverified");
+
+  let fallbackReason = profile.fallbackReason;
+  if (!fallbackReason && source !== "auto") {
+    fallbackReason = band === "medium" ? "medium-unresolved" : "low-confidence";
+  }
+
   return {
     ...profile,
     fillConfidence: confidence,
@@ -67,12 +83,8 @@ function finalizeRecoveredProfile(
     confidenceBand: band,
     refinementAttempted,
     source,
-    fallbackReason:
-      source === "global"
-        ? band === "medium"
-          ? "medium-unresolved"
-          : "low-confidence"
-        : undefined,
+    evidenceState,
+    fallbackReason,
   };
 }
 
@@ -83,6 +95,9 @@ export interface ColorBucket {
   chroma: number;
   count: number;
   centerScore: number;
+  borderTouchCount?: number;
+  outerMarginCount?: number;
+  innerCoreCount?: number;
   sumX?: number;
   sumY?: number;
   minX?: number;
@@ -98,6 +113,9 @@ export interface ColorCluster {
   chroma: number;
   count: number;
   centerScore: number;
+  borderTouchCount?: number;
+  outerMarginCount?: number;
+  innerCoreCount?: number;
   sumX?: number;
   sumY?: number;
   minX?: number;
@@ -133,6 +151,9 @@ export function clusterBuckets(
       matched.chroma = Math.max(matched.chroma, b.chroma);
       matched.count += b.count;
       matched.centerScore += b.centerScore;
+      matched.borderTouchCount = (matched.borderTouchCount ?? 0) + (b.borderTouchCount ?? 0);
+      matched.outerMarginCount = (matched.outerMarginCount ?? 0) + (b.outerMarginCount ?? 0);
+      matched.innerCoreCount = (matched.innerCoreCount ?? 0) + (b.innerCoreCount ?? 0);
       matched.sumX = (matched.sumX ?? 0) + (b.sumX ?? 0);
       matched.sumY = (matched.sumY ?? 0) + (b.sumY ?? 0);
       matched.minX = Math.min(matched.minX ?? (b.minX ?? 0), b.minX ?? 0);
@@ -147,6 +168,9 @@ export function clusterBuckets(
         chroma: b.chroma,
         count: b.count,
         centerScore: b.centerScore,
+        borderTouchCount: b.borderTouchCount ?? 0,
+        outerMarginCount: b.outerMarginCount ?? 0,
+        innerCoreCount: b.innerCoreCount ?? 0,
         sumX: b.sumX,
         sumY: b.sumY,
         minX: b.minX,
@@ -302,8 +326,9 @@ export function extractTextColors(
   const hasGlyphMask = glyphMask?.length === totalPixels;
   const minContrast = options.minContrast ?? (hasGlyphMask ? 10 : bgTolerance);
 
-  // 1. Modal Background Estimation from Perimeter Border (Prevents Muddy Border Averages)
-  const borderWidth = Math.max(1, Math.min(3, Math.floor(Math.min(width, height) / 6)));
+  // 1. Modal Background Estimation from Perimeter Border & Margins
+  // Sample adequate margin so thin border lines, accent trims, or frame lines do not hijack background
+  const borderWidth = Math.max(2, Math.floor(Math.min(width, height) * 0.18));
   const perimBuckets = new Map<string, { r: number; g: number; b: number; count: number }>();
 
   for (let y = 0; y < height; y++) {
@@ -341,6 +366,9 @@ export function extractTextColors(
   const bgG = dominantPerim.g;
   const bgB = dominantPerim.b;
   const bgLum = 0.299 * bgR + 0.587 * bgG + 0.114 * bgB;
+  const bgLuminanceSamples: number[] = sortedPerim.map((b) =>
+    Math.round(0.299 * b.r + 0.587 * b.g + 0.114 * b.b),
+  );
 
   // 2. Identify Non-Background (Foreground Candidate) pixels & Color Distributions
   const isFg = new Uint8Array(totalPixels);
@@ -400,6 +428,11 @@ export function extractTextColors(
     discardBorderConnectedComponents(isFg, rgba, width, height);
   }
 
+  const marginX = Math.max(1, Math.floor(width * 0.12));
+  const marginY = Math.max(1, Math.floor(height * 0.12));
+  let whiteInnerCoreCount = 0;
+  let darkInkInnerCoreCount = 0;
+
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const pixel = y * width + x;
@@ -415,6 +448,13 @@ export function extractTextColors(
       const lum = 0.299 * r + 0.587 * g + 0.114 * b;
       totalFgCount++;
       foregroundAlphaSum += rgba[idx + 3];
+
+      const isBorderTouch = x === 0 || x === width - 1 || y === 0 || y === height - 1;
+      const isOuterMargin = x < marginX || x >= width - marginX || y < marginY || y >= height - marginY;
+      const isInnerCore = !isOuterMargin;
+      const bTouch = isBorderTouch ? 1 : 0;
+      const oMargin = isOuterMargin ? 1 : 0;
+      const iCore = isInnerCore ? 1 : 0;
 
       // Real manga colored text has high saturation (>= 40%) or high chroma (>= 70)
       // This strictly rejects pale skin tones, paper texture, and neutral shadows
@@ -447,6 +487,9 @@ export function extractTextColors(
           existing.chroma = Math.max(existing.chroma, chroma);
           existing.count++;
           existing.centerScore += centerWeight;
+          existing.borderTouchCount = (existing.borderTouchCount ?? 0) + bTouch;
+          existing.outerMarginCount = (existing.outerMarginCount ?? 0) + oMargin;
+          existing.innerCoreCount = (existing.innerCoreCount ?? 0) + iCore;
           existing.sumX = (existing.sumX ?? 0) + x;
           existing.sumY = (existing.sumY ?? 0) + y;
           existing.minX = Math.min(existing.minX ?? x, x);
@@ -461,6 +504,9 @@ export function extractTextColors(
             chroma,
             count: 1,
             centerScore: centerWeight,
+            borderTouchCount: bTouch,
+            outerMarginCount: oMargin,
+            innerCoreCount: iCore,
             sumX: x,
             sumY: y,
             minX: x,
@@ -471,6 +517,7 @@ export function extractTextColors(
         }
       } else if (lum >= 210) {
         whiteCount++;
+        if (isInnerCore) whiteInnerCoreCount++;
         whiteSumX += x;
         whiteSumY += y;
         whiteMinX = Math.min(whiteMinX, x);
@@ -479,6 +526,7 @@ export function extractTextColors(
         whiteMaxY = Math.max(whiteMaxY, y);
       } else if (lum <= 65) {
         darkInkCount++;
+        if (isInnerCore) darkInkInnerCoreCount++;
         darkInkSumX += x;
         darkInkSumY += y;
         darkInkMinX = Math.min(darkInkMinX, x);
@@ -504,6 +552,8 @@ export function extractTextColors(
       confidenceBand: "low",
       source: "global",
       fallbackReason: "low-confidence",
+      backgroundLuminance: Math.round(bgLum),
+      backgroundColor: rgbToHex(bgR, bgG, bgB),
     };
   }
 
@@ -520,16 +570,69 @@ export function extractTextColors(
 
   // 3. Manga archetype detection, preserving source outline presence instead of
   // inventing a readability stroke.
-  const hasStrongChromatic = chromaticCount >= Math.max(6, totalFgCount * 0.025);
   const chromaticClusters = clusterBuckets(Array.from(chromaticBuckets.values()), 36);
-  const topChromatic = chromaticClusters.sort((a, b) => (b.count * (1 + b.chroma / 80)) - (a.count * (1 + a.chroma / 80)))[0];
+  const sortedChromatic = chromaticClusters.sort(
+    (a, b) => b.count * (1 + b.chroma / 80) - a.count * (1 + a.chroma / 80),
+  );
+  let topChromatic: ColorCluster | undefined = sortedChromatic[0];
+
+  // Evidence Gate on Chromatic Candidate:
+  // Reject candidate if it is contaminated by surrounding artwork / floor / trim
+  if (topChromatic && !hasGlyphMask) {
+    const touchCount = topChromatic.borderTouchCount ?? 0;
+    const outerCount = topChromatic.outerMarginCount ?? 0;
+    const innerCount = topChromatic.innerCoreCount ?? 0;
+    const borderRatio = touchCount / Math.max(1, topChromatic.count);
+    const outerRatio = outerCount / Math.max(1, topChromatic.count);
+    const cropAreaRatio = topChromatic.count / totalPixels;
+
+    const hasCentralTextAlternative = whiteInnerCoreCount >= 4 || darkInkInnerCoreCount >= 4;
+    const chromSpanX = (topChromatic.maxX ?? width) - (topChromatic.minX ?? 0);
+    const textSpanX = Math.max(whiteMaxX - whiteMinX, darkInkMaxX - darkInkMinX);
+    const isSpanningArtwork =
+      hasCentralTextAlternative && chromSpanX > textSpanX + Math.max(10, width * 0.20);
+
+    const isBorderContaminated =
+      (touchCount >= 2 || borderRatio > 0.08 || outerRatio > 0.35) &&
+      (hasCentralTextAlternative || innerCount < 4);
+
+    const isCropDominancePlane =
+      cropAreaRatio > 0.50 ||
+      (cropAreaRatio > 0.30 &&
+        (touchCount > 0 || outerRatio > 0.20 || isSpanningArtwork));
+
+    const distToBg = colorDistance(topChromatic.r, topChromatic.g, topChromatic.b, bgR, bgG, bgB);
+    const resemblesBackground = distToBg < 32;
+
+    if (isBorderContaminated || isCropDominancePlane || resemblesBackground || isSpanningArtwork) {
+      topChromatic = undefined;
+    }
+  }
+
+  const chromaticPurity = topChromatic ? topChromatic.count / Math.max(1, chromaticCount) : 0;
+  const isChaoticChromatic =
+    !hasGlyphMask &&
+    ((chromaticClusters.length > 8 && chromaticPurity < 0.25) ||
+      (topChromatic ? topChromatic.count < 6 : true));
+
+  const hasStrongChromatic = Boolean(
+    topChromatic &&
+      !isChaoticChromatic &&
+      topChromatic.count >= Math.max(6, totalFgCount * 0.025) &&
+      (hasGlyphMask || chromaticPurity >= 0.20),
+  );
 
   if (hasStrongChromatic && topChromatic) {
     const chromHex = rgbToHex(topChromatic.r, topChromatic.g, topChromatic.b);
     const fillGradient = detectDirectionalGradient(chromaticClusters, chromaticCount);
 
     // White core + vivid chromatic contour is strong evidence of a real outline/glow.
-    if (whiteCount >= Math.max(8, totalFgCount * 0.08)) {
+    // A genuine stroke/glow cannot have 3x or 5x more pixels than the core glyphs.
+    const isChromaticContour =
+      whiteCount >= Math.max(8, totalFgCount * 0.08) &&
+      (hasGlyphMask || chromaticCount <= whiteCount * 2.2);
+
+    if (isChromaticContour) {
       const outlineRatio = estimateOutlineWidthRatio(whiteCount, chromaticCount);
       const isDiffuseGlow = outlineRatio >= 0.08 && chromaticCount >= 8;
       const glowEffect: TextShadowStyle | undefined = isDiffuseGlow
@@ -553,6 +656,9 @@ export function extractTextColors(
           outlineConfidence: autoConfidence,
           glow: glowEffect,
           fillGradient,
+          evidenceState: "admitted",
+          backgroundLuminance: Math.round(bgLum),
+          backgroundColor: rgbToHex(bgR, bgG, bgB),
         },
         autoConfidence,
         (whiteCount + chromaticCount) / Math.max(1, totalFgCount),
@@ -604,15 +710,27 @@ export function extractTextColors(
         outlineConfidence: clampConfidence(autoConfidence - 0.05),
         fillGradient,
         shadow: shadowEffect,
+        evidenceState: "admitted",
+        backgroundLuminance: Math.round(bgLum),
+        backgroundColor: rgbToHex(bgR, bgG, bgB),
       },
       autoConfidence,
       (chromaticCount + (hasDarkOutline ? darkInkCount : 0)) / Math.max(1, totalFgCount),
     );
   }
 
-  // 4. High-contrast monochrome dialogue. With only one foreground ink family,
-  // preserve the absence of an outline instead of forcing white/black stroke.
-  if (bgLum >= 135 && darkInkCount >= 4) {
+  // 4. Speech Bubble Container vs. Text Ink Discrimination & High-contrast Dialogue
+  // Text glyphs consist of thin strokes that occupy a fraction of the crop (usually < 20%).
+  // A large uniform mass (e.g. whiteCount / totalPixels >= 0.20 or darkInkCount / totalPixels >= 0.20)
+  // represents a speech bubble container, NOT text glyph ink.
+  const whiteCropRatio = whiteCount / totalPixels;
+  const darkCropRatio = darkInkCount / totalPixels;
+
+  // Case A: White speech bubble on dark/colored panel artwork.
+  // The perimeter may be dark artwork (bgLum <= 110), but the large white area is a speech bubble container.
+  // The text inside a white speech bubble must be dark (#000000) to remain readable.
+  if (whiteCropRatio >= 0.20) {
+    const hasDarkText = darkInkCount >= 4 || darkInkInnerCoreCount >= 2;
     return finalizeRecoveredProfile(
       {
         fill: "#000000",
@@ -622,13 +740,18 @@ export function extractTextColors(
         outlineWidth: 0,
         opacity: sourceOpacity,
         outlineConfidence: autoConfidence,
+        evidenceState: hasDarkText ? "admitted" : "rejected",
+        fallbackReason: hasDarkText ? undefined : "insufficient-evidence",
+        backgroundLuminance: 255,
+        backgroundColor: "#ffffff",
       },
-      autoConfidence,
-      darkInkCount / Math.max(1, totalFgCount),
+      hasDarkText ? autoConfidence : 0.45,
+      hasDarkText ? Math.max(0.7, darkInkCount / Math.max(1, totalFgCount)) : 0.40,
     );
   }
 
-  if (bgLum <= 90 && whiteCount >= 4) {
+  // Case B: Inverted Black speech bubble containing white dialogue text.
+  if (darkCropRatio >= 0.20 && (whiteCount >= 4 || whiteInnerCoreCount >= 2)) {
     return finalizeRecoveredProfile(
       {
         fill: "#ffffff",
@@ -638,10 +761,77 @@ export function extractTextColors(
         outlineWidth: 0,
         opacity: sourceOpacity,
         outlineConfidence: autoConfidence,
+        evidenceState: "admitted",
+        backgroundLuminance: 0,
+        backgroundColor: "#000000",
       },
       autoConfidence,
-      whiteCount / Math.max(1, totalFgCount),
+      Math.max(0.7, whiteCount / Math.max(1, totalFgCount)),
     );
+  }
+
+  // Case C: Standard black dialogue text on light/white background.
+  const isDominantDarkInk =
+    darkInkCount >= Math.max(6, totalFgCount * 0.15) && darkInkCount >= chromaticCount;
+
+  if (
+    bgLum >= 130 &&
+    (isDominantDarkInk ||
+      (darkInkInnerCoreCount >= 6 && darkInkCount > whiteCount && darkInkCount >= chromaticCount))
+  ) {
+    const contrast = colorDistance(0, 0, 0, bgR, bgG, bgB);
+    if (contrast >= 40) {
+      return finalizeRecoveredProfile(
+        {
+          fill: "#000000",
+          outline: "#000000",
+          hasOutline: false,
+          outlineWidthRatio: 0,
+          outlineWidth: 0,
+          opacity: sourceOpacity,
+          outlineConfidence: autoConfidence,
+          evidenceState: "admitted",
+          backgroundLuminance: Math.round(bgLum),
+          backgroundColor: rgbToHex(bgR, bgG, bgB),
+        },
+        autoConfidence,
+        darkInkCount / Math.max(1, totalFgCount),
+      );
+    }
+  }
+
+  // Case D: White text floating on dark artwork without outline.
+  // Must NOT be a speech bubble container (whiteCropRatio < 0.25).
+  const isDominantWhiteInk =
+    whiteCropRatio < 0.25 &&
+    whiteCount >= Math.max(6, totalFgCount * 0.15) &&
+    whiteCount >= chromaticCount;
+
+  if (
+    bgLum <= 110 &&
+    whiteCropRatio < 0.25 &&
+    (isDominantWhiteInk ||
+      (whiteInnerCoreCount >= 6 && whiteCount >= darkInkCount && whiteCount >= chromaticCount))
+  ) {
+    const contrast = colorDistance(255, 255, 255, bgR, bgG, bgB);
+    if (contrast >= 40) {
+      return finalizeRecoveredProfile(
+        {
+          fill: "#ffffff",
+          outline: "#ffffff",
+          hasOutline: false,
+          outlineWidthRatio: 0,
+          outlineWidth: 0,
+          opacity: sourceOpacity,
+          outlineConfidence: autoConfidence,
+          evidenceState: "admitted",
+          backgroundLuminance: Math.round(bgLum),
+          backgroundColor: rgbToHex(bgR, bgG, bgB),
+        },
+        autoConfidence,
+        whiteCount / Math.max(1, totalFgCount),
+      );
+    }
   }
 
   // 5. Multi-pass Distance Transform Core / Contour Extraction
@@ -722,10 +912,29 @@ export function extractTextColors(
           existing.chroma = Math.max(existing.chroma, chroma);
           existing.count++;
           existing.centerScore += centerWeight * (1 + dist[p] * 0.5);
+          existing.minX = Math.min(existing.minX ?? x, x);
+          existing.maxX = Math.max(existing.maxX ?? x, x);
+          existing.minY = Math.min(existing.minY ?? y, y);
+          existing.maxY = Math.max(existing.maxY ?? y, y);
         } else {
-          coreBuckets.set(key, { r, g, b, chroma, count: 1, centerScore: centerWeight * (1 + dist[p] * 0.5) });
+          coreBuckets.set(key, {
+            r,
+            g,
+            b,
+            chroma,
+            count: 1,
+            centerScore: centerWeight * (1 + dist[p] * 0.5),
+            minX: x,
+            maxX: x,
+            minY: y,
+            maxY: y,
+          });
         }
       } else {
+        const isBorderTouch = x === 0 || x === width - 1 || y === 0 || y === height - 1;
+        const isOuterMargin = x < marginX || x >= width - marginX || y < marginY || y >= height - marginY;
+        const isInnerCore = !isOuterMargin;
+
         const existing = outlineBuckets.get(key);
         if (existing) {
           existing.r = (existing.r * existing.count + r) / (existing.count + 1);
@@ -734,8 +943,29 @@ export function extractTextColors(
           existing.chroma = Math.max(existing.chroma, chroma);
           existing.count++;
           existing.centerScore += centerWeight;
+          if (isBorderTouch) existing.borderTouchCount = (existing.borderTouchCount ?? 0) + 1;
+          if (isOuterMargin) existing.outerMarginCount = (existing.outerMarginCount ?? 0) + 1;
+          if (isInnerCore) existing.innerCoreCount = (existing.innerCoreCount ?? 0) + 1;
+          existing.minX = Math.min(existing.minX ?? x, x);
+          existing.maxX = Math.max(existing.maxX ?? x, x);
+          existing.minY = Math.min(existing.minY ?? y, y);
+          existing.maxY = Math.max(existing.maxY ?? y, y);
         } else {
-          outlineBuckets.set(key, { r, g, b, chroma, count: 1, centerScore: centerWeight });
+          outlineBuckets.set(key, {
+            r,
+            g,
+            b,
+            chroma,
+            count: 1,
+            centerScore: centerWeight,
+            borderTouchCount: isBorderTouch ? 1 : 0,
+            outerMarginCount: isOuterMargin ? 1 : 0,
+            innerCoreCount: isInnerCore ? 1 : 0,
+            minX: x,
+            maxX: x,
+            minY: y,
+            maxY: y,
+          });
         }
       }
     }
@@ -744,7 +974,39 @@ export function extractTextColors(
   const coreClusters = clusterBuckets(Array.from(coreBuckets.values()), 36);
   const outlineClusters = clusterBuckets(Array.from(outlineBuckets.values()), 36);
 
-  const sortedCore = coreClusters.sort((a, b) => b.centerScore - a.centerScore);
+  // Collect rejected background artwork colors identified in earlier stages
+  const rejectedBgColors: Array<{ r: number; g: number; b: number }> = [];
+  for (const c of chromaticClusters) {
+    const cropRatio = c.count / totalPixels;
+    const outerRatio = (c.outerMarginCount ?? 0) / Math.max(1, c.count);
+    const spanX = (c.maxX ?? width) - (c.minX ?? 0);
+    if (
+      cropRatio > 0.35 ||
+      ((c.borderTouchCount ?? 0) >= 2 && outerRatio > 0.15) ||
+      (spanX > width * 0.70 && outerRatio > 0.10)
+    ) {
+      rejectedBgColors.push({ r: c.r, g: c.g, b: c.b });
+    }
+  }
+
+  // If no glyph mask, reject background planes from being selected as the text core
+  const validCoreClusters = coreClusters.filter((c) => {
+    if (hasGlyphMask) return true;
+    const outerRatio = (c.outerMarginCount ?? 0) / Math.max(1, c.count);
+    const cropRatio = c.count / totalPixels;
+    const spanX = (c.maxX ?? width) - (c.minX ?? 0);
+
+    const isBackgroundPlane =
+      cropRatio > 0.30 ||
+      spanX > width * 0.65 ||
+      ((c.borderTouchCount ?? 0) >= 2 && outerRatio > 0.15) ||
+      rejectedBgColors.some((bg) => colorDistance(c.r, c.g, c.b, bg.r, bg.g, bg.b) < 35);
+
+    return !isBackgroundPlane;
+  });
+
+  const candidateCoreClusters = validCoreClusters.length > 0 ? validCoreClusters : coreClusters;
+  const sortedCore = candidateCoreClusters.sort((a, b) => b.centerScore - a.centerScore);
   const topCore = sortedCore[0] ?? { r: 0, g: 0, b: 0, chroma: 0, count: 0, centerScore: 0 };
 
   const fillR = topCore.r;
@@ -752,12 +1014,31 @@ export function extractTextColors(
   const fillB = topCore.b;
   const fillHex = rgbToHex(fillR, fillG, fillB);
 
-  // Reject muddy skin tone outlines (low-chroma brownish-gray artwork edges)
+  // Reject muddy skin tone outlines and artwork/floor outer contamination
   const candidateOutlines = outlineClusters
     .filter((c) => {
       const distToFill = colorDistance(c.r, c.g, c.b, fillR, fillG, fillB);
       const distToBg = colorDistance(c.r, c.g, c.b, bgR, bgG, bgB);
       const isMuddySkin = c.chroma < 26 && c.r > 120 && c.g > 80 && c.b > 70;
+
+      // If no glyph mask, reject artwork outlines that touch borders, are outer-margin dominated,
+      // or span far beyond the text core into the surrounding background
+      if (!hasGlyphMask) {
+        const touchCount = c.borderTouchCount ?? 0;
+        const outerCount = c.outerMarginCount ?? 0;
+        const outerRatio = outerCount / Math.max(1, c.count);
+        const coreSpanX = (topCore.maxX ?? width) - (topCore.minX ?? 0);
+        const outlineSpanX = (c.maxX ?? width) - (c.minX ?? 0);
+        const isSpanningArtwork = outlineSpanX > coreSpanX + Math.max(10, width * 0.20);
+
+        const isArtworkContamination =
+          touchCount >= 2 ||
+          outerRatio > 0.35 ||
+          isSpanningArtwork ||
+          (c.count > topCore.count * 1.5 && outerCount > 0);
+        if (isArtworkContamination) return false;
+      }
+
       return distToFill >= 40 && distToBg >= 25 && !isMuddySkin && c.count >= Math.max(2, totalFgCount * 0.03);
     })
     .sort((a, b) => {
@@ -791,6 +1072,37 @@ export function extractTextColors(
   fillConfidence = Math.min(fillConfidence, autoConfidence);
   outlineConfidence = Math.min(outlineConfidence, autoConfidence);
 
+  // Evidence Gate evaluation
+  let evidenceState: EvidenceAdmissionState = "unverified";
+  let fallbackReason: StyleFallbackReason | undefined = undefined;
+
+  if (hasGlyphMask) {
+    // Precise glyph mask provides authoritative ground truth
+    evidenceState = "admitted";
+  } else {
+    // Without glyph mask, require trustworthy local text evidence:
+    // 1. Extreme background chaos / high fragmentation / low core purity -> reject
+    const isChaotic =
+      corePurity < 0.25 ||
+      (sortedCore.length > 8 && corePurity < 0.35) ||
+      topCore.count < 4 ||
+      maxDist < 2;
+    // 2. Candidate resembles background without strong contrasting outline -> reject
+    const isBgResemblance = contrastFromBg < 35 && (!hasOutline || outlineConfidence < 0.80);
+
+    if (isChaotic) {
+      evidenceState = "rejected";
+      fallbackReason = "insufficient-evidence";
+      fillConfidence = Math.min(fillConfidence, 0.45);
+    } else if (isBgResemblance) {
+      evidenceState = "rejected";
+      fallbackReason = "background-contamination";
+      fillConfidence = Math.min(fillConfidence, 0.45);
+    } else if (fillConfidence >= 0.80 && contrastFromBg >= 35) {
+      evidenceState = "admitted";
+    }
+  }
+
   return finalizeRecoveredProfile(
     {
       fill: fillHex,
@@ -800,6 +1112,11 @@ export function extractTextColors(
       outlineWidth,
       opacity: sourceOpacity,
       outlineConfidence: clampConfidence(outlineConfidence),
+      evidenceState,
+      fallbackReason,
+      backgroundLuminance: Math.round(bgLum),
+      backgroundLuminanceSamples: bgLuminanceSamples.length > 0 ? bgLuminanceSamples : undefined,
+      backgroundColor: rgbToHex(bgR, bgG, bgB),
     },
     fillConfidence,
     Math.min(corePurity, contrastFromBg / 120),

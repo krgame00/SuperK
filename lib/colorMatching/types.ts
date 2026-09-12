@@ -3,8 +3,23 @@
  */
 
 export type StyleSource = "auto" | "manual" | "global" | "fallback";
-export type TextStyleCategory = "dialogue" | "narration" | "sfx" | "unknown";
+export type TextStyleCategory =
+  | "dialogue"
+  | "narration"
+  | "sfx"
+  | "overlay_subtitle"
+  | "unknown";
 export type StyleConfidenceBand = "high" | "medium" | "low";
+export type EvidenceAdmissionState = "admitted" | "rejected" | "unverified";
+export type StyleFallbackReason =
+  | "low-confidence"
+  | "medium-unresolved"
+  | "nearby"
+  | "global"
+  | "background-contamination"
+  | "insufficient-evidence"
+  | "low-readability"
+  | "no-nearby-anchor";
 
 export interface TextGradientStop {
   offset: number;
@@ -45,7 +60,30 @@ export interface TextStyleProfile {
   shadow?: TextShadowStyle;
   glow?: TextShadowStyle;
   nearbySourceId?: string;
-  fallbackReason?: "low-confidence" | "medium-unresolved" | "nearby" | "global";
+  evidenceState?: EvidenceAdmissionState;
+  fallbackReason?: StyleFallbackReason;
+  /** Explicit ownership mode: auto matching, user-selected readable preset, or user-authored manual style */
+  ownershipMode?: "auto" | "readable" | "manual";
+  /** Measured clean background luminance (0..255) beneath the text footprint */
+  backgroundLuminance?: number;
+  /** Measured background luminance samples across the footprint */
+  backgroundLuminanceSamples?: number[];
+  /** Measured modal clean background color */
+  backgroundColor?: string;
+  /** Whether this style was adaptively resolved for readability against the background */
+  isAdaptiveReadable?: boolean;
+  /** Readability aid halo/shadow (separate from source decorative shadow/glow) */
+  readabilityHalo?: TextShadowStyle;
+  /** Background plate for emergency readability rescue (permitted ONLY for overlay_subtitle) */
+  backgroundPlate?: {
+    color: string;
+    opacity: number;
+    paddingRatio?: number;
+  };
+  /** Explicit review-required flag when non-plate escalation cannot fully guarantee contrast */
+  reviewRequired?: boolean;
+  requiresHaloEscalation?: boolean;
+  requiresPlateEscalation?: boolean;
 }
 
 export interface ColorSampleRegion {
@@ -111,7 +149,10 @@ export function createDefaultStyleProfile(source: StyleSource = "global"): TextS
     outlineConfidence: 1.0,
     confidenceBand: source === "global" ? "low" : "high",
     source,
+    evidenceState: source === "auto" ? "admitted" : "rejected",
     category: "unknown",
     fallbackReason: source === "global" ? "global" : undefined,
   };
 }
+
+export type { TranslatedBubble } from "@/lib/translationOverlay";

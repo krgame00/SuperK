@@ -36,7 +36,7 @@ def test_cleaning_result_uses_stable_asset_paths() -> None:
         timings_ms={"total": 1234},
     )
     assert result.clean_asset.endswith("/clean.png")
-    assert result.pipeline_version == "2.1.0-complete-glyph"
+    assert result.pipeline_version == "2.2.0-adaptive-roi"
     assert CleanerRoute.ARTWORK.value == "artwork"
 
 

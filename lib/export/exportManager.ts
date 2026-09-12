@@ -37,14 +37,68 @@ export interface WebtoonStripChunk {
   filename: string;
 }
 
+export function deriveProjectExportName(
+  pages?: Array<{ name?: string }>,
+  fallback = "SuperK_Translations",
+): string {
+  if (!pages || pages.length === 0 || !pages[0]?.name) {
+    return fallback;
+  }
+
+  const raw = pages[0].name.replace(/\.[^/.]+$/, "").trim();
+  if (!raw) return fallback;
+
+  // If already prefixed with SuperK_Page_001_Title:
+  let cleaned = raw.replace(/^SuperK_Page_\d+_/i, "").trim();
+
+  // Strip trailing page numbering patterns:
+  // e.g. _page1, -page01, _p1, -p01, _001, -01, (1), etc.
+  cleaned = cleaned
+    .replace(/([_\s-]*(?:page|p)?\s*\d+)$/i, "")
+    .replace(/\s*\(\d+\)$/, "")
+    .trim();
+
+  const lower = cleaned.toLowerCase();
+  if (
+    !cleaned ||
+    /^\d+$/.test(cleaned) ||
+    lower === "page" ||
+    lower === "image" ||
+    lower === "img" ||
+    lower === "scan" ||
+    lower === "raw" ||
+    lower === "manga" ||
+    lower === "manga_page"
+  ) {
+    return fallback;
+  }
+
+  const sanitized = sanitizeExportFilename(cleaned);
+  if (!sanitized || sanitized === "manga_page") {
+    return fallback;
+  }
+
+  return sanitized.startsWith("SuperK_") ? sanitized : `SuperK_${sanitized}`;
+}
+
+export function generateArchiveFilename(
+  format: "zip" | "cbz" | "pdf",
+  pages?: Array<{ name?: string }>,
+): string {
+  const baseName = deriveProjectExportName(pages);
+  return `${baseName}.${format}`;
+}
+
 export function generateStripFilename(
   chunkIndex: number,
   totalChunks: number,
+  pages?: Array<{ name?: string }>,
 ): string {
+  const baseName = deriveProjectExportName(pages, "SuperK_Webtoon");
   if (totalChunks <= 1) {
-    return "SuperK_Webtoon_LongStrip.jpg";
+    return `${baseName}_LongStrip.jpg`;
   }
-  return `SuperK_Webtoon_Strip_Part${String(chunkIndex).padStart(2, "0")}.jpg`;
+  return `${baseName}_Strip_Part${String(chunkIndex).padStart(2, "0")}.jpg`;
 }
 
 export interface ComicInfoMetadata {

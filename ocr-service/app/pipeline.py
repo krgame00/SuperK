@@ -375,19 +375,27 @@ class CleaningPipeline:
 
         # Global neural inpainting pass with full image context
         full_lama = self.cleaners.get("lama-large")
-        adaptive_scope = decide_adaptive_scope(eligible, refined.regions)
-        # The optimized scope policy is an internal release-gated feature.
-        # Keep the legacy full-page path as the safe default until benchmark,
-        # memory, and quality evidence has been accepted.
+        # The optimized scope policy is release-gated. The previous experiment
+        # measured slower than the legacy path, so stale opt-in flags must not
+        # accidentally re-enable it in normal production runs.
         adaptive_roi_enabled = (
             os.getenv("SUPERK_DISABLE_ADAPTIVE_ROI") != "1"
-            and os.getenv("SUPERK_ENABLE_ADAPTIVE_ROI") == "1"
+            and os.getenv("SUPERK_ENABLE_ADAPTIVE_ROI_V2") == "1"
+        )
+        adaptive_scope = (
+            decide_adaptive_scope(eligible, refined.regions)
+            if adaptive_roi_enabled
+            else None
         )
         scoped_clean = None
         lama_inference_count = 0
         escalation_attempts = 0
         quality_attempts = 1 if np.any(eligible) else 0
-        adaptive_route = adaptive_scope.mode
+        adaptive_route = (
+            adaptive_scope.mode
+            if adaptive_scope is not None
+            else ("legacy-full-page" if np.any(eligible) else "none")
+        )
         if full_lama is not None and np.any(eligible):
             stage_started = perf_counter()
             if not adaptive_roi_enabled and hasattr(full_lama, "clean_full_image"):
@@ -680,7 +688,7 @@ class CleaningPipeline:
                 "verification_ms": verify_ms,
                 "adaptive_route": adaptive_route,
                 "adaptive_roi": 1 if adaptive_roi_enabled and adaptive_scope.mode == "roi" else 0,
-                "roi_cluster_count": adaptive_scope.cluster_count,
+                "roi_cluster_count": adaptive_scope.cluster_count if adaptive_scope is not None else 0,
                 "lama_inference_count": lama_inference_count,
                 "escalation_attempts": escalation_attempts,
                 "total": _elapsed_ms(started),

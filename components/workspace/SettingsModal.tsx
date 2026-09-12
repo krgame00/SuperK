@@ -2,8 +2,14 @@
 
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import { type GlossaryEntry } from "@/lib/translation/glossary";
-import { Plus, Trash2, BookText, Flame, X, ChevronDown, Download } from "lucide-react";
-import { getAskExportDirectory, setAskExportDirectory } from "@/lib/export/saveLocation";
+import { Plus, Trash2, BookText, Flame, X, ChevronDown, Download, Folder } from "lucide-react";
+import {
+  getAskExportDirectory,
+  setAskExportDirectory,
+  getRememberedDirectoryName,
+  pickAndRememberExportDirectory,
+  clearRememberedDirectory,
+} from "@/lib/export/saveLocation";
 
 export interface WorkspaceTextStyle {
   fontFamily: string;
@@ -66,6 +72,16 @@ export function SettingsModal({
   const [askExportDirectory, setAskExportDirectoryState] = useState(
     () => getAskExportDirectory(),
   );
+  const [rememberedDirName, setRememberedDirName] = useState(
+    () => getRememberedDirectoryName(),
+  );
+
+  useEffect(() => {
+    if (isOpen) {
+      setRememberedDirName(getRememberedDirectoryName());
+      setAskExportDirectoryState(getAskExportDirectory());
+    }
+  }, [isOpen]);
 
   const handlePurgeServerCache = async () => {
     if (isPurging) return;
@@ -426,6 +442,10 @@ export function SettingsModal({
                 <option value="gemini-3.5-flash-lite">
                   Gemini 3.5 Flash Lite (แนะนำ! โควต้าเหลือเพียบ 500 RPD)
                 </option>
+                <option value="gemini-3.8-flash">
+                  Gemini 3.8 Flash (ใหม่ล่าสุด! ความแม่นยำสูงสุด)
+                </option>
+                <option value="gemini-3.7-flash">Gemini 3.7 Flash</option>
                 <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
                 <option value="gemini-3-flash">Gemini 3.0 Flash</option>
                 <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
@@ -561,17 +581,17 @@ export function SettingsModal({
               <div>
                 <label className="flex items-center gap-1.5 text-xs font-medium text-foreground">
                   <Download className="h-3.5 w-3.5 text-primary" />
-                  <span>ถามตำแหน่งบันทึกทุกครั้งตอน Export</span>
+                  <span>บันทึกลงโฟลเดอร์ที่กำหนด (จำตำแหน่งโฟลเดอร์)</span>
                 </label>
                 <p className="mt-0.5 text-[10px] text-muted">
-                  เลือกโฟลเดอร์ปลายทางเองแทนโฟลเดอร์ Downloads (รองรับ Chrome/Edge)
+                  เลือกโฟลเดอร์ปลายทางเพียงครั้งเดียว ไม่ต้องเลือกซ้ำทุกรอบ (รองรับ Chrome/Edge)
                 </p>
               </div>
               <button
                 type="button"
                 role="switch"
                 aria-checked={askExportDirectory}
-                aria-label="เปิด/ปิดการถามตำแหน่งบันทึกตอน export"
+                aria-label="เปิด/ปิดการบันทึกลงโฟลเดอร์ที่กำหนด"
                 onClick={() => {
                   const next = !askExportDirectory;
                   setAskExportDirectory(next);
@@ -588,6 +608,47 @@ export function SettingsModal({
                 />
               </button>
             </div>
+
+            {askExportDirectory && (
+              <div className="mt-2.5 flex items-center justify-between rounded-lg bg-surface border border-surface-hover px-3 py-2 text-xs">
+                <div className="flex items-center gap-2 min-w-0 pr-2">
+                  <Folder className="h-4 w-4 shrink-0 text-primary" />
+                  <div className="min-w-0 truncate">
+                    <span className="text-[10px] text-muted block">โฟลเดอร์ที่จำไว้:</span>
+                    <span className="font-medium text-foreground truncate block">
+                      {rememberedDirName || "ยังไม่ได้เลือก (จะถามครั้งแรกตอน Export หรือกดเลือกตอนนี้ได้เลย)"}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const handle = await pickAndRememberExportDirectory();
+                      if (handle) {
+                        setRememberedDirName(handle.name || "โฟลเดอร์ที่เลือก");
+                      }
+                    }}
+                    className="rounded bg-surface-hover hover:bg-surface-active px-2.5 py-1 text-[11px] font-medium text-foreground hover:text-primary transition-colors cursor-pointer"
+                  >
+                    {rememberedDirName ? "เปลี่ยนโฟลเดอร์" : "เลือกโฟลเดอร์"}
+                  </button>
+                  {rememberedDirName && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await clearRememberedDirectory();
+                        setRememberedDirName("");
+                      }}
+                      className="rounded hover:bg-surface-hover px-2 py-1 text-[11px] text-muted hover:text-red-400 transition-colors cursor-pointer"
+                      title="ล้างตำแหน่งโฟลเดอร์ที่จำไว้"
+                    >
+                      ล้างค่า
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

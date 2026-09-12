@@ -72,8 +72,9 @@ export function buildTranslationPrompt({
     `- For Thai: Adapt pronouns (แก, ฉัน, นาย, ข้า, เอ็ง) and endings (ครับ, ค่ะ, วะ, เว้ย, สิ, นะ) based on character relationships and mood.\n` +
     `${policyRules}\n` +
     `- Read order is usually Right-to-Left, Top-to-Bottom.\n` +
+    `- Classify each detected text region as styleCategory: dialogue, narration, or sfx. This is metadata only and must not change translation wording.\n` +
     `Output ONLY valid JSON, no markdown, no explanation.\n` +
-    `Format: {"bubbles":[{"original_text": "text found in image", "t":"translated text in Thai","box":[ymin, xmin, ymax, xmax]}]}\n` +
+    `Format: {"bubbles":[{"original_text": "text found in image", "t":"translated text in Thai","box":[ymin, xmin, ymax, xmax],"styleCategory":"dialogue"}]}\n` +
     `box: bounding box coordinates in 0-1000 scale (ymin, xmin = top-left, ymax, xmax = bottom-right).\n` +
     `ALL translations in 't' MUST be in ${targetLang || "Thai"}.\n` +
     `If no text found: {"bubbles":[]}`
@@ -217,10 +218,15 @@ export async function POST(req: Request) {
           threshold: "BLOCK_NONE",
         },
       ],
+      generationConfig: {
+        responseMimeType: "application/json",
+      },
     };
 
     let MODELS = [
       "gemini-3.5-flash-lite", // Fresh quota: 500 RPD, 15 RPM
+      "gemini-3.8-flash", // High-precision / latest
+      "gemini-3.7-flash",
       "gemini-3.6-flash", // Fresh quota: 20 RPD, 5 RPM
       "gemini-3-flash", // Fresh quota: 20 RPD, 5 RPM
       "gemini-3.5-flash",
@@ -230,8 +236,10 @@ export async function POST(req: Request) {
     ];
 
     if (isRetry && (!modelPreference || modelPreference === "auto")) {
-      // On retry, try gemini-3.6-flash first
+      // On retry, try highest precision models first
       MODELS = [
+        "gemini-3.8-flash",
+        "gemini-3.7-flash",
         "gemini-3.6-flash",
         "gemini-3.5-flash-lite",
         "gemini-3-flash",

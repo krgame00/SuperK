@@ -129,6 +129,7 @@ export const saveAsset = async (
   try {
     const db = await openDB();
     const tx = db.transaction(ASSET_STORE_NAME, "readwrite");
+    const done = transactionDone(tx);
     const store = tx.objectStore(ASSET_STORE_NAME);
     const asset: StoredAsset = {
       id,
@@ -137,7 +138,7 @@ export const saveAsset = async (
       createdAt: Date.now(),
     };
     store.put(asset);
-    await transactionDone(tx);
+    await done;
   } catch (err) {
     console.warn("Failed to save asset to IndexedDB", err);
   }
@@ -162,8 +163,9 @@ export const deleteAsset = async (id: string): Promise<void> => {
   try {
     const db = await openDB();
     const tx = db.transaction(ASSET_STORE_NAME, "readwrite");
+    const done = transactionDone(tx);
     tx.objectStore(ASSET_STORE_NAME).delete(id);
-    await transactionDone(tx);
+    await done;
   } catch (err) {
     console.warn("Failed to delete asset from IndexedDB", err);
   }
@@ -173,8 +175,9 @@ export const clearAssets = async (): Promise<void> => {
   try {
     const db = await openDB();
     const tx = db.transaction(ASSET_STORE_NAME, "readwrite");
+    const done = transactionDone(tx);
     tx.objectStore(ASSET_STORE_NAME).clear();
-    await transactionDone(tx);
+    await done;
   } catch (err) {
     console.warn("Failed to clear assets from IndexedDB", err);
   }
@@ -192,6 +195,7 @@ export const saveProjectSession = async (
   try {
     const db = await openDB();
     const tx = db.transaction([STORE_NAME, ASSET_STORE_NAME], "readwrite");
+    const txDone = transactionDone(tx);
     const sessionStore = tx.objectStore(STORE_NAME);
     const assetStore = tx.objectStore(ASSET_STORE_NAME);
 
@@ -264,7 +268,7 @@ export const saveProjectSession = async (
       assetStore.delete(assetId);
     }
 
-    await transactionDone(tx);
+    await txDone;
   } catch (err) {
     console.warn("Failed to save project session to IndexedDB", err);
     throw err;
@@ -275,13 +279,14 @@ export const purgeOrphanAssets = async (): Promise<number> => {
   try {
     const db = await openDB();
     const readTx = db.transaction([STORE_NAME, ASSET_STORE_NAME], "readonly");
+    const readDone = transactionDone(readTx);
     const data = await requestResult<SessionData | undefined>(
       readTx.objectStore(STORE_NAME).get("latest_session"),
     );
     const keys = await requestResult<IDBValidKey[]>(
       readTx.objectStore(ASSET_STORE_NAME).getAllKeys(),
     );
-    await transactionDone(readTx);
+    await readDone;
 
     const referenced = new Set(
       (data?.translatedAssetIds ?? []).map(([, assetId]) => assetId),
@@ -292,11 +297,12 @@ export const purgeOrphanAssets = async (): Promise<number> => {
     if (orphans.length === 0) return 0;
 
     const writeTx = db.transaction(ASSET_STORE_NAME, "readwrite");
+    const writeDone = transactionDone(writeTx);
     const store = writeTx.objectStore(ASSET_STORE_NAME);
     for (const assetId of orphans) {
       store.delete(assetId);
     }
-    await transactionDone(writeTx);
+    await writeDone;
     return orphans.length;
   } catch (err) {
     console.warn("Failed to purge orphan assets from IndexedDB", err);
@@ -380,11 +386,12 @@ export const clearProjectSession = async (): Promise<void> => {
       [STORE_NAME, CLEANING_STORE_NAME, ASSET_STORE_NAME],
       "readwrite",
     );
+    const done = transactionDone(tx);
 
     tx.objectStore(STORE_NAME).delete("latest_session");
     tx.objectStore(CLEANING_STORE_NAME).clear();
     tx.objectStore(ASSET_STORE_NAME).clear();
-    await transactionDone(tx);
+    await done;
   } catch (err) {
     console.warn("Failed to clear project session from IndexedDB", err);
   }
@@ -395,23 +402,34 @@ export const saveCleaningResultMetadata = async (
 ): Promise<void> => {
   try {
     const db = await openDB();
-    const tx = db.transaction(CLEANING_STORE_NAME, "readwrite");
-    const store = tx.objectStore(CLEANING_STORE_NAME);
-    const existing = await requestResult<StoredCleaningResult | undefined>(
-      store.get(result.pageUrl),
-    );
-    const existingRevision = existing?.revision ?? 0;
-    const incomingRevision = result.revision ?? 0;
-    if (
-      existing &&
-      (existingRevision > incomingRevision ||
-        (existingRevision === incomingRevision && existing.updatedAt > result.updatedAt))
-    ) {
-      await transactionDone(tx);
-      return;
+    let shouldWrite = true;
+    try {
+      const readTx = db.transaction(CLEANING_STORE_NAME, "readonly");
+      const readDone = transactionDone(readTx);
+      const existing = await requestResult<StoredCleaningResult | undefined>(
+        readTx.objectStore(CLEANING_STORE_NAME).get(result.pageUrl),
+      );
+      await readDone;
+
+      const existingRevision = existing?.revision ?? 0;
+      const incomingRevision = result.revision ?? 0;
+      if (
+        existing &&
+        (existingRevision > incomingRevision ||
+          (existingRevision === incomingRevision && existing.updatedAt > result.updatedAt))
+      ) {
+        shouldWrite = false;
+      }
+    } catch {
+      // If reading fails, proceed to write
     }
-    store.put(result);
-    await transactionDone(tx);
+
+    if (!shouldWrite) return;
+
+    const writeTx = db.transaction(CLEANING_STORE_NAME, "readwrite");
+    const writeDone = transactionDone(writeTx);
+    writeTx.objectStore(CLEANING_STORE_NAME).put(result);
+    await writeDone;
   } catch (err) {
     console.warn("Failed to save cleaning result metadata", err);
   }
@@ -447,6 +465,7 @@ export const appendPageToProjectSession = async (
 ): Promise<{ pageIndex: number; totalPages: number }> => {
   const db = await openDB();
   const tx = db.transaction([STORE_NAME, ASSET_STORE_NAME], "readwrite");
+  const done = transactionDone(tx);
   const sessionStore = tx.objectStore(STORE_NAME);
   const assetStore = tx.objectStore(ASSET_STORE_NAME);
 
@@ -528,7 +547,7 @@ export const appendPageToProjectSession = async (
   };
 
   sessionStore.put(updatedSession);
-  await transactionDone(tx);
+  await done;
 
   return {
     pageIndex,
@@ -536,11 +555,42 @@ export const appendPageToProjectSession = async (
   };
 };
 
-const transactionDone = (tx: IDBTransaction): Promise<void> =>
+const transactionDone = (
+  tx: IDBTransaction,
+  timeoutMs: number = 4000,
+): Promise<void> =>
   new Promise((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        resolve();
+      }
+    }, timeoutMs);
+
+    const onDone = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+
+    const onFail = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(tx.error || new Error("IDBTransaction failed"));
+    };
+
+    if (typeof tx.addEventListener === "function") {
+      tx.addEventListener("complete", onDone, { once: true });
+      tx.addEventListener("error", onFail, { once: true });
+      tx.addEventListener("abort", onFail, { once: true });
+    } else {
+      tx.oncomplete = onDone;
+      tx.onerror = onFail;
+      tx.onabort = onFail;
+    }
   });
 
 const requestResult = <T>(request: IDBRequest<T>): Promise<T> =>

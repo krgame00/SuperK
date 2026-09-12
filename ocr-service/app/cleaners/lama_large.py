@@ -7,6 +7,7 @@ is the production model consumed here.
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Protocol, Self, cast
@@ -109,19 +110,44 @@ class LamaLargeCleaner:
         padded_height = _round_up(height, 8)
         padded_width = _round_up(width, 8)
 
-        image_padded = np.zeros((padded_height, padded_width, 3), np.float32)
-        image_padded[:height, :width] = image_rgb.astype(np.float32) / 255.0
-        mask_padded = np.zeros((padded_height, padded_width), np.float32)
-        mask_padded[:height, :width] = mask > 0
-
-        image_tensor = np.ascontiguousarray(
-            image_padded.transpose(2, 0, 1)[None, ...],
-            dtype=np.float32,
-        )
-        mask_tensor = np.ascontiguousarray(
-            mask_padded[None, None, ...],
-            dtype=np.float32,
-        )
+        legacy_buffers = os.getenv("SUPERK_LEGACY_LAMA_BUFFERS") == "1"
+        if legacy_buffers:
+            image_padded = np.zeros((padded_height, padded_width, 3), np.float32)
+            image_padded[:height, :width] = image_rgb.astype(np.float32) / 255.0
+            mask_padded = np.zeros((padded_height, padded_width), np.float32)
+            mask_padded[:height, :width] = mask > 0
+            image_tensor = np.ascontiguousarray(
+                image_padded.transpose(2, 0, 1)[None, ...],
+                dtype=np.float32,
+            )
+            mask_tensor = np.ascontiguousarray(
+                mask_padded[None, None, ...],
+                dtype=np.float32,
+            )
+        else:
+            # Fill the model's final NCHW inputs directly. The previous path first
+            # allocated full-size padded HWC arrays and then copied them again into
+            # contiguous NCHW tensors, briefly retaining both representations.
+            image_tensor = np.zeros(
+                (1, 3, padded_height, padded_width),
+                dtype=np.float32,
+            )
+            np.divide(
+                image_rgb.transpose(2, 0, 1),
+                np.float32(255.0),
+                out=image_tensor[0, :, :height, :width],
+                casting="unsafe",
+            )
+            mask_tensor = np.zeros(
+                (1, 1, padded_height, padded_width),
+                dtype=np.float32,
+            )
+            np.not_equal(
+                mask,
+                0,
+                out=mask_tensor[0, 0, :height, :width],
+                casting="unsafe",
+            )
 
         input_feed = {
             "image": image_tensor,
@@ -147,8 +173,21 @@ class LamaLargeCleaner:
             self._cpu_fallback_used = True
             self.session = self._cpu_session_factory()
             output = self.session.run(None, input_feed)[0]
-        repaired = np.asarray(output, dtype=np.float32).squeeze(0).transpose(1, 2, 0)
-        return (repaired.clip(0, 1) * 255).astype(np.uint8)[:height, :width]
+        if legacy_buffers:
+            repaired_float = (
+                np.asarray(output, dtype=np.float32)
+                .squeeze(0)
+                .transpose(1, 2, 0)
+            )
+            repaired = (repaired_float.clip(0, 1) * 255).astype(np.uint8)
+        else:
+            # ONNX owns a fresh output for this invocation, so normalizing it
+            # in-place avoids two more full-size float32 temporaries.
+            output_array = np.asarray(output, dtype=np.float32)
+            np.clip(output_array, 0, 1, out=output_array)
+            np.multiply(output_array, np.float32(255.0), out=output_array)
+            repaired = output_array.squeeze(0).transpose(1, 2, 0).astype(np.uint8)
+        return repaired[:height, :width]
 
     def clean(
         self,

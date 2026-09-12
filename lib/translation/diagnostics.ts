@@ -9,7 +9,10 @@ export type DiagnosticErrorCode =
   | "SAFETY_BLOCKED"
   | "LOCAL_SIDECAR_OFFLINE"
   | "LOCAL_CLEANER_FAILED"
+  | "IMAGE_LOAD_FAILED"
   | "NETWORK_OR_TIMEOUT"
+  | "PROVIDER_RESPONSE_INVALID"
+  | "CLEANING_REVIEW_REQUIRED"
   | "UNKNOWN_ERROR";
 
 export type DiagnosticActionType =
@@ -29,6 +32,15 @@ export interface DiagnosticDetail {
 }
 
 export const DIAGNOSTIC_TAXONOMY: Record<DiagnosticErrorCode, DiagnosticDetail> = {
+  CLEANING_REVIEW_REQUIRED: {
+    code: "CLEANING_REVIEW_REQUIRED",
+    title: "หน้ารอการตรวจสอบคุณภาพการลบคำพูด (Awaiting Review)",
+    description:
+      "ระบบลบข้อความในหน้าเหล่านี้เรียบร้อยแล้ว แต่ตรวจพบฉากหลังที่ซับซ้อนหรือเอฟเฟกต์ SFX ที่แนะนำให้ตรวจสอบ หรือสามารถกดยืนยันเพื่อดำเนินการแปลต่อทันที",
+    recommendedAction: "retry_failed",
+    actionLabel: "ยืนยันและดำเนินการแปลต่อ",
+    retryable: true,
+  },
   MISSING_KEY: {
     code: "MISSING_KEY",
     title: "ยังไม่ได้ระบุ Gemini API Key",
@@ -58,7 +70,7 @@ export const DIAGNOSTIC_TAXONOMY: Record<DiagnosticErrorCode, DiagnosticDetail> 
   },
   LOCAL_SIDECAR_OFFLINE: {
     code: "LOCAL_SIDECAR_OFFLINE",
-    title: "ระบบคลีนภาพบนเครื่องไม่ตอบสนอง (Port 8765)",
+    title: "ระบบคลีนภาพบนเครื่องไม่ตอบสนอง",
     description:
       "ไม่สามารถเชื่อมต่อกับ Python Inpainting Service บนเครื่องได้ กรุณาตรวจสอบหรือกู้คืน Cleaner ก่อนลองหน้าที่ได้รับผลกระทบใหม่",
     recommendedAction: "restart_cleaner",
@@ -74,13 +86,31 @@ export const DIAGNOSTIC_TAXONOMY: Record<DiagnosticErrorCode, DiagnosticDetail> 
     actionLabel: "ลองหน้ากลุ่มนี้ใหม่",
     retryable: true,
   },
+  IMAGE_LOAD_FAILED: {
+    code: "IMAGE_LOAD_FAILED",
+    title: "โหลดภาพสำหรับแปลไม่สำเร็จ",
+    description:
+      "ระบบไม่สามารถอ่านภาพต้นฉบับหรือภาพที่เตรียมไว้สำหรับการแปลได้ อาจเกิดจาก Blob/ไฟล์ภาพหมดอายุหรือโหลดไม่ทัน กรุณาลองหน้ากลุ่มนี้ใหม่ หากยังเกิดซ้ำให้เปิดโครงการหรือไฟล์ภาพใหม่อีกครั้ง",
+    recommendedAction: "retry_failed",
+    actionLabel: "ลองโหลดและแปลใหม่",
+    retryable: true,
+  },
   NETWORK_OR_TIMEOUT: {
     code: "NETWORK_OR_TIMEOUT",
-    title: "การเชื่อมต่อขัดข้องหรือหมดเวลา",
+    title: "การเชื่อมต่อหรือบริการ AI ขัดข้อง",
     description:
-      "การส่งข้อมูลไปยังเซิร์ฟเวอร์ใช้เวลานานเกินกำหนดหรือการเชื่อมต่ออินเทอร์เน็ตหลุด กรุณาตรวจสอบสัญญาณเน็ตแล้วลองใหม่อีกครั้ง",
+      "การส่งข้อมูลไปยังเซิร์ฟเวอร์หมดเวลา การเชื่อมต่ออินเทอร์เน็ตขัดข้อง หรือบริการ AI ต้นทางตอบกลับผิดพลาดชั่วคราว กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่อีกครั้ง",
     recommendedAction: "retry_failed",
     actionLabel: "ลองส่งใหม่อีกครั้ง",
+    retryable: true,
+  },
+  PROVIDER_RESPONSE_INVALID: {
+    code: "PROVIDER_RESPONSE_INVALID",
+    title: "AI ตอบกลับมาในรูปแบบไม่สมบูรณ์",
+    description:
+      "ระบบ AI ตอบกลับมาแล้ว แต่ข้อมูล JSON หรือรายการกล่องข้อความไม่ครบตามรูปแบบที่ SuperK ต้องใช้ ปัญหานี้มักเกิดเป็นบางหน้าและสามารถลองส่งหน้านั้นใหม่ได้",
+    recommendedAction: "retry_failed",
+    actionLabel: "ลองหน้ากลุ่มนี้ใหม่",
     retryable: true,
   },
   UNKNOWN_ERROR: {
@@ -127,13 +157,25 @@ export function classifyTranslationError(
   if (codeStr === "LOCAL_CLEANER_FAILED") {
     return DIAGNOSTIC_TAXONOMY.LOCAL_CLEANER_FAILED;
   }
+  if (codeStr === "IMAGE_LOAD_FAILED") {
+    return DIAGNOSTIC_TAXONOMY.IMAGE_LOAD_FAILED;
+  }
   if (codeStr === "NETWORK_OR_TIMEOUT" || codeStr === "GEMINI_TIMEOUT" || codeStr === "TIMEOUT") {
     return DIAGNOSTIC_TAXONOMY.NETWORK_OR_TIMEOUT;
+  }
+  if (codeStr === "PROVIDER_RESPONSE_INVALID" || codeStr === "MALFORMED_RESPONSE") {
+    return DIAGNOSTIC_TAXONOMY.PROVIDER_RESPONSE_INVALID;
+  }
+  if (codeStr === "CLEANING_REVIEW_REQUIRED" || codeStr === "AWAITING_REVIEW") {
+    return DIAGNOSTIC_TAXONOMY.CLEANING_REVIEW_REQUIRED;
   }
 
   // 2. Status codes
   if (status === 401 || status === 403) {
     return DIAGNOSTIC_TAXONOMY.MISSING_KEY;
+  }
+  if (status === 422) {
+    return DIAGNOSTIC_TAXONOMY.CLEANING_REVIEW_REQUIRED;
   }
   if (status === 429) {
     return DIAGNOSTIC_TAXONOMY.QUOTA_EXHAUSTED;
@@ -187,12 +229,51 @@ export function classifyTranslationError(
     return DIAGNOSTIC_TAXONOMY.LOCAL_CLEANER_FAILED;
   }
   if (
+    msg.includes("โหลดรูปภาพไม่สำเร็จ") ||
+    msg.includes("ไม่สามารถโหลดรูปภาพได้") ||
+    msg.includes("image constructor unavailable") ||
+    msg.includes("failed to load image")
+  ) {
+    return DIAGNOSTIC_TAXONOMY.IMAGE_LOAD_FAILED;
+  }
+  if (
+    msg.includes("malformed") ||
+    msg.includes("invalid json") ||
+    msg.includes("bubbles array missing") ||
+    msg.includes("unexpected format") ||
+    msg.includes("provider response invalid")
+  ) {
+    return DIAGNOSTIC_TAXONOMY.PROVIDER_RESPONSE_INVALID;
+  }
+  if (
     msg.includes("timeout") ||
     msg.includes("ช้าเกินกำหนด") ||
     msg.includes("network") ||
     msg.includes("fetch failed") ||
     msg.includes("หมดเวลา")
   ) {
+    return DIAGNOSTIC_TAXONOMY.NETWORK_OR_TIMEOUT;
+  }
+  if (
+    msg.includes("awaiting review") ||
+    msg.includes("cleaning verification") ||
+    msg.includes("needs_review") ||
+    msg.includes("รอการตรวจสอบ")
+  ) {
+    return DIAGNOSTIC_TAXONOMY.CLEANING_REVIEW_REQUIRED;
+  }
+
+  // Generic provider/transport fallbacks come after specific message checks so
+  // a useful cause such as "missing API key" is never hidden by a generic 5xx.
+  if (
+    codeStr === "NETWORK" ||
+    codeStr === "UPSTREAM" ||
+    codeStr === "GEMINI_UPSTREAM" ||
+    codeStr === "MODEL_UNAVAILABLE"
+  ) {
+    return DIAGNOSTIC_TAXONOMY.NETWORK_OR_TIMEOUT;
+  }
+  if (status === 500 || status === 502 || status === 503) {
     return DIAGNOSTIC_TAXONOMY.NETWORK_OR_TIMEOUT;
   }
 

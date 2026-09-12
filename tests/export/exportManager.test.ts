@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  deriveProjectExportName,
   escapeXml,
+  generateArchiveFilename,
   generateComicInfoXml,
   generatePageFilename,
   generateStripFilename,
@@ -25,6 +27,48 @@ describe("sanitizeExportFilename", () => {
   });
 });
 
+describe("deriveProjectExportName & generateArchiveFilename", () => {
+  it("extracts series/title from first page filename", () => {
+    expect(deriveProjectExportName([{ name: "OnePiece_Ch1000_01.jpg" }])).toBe(
+      "SuperK_OnePiece_Ch1000",
+    );
+    expect(deriveProjectExportName([{ name: "Dandadan-Vol02-Page05.png" }])).toBe(
+      "SuperK_Dandadan-Vol02",
+    );
+    expect(deriveProjectExportName([{ name: "Naruto_Chapter_5_page1.jpg" }])).toBe(
+      "SuperK_Naruto_Chapter_5",
+    );
+  });
+
+  it("preserves names that already have SuperK prefix", () => {
+    expect(deriveProjectExportName([{ name: "SuperK_Page_001_MyStory.png" }])).toBe(
+      "SuperK_MyStory",
+    );
+  });
+
+  it("falls back to SuperK_Translations for generic or numbered-only pages", () => {
+    expect(deriveProjectExportName([])).toBe("SuperK_Translations");
+    expect(deriveProjectExportName([{ name: "001.png" }, { name: "002.png" }])).toBe(
+      "SuperK_Translations",
+    );
+    expect(deriveProjectExportName([{ name: "page_1.jpg" }])).toBe("SuperK_Translations");
+    expect(deriveProjectExportName([{ name: "image.webp" }])).toBe("SuperK_Translations");
+  });
+
+  it("generates archive filenames matching format", () => {
+    expect(generateArchiveFilename("zip", [{ name: "Bleach_Ch01_01.jpg" }])).toBe(
+      "SuperK_Bleach_Ch01.zip",
+    );
+    expect(generateArchiveFilename("cbz", [{ name: "Bleach_Ch01_01.jpg" }])).toBe(
+      "SuperK_Bleach_Ch01.cbz",
+    );
+    expect(generateArchiveFilename("pdf", [{ name: "Bleach_Ch01_01.jpg" }])).toBe(
+      "SuperK_Bleach_Ch01.pdf",
+    );
+    expect(generateArchiveFilename("zip")).toBe("SuperK_Translations.zip");
+  });
+});
+
 describe("generatePageFilename", () => {
   it("formats zero-padded page numbers with original basename and extension", () => {
     expect(generatePageFilename(0, "cover.jpg")).toBe("SuperK_Page_001_cover.jpg");
@@ -44,6 +88,12 @@ describe("generateStripFilename", () => {
 
   it("returns numbered strip part when multiple chunks", () => {
     expect(generateStripFilename(2, 4)).toBe("SuperK_Webtoon_Strip_Part02.jpg");
+  });
+
+  it("uses custom manga project name when pages are supplied", () => {
+    expect(
+      generateStripFilename(1, 1, [{ name: "OnePiece_100_01.jpg" }]),
+    ).toBe("SuperK_OnePiece_100_LongStrip.jpg");
   });
 });
 

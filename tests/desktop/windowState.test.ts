@@ -161,5 +161,28 @@ describe("WindowStateManager & System Tray (Ticket 05)", () => {
       expect(mockWindow.show).toHaveBeenCalled();
       expect(mockWindow.focus).toHaveBeenCalled();
     });
+
+    it("resolves window dynamically via getMainWindow getter", () => {
+      let currentWin: any = null;
+      createTrayManager({
+        tray: mockTray as any,
+        Menu: mockMenu as any,
+        getMainWindow: () => currentWin,
+        onExit: vi.fn(),
+        openHealthUrl: vi.fn(),
+      });
+
+      // Window is attached later
+      currentWin = mockWindow;
+
+      const doubleClickHandler = mockTray.on.mock.calls.find(
+        (call: any[]) => call[0] === "double-click"
+      )?.[1];
+      expect(doubleClickHandler).toBeDefined();
+      doubleClickHandler();
+
+      expect(mockWindow.show).toHaveBeenCalled();
+      expect(mockWindow.focus).toHaveBeenCalled();
+    });
   });
 });

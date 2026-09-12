@@ -4,7 +4,7 @@ Date: 2026-09-12
 
 ## Status
 
-Accepted
+Accepted; the high-confidence fidelity-precedence rule is narrowed by ADR 0007, which requires source-evidence and readability validation before automatic source-faithful rendering.
 
 ## Context
 

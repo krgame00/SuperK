@@ -1,4 +1,4 @@
-﻿import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "vitest";
 import { parseLLMJSON } from "@/lib/parseLLMJSON";
 
 interface TestResult {
@@ -44,6 +44,11 @@ describe("parseLLMJSON", () => {
   it("recovers truncated closing braces", () => {
     const result = parseAsResult('{"bubbles":[{"t":"ทดสอบ"}');
     expect(result.bubbles[0].t).toBe("ทดสอบ");
+  });
+
+  it("handles unescaped literal newlines inside string values", () => {
+    const result = parseAsResult('{"bubbles":[{"t":"บรรทัดที่ 1\nบรรทัดที่ 2"}]}');
+    expect(result.bubbles[0].t).toBe("บรรทัดที่ 1\nบรรทัดที่ 2");
   });
 
   it("returns null on garbage", () => {
