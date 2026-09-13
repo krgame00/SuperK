@@ -505,9 +505,10 @@ def test_hybrid_detector_rejects_low_seed_false_positives() -> None:
     detector = HybridTextDetector(FalsePositiveCTD(), paddle_engine=None)
     res = detector.detect(image)
 
-    # Low-confidence block with no text seed should be filtered out
-    assert len(res.blocks) == 0
-    assert len(res.evidence_regions) == 0
+    # Weak candidates remain inspectable but cannot authorize removal.
+    assert len(res.blocks) == 1
+    assert not res.evidence_regions[0].text_supported
+    assert len(res.evidence_regions) == 1
 
 
 def test_detector_extracts_magenta_and_chromatic_strokes_on_dark_background() -> None:

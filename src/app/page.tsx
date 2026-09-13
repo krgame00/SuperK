@@ -1,5 +1,8 @@
 "use client";
 
+import { PageReviewNotice } from "@/components/cleaning/PageReviewNotice";
+import { translationScope } from "@/lib/cleaning/textAuthorization";
+
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { getWorkspacePrimaryAction } from "@/lib/workspacePrimaryAction";
 import { useTranslation } from "@/hooks/useTranslation";
@@ -238,6 +241,7 @@ export default function WorkspacePage() {
       const result = await cleanPage(pageUrl, await response.blob());
       return {
         recognitionUrl: pageUrl,
+        textScope: translationScope(result),
         backgroundUrl: result.cleanUrl,
         maskUrl: result.maskUrl,
         preparedIdentity: result.preparedIdentity,
@@ -504,7 +508,7 @@ export default function WorkspacePage() {
   ) => {
     const result = await retryRegion(regionId, mask, cleaner, action);
     const page = pages[currentPage];
-    if (page && result) {
+    if (page && result && action !== "confirm-text") {
       invalidatePageTranslation(page.url);
       setReviewedPageUrls((current) => {
         const next = new Set(current);
@@ -970,7 +974,8 @@ export default function WorkspacePage() {
           exportChunk(currentChunk, chunkIndex, chunkIndex > 1);
         }
 
-        setTranslationResult(`✅ ดาวน์โหลด Webtoon Strip สำเร็จ! (${loadedImages.length} หน้า)`);
+        const folderLabel = destDir?.name ? ` ใน "${destDir.name}"` : "";
+        setTranslationResult(`✅ ดาวน์โหลด Webtoon Strip${folderLabel} สำเร็จ! (${loadedImages.length} หน้า)`);
         setTimeout(() => setTranslationResult(null), 3000);
       } catch (e) {
         console.error("Failed to generate long strip", e);
@@ -2031,37 +2036,10 @@ export default function WorkspacePage() {
                         cleaningResultsByPage.get(currentPageUrl),
                         activeBubbles,
                       ) && (
-                        <div className="w-full flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-xs backdrop-blur-md shadow-md animate-in fade-in">
-                          <span className="flex items-center gap-1.5 text-amber-500 font-medium">
-                            ⚠️ หน้านี้มีจุดคลีนหรือคำแปลที่ต้องการการตรวจทาน
-                          </span>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setConfirmedPages((prev) =>
-                                  new Set(prev).add(currentPageUrl),
-                                )
-                              }
-                              className="px-2.5 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white font-semibold transition-colors cursor-pointer"
-                            >
-                              ยืนยันหน้านี้
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setConfirmedPages((prev) =>
-                                  new Set(prev).add(currentPageUrl),
-                                )
-                              }
-                              className="text-muted hover:text-foreground p-1 rounded transition-colors cursor-pointer text-xs"
-                              title="ปิดการแจ้งเตือน"
-                              aria-label="ปิดการแจ้งเตือน"
-                            >
-                              ✕
-                            </button>
-                          </div>
-                        </div>
+                        <PageReviewNotice
+                          key={`${currentPageUrl}:${cleaningResultsByPage.get(currentPageUrl)?.jobId ?? ""}`}
+                          onConfirm={() => setConfirmedPages(prev => new Set(prev).add(currentPageUrl))}
+                        />
                       )}
                     {batchFailures.length > 0 && (
                       <div className="w-full flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg border border-red-500/40 bg-red-500/15 text-xs backdrop-blur-md shadow-md animate-in fade-in">
@@ -2253,7 +2231,8 @@ export default function WorkspacePage() {
       />
       {isMaskEditorOpen && currentCleaningResult && pages[currentPage] && (
         <MaskEditor
-          sourceUrl={currentCleaningResult.cleanUrl}
+          sourceUrl={pages[currentPage].url}
+          proposalMaskUrl={currentCleaningResult.reviewMaskUrl}
           maskUrl={currentCleaningResult.maskUrl}
           regions={currentCleaningResult.regions}
           onClose={() => setIsMaskEditorOpen(false)}

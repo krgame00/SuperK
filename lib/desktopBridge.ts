@@ -11,11 +11,24 @@ export interface CleanerRecoveryResult {
   message?: string;
 }
 
-interface SuperKDesktopBridge {
+export interface SuperKDesktopBridge {
+  isDesktop?: boolean;
   recoverCleaner: () => Promise<CleanerRecoveryResult>;
   onCleanerRecoveryStatus?: (
     listener: (payload: { status: CleanerRecoveryPhase; message?: string }) => void,
   ) => () => void;
+  notify?: (payload: any) => void;
+  pickExportDirectory?: () => Promise<string | null>;
+  saveExportFile?: (payload: {
+    dirPath: string;
+    filename: string;
+    buffer: ArrayBuffer;
+  }) => Promise<{
+    success: boolean;
+    savedName: string;
+    fullPath: string;
+  }>;
+  openExportDirectory?: (dirPath: string) => Promise<string>;
 }
 
 declare global {

@@ -103,4 +103,34 @@ describe("SettingsModal Export Directory Settings", () => {
       expect(screen.getByText(/ยังไม่ได้เลือก/i)).toBeInTheDocument();
     });
   });
+
+  it("renders desktop description and 'เปิดโฟลเดอร์' button in desktop mode", async () => {
+    vi.spyOn(saveLocation, "isDesktopMode").mockReturnValue(true);
+    vi.spyOn(saveLocation, "getAskExportDirectory").mockReturnValue(true);
+    vi.spyOn(saveLocation, "getRememberedDirectoryName").mockReturnValue("E:\\SuperK_Translations");
+    const openSpy = vi.spyOn(saveLocation, "openRememberedDesktopDirectory").mockResolvedValue("E:\\SuperK_Translations");
+
+    render(<SettingsModal {...defaultProps} />);
+
+    expect(screen.getByText(/ไม่ต้องเลือกโฟลเดอร์ซ้ำ/i)).toBeInTheDocument();
+    expect(screen.getByText("E:\\SuperK_Translations")).toBeInTheDocument();
+
+    const openBtn = screen.getByRole("button", { name: /เปิดโฟลเดอร์/i });
+    expect(openBtn).toBeInTheDocument();
+
+    fireEvent.click(openBtn);
+    expect(openSpy).toHaveBeenCalled();
+  });
+
+  it("does not render 'เปิดโฟลเดอร์' button in web mode", () => {
+    vi.spyOn(saveLocation, "isDesktopMode").mockReturnValue(false);
+    vi.spyOn(saveLocation, "getAskExportDirectory").mockReturnValue(true);
+    vi.spyOn(saveLocation, "getRememberedDirectoryName").mockReturnValue("WebDownloads");
+
+    render(<SettingsModal {...defaultProps} />);
+
+    expect(screen.queryByRole("button", { name: /เปิดโฟลเดอร์/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /เปลี่ยนโฟลเดอร์/i })).toBeInTheDocument();
+  });
 });
+

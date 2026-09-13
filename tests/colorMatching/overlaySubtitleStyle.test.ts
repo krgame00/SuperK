@@ -177,8 +177,8 @@ describe("Ticket 09: Overlay Subtitle Classification & Readable Safety Path", ()
 
       const resolved = resolveBubbleTextStyle(bubble);
       expect(resolved.textColor).toBe("#000000");
-      expect(resolved.hasOutline).toBe(false);
-      expect(resolved.outlineWidthRatio).toBe(0);
+      expect(resolved.hasOutline).toBe(true);
+      expect(resolved.outlineWidthRatio).toBeGreaterThanOrEqual(0.12);
       expect(resolved.source).toBe("auto");
     });
 

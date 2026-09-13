@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import cv2
 import numpy as np
@@ -24,6 +24,7 @@ class MaskRegion:
     rect: PixelRect
     component_ids: tuple[int, ...]
     stroke_radius: int
+    text_supported: bool = True
 
 
 @dataclass(frozen=True)
@@ -258,12 +259,34 @@ def refine_mask(
     seed = (detection.mask_probability >= active.threshold).astype(np.uint8) * 255
     completed_seed = complete_glyph_mask(image_rgb, seed, envelope, protected_edges)
 
-    return _refine_seed_mask(
+    refined = _refine_seed_mask(
         completed_seed,
         protected_edges,
         minimum_component_area=active.minimum_component_area,
         envelope=envelope,
     )
+    if detection.evidence_regions:
+        trusted = np.zeros_like(refined.mask)
+        for evidence in detection.evidence_regions:
+            if not evidence.text_supported:
+                continue
+            if evidence.polygon:
+                cv2.fillPoly(trusted, [np.asarray(evidence.polygon, dtype=np.int32)], 255)
+            else:
+                r = evidence.rect
+                trusted[r.y : r.y + r.height, r.x : r.x + r.width] = 255
+        regions = []
+        for region in refined.regions:
+            r = region.rect
+            pixels = refined.mask[r.y : r.y + r.height, r.x : r.x + r.width] > 0
+            support = trusted[r.y : r.y + r.height, r.x : r.x + r.width] > 0
+            supported = (
+                bool(np.any(pixels))
+                and np.count_nonzero(pixels & support) / np.count_nonzero(pixels) >= 0.90
+            )
+            regions.append(replace(region, text_supported=supported))
+        return replace(refined, regions=regions)
+    return refined
 
 
 def _estimate_stroke_radius(component: BinaryMask) -> int:

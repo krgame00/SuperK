@@ -30,6 +30,7 @@ class AutomaticAction(StrEnum):
 
 
 class ManualRegionAction(StrEnum):
+    CONFIRM_TEXT = "confirm-text"
     AUTOMATIC = "automatic"
     FORCE_CLEAN = "force-clean"
     PROTECT = "protect"
@@ -89,6 +90,9 @@ class RegionRecord(BaseModel):
     eligibility_confidence: float = Field(ge=0, le=1)
     automatic_action: AutomaticAction
     protection_reasons: list[ProtectionReason]
+    text_confirmed: bool = False
+    mask_approved: bool = False
+    approval_revision: str | None = None
 
 
 class JobProgress(BaseModel):
@@ -110,6 +114,7 @@ class TextEvidenceRegion(BaseModel):
     polygon: list[tuple[int, int]] | None = None
     source: EvidenceSource = EvidenceSource.CTD
     confidence: float = Field(ge=0, le=1)
+    text_supported: bool = True
 
 
 class CleaningResult(BaseModel):
@@ -124,4 +129,4 @@ class CleaningResult(BaseModel):
     regions: list[RegionRecord]
     timings_ms: dict[str, int | float | str]
     awaiting_review: bool = False
-    pipeline_version: str = "2.2.0-adaptive-roi"
+    pipeline_version: str = "2.3.0-text-authorization"

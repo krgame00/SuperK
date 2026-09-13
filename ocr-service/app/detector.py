@@ -535,7 +535,7 @@ class HybridTextDetector:
             local_prob = ctd_res.mask_probability[by1:by2, bx1:bx2]
             local_seed = _binary_text_seed(local_prob, threshold=0.25)
             seed_ratio = np.count_nonzero(local_seed) / max(local_seed.size, 1)
-            if b.confidence < 0.60 and seed_ratio < 0.04:
+            if not np.any(local_seed):
                 continue
             filtered_blocks.append(b)
         merged_blocks = filtered_blocks
@@ -548,6 +548,7 @@ class HybridTextDetector:
                 polygon=None,
                 source=EvidenceSource.CTD,
                 confidence=b.confidence,
+                text_supported=_has_glyph_support(ctd_res.mask_probability, b),
             )
             for i, b in enumerate(merged_blocks)
         ]
@@ -682,7 +683,9 @@ class HybridTextDetector:
                             if ox2 > ox1 and oy2 > oy1:
                                 ev.source = EvidenceSource.BOTH
                                 ev.confidence = max(ev.confidence, float(conf))
-                                matched = True
+                                # Recognition confirms its own polygon, not an
+                                # entire overlapping detector rectangle.
+                                matched = False
                         if not matched and float(conf) >= 0.35:
                             evidence_regions.append(
                                 TextEvidenceRegion(
@@ -691,6 +694,7 @@ class HybridTextDetector:
                                     polygon=poly,
                                     source=EvidenceSource.PADDLE,
                                     confidence=float(conf),
+                                    text_supported=float(conf) >= 0.85 and any(c.isalnum() for c in str(_text)),
                                 )
                             )
 
@@ -831,3 +835,14 @@ def _detect_skin_tattoos(image_rgb: RgbImage) -> np.ndarray:
             mask[t_labels == i] = 255
     return cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)), iterations=1)
 
+
+
+def _has_glyph_support(probability: FloatMask, block: DetectedBlock) -> bool:
+    """Sparse isolated marks remain reviewable regardless of box confidence."""
+    r = block.rect
+    local = probability[r.y:r.y + r.height, r.x:r.x + r.width]
+    seed = (local >= 0.35).astype(np.uint8)
+    if seed.size == 0 or block.confidence < 0.60 or np.count_nonzero(seed) / seed.size < 0.04:
+        return False
+    count, _, stats, _ = cv2.connectedComponentsWithStats(seed, connectivity=8)
+    return sum(stats[i, cv2.CC_STAT_AREA] >= 3 for i in range(1, count)) >= 2

@@ -146,9 +146,10 @@ describe("Ticket 12: Reported-Regression E2E & Export Parity", () => {
       expect(resolvedList[0].textOutline).toBe("#000000");
       expect(resolvedList[0].hasOutline).toBe(true);
 
-      // Dialogue 1 preserves no-outline fidelity
+      // Dialogue 1 receives Universal Outline Default
       expect(resolvedList[1].textColor).toBe("#000000");
-      expect(resolvedList[1].hasOutline).toBe(false);
+      expect(resolvedList[1].hasOutline).toBe(true);
+      expect(resolvedList[1].textOutline).toBe("#ffffff");
 
       // SFX 1 preserves vivid color and outline
       expect(resolvedList[2].textColor).toBe("#ff0055");

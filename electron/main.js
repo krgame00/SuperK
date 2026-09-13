@@ -25,6 +25,11 @@ const {
   createTrayManager,
   DEFAULT_BOUNDS,
 } = require("./windowState");
+const {
+  pickExportDirectory,
+  saveExportFile,
+  openExportDirectory,
+} = require("./exportHandler");
 
 let electronModule = null;
 try {
@@ -132,6 +137,7 @@ function bootstrap(
 
   const dialog = dialogModule || runtimeOptions.dialog || null;
   const ipcMain = runtimeOptions.ipcMain || null;
+  const shell = runtimeOptions.shell || electronModule?.shell || null;
   const splashFactory = runtimeOptions.createSplashWindowFn || createSplashWindow;
   const checkRequiredPortsFn = runtimeOptions.checkRequiredPortsFn || checkRequiredPorts;
   const findAvailablePortFn = runtimeOptions.findAvailablePortFn || findAvailablePort;
@@ -482,10 +488,25 @@ function bootstrap(
     }
   };
 
+  const pickExportDirectoryHandler = async () => {
+    return await pickExportDirectory(dialog, mainWindow);
+  };
+
+  const saveExportFileHandler = async (_event, payload) => {
+    return await saveExportFile(payload);
+  };
+
+  const openExportDirectoryHandler = async (_event, dirPath) => {
+    return await openExportDirectory(shell, dirPath);
+  };
+
   if (ipcMain) {
     ipcMain.on("splash:retry", retryHandler);
     ipcMain.on("desktop:notify", notifyHandler);
     ipcMain.handle?.("cleaner:recover", cleanerRecoverHandler);
+    ipcMain.handle?.("desktop:pick-export-directory", pickExportDirectoryHandler);
+    ipcMain.handle?.("desktop:save-export-file", saveExportFileHandler);
+    ipcMain.handle?.("desktop:open-export-directory", openExportDirectoryHandler);
   }
 
   app.whenReady().then(() => {
@@ -530,6 +551,9 @@ function bootstrap(
       ipcMain.removeListener?.("splash:retry", retryHandler);
       ipcMain.removeListener?.("desktop:notify", notifyHandler);
       ipcMain.removeHandler?.("cleaner:recover");
+      ipcMain.removeHandler?.("desktop:pick-export-directory");
+      ipcMain.removeHandler?.("desktop:save-export-file");
+      ipcMain.removeHandler?.("desktop:open-export-directory");
     }
 
     cleanupPromise = Promise.allSettled([

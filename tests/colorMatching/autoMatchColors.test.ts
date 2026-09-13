@@ -119,9 +119,9 @@ describe("autoMatchColors style resolution", () => {
     const resolved = resolveBubbleTextStyle(bubble, globalStyle);
 
     expect(resolved.textColor).toBe("#202020");
-    expect(resolved.textOutline).toBe("#2a2a2a");
-    expect(resolved.hasOutline).toBe(false);
-    expect(resolved.outlineWidthRatio).toBe(0);
+    expect(resolved.textOutline).toBe("#ffffff");
+    expect(resolved.hasOutline).toBe(true);
+    expect(resolved.outlineWidthRatio).toBeGreaterThanOrEqual(0.12);
     expect(resolved.source).toBe("auto");
   });
 

@@ -163,22 +163,29 @@ export function selectAdaptiveReadableStyle(
   };
 }
 
-const GLOBAL_OUTLINE_RATIO = 0.16;
+const GLOBAL_OUTLINE_RATIO = 0.13;
 
 function resolveOutlinePresence(profile: TextStyleProfile): boolean {
-  if (profile.hasOutline !== undefined) return profile.hasOutline;
-  if (profile.outlineWidthRatio !== undefined) return profile.outlineWidthRatio > 0;
-  if (profile.outlineWidth !== undefined) return profile.outlineWidth > 0;
-  // Saved projects created before source-faithful profiles always rendered a stroke.
+  // Manual user styles take precedence: if user explicitly sets hasOutline to false or outlineWidth to 0, respect it.
+  if (profile.ownershipMode === "manual" || profile.source === "manual") {
+    if (profile.hasOutline !== undefined) return profile.hasOutline;
+    if (profile.outlineWidthRatio !== undefined) return profile.outlineWidthRatio > 0;
+    if (profile.outlineWidth !== undefined) return profile.outlineWidth > 0;
+    return true;
+  }
+  // Universal Outline Default: auto & fallback styles ALWAYS have an outline by default
   return true;
 }
 
 function resolveOutlineRatio(profile: TextStyleProfile, hasOutline: boolean): number {
   if (!hasOutline) return 0;
-  if (typeof profile.outlineWidthRatio === "number") {
+  if (typeof profile.outlineWidthRatio === "number" && profile.outlineWidthRatio > 0) {
     return Math.max(0, Math.min(0.5, profile.outlineWidthRatio));
   }
-  return GLOBAL_OUTLINE_RATIO * Math.max(0, profile.outlineWidth ?? 1.0);
+  const scale = (typeof profile.outlineWidth === "number" && profile.outlineWidth > 0)
+    ? profile.outlineWidth
+    : 1.0;
+  return GLOBAL_OUTLINE_RATIO * scale;
 }
 
 function globalResolvedStyle(
@@ -203,18 +210,92 @@ function resolvedFromProfile(
   profile: TextStyleProfile,
   globalStyle: OverlayTextStyle,
   autoOutlineEnabled: boolean,
+  bubble?: TranslatedBubble,
 ): ResolvedTextStyle {
+  const isManual = profile.ownershipMode === "manual" || profile.source === "manual";
   const hasSourceOutline = resolveOutlinePresence(profile);
-  const hasOutline = autoOutlineEnabled ? hasSourceOutline : true;
-  const outlineWidthRatio = autoOutlineEnabled
-    ? resolveOutlineRatio(profile, hasSourceOutline)
+  const hasOutline = isManual ? hasSourceOutline : (autoOutlineEnabled ? true : hasSourceOutline);
+  let outlineWidthRatio = autoOutlineEnabled
+    ? resolveOutlineRatio(profile, hasOutline)
     : GLOBAL_OUTLINE_RATIO;
 
+  let textColor = profile.fill || globalStyle.textColor || "#000000";
+  let textOutline = autoOutlineEnabled
+    ? profile.outline || globalStyle.textOutline || "#ffffff"
+    : globalStyle.textOutline || "#ffffff";
+
+  const textContent = bubble
+    ? String(bubble.t || bubble.translated || bubble.original_text || "").trim()
+    : "";
+  const isConversationalSpeech =
+    textContent.length > 15 || (textContent.length > 8 && textContent.includes(" "));
+  const isTrueSfx = profile.category === "sfx" && !isConversationalSpeech;
+
+  // ADR 0011: Thematic Subtitle Pattern (White Fill + Chromatic Outline)
+  // When text is located over artwork and carries a thematic character color,
+  // render with pure white fill (#ffffff) and the thematic outline (~0.15 ratio).
+  if (!isManual && autoOutlineEnabled && !isTrueSfx) {
+    const rgbFill = parseHexColor(textColor);
+    const rgbOutline = parseHexColor(textOutline);
+    const fillChroma = rgbFill
+      ? Math.max(rgbFill.r, rgbFill.g, rgbFill.b) - Math.min(rgbFill.r, rgbFill.g, rgbFill.b)
+      : 0;
+    const outlineChroma = rgbOutline
+      ? Math.max(rgbOutline.r, rgbOutline.g, rgbOutline.b) - Math.min(rgbOutline.r, rgbOutline.g, rgbOutline.b)
+      : 0;
+
+    const bgLum = profile.backgroundLuminance ?? 128;
+    const isWhiteSpeechBalloon = bgLum >= 200 && fillChroma < 20;
+
+    if (!isWhiteSpeechBalloon) {
+      const outlineLum = rgbOutline
+        ? 0.299 * rgbOutline.r + 0.587 * rgbOutline.g + 0.114 * rgbOutline.b
+        : 255;
+      const distToFill = rgbFill && rgbOutline
+        ? colorDistance(rgbFill.r, rgbFill.g, rgbFill.b, rgbOutline.r, rgbOutline.g, rgbOutline.b)
+        : 0;
+
+      // Check if outline is white/light or identical/missing
+      const isWhiteOrMatchingOutline =
+        (outlineChroma < 15 && outlineLum > 210) || distToFill < 35 || !hasSourceOutline;
+
+      if (fillChroma > 20 && isWhiteOrMatchingOutline) {
+        // Detected chromatic fill with white or matching outline -> White fill + Chromatic outline
+        textOutline = textColor;
+        textColor = "#ffffff";
+        outlineWidthRatio = Math.max(0.15, outlineWidthRatio);
+      } else if (outlineChroma > 20 && rgbFill && (rgbFill.r > 230 && rgbFill.g > 230 && rgbFill.b > 230)) {
+        // Detected white fill + chromatic outline (e.g. white text with pink/blue outline)
+        textColor = "#ffffff";
+        if (!profile.outlineWidthRatio) {
+          outlineWidthRatio = Math.max(0.15, outlineWidthRatio);
+        }
+      }
+    }
+  }
+
+  // Under Universal Outline Default, ensure outline has sufficient contrast with fill
+  if (hasOutline && !isManual) {
+    const rgbFill = parseHexColor(textColor);
+    const rgbOutline = parseHexColor(textOutline);
+    const dist = rgbFill && rgbOutline
+      ? colorDistance(rgbFill.r, rgbFill.g, rgbFill.b, rgbOutline.r, rgbOutline.g, rgbOutline.b)
+      : 0;
+
+    if (dist < 35 || textOutline.toLowerCase() === textColor.toLowerCase()) {
+      const bgLum = profile.backgroundLuminance;
+      const fillLum = rgbFill ? 0.299 * rgbFill.r + 0.587 * rgbFill.g + 0.114 * rgbFill.b : 0;
+      if (typeof bgLum === "number") {
+        textOutline = bgLum < 140 ? "#ffffff" : (fillLum > 140 ? "#000000" : "#ffffff");
+      } else {
+        textOutline = fillLum > 140 ? "#000000" : "#ffffff";
+      }
+    }
+  }
+
   return {
-    textColor: profile.fill || globalStyle.textColor || "#000000",
-    textOutline: autoOutlineEnabled
-      ? profile.outline || globalStyle.textOutline || "#ffffff"
-      : globalStyle.textOutline || "#ffffff",
+    textColor,
+    textOutline,
     outlineWidth: hasOutline ? profile.outlineWidth ?? 1.0 : 0,
     hasOutline,
     outlineWidthRatio: hasOutline ? outlineWidthRatio : 0,
@@ -321,7 +402,7 @@ export function resolveBubbleTextStyle(
 
   // Manual user styling is authoritative until the user explicitly returns to Auto/Original.
   if (profile.ownershipMode === "manual" || profile.source === "manual") {
-    return resolvedFromProfile(profile, globalStyle, true);
+    return resolvedFromProfile(profile, globalStyle, true, bubble);
   }
 
   // If candidate was rejected by evidence gate or background contamination,
@@ -388,7 +469,7 @@ export function resolveBubbleTextStyle(
 
   // Source fidelity wins here. Do not contrast-correct or invent an outline for a
   // high-confidence source profile; those changes are visibly wrong in manga art.
-  return resolvedFromProfile(profile, globalStyle, autoOutlineEnabled);
+  return resolvedFromProfile(profile, globalStyle, autoOutlineEnabled, bubble);
 }
 
 export function cloneTextStyleProfile(

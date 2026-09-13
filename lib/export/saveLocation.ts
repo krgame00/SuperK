@@ -5,6 +5,39 @@
 
 export const EXPORT_ASK_DIRECTORY_KEY = "superk_export_ask_directory";
 export const EXPORT_DIRECTORY_NAME_KEY = "superk_export_directory_name";
+export const EXPORT_DESKTOP_PATH_KEY = "superk_export_desktop_path";
+
+export const isDesktopMode = (): boolean =>
+  typeof window !== "undefined" && Boolean(window.superkDesktop?.isDesktop);
+
+export const getRememberedDesktopPath = (): string => {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return "";
+    return window.localStorage.getItem(EXPORT_DESKTOP_PATH_KEY) || "";
+  } catch {
+    return "";
+  }
+};
+
+export const setRememberedDesktopPath = (pathStr: string): void => {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return;
+    if (pathStr) window.localStorage.setItem(EXPORT_DESKTOP_PATH_KEY, pathStr);
+    else window.localStorage.removeItem(EXPORT_DESKTOP_PATH_KEY);
+  } catch {
+    // Storage blocked.
+  }
+};
+
+export const openRememberedDesktopDirectory = async (): Promise<string> => {
+  if (isDesktopMode() && window.superkDesktop?.openExportDirectory) {
+    const p = getRememberedDesktopPath();
+    if (p) {
+      return await window.superkDesktop.openExportDirectory(p);
+    }
+  }
+  return "";
+};
 
 let inMemoryDirectoryHandle: DirectoryHandleLike | null = null;
 
@@ -75,12 +108,27 @@ async function storeDirectoryHandle(handle: DirectoryHandleLike | null): Promise
 }
 
 export const getRememberedDirectoryName = (): string => {
+  if (isDesktopMode()) {
+    const deskPath = getRememberedDesktopPath();
+    if (deskPath) return deskPath;
+  }
   try {
     if (typeof window === "undefined" || !window.localStorage) return "";
     return window.localStorage.getItem(EXPORT_DIRECTORY_NAME_KEY) || "";
   } catch {
     return "";
   }
+};
+
+export const createDesktopDirectoryHandle = (pathStr: string): DirectoryHandleLike => {
+  return {
+    name: pathStr,
+    path: pathStr,
+    isDesktop: true,
+    async getFileHandle() {
+      throw new Error("Desktop directory handle uses direct IPC export");
+    },
+  };
 };
 
 export const setRememberedDirectoryName = (name: string): void => {
@@ -98,6 +146,13 @@ export const setRememberedDirectoryName = (name: string): void => {
  * If permission needs to be checked/requested, it queries it.
  */
 export const getRememberedDirectory = async (): Promise<DirectoryHandleLike | null> => {
+  if (isDesktopMode()) {
+    const deskPath = getRememberedDesktopPath();
+    if (deskPath) {
+      return createDesktopDirectoryHandle(deskPath);
+    }
+    return null;
+  }
   if (inMemoryDirectoryHandle) return inMemoryDirectoryHandle;
   const stored = await getStoredDirectoryHandle();
   if (stored) {
@@ -147,6 +202,7 @@ export const setRememberedDirectory = async (
  * Clears the remembered directory from memory, localStorage, and IndexedDB.
  */
 export const clearRememberedDirectory = async (): Promise<void> => {
+  setRememberedDesktopPath("");
   await setRememberedDirectory(null);
 };
 
@@ -154,6 +210,14 @@ export const clearRememberedDirectory = async (): Promise<void> => {
  * Always opens the directory picker and saves the chosen directory if selected.
  */
 export const pickAndRememberExportDirectory = async (): Promise<DirectoryHandleLike | null> => {
+  if (isDesktopMode() && window.superkDesktop?.pickExportDirectory) {
+    const picked = await window.superkDesktop.pickExportDirectory();
+    if (picked) {
+      setRememberedDesktopPath(picked);
+      return createDesktopDirectoryHandle(picked);
+    }
+    return null;
+  }
   const handle = await pickExportDirectory();
   if (handle) {
     await setRememberedDirectory(handle);
@@ -166,6 +230,13 @@ export const pickAndRememberExportDirectory = async (): Promise<DirectoryHandleL
  * otherwise prompts the user to pick once, remembers it, and returns it.
  */
 export const getOrPickExportDirectory = async (): Promise<DirectoryHandleLike | null> => {
+  if (isDesktopMode()) {
+    const existing = getRememberedDesktopPath();
+    if (existing) {
+      return createDesktopDirectoryHandle(existing);
+    }
+    return await pickAndRememberExportDirectory();
+  }
   const existing = await getRememberedDirectory();
   if (existing) return existing;
   return await pickAndRememberExportDirectory();
@@ -186,6 +257,8 @@ export interface FileHandleLike {
 
 export interface DirectoryHandleLike {
   name?: string;
+  path?: string;
+  isDesktop?: boolean;
   getFileHandle(name: string, options?: { create?: boolean }): Promise<FileHandleLike>;
 }
 
@@ -200,12 +273,16 @@ declare global {
 }
 
 export const isDirectoryPickerSupported = (): boolean =>
-  typeof window !== "undefined" && typeof window.showDirectoryPicker === "function";
+  isDesktopMode() || (typeof window !== "undefined" && typeof window.showDirectoryPicker === "function");
 
 export const getAskExportDirectory = (): boolean => {
   try {
     if (typeof window === "undefined" || !window.localStorage) return false;
-    return window.localStorage.getItem(EXPORT_ASK_DIRECTORY_KEY) === "1";
+    const stored = window.localStorage.getItem(EXPORT_ASK_DIRECTORY_KEY);
+    if (isDesktopMode()) {
+      return stored !== "0";
+    }
+    return stored === "1";
   } catch {
     // localStorage throws when storage access is blocked entirely.
     return false;
@@ -215,8 +292,12 @@ export const getAskExportDirectory = (): boolean => {
 export const setAskExportDirectory = (enabled: boolean): void => {
   try {
     if (typeof window === "undefined" || !window.localStorage) return;
-    if (enabled) window.localStorage.setItem(EXPORT_ASK_DIRECTORY_KEY, "1");
-    else window.localStorage.removeItem(EXPORT_ASK_DIRECTORY_KEY);
+    if (isDesktopMode()) {
+      window.localStorage.setItem(EXPORT_ASK_DIRECTORY_KEY, enabled ? "1" : "0");
+    } else {
+      if (enabled) window.localStorage.setItem(EXPORT_ASK_DIRECTORY_KEY, "1");
+      else window.localStorage.removeItem(EXPORT_ASK_DIRECTORY_KEY);
+    }
   } catch {
     // Storage blocked — the toggle just won't persist.
   }
@@ -275,6 +356,15 @@ export const writeBlobToDirectory = async (
   filename: string,
   blob: Blob,
 ): Promise<string> => {
+  if (directory.isDesktop && directory.path && window.superkDesktop?.saveExportFile) {
+    const arrayBuffer = await blob.arrayBuffer();
+    const res = await window.superkDesktop.saveExportFile({
+      dirPath: directory.path,
+      filename,
+      buffer: arrayBuffer,
+    });
+    return res.savedName || filename;
+  }
   const uniqueName = await resolveUniqueFilename(directory, filename);
   const fileHandle = await directory.getFileHandle(uniqueName, { create: true });
   const writable = await fileHandle.createWritable();
@@ -292,6 +382,18 @@ export const saveBlob = async (
 ): Promise<string> => {
   if (directory) {
     return await writeBlobToDirectory(directory, filename, blob);
+  }
+  if (isDesktopMode() && window.superkDesktop?.saveExportFile) {
+    const deskPath = getRememberedDesktopPath();
+    if (deskPath) {
+      const arrayBuffer = await blob.arrayBuffer();
+      const res = await window.superkDesktop.saveExportFile({
+        dirPath: deskPath,
+        filename,
+        buffer: arrayBuffer,
+      });
+      return res.savedName || filename;
+    }
   }
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");

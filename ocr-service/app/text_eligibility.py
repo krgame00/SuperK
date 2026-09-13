@@ -92,7 +92,7 @@ def classify_eligibility(
         return EligibilityDecision(
             text_role=TextRole.REVIEW,
             confidence=1.0,
-            action=AutomaticAction.CLEAN,
+            action=AutomaticAction.PRESERVE,
             protection_reasons=reasons,
             features=features,
         )
@@ -143,7 +143,7 @@ def classify_eligibility(
     return EligibilityDecision(
         text_role=TextRole.REVIEW,
         confidence=float(np.clip(max(narration_score, sfx_score), 0, 1)),
-        action=AutomaticAction.CLEAN,
+        action=AutomaticAction.PRESERVE,
         protection_reasons=[ProtectionReason.LOW_CONFIDENCE],
         features=features,
     )
@@ -244,7 +244,7 @@ def _threshold_decision(
     return EligibilityDecision(
         text_role=role if confident else TextRole.REVIEW,
         confidence=confidence,
-        action=AutomaticAction.CLEAN,
+        action=AutomaticAction.CLEAN if confident else AutomaticAction.PRESERVE,
         protection_reasons=(
             [] if confident else [ProtectionReason.LOW_CONFIDENCE]
         ),
@@ -271,7 +271,7 @@ def _sfx_decision(
     return EligibilityDecision(
         text_role=TextRole.REVIEW,
         confidence=confidence,
-        action=AutomaticAction.CLEAN,
+        action=AutomaticAction.PRESERVE,
         protection_reasons=[ProtectionReason.LOW_CONFIDENCE],
         features=features,
     )

@@ -164,17 +164,16 @@ describe("translation overlay live editor and keyboard controls", () => {
     ).toBe("data:image/jpeg;base64,dHJhbnNsYXRlZA==");
   });
 
-  test("omits stroke rendering for an explicit high-confidence no-outline source style", async () => {
+  test("omits stroke rendering for an explicit manual no-outline style", async () => {
     await renderOverlay("ธรรมดา", {
       styleProfile: {
         fill: "#000000",
-        outline: "#000000",
+        outline: "#ffffff",
         hasOutline: false,
+        outlineWidth: 0,
         outlineWidthRatio: 0,
-        fillConfidence: 0.95,
-        outlineConfidence: 0.95,
-        source: "auto",
-        category: "dialogue",
+        source: "manual",
+        ownershipMode: "manual",
       },
     });
 

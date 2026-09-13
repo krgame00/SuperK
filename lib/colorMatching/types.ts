@@ -144,7 +144,7 @@ export function createDefaultStyleProfile(source: StyleSource = "global"): TextS
     fill: "#000000",
     outline: "#ffffff",
     hasOutline: true,
-    outlineWidthRatio: 0.16,
+    outlineWidthRatio: 0.13,
     fillConfidence: 1.0,
     outlineConfidence: 1.0,
     confidenceBand: source === "global" ? "low" : "high",

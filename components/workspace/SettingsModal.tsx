@@ -9,6 +9,8 @@ import {
   getRememberedDirectoryName,
   pickAndRememberExportDirectory,
   clearRememberedDirectory,
+  openRememberedDesktopDirectory,
+  isDesktopMode,
 } from "@/lib/export/saveLocation";
 
 export interface WorkspaceTextStyle {
@@ -584,7 +586,9 @@ export function SettingsModal({
                   <span>บันทึกลงโฟลเดอร์ที่กำหนด (จำตำแหน่งโฟลเดอร์)</span>
                 </label>
                 <p className="mt-0.5 text-[10px] text-muted">
-                  เลือกโฟลเดอร์ปลายทางเพียงครั้งเดียว ไม่ต้องเลือกซ้ำทุกรอบ (รองรับ Chrome/Edge)
+                  {isDesktopMode()
+                    ? "บันทึกไฟล์ Export ลงโฟลเดอร์ที่จำไว้โดยอัตโนมัติ ไม่ต้องเลือกโฟลเดอร์ซ้ำ"
+                    : "เลือกโฟลเดอร์ปลายทางเพียงครั้งเดียว ไม่ต้องเลือกซ้ำทุกรอบ (รองรับ Chrome/Edge)"}
                 </p>
               </div>
               <button
@@ -615,12 +619,27 @@ export function SettingsModal({
                   <Folder className="h-4 w-4 shrink-0 text-primary" />
                   <div className="min-w-0 truncate">
                     <span className="text-[10px] text-muted block">โฟลเดอร์ที่จำไว้:</span>
-                    <span className="font-medium text-foreground truncate block">
+                    <span
+                      className="font-medium text-foreground truncate block font-mono text-[11px]"
+                      title={rememberedDirName}
+                    >
                       {rememberedDirName || "ยังไม่ได้เลือก (จะถามครั้งแรกตอน Export หรือกดเลือกตอนนี้ได้เลย)"}
                     </span>
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
+                  {isDesktopMode() && rememberedDirName && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await openRememberedDesktopDirectory();
+                      }}
+                      className="rounded bg-surface-hover hover:bg-surface-active px-2.5 py-1 text-[11px] font-medium text-foreground hover:text-primary transition-colors cursor-pointer"
+                      title="เปิดโฟลเดอร์นี้ใน File Explorer"
+                    >
+                      เปิดโฟลเดอร์
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={async () => {

@@ -14,6 +14,7 @@ import { undoManager } from "@/lib/undoManager";
 interface MaskEditorProps {
   sourceUrl: string;
   maskUrl: string;
+  proposalMaskUrl?: string;
   regions: CleaningRegion[];
   onClose: () => void;
   onRetry: (
@@ -36,6 +37,7 @@ const cleaners: { value: CleanerOverride; label: string }[] = [
 export function MaskEditor({
   sourceUrl,
   maskUrl,
+  proposalMaskUrl,
   regions,
   onClose,
   onRetry,
@@ -49,11 +51,13 @@ export function MaskEditor({
   const imageDataRef = useRef<ImageData | undefined>(undefined);
   const drawingRef = useRef(false);
   const strokeBeforeRef = useRef<ImageData | undefined>(undefined);
+  const loadedRegionRef = useRef("");
 
   const [mode, setMode] = useState<BrushMode>("paint");
   const [radius, setRadius] = useState(8);
   const [cleaner, setCleaner] = useState<CleanerOverride>("auto");
   const [regionId, setRegionId] = useState(regions[0]?.id ?? "");
+  const selectedRegion = regions.find(region => region.id === regionId);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [brushPoint, setBrushPoint] = useState<{ x: number; y: number }>({
     x: 0,
@@ -83,6 +87,9 @@ export function MaskEditor({
   }, []);
 
   useEffect(() => {
+    const key = `${sourceUrl}:${regionId}`;
+    // Confirming text replaces job URLs, but must not discard brush edits.
+    if (loadedRegionRef.current === key && imageDataRef.current) return;
     let active = true;
     const maskImage = new Image();
     maskImage.onload = () => {
@@ -103,19 +110,23 @@ export function MaskEditor({
       context.drawImage(maskImage, 0, 0);
       const source = context.getImageData(0, 0, canvas.width, canvas.height);
       for (let index = 0; index < source.data.length; index += 4) {
-        const activePixel = source.data[index] > 16;
+        const x = (index / 4) % canvas.width;
+        const y = Math.floor(index / 4 / canvas.width);
+        const r = regions.find(region => region.id === regionId)?.rect;
+        const activePixel = source.data[index] > 16 && r && x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
         source.data[index] = 255;
         source.data[index + 1] = 55;
         source.data[index + 2] = 80;
         source.data[index + 3] = activePixel ? 150 : 0;
       }
       renderMask(source);
+      loadedRegionRef.current = key;
     };
-    maskImage.src = maskUrl;
+    maskImage.src = selectedRegion?.textRole === "review" && proposalMaskUrl ? proposalMaskUrl : maskUrl;
     return () => {
       active = false;
     };
-  }, [maskUrl]);
+  }, [sourceUrl, maskUrl, proposalMaskUrl, regionId, regions, selectedRegion?.textRole]);
 
   const commitBrushAt = (point: MaskPoint) => {
     const current = imageDataRef.current;
@@ -271,7 +282,11 @@ export function MaskEditor({
       if (!context) return;
       const grayscale = context.createImageData(output.width, output.height);
       for (let index = 0; index < imageData.data.length; index += 4) {
-        const value = imageData.data[index + 3] > 0 ? 255 : 0;
+        const x = (index / 4) % output.width;
+        const y = Math.floor(index / 4 / output.width);
+        const r = selectedRegion?.rect;
+        const inside = r && x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
+        const value = inside && imageData.data[index + 3] > 0 ? 255 : 0;
         grayscale.data[index] = value;
         grayscale.data[index + 1] = value;
         grayscale.data[index + 2] = value;
@@ -279,8 +294,13 @@ export function MaskEditor({
       }
       context.putImageData(grayscale, 0, 0);
       const blob = await canvasToBlob(output);
-      await onRetry(regionId, blob, cleaner, action);
-      closeAndRestoreFocus();
+      const result = await onRetry(regionId, blob, cleaner, action);
+      if (!result) { setStatusMessage("บันทึกไม่สำเร็จ กรุณาลองใหม่"); return; }
+      if (action === "confirm-text") {
+        setStatusMessage("ยืนยันข้อความแล้ว ตรวจพื้นที่สีแดงก่อนอนุมัติลบ");
+      } else { closeAndRestoreFocus(); }
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "บันทึกไม่สำเร็จ");
     } finally {
       setIsSubmitting(false);
     }
@@ -428,16 +448,16 @@ export function MaskEditor({
               ))}
             </select>
             <p className="text-xs text-red-300">
-              ลบตาม Mask นี้แม้ระบบป้องกันไว้
+              ยืนยันข้อความก่อน แล้วตรวจพื้นที่สีแดงที่จะลบเฉพาะบริเวณที่เลือก
             </p>
             <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:justify-end">
               <button
                 type="button"
                 disabled={isSubmitting || !regionId}
-                onClick={() => submit("automatic")}
+                onClick={() => submit("confirm-text")}
                 className="flex min-h-11 flex-1 items-center justify-center rounded-md bg-surface px-3 text-xs font-medium text-foreground transition-colors duration-150 hover:bg-surface-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-40 sm:min-h-9 sm:flex-none"
               >
-                Reset to automatic
+                ยืนยันว่าเป็นข้อความ
               </button>
               <button
                 type="button"
@@ -449,11 +469,11 @@ export function MaskEditor({
               </button>
               <button
                 type="button"
-                disabled={isSubmitting || !regionId}
+                disabled={isSubmitting || !regionId || selectedRegion?.textConfirmed !== true}
                 onClick={() => submit("force-clean")}
                 className="flex min-h-11 flex-1 items-center justify-center rounded-md bg-primary px-3 text-xs font-semibold text-primary-content transition-colors duration-150 hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-40 sm:min-h-9 sm:flex-none"
               >
-                {isSubmitting ? "กำลังประมวลผล…" : "Force clean"}
+                {isSubmitting ? "กำลังประมวลผล…" : "อนุมัติ Mask และลบ"}
               </button>
             </div>
           </div>

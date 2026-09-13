@@ -30,7 +30,7 @@ export type TextRole =
   | "review";
 
 export type AutomaticAction = "clean" | "preserve";
-export type ManualRegionAction = "automatic" | "force-clean" | "protect";
+export type ManualRegionAction = "automatic" | "force-clean" | "protect" | "confirm-text";
 
 export type ProtectionReason =
   | "qr"
@@ -63,6 +63,9 @@ export interface PixelRect {
 }
 
 export interface CleaningRegion {
+  textConfirmed?: boolean;
+  maskApproved?: boolean;
+  approvalRevision?: string | null;
   id: string;
   rect: PixelRect;
   route: "flat" | "gradient" | "artwork";

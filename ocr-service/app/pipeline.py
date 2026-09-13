@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
+import hashlib
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import Protocol
 
@@ -252,6 +253,7 @@ class CleaningPipeline:
                 retry_mask[protection.protected_mask > 0] = 0
                 if refined.envelope is not None:
                     retry_mask[refined.envelope == 0] = 0
+                retry_mask[region_mask == 0] = 0
                 # Use LAMA Large for second pass if available (ensemble effect)
                 fallback_cleaner = self.cleaners.get("lama-large") or cleaner
                 retry_repaired = fallback_cleaner.clean(before, retry_mask, region)
@@ -344,12 +346,18 @@ class CleaningPipeline:
                 page,
                 protection,
             )
+            if decision.text_role is TextRole.REVIEW or not region.text_supported:
+                decision = decision.model_copy(update={
+                    "text_role": TextRole.REVIEW,
+                    "action": AutomaticAction.PRESERVE,
+                })
             decisions[region.id] = decision
             if decision.action is AutomaticAction.CLEAN:
                 eligible = np.maximum(eligible, region_mask)
             elif decision.text_role is TextRole.REVIEW:
                 review = np.maximum(review, region_mask)
         eligible[protection.protected_mask > 0] = 0
+        eligible[review > 0] = 0
         return eligible, review, decisions
 
     def _run_batched(
@@ -726,10 +734,34 @@ class CleaningPipeline:
             raise ValueError(f"unknown region: {region_id}") from error
 
         binary_mask = np.where(mask > 0, 255, 0).astype(np.uint8)
+        if action is ManualRegionAction.CONFIRM_TEXT:
+            records = list(output.regions)
+            records[record_index] = record.model_copy(update={
+                "text_confirmed": True,
+                "mask_approved": False,
+                "approval_revision": None,
+            })
+            return replace(output, regions=records)
+        revision = hashlib.sha256(output.source_image.tobytes() + binary_mask.tobytes()).hexdigest()
+        if action is ManualRegionAction.FORCE_CLEAN and not record.text_confirmed:
+            raise ValueError("confirm text before approving its removal mask")
+        if action is ManualRegionAction.AUTOMATIC:
+            if not record.text_confirmed:
+                raise ValueError("confirm text before cleaning this candidate")
+            if record.approval_revision and record.approval_revision != revision:
+                raise ValueError("changed mask requires fresh removal-mask approval")
+            if not record.mask_approved:
+                raise ValueError("removal-mask approval is required")
+            if not record.approval_revision and np.any((binary_mask > 0) & (output.mask == 0)):
+                raise ValueError("expanded mask requires fresh removal-mask approval")
         points = cv2.findNonZero(binary_mask)
         if points is None:
             raise ValueError("retry mask is empty")
         x, y, width, height = cv2.boundingRect(points)
+        bounds = record.rect
+        if (x < bounds.x or y < bounds.y or x + width > bounds.x + bounds.width
+                or y + height > bounds.y + bounds.height):
+            raise ValueError("mask must stay within the selected region")
         region = MaskRegion(
             id=region_id,
             rect=record.rect.model_copy(
@@ -752,6 +784,9 @@ class CleaningPipeline:
                     "status": RegionStatus.PRESERVED,
                     "text_role": TextRole.PROTECTED,
                     "automatic_action": AutomaticAction.PRESERVE,
+                    "text_confirmed": False,
+                    "mask_approved": False,
+                    "approval_revision": None,
                 },
             )
             return PipelineOutput(
@@ -765,7 +800,7 @@ class CleaningPipeline:
                 awaiting_review=_has_awaiting_review(updated_records),
             )
 
-        if action is ManualRegionAction.AUTOMATIC:
+        if action is ManualRegionAction.AUTOMATIC and not record.approval_revision:
             page = PageContext(
                 role=record.page_role,
                 confidence=record.eligibility_confidence,
@@ -825,9 +860,7 @@ class CleaningPipeline:
             output.clean_image,
             repaired,
             binary_mask,
-            feather_radius=(
-                0 if action is ManualRegionAction.FORCE_CLEAN else 2
-            ),
+            feather_radius=0,
         )
         if action is ManualRegionAction.AUTOMATIC:
             _restore_protected(
@@ -860,6 +893,9 @@ class CleaningPipeline:
                     else RegionStatus.NEEDS_REVIEW
                 ),
                 "residual_score": report.residual_score,
+                "text_confirmed": record.text_confirmed,
+                "mask_approved": accepted,
+                "approval_revision": revision if accepted else None,
                 "damage_score": report.damage_score,
                 "automatic_action": (
                     AutomaticAction.CLEAN
@@ -908,7 +944,7 @@ def _region_mask(mask: BinaryMask, region: MaskRegion) -> BinaryMask:
 
 
 def _has_awaiting_review(records: list[RegionRecord]) -> bool:
-    return any(record.status is RegionStatus.NEEDS_REVIEW for record in records)
+    return any(record.status is RegionStatus.NEEDS_REVIEW and record.automatic_action is AutomaticAction.CLEAN for record in records)
 
 
 def _peak_rss_mb() -> float | str:
@@ -1038,7 +1074,7 @@ def _record(
         rect=region.rect,
         route=route,
         confidence=route_confidence,
-        status=status,
+        status=RegionStatus.NEEDS_REVIEW if eligibility.text_role is TextRole.REVIEW else status,
         residual_score=residual_score,
         damage_score=damage_score,
         page_role=page.role,
@@ -1046,6 +1082,8 @@ def _record(
         eligibility_confidence=eligibility.confidence,
         automatic_action=eligibility.action,
         protection_reasons=eligibility.protection_reasons,
+        text_confirmed=eligibility.action is AutomaticAction.CLEAN and eligibility.text_role is not TextRole.REVIEW,
+        mask_approved=eligibility.action is AutomaticAction.CLEAN and eligibility.text_role is not TextRole.REVIEW,
     )
 
 

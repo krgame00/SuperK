@@ -20,6 +20,22 @@ _Avoid_: Cleaning box, OCR rectangle
 The pixels belonging to the visible shapes of detected letters, including their fill and outline. Artwork elsewhere inside the surrounding text region is not part of the glyph mask.
 _Avoid_: Bounding-box mask, crop mask
 
+**Unconfirmed text candidate**:
+A region that may contain text but lacks sufficient evidence to authorize removal or translation. It remains available for review while its original artwork is preserved.
+_Avoid_: Confirmed text, automatically removable text
+
+**Region awaiting text confirmation**:
+An unconfirmed text candidate held for human review without preventing confident regions from being processed. Short glyphs, decorative lettering, and sound effects remain eligible for confirmation rather than being excluded by category.
+_Avoid_: Failed page, discarded detection
+
+**Text confirmation**:
+A person's determination that a reviewed candidate contains text. It does not authorize erasing the candidate's surrounding artwork or approve its proposed removal mask.
+_Avoid_: Mask approval, export confirmation
+
+**Removal-mask approval**:
+A person's acceptance of the precise pixels proposed for removal from a reviewed region after inspecting and, if needed, adjusting the mask. It is separate from confirming that the region contains text.
+_Avoid_: Text confirmation, bounding-box approval
+
 **Evidence-supported text**:
 A text candidate confirmed by a primary text detector or OCR; visual hints such as dark marks on skin are supporting evidence only.
 _Avoid_: Tattoo candidate, likely mark
@@ -61,8 +77,16 @@ A user-owned text style that automation may warn about but must not modify until
 _Avoid_: Temporary auto style, gate-corrected manual style
 
 **Source-faithful rendering**:
-Rendering translated text from a validated Source text style profile. Source fidelity takes precedence only when the profile passes the Source style evidence gate and remains legible against its local background; otherwise the system uses a Readable fallback style. If a validated source has no outline, no outline is introduced automatically.
-_Avoid_: Forced contrast mode, always-outlined text, unvalidated source fidelity
+Rendering translated text from a validated Source text style profile. Source fidelity takes precedence when the profile passes the Source style evidence gate and remains legible against its local background. Under the Universal Outline Default policy, text without a validated source outline receives a default contrasting outline rather than rendering borderless, guaranteeing legibility across dynamic manga backgrounds.
+_Avoid_: Unreadable borderless text, unvalidated source fidelity, contrast-blind rendering
+
+**Universal outline default**:
+The standard typesetting guarantee that all rendered manga text includes a contrasting outline (~0.12–0.14 of font size) unless explicitly removed by manual user override, ensuring text remains legible even when placed over complex or tone-colliding artwork.
+_Avoid_: Disappearing text, borderless text on art
+
+**Bidirectional outline extraction**:
+Text color analysis that samples both light/white and dark contour pixels around chromatic glyph cores, faithfully recovering both white-on-color outlines and dark-on-color outlines from original manga artwork.
+_Avoid_: Dark-only contour bias, missed white outlines
 
 **Nearby color profile**:
 A validated source text style profile from a neighboring text region on the same page, eligible for fallback only when the regions share a compatible Text style category, the neighboring profile passes the Source style evidence gate, and the current glyph style cannot be determined confidently.
@@ -147,3 +171,23 @@ _Avoid_: Global retry lock, auto-retry timer
 **Owned desktop child process**:
 A workspace or sidecar process for which the desktop application can verify launch ownership strongly enough to reclaim it safely after an abnormal prior termination.
 _Avoid_: Any process using port 3000 or 8765
+
+**Remembered export destination**:
+The persistent local filesystem directory path configured in user preferences where exported manga archives, documents, or images are written directly without repeated save-dialog prompts.
+_Avoid_: Temporary download directory, browser download default
+
+**Direct desktop export**:
+Writing exported manga assets directly to the target filesystem path via the desktop application shell's native IPC, bypassing browser download manager prompts and sandboxed web permission gates.
+_Avoid_: Browser anchor click, simulated web download
+
+**Universal outline default**:
+The rendering standard ensuring that translated manga text placed over illustrations always carries a contrasting stroke by default, preventing text from blending into backgrounds of similar hues.
+_Avoid_: Flat borderless text, unconditional stroke removal
+
+**Bidirectional outline extraction**:
+The color extraction technique that tests for both light/white contours around colored text cores and dark contours around light text cores, capturing the true outline style of the original manga artwork.
+_Avoid_: White-core-only outline detection, unidirectional contour sampling
+
+**Thematic subtitle pattern**:
+The typesetting practice of rendering floating dialogue and sound effects over artwork with pure white fill (#FFFFFF) and a contrasting contour in the character's thematic color, maximizing readability across any illustrated background while preserving character visual identity.
+_Avoid_: Solid-colored borderless text, uncontrasted floating text

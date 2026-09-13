@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   DirectoryHandleLike,
@@ -19,6 +19,11 @@ import {
   clearRememberedDirectory,
   writeBlobToDirectory,
   _resetMemoryDirectoryForTesting,
+  isDesktopMode,
+  getRememberedDesktopPath,
+  setRememberedDesktopPath,
+  openRememberedDesktopDirectory,
+  EXPORT_DESKTOP_PATH_KEY,
 } from "@/lib/export/saveLocation";
 
 const storageValues = new Map<string, string>();
@@ -249,6 +254,113 @@ describe("remembered export directory (select once, use everywhere)", () => {
     expect(result).toBe(dir2);
     expect(getRememberedDirectoryName()).toBe("FolderB");
     expect(await getRememberedDirectory()).toBe(dir2);
+  });
+});
+
+describe("Desktop direct export mode (Electron IPC)", () => {
+  const originalSuperkDesktop = (window as any).superkDesktop;
+
+  afterEach(() => {
+    (window as any).superkDesktop = originalSuperkDesktop;
+  });
+
+  it("detects desktop mode when window.superkDesktop.isDesktop is true", () => {
+    (window as any).superkDesktop = { isDesktop: true };
+    expect(isDesktopMode()).toBe(true);
+
+    (window as any).superkDesktop = undefined;
+    expect(isDesktopMode()).toBe(false);
+  });
+
+  it("persists and clears remembered desktop path", () => {
+    (window as any).superkDesktop = { isDesktop: true };
+
+    setRememberedDesktopPath("E:\\SuperK");
+    expect(getRememberedDesktopPath()).toBe("E:\\SuperK");
+    expect(getRememberedDirectoryName()).toBe("E:\\SuperK");
+
+    setRememberedDesktopPath("");
+    expect(getRememberedDesktopPath()).toBe("");
+  });
+
+  it("defaults getAskExportDirectory to true in desktop mode, but respects explicit false", () => {
+    (window as any).superkDesktop = { isDesktop: true };
+    // Default when unset in desktop is true (auto-save enabled without prompting)
+    expect(getAskExportDirectory()).toBe(true);
+
+    setAskExportDirectory(false);
+    expect(getAskExportDirectory()).toBe(false);
+
+    setAskExportDirectory(true);
+    expect(getAskExportDirectory()).toBe(true);
+  });
+
+  it("pickAndRememberExportDirectory invokes native superkDesktop.pickExportDirectory", async () => {
+    const pickMock = vi.fn(async () => "E:\\SuperK");
+    (window as any).superkDesktop = {
+      isDesktop: true,
+      pickExportDirectory: pickMock,
+    };
+
+    const handle = await pickAndRememberExportDirectory();
+    expect(pickMock).toHaveBeenCalled();
+    expect(handle).not.toBeNull();
+    expect(handle?.name).toBe("E:\\SuperK");
+    expect(handle?.path).toBe("E:\\SuperK");
+    expect(handle?.isDesktop).toBe(true);
+    expect(getRememberedDesktopPath()).toBe("E:\\SuperK");
+  });
+
+  it("getOrPickExportDirectory reuses remembered desktop path without opening native picker", async () => {
+    const pickMock = vi.fn(async () => "E:\\SuperK\\New");
+    (window as any).superkDesktop = {
+      isDesktop: true,
+      pickExportDirectory: pickMock,
+    };
+
+    setRememberedDesktopPath("E:\\SuperK");
+    const handle = await getOrPickExportDirectory();
+    expect(pickMock).not.toHaveBeenCalled();
+    expect(handle?.path).toBe("E:\\SuperK");
+  });
+
+  it("saveBlob writes directly via superkDesktop.saveExportFile in desktop mode", async () => {
+    const saveMock = vi.fn(async () => ({
+      success: true,
+      savedName: "SuperK_Translations (1).zip",
+      fullPath: "E:\\SuperK\\SuperK_Translations (1).zip",
+    }));
+
+    (window as any).superkDesktop = {
+      isDesktop: true,
+      saveExportFile: saveMock,
+    };
+
+    setRememberedDesktopPath("E:\\SuperK");
+
+    const testBlob = new Blob(["hello world"], { type: "text/plain" });
+    const savedName = await saveBlob(testBlob, "SuperK_Translations.zip");
+
+    expect(saveMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dirPath: "E:\\SuperK",
+        filename: "SuperK_Translations.zip",
+        buffer: expect.any(ArrayBuffer),
+      }),
+    );
+    expect(savedName).toBe("SuperK_Translations (1).zip");
+  });
+
+  it("openRememberedDesktopDirectory calls window.superkDesktop.openExportDirectory", async () => {
+    const openMock = vi.fn(async () => "");
+    (window as any).superkDesktop = {
+      isDesktop: true,
+      openExportDirectory: openMock,
+    };
+
+    setRememberedDesktopPath("E:\\SuperK");
+    await openRememberedDesktopDirectory();
+    expect(openMock).toHaveBeenCalledWith("E:\\SuperK");
   });
 });
 

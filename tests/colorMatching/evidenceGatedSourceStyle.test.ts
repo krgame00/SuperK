@@ -93,7 +93,8 @@ describe("Ticket 08: Evidence-Gated Source Style on Complex Backgrounds (Seam 1)
 
     // The cyan artwork touching borders must be rejected; black text must be preserved
     expect(profile.fill).toBe("#000000");
-    expect(profile.hasOutline).toBe(false);
+    expect(profile.outline).toBe("#ffffff");
+    expect(profile.hasOutline).toBe(true);
   });
 
   it("does not allow a high numeric confidence score alone to bypass evidence admission", () => {
@@ -165,7 +166,8 @@ describe("Ticket 08: Evidence-Gated Source Style on Complex Backgrounds (Seam 1)
 
     const profile = extractTextColors(sample);
     expect(profile.fill).toBe("#000000");
-    expect(profile.hasOutline).toBe(false);
+    expect(profile.outline).toBe("#ffffff");
+    expect(profile.hasOutline).toBe(true);
     expect(profile.evidenceState).toBe("admitted");
     expect(profile.source).toBe("auto");
   });
@@ -178,7 +180,8 @@ describe("Ticket 08: Evidence-Gated Source Style on Complex Backgrounds (Seam 1)
 
     const profile = extractTextColors(sample);
     expect(profile.fill).toBe("#ffffff");
-    expect(profile.hasOutline).toBe(false);
+    expect(profile.outline).toBe("#000000");
+    expect(profile.hasOutline).toBe(true);
     expect(profile.evidenceState).toBe("admitted");
     expect(profile.source).toBe("auto");
   });

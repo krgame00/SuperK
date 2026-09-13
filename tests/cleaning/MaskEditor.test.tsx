@@ -85,15 +85,15 @@ describe("MaskEditor", () => {
     renderMaskEditor();
 
     expect(
-      (screen.getByRole("button", { name: "Force clean" }) as HTMLButtonElement).disabled,
-    ).toBe(false);
+      (screen.getByRole("button", { name: "อนุมัติ Mask และลบ" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
     expect(
       (screen.getByRole("button", { name: "Protect" }) as HTMLButtonElement).disabled,
     ).toBe(false);
     expect(
-      (screen.getByRole("button", { name: "Reset to automatic" }) as HTMLButtonElement).disabled,
+      (screen.getByRole("button", { name: "ยืนยันว่าเป็นข้อความ" }) as HTMLButtonElement).disabled,
     ).toBe(false);
-    expect(screen.getByText("ลบตาม Mask นี้แม้ระบบป้องกันไว้")).toBeTruthy();
+    expect(screen.getByText("ยืนยันข้อความก่อน แล้วตรวจพื้นที่สีแดงที่จะลบเฉพาะบริเวณที่เลือก")).toBeTruthy();
   });
 
   test("traps focus, closes on Escape, and restores the trigger", async () => {

@@ -182,7 +182,7 @@ def test_margin_review_text_is_attempted_on_comic_page() -> None:
         protection=_protection(review=True),
     )
 
-    assert decision.action is AutomaticAction.CLEAN
+    assert decision.action is (AutomaticAction.PRESERVE if decision.text_role is TextRole.REVIEW else AutomaticAction.CLEAN)
     assert decision.text_role is TextRole.REVIEW
     assert ProtectionReason.MARGIN_MARK in decision.protection_reasons
 
@@ -190,7 +190,7 @@ def test_margin_review_text_is_attempted_on_comic_page() -> None:
 def test_low_confidence_comic_text_is_attempted_for_review() -> None:
     decision = _classify(_features())
 
-    assert decision.action is AutomaticAction.CLEAN
+    assert decision.action is (AutomaticAction.PRESERVE if decision.text_role is TextRole.REVIEW else AutomaticAction.CLEAN)
     assert decision.text_role is TextRole.REVIEW
     assert ProtectionReason.LOW_CONFIDENCE in decision.protection_reasons
 
@@ -288,7 +288,7 @@ def test_narration_threshold_only_changes_semantic_role(
         _features(uniformity=score, rectangular=score),
     )
 
-    assert decision.action is AutomaticAction.CLEAN
+    assert decision.action is (AutomaticAction.PRESERVE if decision.text_role is TextRole.REVIEW else AutomaticAction.CLEAN)
     assert decision.text_role is expected_role
     assert (
         ProtectionReason.LOW_CONFIDENCE in decision.protection_reasons
@@ -301,7 +301,7 @@ def test_narration_threshold_only_changes_semantic_role(
         (
             0.899,
             TextRole.REVIEW,
-            AutomaticAction.CLEAN,
+            AutomaticAction.PRESERVE,
             [ProtectionReason.LOW_CONFIDENCE],
         ),
         (

@@ -222,8 +222,9 @@ def test_force_clean_is_the_only_action_that_can_override_review() -> None:
         eligibility_classifier=_clean_decision,
     )
 
+    confirmed = pipeline.retry_region(output, "region-1", user_mask, "aot", ManualRegionAction.CONFIRM_TEXT)
     forced = pipeline.retry_region(
-        output,
+        confirmed,
         "region-1",
         user_mask,
         "aot",

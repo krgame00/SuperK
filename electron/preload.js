@@ -12,4 +12,15 @@ contextBridge.exposeInMainWorld("superkDesktop", {
   notify(payload) {
     ipcRenderer.send("desktop:notify", payload);
   },
+  isDesktop: true,
+  pickExportDirectory() {
+    return ipcRenderer.invoke("desktop:pick-export-directory");
+  },
+  saveExportFile(dirPath, filename, buffer) {
+    return ipcRenderer.invoke("desktop:save-export-file", { dirPath, filename, buffer });
+  },
+  openExportDirectory(dirPath) {
+    return ipcRenderer.invoke("desktop:open-export-directory", dirPath);
+  },
 });
+

@@ -524,4 +524,54 @@ describe("Background Execution & System Tray", () => {
     );
     expect(mockNotificationInstance.show).toHaveBeenCalled();
   });
+
+  it("registers desktop export IPC handlers and cleans them up on shutdown", async () => {
+    const ipcMain = {
+      on: vi.fn(),
+      handle: vi.fn(),
+      removeListener: vi.fn(),
+      removeHandler: vi.fn(),
+    };
+
+    const dialogMock = {
+      showOpenDialog: vi.fn(async () => ({ canceled: false, filePaths: ["E:\\SuperK"] })),
+    };
+
+    const shellMock = {
+      openPath: vi.fn(async () => ""),
+    };
+
+    bootstrapForTest(appMock, BrowserWindowMock, {
+      ipcMain,
+      dialog: dialogMock,
+      shell: shellMock,
+    });
+
+    const handleChannels = ipcMain.handle.mock.calls.map(([ch]) => ch);
+    expect(handleChannels).toContain("desktop:pick-export-directory");
+    expect(handleChannels).toContain("desktop:save-export-file");
+    expect(handleChannels).toContain("desktop:open-export-directory");
+
+    // Trigger pick-export-directory
+    const pickHandler = ipcMain.handle.mock.calls.find(
+      ([ch]) => ch === "desktop:pick-export-directory"
+    )?.[1];
+    const pickedPath = await pickHandler?.();
+    expect(pickedPath).toBe("E:\\SuperK");
+
+    // Trigger open-export-directory
+    const openHandler = ipcMain.handle.mock.calls.find(
+      ([ch]) => ch === "desktop:open-export-directory"
+    )?.[1];
+    await openHandler?.({}, "E:\\SuperK");
+    expect(shellMock.openPath).toHaveBeenCalledWith("E:\\SuperK");
+
+    // Trigger shutdown
+    appMock._events["before-quit"]?.({ preventDefault: vi.fn() });
+
+    expect(ipcMain.removeHandler).toHaveBeenCalledWith("desktop:pick-export-directory");
+    expect(ipcMain.removeHandler).toHaveBeenCalledWith("desktop:save-export-file");
+    expect(ipcMain.removeHandler).toHaveBeenCalledWith("desktop:open-export-directory");
+  });
 });
+

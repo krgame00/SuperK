@@ -53,11 +53,20 @@ function normalizeCategory(value: unknown): TextStyleCategory | null {
  * spatial proximity because cross-kind inheritance is worse than global fallback.
  */
 export function inferTextStyleCategory(bubble: TranslatedBubble): TextStyleCategory {
+  const textContent = String(bubble.t || bubble.translated || bubble.original_text || "").trim();
+  const isConversationalSpeech =
+    textContent.length > 15 || (textContent.length > 8 && textContent.includes(" "));
+
   const profileCategory = normalizeCategory(bubble.styleProfile?.category);
-  if (profileCategory) return profileCategory;
+  if (profileCategory) {
+    if (profileCategory === "sfx" && isConversationalSpeech) {
+      return "dialogue";
+    }
+    return profileCategory;
+  }
 
   const booleanSfx = bubble.isSfx === true || bubble.is_sfx === true || bubble.sfx === true;
-  if (booleanSfx) return "sfx";
+  if (booleanSfx) return isConversationalSpeech ? "dialogue" : "sfx";
   const booleanNarration =
     bubble.isNarration === true || bubble.is_narration === true || bubble.narration === true;
   if (booleanNarration) return "narration";
@@ -80,7 +89,12 @@ export function inferTextStyleCategory(bubble: TranslatedBubble): TextStyleCateg
   ];
   for (const candidate of candidates) {
     const normalized = normalizeCategory(candidate);
-    if (normalized) return normalized;
+    if (normalized) {
+      if (normalized === "sfx" && isConversationalSpeech) {
+        return "dialogue";
+      }
+      return normalized;
+    }
   }
 
   // Geometric inference for wide shallow regions at the bottom of the page/panel

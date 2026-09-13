@@ -20,9 +20,10 @@ import {
   saveCleaningResultMetadata,
 } from "@/lib/projectStore";
 import { assertMatchingImageDimensions } from "@/lib/translationPipeline";
+import { authorizationIdentity } from "@/lib/cleaning/textAuthorization";
 
 const POLL_INTERVAL_MS = 500;
-const CURRENT_PIPELINE_VERSION = "2.2.0-adaptive-roi";
+const CURRENT_PIPELINE_VERSION = "2.3.0-text-authorization";
 
 const fingerprintBlob = (blob: Blob): string | Promise<string> => {
   // Keep fake-timer workflow tests deterministic; production uses content hash.
@@ -49,7 +50,8 @@ const buildPreparedIdentity = (
   sourceFingerprint: string,
   maskFingerprint: string,
   pipelineVersion?: string,
-) => `${sourceFingerprint}:${maskFingerprint}:${pipelineVersion ?? "unknown-pipeline"}`;
+  regions: CleaningResult["regions"] = [],
+) => `${sourceFingerprint}:${maskFingerprint}:${pipelineVersion ?? "unknown-pipeline"}:${authorizationIdentity(regions)}`;
 
 export interface PageCleaningResult extends CleaningResult {
   cleanUrl: string;
@@ -254,6 +256,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
               sourceFingerprint,
               hydrated.maskFingerprint ?? "unknown-mask",
               hydrated.pipelineVersion,
+              hydrated.regions,
             )
           : undefined,
       };
@@ -452,6 +455,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
           const result = await getCleaningResult(metadata.jobId);
           if (result.sourceHash !== metadata.sourceHash) continue;
           if (metadata.pipelineVersion && result.pipelineVersion !== metadata.pipelineVersion) continue;
+          if (authorizationIdentity(result.regions) !== authorizationIdentity(metadata.regions)) continue;
           const hydrated = await hydrateResult(result);
           if (hydrated.maskFingerprint !== metadata.maskFingerprint) {
             revokeResult(hydrated);
@@ -465,6 +469,7 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
                   metadata.sourceFingerprint,
                   hydrated.maskFingerprint ?? "unknown-mask",
                   result.pipelineVersion,
+                  result.regions,
                 )
               : undefined,
           };

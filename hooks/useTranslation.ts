@@ -1,3 +1,4 @@
+import { scopedRecognitionImage, withinTranslationScope, type TranslationScope } from "@/lib/cleaning/textAuthorization";
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   getTranslationRetryDelay,
@@ -60,6 +61,7 @@ export interface BatchPerformanceMetrics {
 }
 
 export interface PreparedTranslationPage {
+  textScope?: TranslationScope;
   recognitionUrl: string;
   backgroundUrl: string;
   maskUrl?: string;
@@ -824,7 +826,14 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     signal?: AbortSignal,
   ): Promise<boolean> => {
     try {
-      const { recognitionUrl, backgroundUrl } = preparedPage;
+      const { backgroundUrl, textScope } = preparedPage;
+      if (textScope && textScope.allowed.length === 0) {
+        await cacheBackgroundOnly(backgroundUrl, pageUrl);
+        return true;
+      }
+      const recognitionUrl = textScope
+        ? scopedRecognitionImage(await waitForImageReady(preparedPage.recognitionUrl), textScope)
+        : preparedPage.recognitionUrl;
       const resImg = await fetch(recognitionUrl, signal ? { signal } : undefined);
       if (!resImg.ok) throw new Error(`ไม่สามารถโหลดรูปภาพได้ (HTTP ${resImg.status})`);
       const blob = await resImg.blob();
@@ -988,7 +997,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           throw new Error("Translation failed: no valid NSFW slice responses.");
         }
 
-        allBubbles = deduplicateBubbleSFX(allBubbles, 3);
+        allBubbles = deduplicateBubbleSFX(allBubbles, 3).filter(b => withinTranslationScope(b.box, textScope));
 
         const outcome = resolveTranslationOutcome(
           allBubbles,
@@ -1126,7 +1135,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             .bubbles ?? [];
       }
 
-      const filteredParsed = deduplicateBubbleSFX(pageBubbles, 3);
+      const filteredParsed = deduplicateBubbleSFX(pageBubbles, 3).filter(b => withinTranslationScope(b.box, textScope));
 
       const outcome = resolveTranslationOutcome(
         filteredParsed,

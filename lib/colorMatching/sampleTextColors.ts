@@ -10,6 +10,8 @@ import {
   type TextStyleProfile,
 } from "./types";
 
+export type { ColorSampleRegion };
+
 export function colorDistance(
   r1: number,
   g1: number,
@@ -32,11 +34,11 @@ export function rgbToHex(r: number, g: number, b: number): string {
 }
 
 function estimateOutlineWidthRatio(fillPixels: number, outlinePixels: number): number {
-  if (fillPixels <= 0 || outlinePixels <= 0) return 0;
+  if (fillPixels <= 0 || outlinePixels <= 0) return 0.13;
   const total = fillPixels + outlinePixels;
   const innerLinearScale = Math.sqrt(fillPixels / total);
   // Approximate stroke thickness relative to the outer glyph diameter.
-  return Math.max(0.02, Math.min(0.30, (1 - innerLinearScale) / 2));
+  return Math.max(0.10, Math.min(0.25, (1 - innerLinearScale) / 2));
 }
 
 function finalizeRecoveredProfile(
@@ -432,6 +434,9 @@ export function extractTextColors(
   const marginY = Math.max(1, Math.floor(height * 0.12));
   let whiteInnerCoreCount = 0;
   let darkInkInnerCoreCount = 0;
+  let chromaticDistSum = 0;
+  let whiteDistSum = 0;
+  let darkInkDistSum = 0;
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -456,12 +461,17 @@ export function extractTextColors(
       const oMargin = isOuterMargin ? 1 : 0;
       const iCore = isInnerCore ? 1 : 0;
 
+      const nx = (x - width / 2) / Math.max(1, width / 2);
+      const ny = (y - height / 2) / Math.max(1, height / 2);
+      const distFromCenter = Math.sqrt(nx * nx + ny * ny);
+
       // Real manga colored text has high saturation (>= 40%) or high chroma (>= 70)
       // This strictly rejects pale skin tones, paper texture, and neutral shadows
       const isMangaColoredText = (saturation >= 0.38 && chroma >= 35) || chroma >= 70;
 
       if (isMangaColoredText) {
         chromaticCount++;
+        chromaticDistSum += distFromCenter;
         chromaticSumX += x;
         chromaticSumY += y;
         chromaticMinX = Math.min(chromaticMinX, x);
@@ -474,9 +484,6 @@ export function extractTextColors(
         const qb = Math.floor(b / 16) * 16 + 8;
         const key = `${qr},${qg},${qb}`;
 
-        const nx = (x - width / 2) / Math.max(1, width / 2);
-        const ny = (y - height / 2) / Math.max(1, height / 2);
-        const distFromCenter = Math.sqrt(nx * nx + ny * ny);
         const centerWeight = distFromCenter <= 0.65 ? 2.5 : 1.0;
 
         const existing = chromaticBuckets.get(key);
@@ -517,6 +524,7 @@ export function extractTextColors(
         }
       } else if (lum >= 210) {
         whiteCount++;
+        whiteDistSum += distFromCenter;
         if (isInnerCore) whiteInnerCoreCount++;
         whiteSumX += x;
         whiteSumY += y;
@@ -526,6 +534,7 @@ export function extractTextColors(
         whiteMaxY = Math.max(whiteMaxY, y);
       } else if (lum <= 65) {
         darkInkCount++;
+        darkInkDistSum += distFromCenter;
         if (isInnerCore) darkInkInnerCoreCount++;
         darkInkSumX += x;
         darkInkSumY += y;
@@ -626,10 +635,15 @@ export function extractTextColors(
     const chromHex = rgbToHex(topChromatic.r, topChromatic.g, topChromatic.b);
     const fillGradient = detectDirectionalGradient(chromaticClusters, chromaticCount);
 
+    const meanChromaticDist = chromaticDistSum / Math.max(1, chromaticCount);
+    const meanWhiteDist = whiteDistSum / Math.max(1, whiteCount);
+
     // White core + vivid chromatic contour is strong evidence of a real outline/glow.
-    // A genuine stroke/glow cannot have 3x or 5x more pixels than the core glyphs.
+    // Distinguish white fill + colored glow/stroke vs colored fill + white outline:
+    // White is the core only if white is physically closer to the center than chromatic:
     const isChromaticContour =
       whiteCount >= Math.max(8, totalFgCount * 0.08) &&
+      meanWhiteDist < meanChromaticDist * 0.90 &&
       (hasGlyphMask || chromaticCount <= whiteCount * 2.2);
 
     if (isChromaticContour) {
@@ -665,9 +679,11 @@ export function extractTextColors(
       );
     }
 
-    // Solid chromatic lettering gets a dark outline only when dark contour pixels
-    // are actually present. A light/dark background alone must not create a stroke.
+    // Bidirectional Outline Detection for chromatic text (Universal Outline Default):
     const hasDarkOutline = darkInkCount >= Math.max(4, totalFgCount * 0.03);
+    const hasLightOutline =
+      whiteCount >= Math.max(4, totalFgCount * 0.03) &&
+      (chromaticCount === 0 || meanChromaticDist <= meanWhiteDist * 1.15);
     let shadowEffect: TextShadowStyle | undefined;
     let isDropShadow = false;
 
@@ -696,16 +712,37 @@ export function extractTextColors(
       }
     }
 
-    const hasRealOutline = hasDarkOutline && !isDropShadow;
+    let outlineColor = "#ffffff";
+    let outlineRatio = 0.13;
+    let outlineCount = 0;
+
+    const chromLum = 0.299 * topChromatic.r + 0.587 * topChromatic.g + 0.114 * topChromatic.b;
+
+    if (hasLightOutline && (!hasDarkOutline || whiteCount >= darkInkCount)) {
+      outlineColor = "#ffffff";
+      outlineCount = whiteCount;
+      outlineRatio = Math.max(0.12, estimateOutlineWidthRatio(chromaticCount, whiteCount));
+    } else if (hasDarkOutline && !isDropShadow && (!hasLightOutline || darkInkCount > whiteCount)) {
+      outlineColor = "#0a0a0a";
+      outlineCount = darkInkCount;
+      outlineRatio = Math.max(0.12, estimateOutlineWidthRatio(chromaticCount, darkInkCount));
+    } else {
+      // Universal Outline Default: synthesize high-contrast stroke
+      if (bgLum < 140) {
+        outlineColor = "#ffffff";
+      } else {
+        outlineColor = chromLum > 140 ? "#000000" : "#ffffff";
+      }
+      outlineRatio = 0.13;
+    }
+
     return finalizeRecoveredProfile(
       {
         fill: chromHex,
-        outline: hasRealOutline ? "#0a0a0a" : chromHex,
-        hasOutline: hasRealOutline,
-        outlineWidthRatio: hasRealOutline
-          ? estimateOutlineWidthRatio(chromaticCount, darkInkCount)
-          : 0,
-        outlineWidth: hasRealOutline ? 1.0 : 0,
+        outline: outlineColor,
+        hasOutline: true,
+        outlineWidthRatio: outlineRatio,
+        outlineWidth: 1.0,
         opacity: sourceOpacity,
         outlineConfidence: clampConfidence(autoConfidence - 0.05),
         fillGradient,
@@ -715,7 +752,7 @@ export function extractTextColors(
         backgroundColor: rgbToHex(bgR, bgG, bgB),
       },
       autoConfidence,
-      (chromaticCount + (hasDarkOutline ? darkInkCount : 0)) / Math.max(1, totalFgCount),
+      (chromaticCount + outlineCount) / Math.max(1, totalFgCount),
     );
   }
 
@@ -734,10 +771,10 @@ export function extractTextColors(
     return finalizeRecoveredProfile(
       {
         fill: "#000000",
-        outline: "#000000",
-        hasOutline: false,
-        outlineWidthRatio: 0,
-        outlineWidth: 0,
+        outline: "#ffffff",
+        hasOutline: true,
+        outlineWidthRatio: 0.13,
+        outlineWidth: 1.0,
         opacity: sourceOpacity,
         outlineConfidence: autoConfidence,
         evidenceState: hasDarkText ? "admitted" : "rejected",
@@ -755,10 +792,10 @@ export function extractTextColors(
     return finalizeRecoveredProfile(
       {
         fill: "#ffffff",
-        outline: "#ffffff",
-        hasOutline: false,
-        outlineWidthRatio: 0,
-        outlineWidth: 0,
+        outline: "#000000",
+        hasOutline: true,
+        outlineWidthRatio: 0.13,
+        outlineWidth: 1.0,
         opacity: sourceOpacity,
         outlineConfidence: autoConfidence,
         evidenceState: "admitted",
@@ -784,10 +821,10 @@ export function extractTextColors(
       return finalizeRecoveredProfile(
         {
           fill: "#000000",
-          outline: "#000000",
-          hasOutline: false,
-          outlineWidthRatio: 0,
-          outlineWidth: 0,
+          outline: "#ffffff",
+          hasOutline: true,
+          outlineWidthRatio: 0.13,
+          outlineWidth: 1.0,
           opacity: sourceOpacity,
           outlineConfidence: autoConfidence,
           evidenceState: "admitted",
@@ -818,10 +855,10 @@ export function extractTextColors(
       return finalizeRecoveredProfile(
         {
           fill: "#ffffff",
-          outline: "#ffffff",
-          hasOutline: false,
-          outlineWidthRatio: 0,
-          outlineWidth: 0,
+          outline: "#000000",
+          hasOutline: true,
+          outlineWidthRatio: 0.13,
+          outlineWidth: 1.0,
           opacity: sourceOpacity,
           outlineConfidence: autoConfidence,
           evidenceState: "admitted",
@@ -1047,19 +1084,28 @@ export function extractTextColors(
       return b.centerScore - a.centerScore;
     });
 
-  const hasOutline = candidateOutlines.length > 0;
+  const hasDetectedOutline = candidateOutlines.length > 0;
   let outlineHex = fillHex;
   let outlineConfidence = 0.85;
-  let outlineWidth = 0;
-  let outlineWidthRatio = 0;
+  let outlineWidth = 1.0;
+  let outlineWidthRatio = 0.13;
 
-  if (hasOutline) {
+  if (hasDetectedOutline) {
     const topOutline = candidateOutlines[0];
     outlineHex = rgbToHex(topOutline.r, topOutline.g, topOutline.b);
     outlineConfidence = 0.92;
     outlineWidth = 1.0;
-    outlineWidthRatio = estimateOutlineWidthRatio(topCore.count, topOutline.count);
+    outlineWidthRatio = Math.max(0.12, estimateOutlineWidthRatio(topCore.count, topOutline.count));
+  } else {
+    // Universal Outline Default: provide high-contrast stroke
+    const fillLum = 0.299 * fillR + 0.587 * fillG + 0.114 * fillB;
+    if (bgLum < 140) {
+      outlineHex = "#ffffff";
+    } else {
+      outlineHex = fillLum > 140 ? "#000000" : "#ffffff";
+    }
   }
+  const hasOutline = true;
 
   const contrastFromBg = colorDistance(fillR, fillG, fillB, bgR, bgG, bgB);
   let fillConfidence = 0.70 + Math.min(0.25, (contrastFromBg / 441.67) * 0.35);
@@ -1088,7 +1134,7 @@ export function extractTextColors(
       topCore.count < 4 ||
       maxDist < 2;
     // 2. Candidate resembles background without strong contrasting outline -> reject
-    const isBgResemblance = contrastFromBg < 35 && (!hasOutline || outlineConfidence < 0.80);
+    const isBgResemblance = contrastFromBg < 35 && (!hasDetectedOutline || outlineConfidence < 0.80);
 
     if (isChaotic) {
       evidenceState = "rejected";
