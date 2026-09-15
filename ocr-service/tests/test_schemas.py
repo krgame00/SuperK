@@ -36,7 +36,7 @@ def test_cleaning_result_uses_stable_asset_paths() -> None:
         timings_ms={"total": 1234},
     )
     assert result.clean_asset.endswith("/clean.png")
-    assert result.pipeline_version == "2.3.0-text-authorization"
+    assert result.pipeline_version == "2.3.1-enclosed-backing"
     assert CleanerRoute.ARTWORK.value == "artwork"
 
 

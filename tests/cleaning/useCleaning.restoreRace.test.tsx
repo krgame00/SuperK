@@ -31,7 +31,7 @@ const cleaningResult = {
   protectedMaskAsset: "/api/clean/v1/jobs/job-1/assets/protected-mask.png",
   regions: [],
   timingsMs: { total: 10 },
-  pipelineVersion: "2.3.0-text-authorization",
+  pipelineVersion: "2.3.1-enclosed-backing",
 };
 
 beforeEach(() => {
@@ -92,7 +92,7 @@ test("metadata restore restarts after the page count changes", async () => {
             sourceHash: "a".repeat(64),
             sourceFingerprint: "13:text/plain;charset=utf-8",
             maskFingerprint: "13:text/plain;charset=utf-8",
-            pipelineVersion: "2.3.0-text-authorization",
+            pipelineVersion: "2.3.1-enclosed-backing",
             jobId: "job-1",
             regions: [],
             updatedAt: 1,

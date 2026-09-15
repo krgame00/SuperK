@@ -66,7 +66,7 @@ const cleaningResult = {
   protectedMaskAsset: "/api/clean/v1/jobs/job-1/assets/protected-mask.png",
   regions: [],
   timingsMs: { total: 10 },
-  pipelineVersion: "2.3.0-text-authorization",
+  pipelineVersion: "2.3.1-enclosed-backing",
 };
 
 beforeEach(() => {
@@ -252,7 +252,7 @@ test("cleanPage recomputes an in-memory result from an older pipeline", async ()
   vi.mocked(getCleaningResult).mockImplementation(async (jobId) => ({
     ...cleaningResult,
     jobId,
-    pipelineVersion: jobId === "job-old" ? "2.1.0-complete-glyph" : "2.3.0-text-authorization",
+    pipelineVersion: jobId === "job-old" ? "2.1.0-complete-glyph" : "2.3.1-enclosed-backing",
   }));
   const { result } = renderHook(() =>
     useCleaning({ pages: ["blob:one"], currentPage: 0 }),
@@ -597,7 +597,7 @@ test("stale saved job asks for reclean without crashing", async () => {
           sourceHash: "a".repeat(64),
           sourceFingerprint: "13:text/plain;charset=utf-8",
           maskFingerprint: "13:text/plain;charset=utf-8",
-          pipelineVersion: "2.3.0-text-authorization",
+          pipelineVersion: "2.3.1-enclosed-backing",
           jobId: "missing-job",
           regions: [],
           updatedAt: 1,

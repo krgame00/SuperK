@@ -23,7 +23,7 @@ import { assertMatchingImageDimensions } from "@/lib/translationPipeline";
 import { authorizationIdentity } from "@/lib/cleaning/textAuthorization";
 
 const POLL_INTERVAL_MS = 500;
-const CURRENT_PIPELINE_VERSION = "2.3.0-text-authorization";
+const CURRENT_PIPELINE_VERSION = "2.3.1-enclosed-backing";
 
 const fingerprintBlob = (blob: Blob): string | Promise<string> => {
   // Keep fake-timer workflow tests deterministic; production uses content hash.

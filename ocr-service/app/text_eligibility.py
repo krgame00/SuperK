@@ -196,6 +196,13 @@ def extract_eligibility_features(
         ),
         minimum_area=rect.width * rect.height * 1.10,
     )
+    closed_backing = _closed_light_backing_features(
+        shape_gray,
+        region_mask[shape_y1:shape_y2, shape_x1:shape_x2] > 0,
+        minimum_area=rect.width * rect.height * 1.10,
+    )
+    if closed_backing is not None:
+        enclosure, rectangle, uniformity = closed_backing
     irregularity = _stroke_irregularity(region_mask)
     margin_fraction = _margin_fraction(rect, width, height)
     return EligibilityFeatures(
@@ -333,6 +340,49 @@ def _backing_shape_scores(
         else:
             enclosure = max(enclosure, 0.90)
     return enclosure, rectangle
+
+
+def _closed_light_backing_features(
+    gray: np.ndarray,
+    text_mask: np.ndarray,
+    *,
+    minimum_area: float,
+) -> tuple[float, float, float] | None:
+    """Measure a bounded light balloon/caption without sampling outside its border.
+
+    A bright area reaching the crop edge is not evidence of an enclosure.
+    The closed contour must contain the text mask; this cannot establish text
+    identity on its own, which remains the pipeline's separate evidence gate.
+    """
+    text_pixels = np.count_nonzero(text_mask)
+    if not text_pixels:
+        return None
+    contours, _ = cv2.findContours(
+        (gray >= 220).astype(np.uint8) * 255,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+    for contour in sorted(contours, key=cv2.contourArea):
+        if cv2.contourArea(contour) < minimum_area:
+            continue
+        x, y, width, height = cv2.boundingRect(contour)
+        if x == 0 or y == 0 or x + width >= gray.shape[1] or y + height >= gray.shape[0]:
+            continue
+        interior = np.zeros_like(gray)
+        cv2.drawContours(interior, [contour], -1, 255, cv2.FILLED)
+        if np.count_nonzero((interior > 0) & text_mask) / text_pixels < 0.98:
+            continue
+        # Exclude antialiased border pixels, but retain any unmasked marks
+        # inside the balloon when measuring variation.
+        interior = cv2.erode(interior, np.ones((3, 3), np.uint8))
+        backing = gray[(interior > 0) & ~text_mask]
+        if backing.size < minimum_area * 0.25:
+            continue
+        uniformity = float(np.clip(1.0 - np.std(backing) / BACKING_STD_NORMALIZER, 0, 1))
+        perimeter = cv2.arcLength(contour, True)
+        vertices = len(cv2.approxPolyDP(contour, 0.03 * perimeter, True))
+        return (0.0, 0.92, uniformity) if vertices <= 4 else (0.90, 0.0, uniformity)
+    return None
 
 
 def _stroke_irregularity(region_mask: BinaryMask) -> float:

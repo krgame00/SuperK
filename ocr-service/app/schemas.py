@@ -129,4 +129,4 @@ class CleaningResult(BaseModel):
     regions: list[RegionRecord]
     timings_ms: dict[str, int | float | str]
     awaiting_review: bool = False
-    pipeline_version: str = "2.3.0-text-authorization"
+    pipeline_version: str = "2.3.1-enclosed-backing"

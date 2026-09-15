@@ -362,7 +362,7 @@ def test_api_pipeline_version_invalidates_cache_and_reports_glyph_version(
     assert job["status"] == "succeeded"
 
     result = client.get(f"/v1/jobs/{created['job_id']}/result").json()
-    assert result["pipeline_version"] == "2.3.0-text-authorization"
+    assert result["pipeline_version"] == "2.3.1-enclosed-backing"
 
 
 def test_purge_endpoint_removes_completed_jobs(tmp_path, png_bytes: bytes) -> None:
