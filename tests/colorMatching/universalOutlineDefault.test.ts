@@ -139,7 +139,7 @@ describe("Universal Outline Default & Bidirectional Stroke Detection", () => {
   });
 
   describe("Universal Outline Default (resolveBubbleTextStyle)", () => {
-    it("guarantees outline for auto profiles even if legacy profile has hasOutline=false", () => {
+    it("guarantees outline for fallback profiles even if legacy profile has hasOutline=false", () => {
       const bubble: TranslatedBubble = {
         box: [100, 100, 200, 200],
         original_text: "DARK TEXT OVER ARTWORK",
@@ -148,9 +148,10 @@ describe("Universal Outline Default & Bidirectional Stroke Detection", () => {
           fill: "#111111",
           outline: "#111111", // legacy identical outline
           hasOutline: false, // legacy false
-          fillConfidence: 0.90,
-          outlineConfidence: 0.90,
-          source: "auto",
+          fillConfidence: 0.50,
+          outlineConfidence: 0.50,
+          source: "fallback",
+          fallbackReason: "background-contamination",
           backgroundLuminance: 35, // dark background
         },
       };
@@ -158,11 +159,12 @@ describe("Universal Outline Default & Bidirectional Stroke Detection", () => {
       const resolved = resolveBubbleTextStyle(bubble, globalStyle);
 
       expect(resolved.hasOutline).toBe(true);
-      expect(resolved.textOutline).toBe("#ffffff"); // contrast against dark fill & dark bg
+      expect(resolved.textColor).toBe("#ffffff");
+      expect(resolved.textOutline).toBe("#000000");
       expect(resolved.outlineWidthRatio).toBeGreaterThanOrEqual(0.12);
     });
 
-    it("applies Thematic Subtitle Pattern (white fill + chromatic outline) for chromatic artwork text", () => {
+    it("applies Binary Fill Readable (white fill + outline) for chromatic text in Readable mode", () => {
       const chromaticBubble: TranslatedBubble = {
         box: [100, 100, 200, 200],
         original_text: "ANYONE COULD SEE US FROM HERE",
@@ -171,8 +173,7 @@ describe("Universal Outline Default & Bidirectional Stroke Detection", () => {
           fill: "#00a2ff",
           outline: "#00a2ff",
           hasOutline: false,
-          fillConfidence: 0.90,
-          outlineConfidence: 0.90,
+          ownershipMode: "readable",
           source: "auto",
           backgroundLuminance: 35,
         },
@@ -182,8 +183,7 @@ describe("Universal Outline Default & Bidirectional Stroke Detection", () => {
 
       expect(resolved.hasOutline).toBe(true);
       expect(resolved.textColor).toBe("#ffffff");
-      expect(resolved.textOutline).toBe("#00a2ff");
-      expect(resolved.outlineWidthRatio).toBeGreaterThanOrEqual(0.15);
+      expect(resolved.isAdaptiveReadable).toBe(true);
     });
 
     it("preserves manual user override when user explicitly sets borderless / strokeWidth=0", () => {

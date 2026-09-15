@@ -4,7 +4,7 @@ Date: 2026-09-13
 
 ## Status
 
-Accepted — amends ADR 0006, ADR 0007, and ADR 0008
+Accepted — outline-extraction decision remains; universal-outline default narrowed by ADR 0012 for validated source-faithful no-outline text
 
 ## Context
 

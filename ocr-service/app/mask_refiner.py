@@ -282,7 +282,7 @@ def refine_mask(
             support = trusted[r.y : r.y + r.height, r.x : r.x + r.width] > 0
             supported = (
                 bool(np.any(pixels))
-                and np.count_nonzero(pixels & support) / np.count_nonzero(pixels) >= 0.90
+                and np.count_nonzero(pixels & support) / np.count_nonzero(pixels) >= 0.50
             )
             regions.append(replace(region, text_supported=supported))
         return replace(refined, regions=regions)

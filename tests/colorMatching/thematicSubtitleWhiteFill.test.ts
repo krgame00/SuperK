@@ -9,7 +9,7 @@ describe("ADR 0011: Thematic Subtitle Pattern (White Fill + Chromatic Outline)",
     textOutline: "#ffffff",
   };
 
-  it("converts chromatic text over artwork (cyan dialogue) to white fill with chromatic outline", () => {
+  it("preserves admitted chromatic text over artwork (cyan dialogue) as source-faithful fill", () => {
     // The exact case from "ANYONE COULD SEE US FROM HERE"
     const cyanProfile: TextStyleProfile = {
       fill: "#65aad6",
@@ -33,24 +33,21 @@ describe("ADR 0011: Thematic Subtitle Pattern (White Fill + Chromatic Outline)",
 
     const resolved = resolveBubbleTextStyle(bubble, globalStyle);
 
-    // White fill for maximum readability, cyan outline for character identity
-    expect(resolved.textColor).toBe("#ffffff");
-    expect(resolved.textOutline).toBe("#65aad6");
+    // Source fidelity: admitted source keeps cyan fill and outline
+    expect(resolved.textColor).toBe("#65aad6");
+    expect(resolved.textOutline).toBe("#ffffff");
     expect(resolved.hasOutline).toBe(true);
-    expect(resolved.outlineWidthRatio).toBeGreaterThanOrEqual(0.14);
+    expect(resolved.outlineWidthRatio).toBe(0.12);
   });
 
-  it("converts conversational dialogue misclassified as sfx to white fill with chromatic outline", () => {
-    // OCR/LLM often tags floating dialogue without balloon boundary as 'sfx'
+  it("converts chromatic text in Readable fallback mode on dark background to white fill + outline", () => {
     const sfxDialogueProfile: TextStyleProfile = {
       fill: "#00a2ff",
       outline: "#ffffff",
       hasOutline: true,
       outlineWidthRatio: 0.12,
       source: "auto",
-      evidenceState: "admitted",
-      fillConfidence: 0.95,
-      outlineConfidence: 0.90,
+      ownershipMode: "readable",
       backgroundLuminance: 25,
       category: "sfx",
     };
@@ -66,13 +63,11 @@ describe("ADR 0011: Thematic Subtitle Pattern (White Fill + Chromatic Outline)",
     const resolved = resolveBubbleTextStyle(bubble, globalStyle);
 
     expect(resolved.textColor).toBe("#ffffff");
-    expect(resolved.textOutline).toBe("#00a2ff");
     expect(resolved.hasOutline).toBe(true);
-    expect(resolved.outlineWidthRatio).toBeGreaterThanOrEqual(0.14);
+    expect(resolved.isAdaptiveReadable).toBe(true);
   });
 
-  it("converts chromatic text with matching/missing outline to white fill with chromatic outline", () => {
-    // Text where outline was not separated or legacy identical
+  it("preserves admitted chromatic text with matching outline as source-faithful fill", () => {
     const magentaProfile: TextStyleProfile = {
       fill: "#ff3399",
       outline: "#ff3399",
@@ -91,10 +86,8 @@ describe("ADR 0011: Thematic Subtitle Pattern (White Fill + Chromatic Outline)",
 
     const resolved = resolveBubbleTextStyle(bubble, globalStyle);
 
-    expect(resolved.textColor).toBe("#ffffff");
-    expect(resolved.textOutline).toBe("#ff3399");
-    expect(resolved.hasOutline).toBe(true);
-    expect(resolved.outlineWidthRatio).toBeGreaterThanOrEqual(0.14);
+    expect(resolved.textColor).toBe("#ff3399");
+    expect(resolved.hasOutline).toBe(false);
   });
 
   it("preserves white text with chromatic outline as white fill + chromatic outline", () => {

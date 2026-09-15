@@ -4,7 +4,7 @@ Date: 2026-09-13
 
 ## Status
 
-Accepted — extends ADR 0010
+Superseded by ADR 0012 for automatic source/readable remapping; thematic chromatic outline remains a valid Readable candidate
 
 ## Context
 

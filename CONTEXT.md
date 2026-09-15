@@ -61,11 +61,19 @@ The semantic visual class of a source text region used to constrain style inheri
 _Avoid_: Ambiguous Caption, nearest bubble type, color family
 
 **Readable fallback style**:
-An adaptive safe text style used when source-style evidence is invalid or insufficient. It is selected against the actual Inpainted clean background under the Translated glyph footprint rather than from a fixed white-text preset, and it always includes an outline. The system evaluates multiple conservative fill/outline pairs, considers both broad readability and weak local regions, prefers dark fill on white or near-white balloons, and may escalate from normal outline to thicker outline and then controlled shadow/halo. Automatic background plates are a last-resort Overlay Subtitle behavior only.
-_Avoid_: Fixed white fallback, source text style profile, guessed source color, silent style inheritance
+A background-aware Binary Fill + Source Outline style used when source-style evidence is invalid/insufficient or when the user explicitly selects Readable. Its glyph fill is restricted to pure white or pure black, it always includes an outline, and local readability against the Inpainted clean background remains authoritative. A trustworthy Source accent color may tint the outline and may be strengthened while preserving hue when practical; a safe neutral outline is allowed when the accent cannot provide enough separation.
+_Avoid_: Chromatic fallback fill, source text style profile, fixed white fallback, silent style inheritance
+
+**Binary Fill + Source Outline**:
+The current Readable policy: translated fallback glyphs use only white or black fill, while the outline carries safe source identity when possible. Light/bright Source accents prefer white fill plus Source-accent outline; dark/near-black accents prefer black fill plus white/light outline; ambiguous mid-tones and failed preferred pairs are resolved through the Readability gate. Mandatory outline applies to this Readable path, not to an admitted Source text style profile.
+_Avoid_: Universal outline on validated source, arbitrary chromatic fill, hue-name classification
+
+**Source accent color**:
+A trustworthy detected source color used primarily as the thematic outline accent for Binary Fill Readable output. It may come from source fill or outline evidence and may have its lightness/value strengthened for readability while preserving hue where practical.
+_Avoid_: Background crop color, mandatory exact RGB, fallback fill color
 
 **Translated glyph footprint**:
-The page area actually occupied by the laid-out translated glyphs plus the small margin needed to evaluate outline or readability separation. Adaptive Readable decisions sample the Inpainted clean background against this footprint instead of treating the whole OCR box as the readability surface.
+The page area actually occupied by the laid-out translated glyphs plus the small margin needed to evaluate outline or readability separation. Binary Fill Readable decisions sample the Inpainted clean background against this footprint instead of treating the whole OCR box as the readability surface.
 _Avoid_: Entire OCR box, source glyph mask, text-removal mask
 
 **Readability gate**:
@@ -77,12 +85,12 @@ A user-owned text style that automation may warn about but must not modify until
 _Avoid_: Temporary auto style, gate-corrected manual style
 
 **Source-faithful rendering**:
-Rendering translated text from a validated Source text style profile. Source fidelity takes precedence when the profile passes the Source style evidence gate and remains legible against its local background. Under the Universal Outline Default policy, text without a validated source outline receives a default contrasting outline rather than rendering borderless, guaranteeing legibility across dynamic manga backgrounds.
-_Avoid_: Unreadable borderless text, unvalidated source fidelity, contrast-blind rendering
+Rendering translated text from a validated Source text style profile. Source fidelity takes precedence when the profile passes the Source style evidence gate and remains legible against its local background. The admitted source profile preserves authored outline presence or absence, so a validated no-outline source may remain no-outline; mandatory automatic outline belongs to the Readable fallback path.
+_Avoid_: Binary fallback styling presented as source, unvalidated source fidelity, forced outline on admitted no-outline source
 
-**Universal outline default**:
-The standard typesetting guarantee that all rendered manga text includes a contrasting outline (~0.12–0.14 of font size) unless explicitly removed by manual user override, ensuring text remains legible even when placed over complex or tone-colliding artwork.
-_Avoid_: Disappearing text, borderless text on art
+**Legacy universal outline default**:
+The superseded policy that automatically added a contrasting outline to all translated text lacking a detected source outline. ADR 0012 narrows this rule: Binary Fill Readable output always has an outline, while an admitted Source text style profile may preserve no-outline source styling.
+_Avoid_: Current source-faithful policy, mandatory outline on validated source
 
 **Bidirectional outline extraction**:
 Text color analysis that samples both light/white and dark contour pixels around chromatic glyph cores, faithfully recovering both white-on-color outlines and dark-on-color outlines from original manga artwork.

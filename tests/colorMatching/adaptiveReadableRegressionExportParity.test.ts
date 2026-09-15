@@ -103,8 +103,7 @@ describe("Ticket 17: Adaptive Readable Regression & Export Parity", () => {
 
       const resolved = resolveBubbleTextStyle(sourceBubble);
       expect(resolved.textColor).toBe("#000000");
-      expect(resolved.hasOutline).toBe(true);
-      expect(resolved.textOutline).toBe("#ffffff");
+      expect(resolved.hasOutline).toBe(false);
       expect(resolved.source).toBe("auto");
     });
 

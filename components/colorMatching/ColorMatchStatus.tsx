@@ -73,6 +73,11 @@ export function ColorMatchStatus({
           <div className="flex items-center gap-1 font-medium text-[11px]">
             {isManual ? (
               <span className="text-primary font-semibold">ปรับแต่งเอง (Manual)</span>
+            ) : profile.ownershipMode === "readable" ? (
+              <>
+                <Palette className="w-3 h-3 text-sky-400" />
+                <span className="text-sky-300">โหมดอ่านง่าย (Readable)</span>
+              </>
             ) : isFallback ? (
               <>
                 <AlertCircle className="w-3 h-3 text-amber-400" />

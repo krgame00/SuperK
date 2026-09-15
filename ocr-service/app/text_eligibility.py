@@ -17,7 +17,7 @@ from app.schemas import (
     TextRole,
 )
 
-NARRATION_THRESHOLD = 0.82
+NARRATION_THRESHOLD = 0.55
 SFX_THRESHOLD = 0.90
 UI_LABEL_MAX_AREA_FRACTION = 0.012
 UI_LABEL_MAX_HEIGHT_FRACTION = 0.08
@@ -108,6 +108,7 @@ def classify_eligibility(
 
     narration_score = max(
         features.backing_uniformity,
+        features.rectangular_backing,
         0.55 * features.backing_uniformity
         + 0.45 * features.rectangular_backing,
     )
@@ -164,11 +165,19 @@ def extract_eligibility_features(
     gray = cv2.cvtColor(image_rgb[y1:y2, x1:x2], cv2.COLOR_RGB2GRAY)
     mask_crop = region_mask[y1:y2, x1:x2] > 0
     backing = gray[~mask_crop]
-    uniformity = (
-        float(np.clip(1.0 - np.std(backing) / BACKING_STD_NORMALIZER, 0, 1))
-        if backing.size
-        else 0.0
-    )
+    if backing.size:
+        p10, p90 = np.percentile(backing, [10, 90])
+        trimmed = backing[(backing >= p10) & (backing <= p90)]
+        trimmed_std = float(np.std(trimmed)) if trimmed.size else float(np.std(backing))
+        std_val = min(float(np.std(backing)), trimmed_std * 1.25)
+        raw_uniformity = float(np.clip(1.0 - std_val / BACKING_STD_NORMALIZER, 0, 1))
+        light_fraction = float(np.count_nonzero(backing >= 220)) / backing.size
+        if light_fraction >= 0.70:
+            uniformity = max(raw_uniformity, min(0.95, 0.70 + 0.30 * light_fraction))
+        else:
+            uniformity = raw_uniformity
+    else:
+        uniformity = 0.0
 
     edges = cv2.Canny(gray, 80, 160)
     edge_density = min(

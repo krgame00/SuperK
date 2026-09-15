@@ -846,5 +846,8 @@ def _has_glyph_support(probability: FloatMask, block: DetectedBlock) -> bool:
         return False
     count, _, stats, _ = cv2.connectedComponentsWithStats(seed, connectivity=8)
     valid_comps = [stats[i, cv2.CC_STAT_AREA] for i in range(1, count) if stats[i, cv2.CC_STAT_AREA] >= 3]
-    return len(valid_comps) >= 2 and sum(valid_comps) >= 10
+    if not valid_comps:
+        return False
+    return (len(valid_comps) >= 2 and sum(valid_comps) >= 10) or (len(valid_comps) == 1 and valid_comps[0] >= 120)
+
 

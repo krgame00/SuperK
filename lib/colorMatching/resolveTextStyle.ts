@@ -1,6 +1,6 @@
 import type { OverlayTextStyle, TranslatedBubble } from "@/lib/translationOverlay";
 import { inferTextStyleCategory } from "./nearbyStyleFallback";
-import { colorDistance, extractTextColors } from "./sampleTextColors";
+import { colorDistance, extractTextColors, rgbToHex } from "./sampleTextColors";
 import {
   createDefaultStyleProfile,
   type ColorSampleRegion,
@@ -57,6 +57,165 @@ export interface AdaptiveReadableOptions {
   preferredOutlineRatio?: number;
   requiresHaloEscalation?: boolean;
   requiresPlateEscalation?: boolean;
+  sourceAccentColor?: string;
+  sourceProfile?: TextStyleProfile;
+}
+
+export type AccentLuminanceClass = "bright" | "dark" | "ambiguous";
+
+function rgbToHsl(r: number, g: number, b: number): { h: number; s: number; l: number } {
+  const rn = r / 255;
+  const gn = g / 255;
+  const bn = b / 255;
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const l = (max + min) / 2;
+  let h = 0;
+  let s = 0;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case rn:
+        h = (gn - bn) / d + (gn < bn ? 6 : 0);
+        break;
+      case gn:
+        h = (bn - rn) / d + 2;
+        break;
+      case bn:
+        h = (rn - gn) / d + 4;
+        break;
+    }
+    h /= 6;
+  }
+  return { h: h * 360, s, l };
+}
+
+function hslToRgb(h: number, s: number, l: number): { r: number; g: number; b: number } {
+  let r: number, g: number, b: number;
+  const hNorm = (((h % 360) + 360) % 360) / 360;
+
+  if (s === 0) {
+    r = g = b = l;
+  } else {
+    const hue2rgb = (p: number, q: number, t: number) => {
+      let tAdj = t;
+      if (tAdj < 0) tAdj += 1;
+      if (tAdj > 1) tAdj -= 1;
+      if (tAdj < 1 / 6) return p + (q - p) * 6 * tAdj;
+      if (tAdj < 1 / 2) return q;
+      if (tAdj < 2 / 3) return p + (q - p) * (2 / 3 - tAdj) * 6;
+      return p;
+    };
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hue2rgb(p, q, hNorm + 1 / 3);
+    g = hue2rgb(p, q, hNorm);
+    b = hue2rgb(p, q, hNorm - 1 / 3);
+  }
+  return {
+    r: Math.round(r * 255),
+    g: Math.round(g * 255),
+    b: Math.round(b * 255),
+  };
+}
+
+export function calculateColorLuminance(hex: string): number {
+  const rgb = parseHexColor(hex);
+  if (!rgb) return 0;
+  return 0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b;
+}
+
+export function classifyAccentLuminance(accentHex: string): AccentLuminanceClass {
+  const lum = calculateColorLuminance(accentHex);
+  if (lum >= 160) return "bright";
+  if (lum <= 90) return "dark";
+  return "ambiguous";
+}
+
+export function deriveSourceAccentColor(
+  profile?: TextStyleProfile,
+): string | undefined {
+  if (!profile) return undefined;
+  if ((profile as any).sourceAccentColor) {
+    return (profile as any).sourceAccentColor;
+  }
+  // If the profile was rejected due to background contamination or insufficient evidence,
+  // or is already a generic fallback/global/readable profile, its fill/outline colors are not trustworthy source accents.
+  if (
+    profile.evidenceState === "rejected" ||
+    profile.fallbackReason === "background-contamination" ||
+    profile.fallbackReason === "insufficient-evidence" ||
+    profile.source === "fallback" ||
+    profile.source === "global" ||
+    profile.ownershipMode === "readable"
+  ) {
+    return undefined;
+  }
+
+  const bgHex = profile.backgroundColor?.toLowerCase();
+
+  const isChromatic = (hex?: string) => {
+    if (!hex) return false;
+    const clean = hex.toLowerCase();
+    if (bgHex && clean === bgHex) return false;
+    const rgb = parseHexColor(clean);
+    if (!rgb) return false;
+    const max = Math.max(rgb.r, rgb.g, rgb.b);
+    const min = Math.min(rgb.r, rgb.g, rgb.b);
+    return max - min >= 20;
+  };
+
+  const outlineHex = profile.outline;
+  const fillHex = profile.fill;
+
+  if (isChromatic(outlineHex)) return outlineHex;
+  if (isChromatic(fillHex)) return fillHex;
+
+  return undefined;
+}
+
+export function strengthenSourceAccentOutline(
+  accentHex: string,
+  targetFill: string,
+): string {
+  const rgb = parseHexColor(accentHex);
+  if (!rgb) return targetFill.toLowerCase() === "#ffffff" ? "#000000" : "#ffffff";
+
+  const isWhiteFill = targetFill.toLowerCase() === "#ffffff";
+  const hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+
+  if (hsl.s < 0.12) {
+    if (isWhiteFill) {
+      return hsl.l > 0.4 ? "#000000" : rgbToHex(rgb.r, rgb.g, rgb.b);
+    } else {
+      return hsl.l < 0.6 ? "#ffffff" : rgbToHex(rgb.r, rgb.g, rgb.b);
+    }
+  }
+
+  if (isWhiteFill) {
+    let targetL = hsl.l;
+    let targetS = hsl.s;
+
+    if (targetL > 0.40) {
+      targetL = 0.35;
+    }
+    if (targetS < 0.60) {
+      targetS = Math.min(1.0, targetS + 0.35);
+    }
+
+    const newRgb = hslToRgb(hsl.h, targetS, targetL);
+    return rgbToHex(newRgb.r, newRgb.g, newRgb.b);
+  } else {
+    let targetL = hsl.l;
+    let targetS = hsl.s;
+
+    if (targetL < 0.60) {
+      targetL = 0.70;
+    }
+    const newRgb = hslToRgb(hsl.h, targetS, targetL);
+    return rgbToHex(newRgb.r, newRgb.g, newRgb.b);
+  }
 }
 
 export function selectAdaptiveReadableStyle(
@@ -80,20 +239,53 @@ export function selectAdaptiveReadableStyle(
   const defaultOutlineRatio = options.category === "overlay_subtitle" ? 0.18 : 0.12;
   let outlineWidthRatio = options.preferredOutlineRatio ?? defaultOutlineRatio;
 
-  // Candidate evaluation:
-  // For bright backgrounds (bgLum >= 150, or default for dialogue in speech balloons):
-  // Dark fill (#000000) with Light outline (#ffffff) ensures strong readability.
-  // For dark backgrounds (bgLum < 150):
-  // Light fill (#ffffff) with Dark outline (#000000) ensures strong readability.
   const isDarkBg = bgLum !== undefined ? bgLum < 150 : (options.category === "overlay_subtitle");
 
-  const textColor = isDarkBg ? "#ffffff" : "#000000";
-  const textOutline = isDarkBg ? "#000000" : "#ffffff";
+  let textColor: string;
+  let textOutline: string;
+
+  // ADR 0012: Source accent drives preferred binary fallback pair,
+  // but Background-Aware Readability Gate evaluates local background and rejects
+  // preferred pair if it would disappear on the background.
+  const accentColor = options.sourceAccentColor ?? deriveSourceAccentColor(options.sourceProfile);
+  if (accentColor) {
+    const accentClass = classifyAccentLuminance(accentColor);
+    if (accentClass === "bright") {
+      // Preferred pair: White fill + strengthened accent outline.
+      // If background is bright (e.g. white balloon), white fill fails readability -> select Black fill + light outline.
+      if (isDarkBg) {
+        textColor = "#ffffff";
+        textOutline = strengthenSourceAccentOutline(accentColor, "#ffffff");
+      } else {
+        textColor = "#000000";
+        textOutline = "#ffffff";
+      }
+    } else if (accentClass === "dark") {
+      // Preferred pair: Black fill + light outline.
+      // If background is dark (e.g. night panel), black fill fails readability -> select White fill + dark outline.
+      if (!isDarkBg) {
+        textColor = "#000000";
+        textOutline = "#ffffff";
+      } else {
+        textColor = "#ffffff";
+        textOutline = "#000000";
+      }
+    } else {
+      // Ambiguous mid-tone: evaluates background context directly
+      if (isDarkBg) {
+        textColor = "#ffffff";
+        textOutline = strengthenSourceAccentOutline(accentColor, "#ffffff");
+      } else {
+        textColor = "#000000";
+        textOutline = "#ffffff";
+      }
+    }
+  } else {
+    textColor = isDarkBg ? "#ffffff" : "#000000";
+    textOutline = isDarkBg ? "#000000" : "#ffffff";
+  }
 
   // Outline Escalation for Mixed or Difficult Backgrounds:
-  // When the text crosses mixed tones or local weak regions (contrast near/below 3:1),
-  // escalate the outline thickness from normal (0.10–0.14) toward 0.16–0.20,
-  // capped at 0.20 to prevent Thai glyph counters from clogging.
   if (samples.length > 0 && options.preferredOutlineRatio === undefined) {
     const sorted = [...samples].sort((a, b) => a - b);
     const minLum = sorted[0];
@@ -111,9 +303,6 @@ export function selectAdaptiveReadableStyle(
     }
   }
 
-  // Readability Halo Escalation:
-  // Introduced only when ordinary outlined text still fails on severe contrast collision.
-  // Kept distinct from recovered decorative source glow/shadow.
   let readabilityHalo: TextShadowStyle | undefined = undefined;
   if (options.requiresHaloEscalation) {
     readabilityHalo = {
@@ -125,11 +314,8 @@ export function selectAdaptiveReadableStyle(
     };
   }
 
-  // Background Plate Escalation:
-  // Strictly permitted ONLY for overlay_subtitle as a last resort.
-  // Dialogue and Narration NEVER receive automatic plates; they are marked reviewRequired.
   let backgroundPlate: { color: string; opacity: number; paddingRatio?: number } | undefined = undefined;
-  let reviewRequired = false;
+  let reviewRequired = options.sourceProfile?.reviewRequired ?? false;
 
   if (options.requiresPlateEscalation) {
     if (options.category === "overlay_subtitle") {
@@ -173,7 +359,13 @@ function resolveOutlinePresence(profile: TextStyleProfile): boolean {
     if (profile.outlineWidth !== undefined) return profile.outlineWidth > 0;
     return true;
   }
-  // Universal Outline Default: auto & fallback styles ALWAYS have an outline by default
+  // ADR 0012: Validated source profiles preserve authored outline presence or absence (including legitimate no-outline)
+  if (profile.evidenceState === "admitted" || profile.source === "auto") {
+    if (profile.hasOutline !== undefined) return profile.hasOutline;
+    if (profile.outlineWidthRatio !== undefined) return profile.outlineWidthRatio > 0;
+    if (profile.outlineWidth !== undefined) return profile.outlineWidth > 0;
+  }
+  // Fallback / unverified styles always have an outline
   return true;
 }
 
@@ -213,66 +405,16 @@ function resolvedFromProfile(
   bubble?: TranslatedBubble,
 ): ResolvedTextStyle {
   const isManual = profile.ownershipMode === "manual" || profile.source === "manual";
-  const hasSourceOutline = resolveOutlinePresence(profile);
-  const hasOutline = isManual ? hasSourceOutline : (autoOutlineEnabled ? true : hasSourceOutline);
-  let outlineWidthRatio = autoOutlineEnabled
+  const isValidatedSource = profile.evidenceState === "admitted";
+  const hasOutline = resolveOutlinePresence(profile);
+  let outlineWidthRatio = hasOutline
     ? resolveOutlineRatio(profile, hasOutline)
-    : GLOBAL_OUTLINE_RATIO;
+    : 0;
 
   let textColor = profile.fill || globalStyle.textColor || "#000000";
-  let textOutline = autoOutlineEnabled
+  let textOutline = hasOutline
     ? profile.outline || globalStyle.textOutline || "#ffffff"
     : globalStyle.textOutline || "#ffffff";
-
-  const textContent = bubble
-    ? String(bubble.t || bubble.translated || bubble.original_text || "").trim()
-    : "";
-  const isConversationalSpeech =
-    textContent.length > 15 || (textContent.length > 8 && textContent.includes(" "));
-  const isTrueSfx = profile.category === "sfx" && !isConversationalSpeech;
-
-  // ADR 0011: Thematic Subtitle Pattern (White Fill + Chromatic Outline)
-  // When text is located over artwork and carries a thematic character color,
-  // render with pure white fill (#ffffff) and the thematic outline (~0.15 ratio).
-  if (!isManual && autoOutlineEnabled && !isTrueSfx) {
-    const rgbFill = parseHexColor(textColor);
-    const rgbOutline = parseHexColor(textOutline);
-    const fillChroma = rgbFill
-      ? Math.max(rgbFill.r, rgbFill.g, rgbFill.b) - Math.min(rgbFill.r, rgbFill.g, rgbFill.b)
-      : 0;
-    const outlineChroma = rgbOutline
-      ? Math.max(rgbOutline.r, rgbOutline.g, rgbOutline.b) - Math.min(rgbOutline.r, rgbOutline.g, rgbOutline.b)
-      : 0;
-
-    const bgLum = profile.backgroundLuminance ?? 128;
-    const isWhiteSpeechBalloon = bgLum >= 200 && fillChroma < 20;
-
-    if (!isWhiteSpeechBalloon) {
-      const outlineLum = rgbOutline
-        ? 0.299 * rgbOutline.r + 0.587 * rgbOutline.g + 0.114 * rgbOutline.b
-        : 255;
-      const distToFill = rgbFill && rgbOutline
-        ? colorDistance(rgbFill.r, rgbFill.g, rgbFill.b, rgbOutline.r, rgbOutline.g, rgbOutline.b)
-        : 0;
-
-      // Check if outline is white/light or identical/missing
-      const isWhiteOrMatchingOutline =
-        (outlineChroma < 15 && outlineLum > 210) || distToFill < 35 || !hasSourceOutline;
-
-      if (fillChroma > 20 && isWhiteOrMatchingOutline) {
-        // Detected chromatic fill with white or matching outline -> White fill + Chromatic outline
-        textOutline = textColor;
-        textColor = "#ffffff";
-        outlineWidthRatio = Math.max(0.15, outlineWidthRatio);
-      } else if (outlineChroma > 20 && rgbFill && (rgbFill.r > 230 && rgbFill.g > 230 && rgbFill.b > 230)) {
-        // Detected white fill + chromatic outline (e.g. white text with pink/blue outline)
-        textColor = "#ffffff";
-        if (!profile.outlineWidthRatio) {
-          outlineWidthRatio = Math.max(0.15, outlineWidthRatio);
-        }
-      }
-    }
-  }
 
   // Under Universal Outline Default, ensure outline has sufficient contrast with fill
   if (hasOutline && !isManual) {
@@ -306,6 +448,7 @@ function resolvedFromProfile(
     fillGradient: profile.fillGradient,
     shadow: profile.shadow,
     glow: profile.glow,
+    reviewRequired: profile.reviewRequired ? true : undefined,
   };
 }
 
@@ -397,6 +540,7 @@ export function resolveBubbleTextStyle(
       outlineConfidence: outlineConf,
       requiresHaloEscalation: profile.requiresHaloEscalation,
       requiresPlateEscalation: profile.requiresPlateEscalation,
+      sourceProfile: profile,
     });
   }
 
@@ -422,6 +566,7 @@ export function resolveBubbleTextStyle(
       outlineConfidence: outlineConf,
       requiresHaloEscalation: profile.requiresHaloEscalation,
       requiresPlateEscalation: profile.requiresPlateEscalation,
+      sourceProfile: profile,
     });
   }
 
@@ -446,6 +591,7 @@ export function resolveBubbleTextStyle(
         outlineConfidence: outlineConf,
         requiresHaloEscalation: profile.requiresHaloEscalation,
         requiresPlateEscalation: profile.requiresPlateEscalation,
+        sourceProfile: profile,
       });
     }
   }
@@ -604,6 +750,7 @@ export function recomputeAdaptiveReadableOnLayoutCommit(
       outlineConfidence: profile?.outlineConfidence,
       requiresHaloEscalation: profile?.requiresHaloEscalation,
       requiresPlateEscalation: profile?.requiresPlateEscalation,
+      sourceProfile: profile,
     });
 
     const isFallbackOrReadable =

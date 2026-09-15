@@ -276,8 +276,8 @@ def test_small_unenclosed_label_is_preserved(role: PageRole) -> None:
 @pytest.mark.parametrize(
     ("score", "expected_role"),
     [
-        (0.819, TextRole.REVIEW),
-        (0.820, TextRole.NARRATION),
+        (0.549, TextRole.REVIEW),
+        (0.550, TextRole.NARRATION),
     ],
 )
 def test_narration_threshold_only_changes_semantic_role(

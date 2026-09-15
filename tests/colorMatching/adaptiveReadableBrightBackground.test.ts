@@ -145,9 +145,8 @@ describe("Ticket 13: Adaptive Readable on Bright & White Backgrounds", () => {
 
     const resolved = resolveBubbleTextStyle(sourceFaithfulDialogue);
     expect(resolved.textColor).toBe("#000000");
-    expect(resolved.hasOutline).toBe(true);
-    expect(resolved.textOutline).toBe("#ffffff");
-    expect(resolved.outlineWidthRatio).toBeGreaterThanOrEqual(0.12);
+    expect(resolved.hasOutline).toBe(false);
+    expect(resolved.outlineWidthRatio).toBe(0);
     expect(resolved.source).toBe("auto");
   });
 

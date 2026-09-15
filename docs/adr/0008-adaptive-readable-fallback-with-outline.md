@@ -4,7 +4,7 @@ Date: 2026-09-13
 
 ## Status
 
-Accepted
+Accepted — Readable fill-selection superseded by ADR 0012; background-aware readability and escalation constraints remain
 
 ## Context
 

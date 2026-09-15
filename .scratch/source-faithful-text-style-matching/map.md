@@ -4,31 +4,36 @@
 
 - Q1–Q16 established source-faithful rendering and the three original behavior seams.
 - Q17–Q30 revised automatic source admission after background/artwork contamination produced unreadable sampled colors.
-- Q31–Q48 revised Readable behavior after a fixed white fallback became unreadable on white/bright backgrounds.
-- The current specification is `spec.md`, triaged `ready-for-agent`, and now defines Adaptive Readable + mandatory outline for the Readable path.
+- Q31–Q48 revised Readable behavior after fixed white fallback became unreadable on white/bright backgrounds.
+- Q49–Q56 are the latest confirmed revision: Readable behavior now uses **Binary Fill + Source Outline**.
+- The current specification is `spec.md`, triaged `ready-for-agent`, and supersedes free-form Adaptive Readable fill selection with binary white/black fallback fill.
 - The confirmed test strategy remains exactly three seams: Source Style Recovery + Evidence Admission; Style Resolution + Readability/Fallback Policy; Overlay/UI/Export Behavior.
-- ADR 0006 governs source-faithful rendering, ADR 0007 governs gated source admission and fallback ordering, and ADR 0008 governs Adaptive Readable fallback.
-- Existing implementation/test changes in the working tree must be reconciled against the current spec; do not silently discard prior work.
+- ADR 0006 governs source-faithful rendering, ADR 0007 governs gated source admission/fallback ordering, ADR 0008 retains background-aware readability/escalation constraints, ADR 0010 retains bidirectional outline extraction but has its universal-outline rule narrowed, ADR 0011 is superseded for automatic remapping, and ADR 0012 governs the current Binary Fill Readable policy.
+- Existing implementation/test changes in the working tree must be reconciled against the latest spec; do not silently discard prior work.
 
 ## Decisions-so-far
 
-- Source style recovery uses the original pre-clean image; readability fallback evaluates the Inpainted clean background actually shown behind translated text.
+- Source style recovery uses the original pre-clean image; Readable safety evaluates the Inpainted clean background actually shown behind translated text.
 - Glyph mask and Text-removal mask remain distinct contracts.
 - Automatic source style must pass Source style evidence and Readability gates; confidence alone never admits source style.
-- Validated source no-outline remains no-outline. Mandatory outline applies only to Readable and Auto → Readable fallback.
-- Adaptive Readable samples the background under the Translated glyph footprint rather than the entire OCR box.
-- Adaptive Readable evaluates multiple conservative Fill + Outline candidate pairs instead of defaulting to white fill.
-- White or near-white balloons bias toward dark fill.
-- Readability considers both broad/overall separation and weak local regions; behavioral targets are roughly 4.5:1 across most sampled areas and avoiding materially weak regions around 3:1 when a stronger candidate is available.
-- Readable outline scales with glyph size, normally around 0.10–0.14 and escalating roughly to 0.16–0.20 when necessary without clogging Thai glyph shapes.
-- Escalation order is normal Fill + Outline → thicker Outline → controlled Shadow/Halo → Background Plate where allowed.
-- Automatic Background Plate is restricted to Overlay Subtitle as a last resort. Dialogue and Narration / Panel Caption use the strongest non-plate candidate and review-required state if still insufficient.
-- Canonical Text style categories remain Dialogue, Narration / Panel Caption, SFX / Decorative, and Overlay Subtitle.
-- Automatic fallback order remains own validated source → bounded re-analysis → validated same-category Nearby color profile → Adaptive Readable fallback.
-- Auto remains Auto when fallback occurs and exposes `Auto → Readable fallback` plus a reason. Readable intentionally uses Adaptive Readable. Manual remains fully user-owned.
-- Auto/Readable recompute after committed layout changes that alter the translated glyph footprint; they do not recompute every pointer frame. Manual is never adaptively rewritten.
+- Validated source styling remains source-faithful, including authored source fill, effects, and outline presence/absence. A validated no-outline source may remain no-outline.
+- Automatic fallback order remains own validated source → bounded re-analysis → validated same-category Nearby color profile → Readable fallback.
+- Readable fallback is now **Binary Fill + Source Outline**: glyph fill is restricted to pure white or pure black and every Readable result has an outline.
+- A trustworthy **Source accent color** may tint the Readable outline; it is not used as chromatic fallback fill.
+- Source accent classification is luminance-led, not hue-name-led.
+- Light/bright Source accents prefer white fill + Source-accent outline; dark/near-black accents prefer black fill + white/light outline; ambiguous mid-tones evaluate both binary directions.
+- Preferred mapping is not final admission. Background-aware Readability can reject it and choose the alternate white/black direction or safer outline.
+- Weak/pastel Source-accent outlines may be strengthened/darkened while preserving hue where practical; a neutral high-contrast outline is allowed when the accent cannot separate sufficiently.
+- Binary Readable samples the background under the Translated glyph footprint rather than the entire OCR box.
+- Readability considers broad/overall separation and weak local regions; behavioral targets remain roughly 4.5:1 across most sampled areas and avoiding materially weak regions around 3:1 when a stronger candidate exists.
+- Readable outline remains proportional to glyph size and may escalate within safe limits that preserve Thai glyph counters and tone marks.
+- Later safety escalation remains normal outline → thicker outline → controlled Shadow/Halo → Background Plate where allowed.
+- Automatic Background Plate remains restricted to Overlay Subtitle. Dialogue and Narration / Panel Caption use the strongest non-plate candidate and review-required state if still insufficient.
+- Validated SFX / Decorative source effects remain source-faithful; once a decorative region enters Readable fallback, uncertain gradient/glow/shadow is simplified rather than guessed.
+- Auto remains Auto when fallback occurs and exposes `Auto → Readable fallback` plus a reason. Explicit Readable uses Binary Fill directly. Manual remains fully user-owned.
+- Auto/Readable recompute after committed layout changes that alter the Translated glyph footprint; they do not recompute every pointer frame. Manual is never adaptively rewritten.
 - Style/readability failure remains non-fatal to single-page and batch translation.
-- Workspace and export consume the same final resolved style, escalation state, and fallback provenance.
+- Workspace and export consume the same final resolved style, fallback provenance, escalation state, and review state.
 
 ## Ticket History
 
@@ -48,17 +53,26 @@ Evidence-gating regression wave:
 - `11` Auto / Readable / Manual Style Ownership UX
 - `12` Reported-Regression E2E & Export Parity
 
-Adaptive Readable + Outline wave:
-- `13` Adaptive Readable on Bright & White Backgrounds — [READY / current frontier]
-- `14` Mixed-Background Readability Scoring & Outline Escalation — blocked by `13`
-- `15` Readability Halo, Overlay Plate & Review Escalation — blocked by `14`
-- `16` Layout-Commit Adaptive Recalculation & Ownership Persistence — blocked by `13` and `14`
-- `17` Adaptive Readable Regression & Export Parity — blocked by `13`, `14`, `15`, and `16`
+Adaptive Readable + Outline wave (closed):
+- `13` Adaptive Readable on Bright & White Backgrounds
+- `14` Mixed-Background Readability Scoring & Outline Escalation
+- `15` Readability Halo, Overlay Plate & Review Escalation
+- `16` Layout-Commit Adaptive Recalculation & Ownership Persistence
+- `17` Adaptive Readable Regression & Export Parity
 
-Current frontier: `13` can start immediately. After `14` resolves, tickets `15` and `16` can proceed independently, and `17` is the final integration/regression gate once both are complete.
+Binary Fill + Source Outline wave (closed):
+- `18` Binary Fill Readable Foundation — [CLOSED]
+- `19` Brightness Classification & Outline Strengthening — [CLOSED]
+- `20` Background-Aware Binary Readability Gate — [CLOSED]
+- `21` Binary Fill Ownership, UI State & Persistence — [CLOSED]
+- `22` Binary Fill Regression, Batch & Export Parity — [CLOSED]
+
+Current frontier: All tickets in the wave (18–22) are completed and closed.
 
 ## Fog
 
-- The exact internal contrast formula, percentile calculation, sampling density, and safe-candidate scoring remain implementation choices as long as the confirmed behavior thresholds and seams are satisfied.
-- The exact visual cap for outline thickness may depend on font/glyph metrics; it must preserve Thai glyph counters and remain within the confirmed proportional ranges when practical.
-- The exact shape/opacity of the final Overlay Subtitle background plate remains an implementation choice as long as it is only reached after earlier readable escalation fails and workspace/export parity is preserved.
+- The exact numeric luminance boundary between light, dark, and ambiguous Source accents remains an implementation choice; behavior must be testable without hard-coding one private threshold into the public contract.
+- The exact color-space method used to strengthen Source-accent outlines remains an implementation choice as long as hue is preserved where practical and the final result passes Readability.
+- The exact contrast metric, lower-percentile calculation, and sampling density remain implementation choices within the established behavior targets.
+- The exact visual cap for outline thickness may depend on font/glyph metrics; it must preserve Thai glyph counters and tone marks.
+- The exact shape/opacity of the final Overlay Subtitle background plate remains an implementation choice as long as it is only reached after earlier Binary Fill safety stages fail and workspace/export parity is preserved.

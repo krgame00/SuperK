@@ -1,257 +1,238 @@
-# Source-Faithful Manga Text Style Matching — Adaptive Readable + Outline Revision
+# Source-Faithful Manga Text Style Matching — Binary Fill + Source Outline Revision
 
 **Triage:** `ready-for-agent`
 
 ## Problem Statement
 
-SuperK should preserve the visual style of source manga text when that style can be recovered reliably, but it must not produce translated text that becomes difficult to read because the automatic source match or fallback color blends into the actual background.
+SuperK should preserve source manga text styling when that styling can be recovered reliably, but its fallback behavior must remain consistently readable across white speech balloons, dark panels, bright skin/highlights, and mixed artwork.
 
-The previous revision added a Source style evidence gate and readability validation so surrounding artwork, floor texture, shadows, trim colors, and other non-glyph pixels could not be promoted to source style merely because they formed a high-confidence color cluster. That solved one class of regression, but a second user-visible failure remains: the Readable fallback itself can still be unreadable when it uses a fixed light/white text preset over a light speech balloon, bright skin, highlights, glow, or other locally bright artwork.
+Previous revisions solved two important failure classes: background/artwork colors being mistaken for source text colors, and fixed white fallback text disappearing on bright backgrounds. The current Adaptive Readable design improved safety by comparing multiple fill/outline pairs against the Inpainted clean background. Real usage still shows that allowing many possible fallback fill colors creates too much visual variation and too many ways for translated text to become muddy, inconsistent, or difficult to read.
 
-The reported failure demonstrates that a static “white fill + dark outline” fallback is not universally readable. A text region may cross several background tones at once, and the average OCR box color is not sufficient evidence for what appears directly beneath the translated glyphs. A fallback that looks safe on one half of the region can disappear on another half.
+The newly confirmed policy intentionally reduces fallback freedom. When a region enters Readable behavior, translated glyph fill is restricted to **pure white or pure black**. Source color is used primarily as an outline accent when that produces a readable result. This keeps the text body predictable while retaining some source identity through the outline.
 
-The design therefore needs to distinguish three separate concerns:
+The system therefore has three distinct ownership paths:
 
-- **Source-faithful rendering:** preserve the validated source style, including genuine no-outline text, when source evidence is trustworthy and the automatic result is legible.
-- **Adaptive Readable fallback:** when source recovery is invalid or insufficient, choose a safe fill/outline pair against the real cleaned background under the translated glyph footprint rather than using a fixed white preset.
-- **Manual style ownership:** preserve exactly what the user selected even if it would fail automatic readability checks; automatic safety logic may warn but must not rewrite Manual style.
+- **Source-faithful Auto:** preserve a validated Source text style profile, including its authored fill and outline presence, when the Source style evidence gate and Readability gate both pass.
+- **Binary Fill Readable:** when Auto exhausts its safe source/nearby fallback chain, or when the user explicitly selects Readable, use only white or black fill plus an outline selected from source accent evidence and local readability.
+- **Manual:** preserve exactly what the user selected. Automatic evidence or readability logic may warn but must not mutate Manual styling.
 
-The desired result is that Auto remains source-faithful when possible, but when it must fall back it produces text that is demonstrably readable on the page the user actually sees. Readable mode should intentionally use the same adaptive safety behavior. Readable fallback must always have an outline, while validated source text may still remain no-outline when that matches the original.
+The desired result is predictable: validated source styling remains source-faithful, while Readable fallback becomes simple, high-contrast, and repeatable instead of trying to reproduce uncertain chromatic fills.
 
 ## Solution
 
-Extend the validated source-style pipeline with an Adaptive Readable stage that evaluates the actual inpainted background beneath the translated text layout and selects a safe outlined style dynamically.
+Revise Readable behavior to use a **Binary Fill + Source Outline** policy while retaining the existing source-evidence, fallback-order, ownership, persistence, and export guarantees.
 
 The system will:
 
-1. Continue using the original pre-clean image as the authoritative source for Source text style profile recovery.
-2. Continue requiring automatic source candidates to pass the Source style evidence gate and automatic readability validation before source-faithful rendering is admitted.
-3. Preserve validated source no-outline state. The mandatory-outline rule applies only to Readable behavior and Auto → Readable fallback, not to validated source-faithful output.
-4. Replace the fixed white Readable preset with an **Adaptive Readable style** selected against the Inpainted clean background that the translated text will actually cover.
-5. Evaluate background evidence primarily beneath the translated glyph footprint plus a small margin, not across the entire OCR region.
-6. Evaluate multiple safe fill/outline candidate pairs instead of choosing fill first and adding a fixed black outline afterward.
-7. Include both light-fill/dark-outline and dark-fill/light-outline candidates, with stronger outlined variants available for complex backgrounds.
-8. Always include an outline in Adaptive Readable output.
-9. Prefer dark fill candidates on white or near-white speech balloons rather than rendering white text over a white balloon.
-10. Score candidate readability over multiple locations beneath the translated glyph footprint and consider both broad/overall readability and a lower-percentile or worst-region measure so a small unreadable section cannot be hidden by a good average.
-11. Target effective contrast of approximately `4.5:1` across most sampled text/background locations and avoid local regions falling materially below approximately `3:1` when a stronger safe candidate is available.
-12. Escalate readable separation in a controlled order: normal fill + outline → thicker outline → controlled shadow/halo → optional background plate where allowed.
-13. Use an initial Readable outline ratio roughly proportional to glyph size, around `0.10–0.14`, and permit escalation to roughly `0.16–0.20` on complex backgrounds when needed, while avoiding stroke widths that close counters or make Thai glyphs visually clogged.
-14. Add controlled shadow/halo only after ordinary safe fill/outline candidates fail the Readability Gate; it is not applied to every fallback by default.
-15. Permit automatic background plates only as a last-resort escalation for Overlay Subtitle text drawn directly over artwork. Dialogue and Narration / Panel Caption do not receive automatic plates; if they still cannot satisfy the gate after safe styling, the system keeps the strongest non-plate candidate and marks the region for review.
-16. Apply Adaptive Readable behavior to every Text style category when that region enters Readable behavior: Dialogue, Narration / Panel Caption, SFX / Decorative, and Overlay Subtitle.
-17. Keep the automatic fallback order: own validated source style → bounded local re-analysis → validated same-category Nearby color profile → Adaptive Readable fallback.
-18. Keep Auto mode as Auto when it falls back, expose `Auto → Readable fallback`, and preserve a reason such as background contamination, insufficient source evidence, failed readability, or no validated nearby source.
-19. Keep Readable as an explicit user-selectable behavior that intentionally bypasses source-faithful styling and selects an Adaptive Readable result.
-20. Keep Manual authoritative. Automatic evidence, readability scoring, adaptive recoloring, outline escalation, shadow/halo, and plate logic must not mutate a Manual style.
-21. Recalculate Adaptive Readable after a committed layout change that changes the translated glyph footprint, such as moving, resizing, reflowing, or changing font size. Do not recompute continuously on every pointer frame during dragging.
-22. Do not recalculate Manual style after layout changes, although the UI may recalculate and surface a non-mutating low-contrast warning.
-23. Use the same final resolved style and fallback/escalation state in the workspace overlay and export path.
-24. Keep style-recovery and readability failure non-fatal to translation in single-page and batch workflows.
-25. Introduce no additional cloud/AI request solely for adaptive readability selection or local contrast scoring.
+1. Keep the original pre-clean image authoritative for Source text style profile recovery.
+2. Keep the Source style evidence gate and automatic Readability gate as prerequisites for source-faithful Auto rendering.
+3. Preserve validated source styling as source-faithful, including source fill, source outline when present, source opacity, and supported source effects.
+4. Preserve validated source no-outline state. The mandatory-outline rule applies to Readable behavior, not to a validated source profile.
+5. Keep the fallback chain: own validated source style → bounded local re-analysis → validated same-category Nearby color profile → Binary Fill Readable fallback.
+6. Replace free-form Adaptive Readable fill selection with Binary Fill Readable: fallback fill may only be `#FFFFFF` or `#000000`.
+7. Require an outline for every Binary Fill Readable result.
+8. Derive a Source accent color from trustworthy detected source fill/outline evidence when available. The Source accent is primarily used to preserve thematic identity in the Readable outline rather than as a chromatic fill.
+9. Classify the Source accent mainly by luminance/brightness rather than semantic color name.
+10. For a light/bright Source accent, prefer white fill with a Source-accent outline, then strengthen/darken the outline while preserving hue when needed for separation.
+11. For a dark/near-black Source accent, prefer black fill with a white/light high-contrast outline.
+12. For ambiguous mid-tone Source accents, evaluate both binary fill directions through the Readability gate rather than assuming a semantic color family.
+13. Treat those mappings as preferences, not permission to render unreadable text. If the preferred pair fails local readability, evaluate the alternate binary fill direction and safe outline variant while keeping fill strictly white or black.
+14. Use the Inpainted clean background under the Translated glyph footprint plus a small margin as the readability surface; do not use the entire OCR box as the primary background sample.
+15. Continue evaluating multiple locations across the footprint so a good average cannot hide a locally unreadable part of the text.
+16. Continue targeting roughly `4.5:1` effective contrast across most relevant samples and avoiding materially weak local regions around `3:1` when a stronger Binary Fill candidate exists.
+17. Permit Source-accent outline strengthening by changing lightness/value while preserving hue where practical. Do not require exact source RGB when that would make fallback unreadable.
+18. Permit a safe neutral outline (white/light or dark/black) when the Source accent cannot provide sufficient separation, while keeping fill binary.
+19. Keep outline width proportional to glyph size and reuse the existing readable outline escalation/capping rules so Thai counters and tone marks do not become clogged.
+20. Keep controlled readability shadow/halo and Overlay Subtitle background plate as later escalation only after Binary Fill + Outline candidates fail; they are not source effects.
+21. Keep automatic background plates restricted to Overlay Subtitle. Dialogue and Narration / Panel Caption use the strongest non-plate Binary Fill result and review-required state if still insufficient.
+22. Simplify decorative fallback deliberately: when SFX / Decorative or other authored effects enter Binary Fill Readable, do not attempt to reproduce uncertain gradient/glow/shadow as source-faithful effects. Reduce the fallback to binary fill, readable outline, and only the safety escalation required for legibility.
+23. Keep validated decorative Source text style profiles source-faithful when their evidence and readability pass; the simplification applies only after entering Readable behavior.
+24. Keep Auto ownership as Auto when fallback occurs and expose `Auto → Readable fallback` plus a reason.
+25. Keep Readable as an explicit user-selected ownership mode that enters Binary Fill Readable directly without pretending the result is recovered source styling.
+26. Keep Manual authoritative. Automatic binary recoloring, outline selection, outline strengthening, readability escalation, and layout-triggered recomputation must not mutate a Manual profile.
+27. Recompute Auto/Readable fallback after committed layout changes that materially change the Translated glyph footprint; do not recompute every pointer frame.
+28. Preserve ownership, fallback reason, Source accent/provenance where needed, resolved binary fill/outline, escalation level, and review-required state across save/load.
+29. Use the same final resolved style semantics in the translation workspace, single-page flow, batch flow, and export.
+30. Introduce no additional cloud/AI request solely for Binary Fill classification, outline selection, or readability evaluation.
 
 ## User Stories
 
-1. As a manga translator, I want validated source text to preserve its original fill color, so that the translated lettering still belongs visually to the artwork.
-2. As a manga translator, I want validated source text with no outline to stay no-outline, so that the readability system does not add a synthetic stroke to faithful source text.
-3. As a manga translator, I want source text with a real outline to preserve its outline color and relative thickness, so that the translated result keeps the original visual weight.
-4. As a manga translator, I want high-confidence source style to pass evidence validation before rendering, so that background colors are not mistaken for text colors.
-5. As a manga translator, I want source style to remain legible against the actual page background before Auto accepts it, so that “source-faithful” does not mean unreadable.
-6. As a manga translator, I want a fixed white fallback removed, so that bright speech balloons and bright artwork do not make fallback text disappear.
-7. As a manga translator, I want Readable fallback selected against the cleaned background I will actually see, so that contrast decisions match the final rendered page.
-8. As a manga translator, I want background analysis focused beneath translated glyphs rather than the whole OCR box, so that unrelated margins do not distort readability decisions.
-9. As a manga translator, I want the system to test several safe fill/outline pairs, so that it can choose dark text on bright backgrounds and light text on dark backgrounds automatically.
-10. As a manga translator, I want Adaptive Readable output to always have an outline, so that fallback text has a reliable separation boundary from artwork.
-11. As a manga translator, I want the system to prefer dark text on a white or near-white speech balloon, so that dialogue remains immediately readable.
-12. As a manga translator, I want the system to avoid choosing white fill merely because the global fallback used to be white, so that old defaults do not override local evidence.
-13. As a manga translator, I want readability checked across many parts of the text, so that one bright patch cannot make part of a line disappear unnoticed.
-14. As a manga translator, I want the system to consider the weaker areas of a text region as well as the average, so that readable sections cannot hide unreadable sections.
-15. As a manga translator, I want most of the rendered text/background footprint to reach roughly 4.5:1 effective contrast when practical, so that fallback text is comfortably legible.
-16. As a manga translator, I want severely weak local regions around 3:1 or lower to trigger a stronger safe candidate when available, so that small portions of text do not vanish.
-17. As a manga translator, I want readable outline width to scale with glyph size, so that large and small translated text receive proportional separation.
-18. As a manga translator, I want outline width to increase only when the background requires it, so that ordinary text does not become unnecessarily heavy.
-19. As a manga translator, I want readable outline escalation capped before Thai glyph counters become clogged, so that the safety fix does not damage letter shapes.
-20. As a manga translator, I want a subtle shadow or halo added only when a normal outlined candidate still fails, so that fallback styling remains visually restrained.
-21. As a manga translator, I want shadow/halo to be controlled rather than a decorative glow, so that safety effects do not look like invented source styling.
-22. As a manga translator, I want Overlay Subtitle text to be allowed a subtle background plate only as a final fallback, so that text over extremely complex artwork can remain readable.
-23. As a manga translator, I want Dialogue to avoid automatic background plates, so that the system does not paint new rectangles into speech balloons.
-24. As a manga translator, I want Narration / Panel Caption to avoid automatic background plates, so that the original panel composition is not altered unnecessarily.
-25. As a manga translator, I want difficult Dialogue or Panel Caption that still fails after outline/halo escalation marked for review, so that I know which regions need manual attention.
-26. As a manga translator, I want Overlay Subtitle treated separately from Narration / Panel Caption, so that artwork-overlaid lines can use stronger last-resort safety without affecting panel captions.
-27. As a manga translator, I want SFX / Decorative text to use Adaptive Readable when it falls back, so that unreadable source recovery does not force muddy decorative colors.
-28. As a manga translator, I want valid decorative source styling preserved when its evidence is trustworthy and legible, so that adaptive fallback does not flatten good source effects.
-29. As a manga translator, I want the fallback sequence to try my own source evidence first, so that the system does not abandon a recoverable style prematurely.
-30. As a manga translator, I want one bounded local re-analysis before fallback, so that uncertain but recoverable source text gets a second deterministic attempt.
-31. As a manga translator, I want nearby inheritance to use only a validated same-category source profile, so that unrelated nearby lettering does not determine my style.
-32. As a manga translator, I want Adaptive Readable used only after own-source, re-analysis, and validated nearby options fail, so that fallback remains the final safety path rather than the default.
-33. As a manga translator, I want Auto to remain visibly Auto when it chooses Adaptive Readable, so that ownership state remains truthful.
-34. As a manga translator, I want Auto to explain that it used a Readable fallback, so that I can understand why the text differs from the source.
-35. As a manga translator, I want a reason such as background contamination or low readability, so that fallback review is actionable.
-36. As a manga translator, I want an explicit Readable mode, so that I can intentionally prioritize legibility without manually choosing colors.
-37. As a manga translator, I want Readable mode to use the same adaptive background-aware selection as Auto fallback, so that there is one coherent readability model.
-38. As a manga translator, I want Manual mode to preserve exactly my selected fill, outline, opacity, gradient, glow, shadow, and other style settings, so that automation cannot silently reclaim control.
-39. As a manga translator, I want a low-contrast Manual warning without automatic recoloring, so that I keep control while receiving useful feedback.
-40. As a manga translator, I want returning from Manual to Auto or Readable to require an explicit action, so that ownership changes are never implicit.
-41. As a manga translator, I want moving a text region to trigger a new Adaptive Readable decision after I finish the move, so that the style reflects the new background.
-42. As a manga translator, I want resizing a region to trigger a new Adaptive Readable decision after the resize is committed, so that the changed glyph footprint is evaluated.
-43. As a manga translator, I want changing font size or reflowing text to update Adaptive Readable after layout settles, so that the new glyph footprint remains readable.
-44. As a manga translator, I do not want readability recomputed every pointer frame while dragging, so that editing remains responsive and styles do not flicker during interaction.
-45. As a manga translator, I want Manual style left untouched when moving or resizing its text region, so that layout edits do not change my chosen visual style.
-46. As a manga translator, I want the same Adaptive Readable decision in single-page and batch translation, so that output quality does not depend on workflow.
-47. As a manga translator, I want style/readability failures to remain non-fatal in batch jobs, so that one difficult region does not stop later pages.
-48. As a manga translator, I want fallback provenance saved with my project, so that reopening a page does not silently convert a fallback into a source-faithful state.
-49. As a manga translator, I want ownership state saved with my project, so that Auto, Readable, and Manual still mean the same thing after reload.
-50. As a manga translator, I want export to use the same final fill, outline, outline width, halo/shadow, and plate state I reviewed on screen, so that the downloaded image matches the workspace.
-51. As a manga translator, I want a white speech balloon regression test, so that white fallback text can never silently disappear on a white balloon again.
-52. As a manga translator, I want a mixed bright/dark artwork regression test, so that the system proves a single candidate can remain readable across a varied background.
-53. As a manga translator, I want a complex-background Overlay Subtitle regression test, so that the system verifies its full escalation path when simple outline choices are insufficient.
-54. As a manga translator, I want ordinary dark-background text to remain simple when a normal light-fill/dark-outline pair already passes, so that escalation is not overused.
-55. As a manga translator, I want ordinary bright-background text to remain simple when a normal dark-fill/outline pair already passes, so that halo and plates are avoided unnecessarily.
-56. As a manga translator, I want valid black no-outline source dialogue to remain unchanged after this revision, so that adaptive readability does not regress source fidelity.
-57. As a manga translator, I want valid white no-outline source text on a dark region to remain unchanged when it passes source validation, so that mandatory outline remains limited to the Readable path.
-58. As a manga translator, I want valid colored source text to remain colored when admitted, so that safe fallback does not flatten legitimate source design.
-59. As a manga translator, I want gradient, glow, and shadow preserved only when they belong to validated source style, so that readability effects are not confused with decorative source effects.
-60. As a manga translator, I want Adaptive Readable halo/shadow metadata distinguishable from source decorative effects, so that persistence and UI can explain why the effect exists.
-61. As a maintainer, I want source evidence validation and adaptive readability to remain separate decisions, so that source recovery and fallback safety can evolve independently.
-62. As a maintainer, I want readability tested through resolved behavior rather than a private helper formula, so that the scoring algorithm can evolve without brittle tests.
-63. As a maintainer, I want glyph-footprint background sampling tested from observable candidate selection, so that tests do not depend on a particular pixel iteration implementation.
-64. As a maintainer, I want overall and lower-percentile readability behavior represented in tests through mixed-background fixtures, so that average-only scoring cannot return unnoticed.
-65. As a maintainer, I want outline escalation tested by visible resolved outline ratios, so that simple backgrounds remain thin and difficult backgrounds can become stronger.
-66. As a maintainer, I want halo/plate escalation tested only where the earlier stages fail, so that the implementation cannot apply heavy safety effects indiscriminately.
-67. As a maintainer, I want automatic plate behavior restricted to Overlay Subtitle by contract-level tests, so that Dialogue and Panel Caption cannot gain plates through a refactor.
-68. As a maintainer, I want committed layout changes to invalidate/recompute Adaptive Readable state while Manual remains stable, so that interaction semantics are deterministic.
-69. As a maintainer, I want legacy saved profiles without adaptive-readability metadata to load safely, so that existing projects remain usable.
-70. As a maintainer, I want no extra cloud request for readability selection, so that this revision does not increase API cost, latency, or quota pressure.
+1. As a manga translator, I want validated source text to keep its authored fill color, so that trustworthy source styling remains faithful.
+2. As a manga translator, I want validated source text to keep its authored outline color and width, so that real source borders remain recognizable.
+3. As a manga translator, I want validated source text with no outline to remain no-outline, so that fallback safety rules do not rewrite trustworthy source styling.
+4. As a manga translator, I want contaminated source colors rejected before rendering, so that background artwork cannot become translated text color.
+5. As a manga translator, I want Auto to try its own validated source style before fallback, so that good source evidence is not discarded.
+6. As a manga translator, I want one bounded local re-analysis before fallback, so that recoverable source styling gets another deterministic attempt.
+7. As a manga translator, I want Nearby inheritance limited to validated same-category profiles, so that unrelated text roles cannot donate styling.
+8. As a manga translator, I want Readable fallback to use only white or black fill, so that the body of translated text is visually predictable.
+9. As a manga translator, I want Binary Fill Readable to always include an outline, so that fallback glyphs have a separation boundary from artwork.
+10. As a manga translator, I want bright detected source colors to influence the outline rather than become low-contrast chromatic fill, so that source identity remains visible without sacrificing readability.
+11. As a manga translator, I want dark detected source colors to produce a dark fill with a light outline when that is readable, so that dark source intent maps to a stable high-contrast form.
+12. As a manga translator, I want source-color lightness measured numerically rather than inferred from color names, so that cyan, purple, orange, and other hues are classified consistently.
+13. As a manga translator, I want mid-tone source colors treated as ambiguous, so that the system checks both binary directions rather than guessing from hue.
+14. As a manga translator, I want a light Source accent outline darkened or strengthened when necessary, so that a pastel border does not disappear on a bright panel.
+15. As a manga translator, I want outline hue preserved where practical during strengthening, so that the character/theme accent is still recognizable.
+16. As a manga translator, I want a safe neutral outline used when the source accent cannot provide enough separation, so that readability wins in the fallback path.
+17. As a manga translator, I want white speech-balloon fallback to avoid white-on-white text, so that dialogue remains immediately readable.
+18. As a manga translator, I want dark panels to allow white Binary Fill when that is the stronger result, so that dark backgrounds do not force unreadable black text.
+19. As a manga translator, I want the preferred Binary Fill mapping validated against the actual background, so that source brightness alone cannot authorize a bad pair.
+20. As a manga translator, I want fallback background analysis under the laid-out translated glyphs, so that unrelated OCR-box margins do not influence the result.
+21. As a manga translator, I want readability checked across multiple parts of the text, so that one weak section cannot be hidden by a strong average.
+22. As a manga translator, I want the strongest readable white/black candidate selected on mixed artwork, so that the text remains consistent without per-character recoloring.
+23. As a manga translator, I want readable outline width to scale with glyph size, so that small and large translated text receive proportional separation.
+24. As a manga translator, I want outline escalation capped before Thai loops and tone marks become clogged, so that thicker safety strokes remain legible.
+25. As a manga translator, I want shadow/halo used only after ordinary Binary Fill + Outline candidates fail, so that safety effects are not overused.
+26. As a manga translator, I want Overlay Subtitle to be allowed a last-resort background plate, so that text over extreme artwork can still be recovered visibly.
+27. As a manga translator, I want Dialogue to avoid automatic background plates, so that the system does not paint new boxes inside speech balloons.
+28. As a manga translator, I want Narration / Panel Caption to avoid automatic background plates, so that panel composition is not altered unnecessarily.
+29. As a manga translator, I want unresolved non-plate cases marked for review, so that I know where manual attention is still useful.
+30. As a manga translator, I want decorative source text to remain decorative when its validated source profile is trustworthy, so that good source effects are not flattened.
+31. As a manga translator, I want decorative fallback simplified to white/black fill plus readable outline, so that uncertain gradients and glows are not fabricated.
+32. As a manga translator, I want Auto to remain selected when it falls back, so that ownership state remains truthful.
+33. As a manga translator, I want Auto to show `Auto → Readable fallback`, so that I can distinguish source-faithful output from safety output.
+34. As a manga translator, I want a concise fallback reason, so that I can tell whether the cause was contamination, weak evidence, low readability, or no valid nearby profile.
+35. As a manga translator, I want an explicit Readable mode, so that I can intentionally choose the stable Binary Fill policy.
+36. As a manga translator, I want explicit Readable mode to use the same Binary Fill policy as Auto fallback, so that there is one coherent safety model.
+37. As a manga translator, I want Manual style to remain exactly mine, so that binary recoloring never silently overrides a deliberate choice.
+38. As a manga translator, I want a low-contrast Manual warning without automatic mutation, so that I keep control while receiving useful feedback.
+39. As a manga translator, I want moving or resizing Auto/Readable text to recompute after I finish the interaction, so that readability matches the new background.
+40. As a manga translator, I want font-size and reflow changes to recompute Auto/Readable after layout settles, so that the new footprint is evaluated.
+41. As a manga translator, I do not want style recomputation every drag frame, so that editing remains responsive and does not flicker.
+42. As a manga translator, I want layout changes to leave Manual styling untouched, so that geometry edits do not change my chosen colors.
+43. As a manga translator, I want source accent and fallback provenance persisted, so that reopening a project reproduces the reviewed Binary Fill result.
+44. As a manga translator, I want legacy projects without Binary Fill metadata to load safely, so that this revision does not invalidate older work.
+45. As a manga translator, I want re-translation to update wording without losing ownership/fallback state, so that visual corrections survive text changes.
+46. As a manga translator, I want single-page and batch translation to use the same Binary Fill rules, so that output quality does not depend on workflow.
+47. As a manga translator, I want style failure to remain non-fatal, so that one difficult region never stops a page or batch.
+48. As a manga translator, I want workspace rendering and export to use the same final white/black fill and outline, so that exported pages match what I reviewed.
+49. As a manga translator, I want white-background regression coverage, so that white fallback text cannot disappear again.
+50. As a manga translator, I want dark-background regression coverage, so that black Binary Fill is not selected when it would disappear.
+51. As a manga translator, I want pastel Source accent regression coverage, so that weak chromatic outlines are strengthened when necessary.
+52. As a manga translator, I want dark Source accent regression coverage, so that the dark-source mapping remains predictable.
+53. As a manga translator, I want mixed-background regression coverage, so that average-only scoring cannot return silently.
+54. As a manga translator, I want validated source no-outline regression coverage, so that Binary Fill mandatory outline never leaks into source-faithful rendering.
+55. As a manga translator, I want Manual regression coverage, so that automatic Binary Fill cannot mutate user-owned styling.
+56. As a maintainer, I want Binary Fill behavior testable from resolved style output, so that internal luminance thresholds can evolve without brittle tests.
+57. As a maintainer, I want Source accent strengthening tested by observable outline hue/readability behavior rather than a private color-conversion helper.
+58. As a maintainer, I want Readability gate tests to prove the preferred mapping can be rejected, so that luminance classification is not mistaken for final admission.
+59. As a maintainer, I want decorative fallback tests to prove source effects are removed only after entering Readable behavior, so that source and fallback semantics remain distinct.
+60. As a maintainer, I want no extra cloud request for Binary Fill, so that this safety revision adds no API cost or quota pressure.
 
 ## Implementation Decisions
 
-- The source-style and readable-style responsibilities remain distinct. The original pre-clean image is authoritative for Source text style profile recovery; the Inpainted clean background is authoritative for evaluating how translated text will read after cleaning.
-- Automatic source style still requires the Source style evidence gate and automatic readability validation. Confidence alone never authorizes source-faithful rendering.
-- Explicit no-outline remains first-class source state. A validated source profile with `hasOutline = false` renders with no stroke. The mandatory-outline rule is limited to Adaptive Readable behavior.
-- The previous fixed light/white Readable fallback is replaced by Adaptive Readable selection. A white-fill/dark-outline pair remains one candidate, not the universal default.
-- Background sampling for Adaptive Readable is tied to the translated glyph footprint at the resolved layout position, with a small surrounding margin for outline/halo evaluation. The entire OCR box is not the primary readability surface.
-- Candidate selection evaluates fill and outline as a pair. At minimum the safe palette must include light-fill/dark-outline and dark-fill/light-outline variants, plus stronger outline variants that remain neutral and predictable.
-- Adaptive Readable output always has an outline. It does not inherit source no-outline semantics because it is a safety style rather than a recovered source style.
-- White or near-white speech-balloon backgrounds bias selection toward dark fill before light fill candidates, subject to the same final readability score.
-- Readability is evaluated over multiple sampled locations across the translated glyph/outline footprint. Selection uses both an overall/broad score and a lower-percentile/worst-region measure rather than average contrast alone.
-- The target policy is approximately `4.5:1` effective contrast across most relevant sampled locations while avoiding materially weak local regions around `< 3:1` when a stronger candidate exists. These values define behavior goals, not a requirement to expose raw threshold controls to users.
-- The exact internal contrast metric may use standard luminance/contrast primitives plus outline-aware separation, but tests assert selected behavior rather than a specific private formula.
-- Adaptive Readable outline thickness is proportional to glyph scale. The expected normal range is roughly `0.10–0.14` and may escalate roughly to `0.16–0.20` for complex backgrounds. The implementation must cap thickness before glyph counters/strokes become visually clogged, especially for Thai text.
-- Escalation order is fixed: normal safe Fill + Outline → thicker Outline → controlled Shadow/Halo → Background Plate where permitted.
-- Controlled Shadow/Halo is a readability aid, not source decorative style. It appears only when ordinary outlined candidates fail the Readability Gate and must remain visually restrained.
-- Automatic Background Plate is a last-resort safety mechanism restricted to Overlay Subtitle. It is not automatically added to Dialogue or Narration / Panel Caption.
-- If Dialogue or Narration / Panel Caption still fails the Readability Gate after non-plate escalation, the system chooses the strongest available non-plate candidate, preserves explicit fallback/review provenance, and marks it for review rather than altering the panel with a new plate.
-- SFX / Decorative may enter Adaptive Readable when source evidence is invalid, but validated decorative source effects remain source-faithful and are not replaced merely because Readable has stronger contrast.
-- The fallback chain remains: own validated source style → bounded local re-analysis → validated same-category Nearby color profile → Adaptive Readable fallback.
-- Auto retains Auto ownership when fallback occurs and exposes `Auto → Readable fallback` plus a reason. Readable ownership intentionally selects Adaptive Readable without claiming source fidelity. Manual remains user-owned.
-- Manual style bypasses automatic adaptive mutation. Low-contrast warning may be recomputed for Manual, but fill, outline, thickness, opacity, gradient, source effects, and user-owned effects remain unchanged.
-- Adaptive Readable must be recomputed after committed layout changes that materially change the translated glyph footprint, including move, resize, font-size change, or text reflow. Recalculation is deferred until the interaction commits rather than running every pointer frame.
-- Saved state must preserve enough information to distinguish source-faithful Auto, Auto → Readable fallback, explicit Readable, Manual, escalation level, fallback reason, and review-required state without breaking older profiles that lack these fields.
-- Workspace rendering and export rendering consume the same final resolved style semantics.
-- No additional cloud/AI request is introduced solely for adaptive readability scoring, safe candidate selection, escalation, or layout-triggered recomputation.
-- ADR 0006 governs source-faithful rendering after validation. ADR 0007 governs evidence-gated source admission and fallback ordering. The Adaptive Readable decision in this revision supersedes ADR 0007’s earlier fixed light-fill/dark-outline fallback detail while preserving its gating and ownership rules.
+- Source recovery and Readable fallback remain separate contracts. The original pre-clean image supplies Source text style evidence; the Inpainted clean background supplies the local surface for fallback readability evaluation.
+- Validated Source text style profiles remain source-faithful. Source fill, validated outline presence/absence, relative outline thickness, opacity, and supported source effects are preserved when both evidence and readability admission succeed.
+- The previous universal automatic-outline policy is narrowed: a validated source profile may remain no-outline. Mandatory outline applies to Readable output and does not authorize rewriting admitted source styling.
+- The fallback chain remains own validated source → bounded local re-analysis → validated same-category Nearby color profile → Readable fallback.
+- Readable fallback is now Binary Fill + Source Outline. Readable fill is restricted to pure white or pure black; chromatic fallback fill is not allowed.
+- A Source accent color is derived from trustworthy detected source styling when available. It is primarily an outline accent in Readable behavior, not a fallback fill color.
+- Source accent classification is luminance-led. Bright/light accents prefer white fill with Source-accent outline; dark/near-black accents prefer black fill with white/light outline; ambiguous mid-tones are evaluated in both binary directions through the Readability gate.
+- The preferred luminance mapping is only an initial candidate. Local background readability remains authoritative; a preferred candidate can be rejected.
+- Source-accent outline strengthening may adjust lightness/value while preserving hue where practical. Exact source RGB is not required in Readable behavior when it would reduce legibility.
+- A safe neutral high-contrast outline is permitted if the Source accent cannot provide sufficient separation. Fill remains binary regardless.
+- Readability is evaluated against the Inpainted clean background beneath the Translated glyph footprint plus a small outline margin, using multiple samples and both broad and weak-region behavior.
+- The existing approximate readability targets (~4.5:1 across most samples, avoiding materially weak ~3:1 regions when a stronger candidate exists) remain behavioral goals rather than user-facing controls.
+- Readable outline width remains proportional to glyph scale and may escalate within the established safe ranges, subject to a cap that preserves Thai counters and tone marks.
+- Controlled readability halo/shadow and Overlay Subtitle background plate remain later escalation stages. They are fallback safety effects and must stay distinct from validated source decorative effects.
+- Automatic background plate remains restricted to Overlay Subtitle. Dialogue and Narration / Panel Caption fall back to the strongest non-plate Binary Fill candidate and review-required state when necessary.
+- SFX / Decorative retains validated source effects when admitted. Once it enters Readable behavior, uncertain gradient/glow/shadow is intentionally simplified rather than guessed.
+- Auto remains Auto when Binary Fill fallback occurs and exposes fallback provenance. Explicit Readable enters Binary Fill directly. Manual remains user-owned and bypasses automatic mutation.
+- Auto/Readable recompute after committed layout changes that materially alter the Translated glyph footprint, not on every interaction frame. Manual is not adaptively rewritten.
+- Saved state preserves enough information to reproduce ownership, fallback reason, resolved binary fill/outline, Source accent/provenance where relevant, escalation level, and review-required state while remaining backward-compatible.
+- Workspace rendering and export consume the same final resolved style semantics.
+- No additional cloud/AI request is introduced solely for Binary Fill classification, Source accent strengthening, or Readability gate evaluation.
+- ADR 0006 continues to govern source-faithful rendering after validation. ADR 0007 continues to govern gated source admission/fallback order. ADR 0012 supersedes the Readable fill-selection details from ADR 0008, narrows ADR 0010's universal-outline rule, and absorbs the thematic chromatic-outline fallback intent from ADR 0011 into the Binary Fill Readable path.
 
 ## Testing Decisions
 
-Tests continue to assert externally observable behavior and reuse the three already-confirmed high-level seams. No new low-level test seam is required for Adaptive Readable because the new behavior fits inside the existing resolution and rendering contracts.
+Tests continue to assert externally observable behavior through the same three confirmed high-level seams. No additional seam is required.
 
 ### Seam 1 — Source Style Recovery + Evidence Admission
 
-Provide a source image region, with precise Glyph mask evidence when available, and observe the resulting Source text style profile, evidence/admission state, and fallback provenance.
+Provide a source image region and available glyph evidence; observe the recovered Source text style profile, evidence/admission state, and provenance.
 
 Required behavior coverage includes:
 
-- Valid plain black dialogue on a light balloon still resolves to black fill with explicit no-outline source state.
-- Valid plain white text on a dark region still resolves to white fill with explicit no-outline source state.
-- Valid colored fill, outline, and source decorative effects remain recoverable.
-- Precise Glyph mask evidence excludes surrounding artwork.
-- Text-removal mask data is never treated as authoritative Glyph mask evidence.
-- A wide or loose region over complex artwork cannot promote surrounding artwork colors merely because those colors form a strong cluster.
-- Confidence remains separate from evidence validity, including rejection of contaminated high-confidence candidates.
-- A rejected source candidate exposes enough provenance for the downstream fallback policy to explain why Adaptive Readable may be needed.
+- Valid source black/dark dialogue can recover its authored fill and outline state.
+- Valid source white/light text can recover its authored fill and outline state.
+- Valid source chromatic fill/outline and supported decorative effects remain recoverable.
+- Validated source no-outline remains representable and is not converted into a Binary Fill fallback profile.
+- Background/artwork contamination cannot be admitted solely because it forms a high-confidence cluster.
+- Text-removal masks remain non-authoritative for glyph-style admission.
+- Rejected/uncertain source style exposes enough provenance for downstream Readable fallback.
 
-Prior art: existing synthetic color-region tests, source-style regression fixtures, and color-matching scenario tests.
+Prior art: existing source-style, color-sampling, and evidence-gating regression tests.
 
 ### Seam 2 — Style Resolution + Readability/Fallback Policy
 
-Provide translated bubbles, validated/invalid source profiles, category metadata, Nearby candidates, Inpainted clean background evidence, translated layout/glyph-footprint information, and ownership state; observe the final resolved style, escalation level, fallback reason, and ownership.
+Provide source profile/admission state, Text style category, Nearby candidates, Inpainted clean background evidence, Translated glyph footprint, and ownership; observe final resolved style, source/fallback provenance, and escalation state.
 
 Required behavior coverage includes:
 
-- A validated readable source profile remains source-faithful and is not forced into Adaptive Readable.
-- A validated no-outline source profile stays no-outline.
-- Auto follows the fixed fallback order before entering Adaptive Readable.
-- Explicit Readable ownership enters Adaptive Readable directly without claiming source fidelity.
-- Adaptive Readable compares safe fill/outline pairs rather than assuming white fill.
-- A white or near-white speech balloon selects a dark-fill readable candidate rather than white-on-white text.
-- A dark background can select a light-fill/dark-outline candidate when that pair scores better.
-- A mixed bright/dark background is evaluated across multiple samples, and a good average cannot hide a severely weak portion.
-- Candidate acceptance reflects the approximately 4.5:1 broad target and avoids materially weak local regions around 3:1 when a stronger safe candidate is available.
-- Readable output always has an outline.
-- Simple backgrounds stop at normal outline; difficult backgrounds may escalate outline thickness.
-- Shadow/halo appears only after ordinary outline candidates fail.
-- Background plate is available only for Overlay Subtitle as the final automatic escalation.
-- Dialogue and Narration / Panel Caption never gain an automatic background plate; unresolved cases are marked for review instead.
-- Auto retains Auto ownership while exposing `Auto → Readable fallback` and reason.
-- Manual remains unchanged regardless of adaptive-readability score or escalation opportunities.
-- Legacy/partial profiles resolve safely with backward-compatible defaults.
+- Validated source-faithful profiles bypass Binary Fill and keep authored fill/outline semantics.
+- Own-source → re-analysis → validated same-category nearby → Binary Fill fallback order remains observable.
+- Binary Fill fallback emits only white or black fill.
+- Every Binary Fill result has an outline.
+- Light/bright Source accent prefers white fill + Source-accent outline before background validation.
+- Dark/near-black Source accent prefers black fill + white/light outline before background validation.
+- Ambiguous mid-tone Source accent is evaluated through both binary directions rather than assigned by hue name.
+- A preferred mapping that is unreadable on the local background is rejected for the alternate binary candidate.
+- Pastel/light Source accent outline can be strengthened while retaining recognizable hue where practical.
+- Safe neutral outline can replace an unusable Source accent without introducing chromatic fill.
+- White/near-white speech balloons do not render white-on-white fallback.
+- Dark panels do not render black-on-dark fallback when a white binary candidate is stronger.
+- Mixed backgrounds use multiple samples so strong averages cannot hide weak local regions.
+- Readable output may escalate outline/halo/plate only according to the established category-safe order.
+- Source decorative effects remain only on admitted source profiles; Readable decorative fallback is simplified.
+- Auto retains Auto ownership with `Auto → Readable fallback`; explicit Readable uses the same Binary Fill policy; Manual remains unchanged.
 
-Prior art: existing automatic style-resolution tests, nearby-style-fallback tests, and translation workflow tests.
+Prior art: existing automatic style-resolution, nearby fallback, thematic subtitle, universal-outline, and adaptive-readability tests. Tests that encode older policy must be revised to the new externally observable contract rather than preserved mechanically.
 
 ### Seam 3 — Overlay/UI/Export Behavior
 
-Provide translated bubbles and final resolved ownership/fallback/escalation state to the translation workspace and renderer; observe user-visible Canvas behavior, interaction-driven recomputation, persistence, and export.
+Provide resolved source/Readable/Manual styles to workspace rendering, persistence, and export; observe user-visible output and ownership behavior.
 
 Required behavior coverage includes:
 
-- Valid source no-outline profiles omit stroke rendering.
-- Adaptive Readable profiles always execute outline rendering.
-- Normal and escalated outline ratios visibly scale with translated glyph size without clogging text.
-- White speech-balloon fallback renders dark readable text rather than disappearing as white-on-white.
-- Controlled shadow/halo is rendered only when the final resolved readable state includes that escalation.
-- Overlay Subtitle background plate is rendered only when the final resolved state explicitly reaches the plate escalation.
-- Dialogue and Narration / Panel Caption do not receive automatic plates.
-- Auto, Readable, and Manual ownership/fallback state is distinguishable to the user.
-- Auto → Readable fallback exposes a reason suitable for review.
-- A committed move, resize, font-size change, or reflow recomputes Adaptive Readable for Auto/Readable after the interaction settles.
-- Dragging does not cause continuous style flicker from per-frame recomputation.
-- Manual style survives the same layout edits unchanged.
-- Single-page and batch translation both render fallback safely without translation failure.
-- Saved/reloaded state preserves ownership, fallback reason, escalation level, and review-required state sufficiently to reproduce the reviewed result.
-- Export uses the same final resolved fill, outline, outline width, shadow/halo, and plate semantics as the workspace overlay.
+- Validated source no-outline can render without stroke.
+- Binary Fill Readable always renders an outline.
+- Readable white/black fill and outline match the resolved policy on screen and in export.
+- Strengthened Source-accent outline remains visually recognizable and consistent across workspace/export.
+- Controlled halo/plate appears only when present in the final resolved fallback state.
+- Auto fallback state/reason remains visible and persists across save/load.
+- Explicit Readable, Auto, and Manual remain distinguishable.
+- Manual survives re-render, re-translation, layout changes, persistence, and export unchanged.
+- Committed layout changes recompute Auto/Readable without per-frame style flicker.
+- Single-page and batch workflows use the same Binary Fill policy and remain non-fatal on style failure.
 
-Prior art: existing translation-overlay behavior tests, manual-style persistence tests, translation workflow tests, and export/render tests.
+Prior art: existing translation-overlay, persistence, workflow, and export/render tests.
 
-A good test asserts what style is admitted, what Adaptive Readable candidate/escalation is resolved, what ownership/fallback state is exposed, and what the user sees or exports. Tests should not lock the implementation to a specific sampling loop, exact internal percentile function, private helper name, or one particular contrast-metric implementation.
+A good test asserts admitted source behavior, final binary fill/outline behavior, ownership/provenance, and visible/exported result. Tests should not lock to one private luminance threshold, color-space helper, sampling loop, or implementation-specific function call order.
 
 ## Out of Scope
 
-- Pixel-for-pixel copying of source glyph raster data onto translated glyphs.
-- Character-by-character source color mapping to Thai or other translated glyphs.
-- Exact source font-family reproduction when the font is unavailable or unidentified.
-- A new cloud/AI request solely for adaptive readability, contrast scoring, style validation, or text category classification.
-- Treating the Text-removal mask as precise Glyph mask evidence.
-- A universal fixed white fallback or a universal fixed black fallback.
-- Chromatic/random fallback color generation for readability; safe candidates remain conservative and predictable.
-- Exposing raw contrast thresholds, percentile settings, outline escalation thresholds, or pixel-sampling internals as ordinary user-facing controls in this revision.
+- Converting validated Source text style profiles to black/white merely because Binary Fill exists.
+- Chromatic Readable fill colors; Readable fill is binary by design.
+- Exact pixel-for-pixel reproduction of source glyph raster data.
+- Character-by-character fallback color changes.
+- Exact source font-family reproduction when unavailable.
+- A new cloud/AI request solely for Binary Fill, accent classification, or readability evaluation.
+- Treating Text-removal mask data as precise Glyph mask evidence.
+- Preserving uncertain gradient/glow/shadow in Readable fallback.
 - Automatic background plates for Dialogue or Narration / Panel Caption.
-- Mutating Manual style to satisfy automatic readability rules.
-- Continuous per-frame Adaptive Readable recalculation while the user is dragging or resizing.
-- Guaranteeing perfect readability over every possible artwork texture without allowing review-required state.
-- Replacing the existing source-faithful pipeline with a separate unrelated styling architecture.
+- Mutating Manual style to satisfy Binary Fill or readability rules.
+- Exposing raw luminance thresholds, contrast thresholds, or outline-strengthening internals as ordinary user settings in this revision.
+- Continuous per-frame fallback recomputation while dragging/resizing.
+- Guaranteeing perfect readability over every possible artwork texture without review-required state.
 
 ## Further Notes
 
 The governing principle for this revision is:
 
-**Source fidelity when validated source evidence is trustworthy; adaptive outlined readability when fallback is necessary.**
+**Preserve trustworthy source styling; when Readable fallback is necessary, keep the glyph body black or white and use the outline to carry safe source identity.**
 
-“Readable fallback” no longer means “white text with a dark outline.” White/dark is only one safe candidate. The final readable style is selected against the Inpainted clean background beneath the translated glyph footprint, and Readable behavior always includes an outline.
+Binary Fill is intentionally not a source-style recovery algorithm. It is a safety policy for Readable behavior. A validated Source text style profile can still be chromatic, decorative, or no-outline because fidelity is the goal of that path.
 
-The source and fallback semantics remain intentionally asymmetric: a validated source can be no-outline because fidelity is the goal, while Adaptive Readable always has an outline because separation from unknown/complex artwork is the goal.
+The confirmed test strategy remains exactly three high-level seams: Source Style Recovery + Evidence Admission, Style Resolution + Readability/Fallback Policy, and Overlay/UI/Export Behavior.
 
-The confirmed testing strategy remains exactly three high-level seams: Source Style Recovery + Evidence Admission, Style Resolution + Readability/Fallback Policy, and Overlay/UI/Export Behavior. No additional test seam is introduced for the new adaptive scoring algorithm.
-
-Canonical terms include Source text style profile, Source style evidence gate, Style confidence band, Text style category, Nearby color profile, Inpainted clean background, Readable fallback style / Adaptive Readable style, Manual style override, Source-faithful rendering, and translated glyph footprint.
-
-The architectural history is captured by ADR 0006 for source-faithful rendering, ADR 0007 for gated source admission/fallback ordering, and ADR 0008 for Adaptive Readable fallback with mandatory outline. ADR 0008 supersedes the fixed light-fill/dark-outline fallback detail from ADR 0007 while preserving its gating, category, and ownership decisions.
+Canonical terms for this revision include Source text style profile, Source style evidence gate, Source accent color, Binary Fill + Source Outline, Readable fallback style, Readability gate, Translated glyph footprint, Nearby color profile, Manual style override, and Source-faithful rendering.

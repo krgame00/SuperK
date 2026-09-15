@@ -84,6 +84,8 @@ export interface TextStyleProfile {
   reviewRequired?: boolean;
   requiresHaloEscalation?: boolean;
   requiresPlateEscalation?: boolean;
+  /** Trustworthy source accent color used to tint Readable fallback outline */
+  sourceAccentColor?: string;
 }
 
 export interface ColorSampleRegion {
