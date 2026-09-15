@@ -841,8 +841,10 @@ def _has_glyph_support(probability: FloatMask, block: DetectedBlock) -> bool:
     """Sparse isolated marks remain reviewable regardless of box confidence."""
     r = block.rect
     local = probability[r.y:r.y + r.height, r.x:r.x + r.width]
-    seed = (local >= 0.35).astype(np.uint8)
-    if seed.size == 0 or block.confidence < 0.60 or np.count_nonzero(seed) / seed.size < 0.04:
+    seed = (local >= 0.25).astype(np.uint8)
+    if seed.size == 0 or block.confidence < 0.25:
         return False
     count, _, stats, _ = cv2.connectedComponentsWithStats(seed, connectivity=8)
-    return sum(stats[i, cv2.CC_STAT_AREA] >= 3 for i in range(1, count)) >= 2
+    valid_comps = [stats[i, cv2.CC_STAT_AREA] for i in range(1, count) if stats[i, cv2.CC_STAT_AREA] >= 3]
+    return len(valid_comps) >= 2 and sum(valid_comps) >= 10
+

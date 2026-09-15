@@ -5,6 +5,7 @@ import {
   FileText,
   ImageDown,
   Rows3,
+  Wand2,
 } from "lucide-react";
 
 import { WorkspaceMenu } from "@/components/workspace/WorkspaceMenu";
@@ -16,6 +17,7 @@ interface WorkspaceExportMenuProps {
   disabledKinds?: Partial<Record<WorkspaceExportKind, boolean>>;
   onExport: (kind: WorkspaceExportKind) => void;
   triggerRef?: RefObject<HTMLButtonElement | null>;
+  variant?: "default" | "primary";
 }
 
 export function WorkspaceExportMenu({
@@ -23,6 +25,7 @@ export function WorkspaceExportMenu({
   disabledKinds = {},
   onExport,
   triggerRef,
+  variant = "default",
 }: WorkspaceExportMenuProps): ReactElement {
   const kinds: WorkspaceExportKind[] = ["image", "pdf", "strip", "zip", "cbz"];
   const allKindsDisabled = kinds.every((kind) => disabledKinds[kind]);
@@ -30,6 +33,12 @@ export function WorkspaceExportMenu({
   return (
     <WorkspaceMenu
       label="ส่งออก"
+      variant={variant}
+      icon={
+        variant === "primary" ? (
+          <Wand2 className="h-3.5 w-3.5" aria-hidden="true" />
+        ) : undefined
+      }
       disabled={disabled || allKindsDisabled}
       triggerRef={triggerRef}
       items={[

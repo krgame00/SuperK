@@ -35,11 +35,12 @@ export interface WorkspaceMenuProps {
   disabled?: boolean;
   triggerRef?: RefObject<HTMLButtonElement | null>;
   icon?: ReactNode;
+  variant?: "default" | "primary";
 }
 
 export const WorkspaceMenu = forwardRef<WorkspaceMenuHandle, WorkspaceMenuProps>(
   function WorkspaceMenu(
-    { label, items, disabled = false, triggerRef, icon },
+    { label, items, disabled = false, triggerRef, icon, variant = "default" },
     ref,
   ): ReactElement {
     const [open, setOpen] = useState(false);
@@ -157,14 +158,22 @@ export const WorkspaceMenu = forwardRef<WorkspaceMenuHandle, WorkspaceMenuProps>
               return !prev;
             });
           }}
-          className="inline-flex h-8.5 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-semibold text-foreground shadow-xs transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-40"
+          className={`inline-flex h-8.5 min-h-[44px] sm:min-h-[34px] items-center gap-1.5 rounded-lg px-3.5 text-xs font-semibold shadow-xs transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-40 shrink-0 ${
+            variant === "primary"
+              ? "bg-primary text-primary-content hover:bg-primary-hover active:scale-95 border border-transparent cursor-pointer"
+              : "border border-border bg-surface text-foreground hover:bg-surface-hover cursor-pointer"
+          }`}
           aria-haspopup="menu"
           aria-expanded={open}
           id={menuId}
         >
           {icon}
           <span>{label}</span>
-          <ChevronDown className="h-3.5 w-3.5 text-muted transition-transform duration-200" />
+          <ChevronDown
+            className={`h-3.5 w-3.5 transition-transform duration-200 ${
+              variant === "primary" ? "text-primary-content/80" : "text-muted"
+            }`}
+          />
         </button>
 
         {open && (

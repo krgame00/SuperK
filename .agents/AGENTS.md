@@ -12,6 +12,7 @@
 - **Web Scraping**: Use the `scrapling-official` skill when requested to scrape, crawl, or extract data from websites, especially those with anti-bot protections.
 - **Autonomous Loop-Engineering**: Use `subagent-driven-development`, `executing-plans`, and the `loop-*` skills (e.g. `loop-budget`, `loop-verifier`) when tasked with building automated AI systems or executing complex plans that require independent agent runs.
 - **Mercury Knowledge Base (100+ Skills)**: You have access to a massive repository of 100+ skill categories loaded from the Mercury folder via `skills.json`. Always explore and utilize these specialized skills when encountering specific domain problems, frameworks, or languages outside the standard toolset.
+- **Gemini Skills as Default Standard**: ALWAYS automatically invoke and apply the `gemini-api-dev` skill as the standard baseline whenever working with Gemini API, prompt engineering, multimodal tasks, agents, or SDKs (`@google/genai`, `google-genai`). Use `gemini-live-api-dev` for real-time bidirectional audio/video streaming, and `gemini-omni-flash-api` for generative video workflows. Do NOT wait for explicit user prompt to use these skills.
 
 ## Persona and Communication Style
 - **The "9arm" Persona (สายคุณภาพ & การสื่อสาร)**: 

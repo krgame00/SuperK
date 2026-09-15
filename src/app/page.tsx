@@ -496,7 +496,12 @@ export default function WorkspacePage() {
       return;
     }
     if (primaryAction.kind === "export") {
-      exportTriggerRef.current?.click();
+      if (typeof window !== "undefined" && window.innerWidth < 768) {
+        setIsMobileMenuOpen(true);
+      } else {
+        exportTriggerRef.current?.click();
+      }
+      return;
     }
   };
 
@@ -1530,6 +1535,7 @@ export default function WorkspacePage() {
                   onClean={() => void handleCleanCurrentPage()}
                   onEditMask={() => setIsMaskEditorOpen(true)}
                   onTranslateBook={() => void handleTranslateBook()}
+                  onTranslateCurrent={() => void handleTranslateCurrent()}
                   onRetryFailedPages={() => void retryFailedPages()}
                   triggerRef={advancedToolsTriggerRef}
                 />
@@ -1563,15 +1569,18 @@ export default function WorkspacePage() {
 
               {/* ── Primary Action Buttons ── */}
               <div className="flex items-center gap-2">
-                <WorkspacePrimaryAction
-                  state={primaryAction}
-                  onAction={() => void handlePrimaryAction()}
-                  onCancel={cancelTranslateAll}
-                />
+                {primaryAction.kind !== "export" && (
+                  <WorkspacePrimaryAction
+                    state={primaryAction}
+                    onAction={() => void handlePrimaryAction()}
+                    onCancel={cancelTranslateAll}
+                  />
+                )}
 
                 {/* ── Export Menu Dropdown ── */}
                 <WorkspaceExportMenu
                   triggerRef={exportTriggerRef}
+                  variant={primaryAction.kind === "export" ? "primary" : "default"}
                   disabled={pages.length === 0}
                   disabledKinds={{
                     image: activeBubbles.length === 0 || workspaceLayer !== "translated",

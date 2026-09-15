@@ -17,7 +17,11 @@ export function translationScope(result: CleaningResult): TranslationScope {
     const r = region.rect;
     const box = [r.y / result.height * 1000, r.x / result.width * 1000,
       (r.y + r.height) / result.height * 1000, (r.x + r.width) / result.width * 1000];
-    (region.textConfirmed === true && region.textRole !== "protected" ? scope.allowed : scope.excluded).push(box);
+    if (region.textRole === "protected") {
+      scope.excluded.push(box);
+    } else {
+      scope.allowed.push(box);
+    }
   }
   return scope;
 }
@@ -32,8 +36,10 @@ export function withinTranslationScope(box: number[] | undefined, scope?: Transl
   if (!box || box.length !== 4 || !box.every(Number.isFinite)) return false;
   const area = (box[2] - box[0]) * (box[3] - box[1]);
   if (area <= 0 || scope.excluded.some(r => intersection(box, r) > 0)) return false;
-  return scope.allowed.some(r => intersection(box, r) / area >= 0.5);
+  if (scope.allowed.length === 0) return true;
+  return scope.allowed.some(r => intersection(box, r) / area >= 0.3);
 }
+
 
 /** Keep page coordinates while withholding unconfirmed pixels from recognition. */
 export function scopedRecognitionImage(image: HTMLImageElement, scope: TranslationScope): string {

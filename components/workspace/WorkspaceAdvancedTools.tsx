@@ -19,6 +19,7 @@ export interface WorkspaceAdvancedToolsProps {
   onClean: () => void;
   onEditMask: () => void;
   onTranslateBook: () => void;
+  onTranslateCurrent?: () => void;
   onRetryFailedPages: () => void;
   triggerRef?: RefObject<HTMLButtonElement | null>;
 }
@@ -31,10 +32,22 @@ export function WorkspaceAdvancedTools({
   onClean,
   onEditMask,
   onTranslateBook,
+  onTranslateCurrent,
   onRetryFailedPages,
   triggerRef,
 }: WorkspaceAdvancedToolsProps): ReactElement {
   const items: WorkspaceMenuItem[] = [
+    ...(onTranslateCurrent
+      ? [
+          {
+            id: "translate-current",
+            label: "แปลหน้านี้ใหม่",
+            icon: <Sparkles className="h-4 w-4 text-primary" />,
+            disabled: busy || !canClean,
+            onSelect: onTranslateCurrent,
+          },
+        ]
+      : []),
     {
       id: "clean",
       label: "คลีนข้อความใหม่",

@@ -827,13 +827,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
   ): Promise<boolean> => {
     try {
       const { backgroundUrl, textScope } = preparedPage;
-      if (textScope && textScope.allowed.length === 0) {
-        await cacheBackgroundOnly(backgroundUrl, pageUrl);
-        return true;
-      }
-      const recognitionUrl = textScope
-        ? scopedRecognitionImage(await waitForImageReady(preparedPage.recognitionUrl), textScope)
-        : preparedPage.recognitionUrl;
+      const recognitionUrl = preparedPage.recognitionUrl;
       const resImg = await fetch(recognitionUrl, signal ? { signal } : undefined);
       if (!resImg.ok) throw new Error(`ไม่สามารถโหลดรูปภาพได้ (HTTP ${resImg.status})`);
       const blob = await resImg.blob();

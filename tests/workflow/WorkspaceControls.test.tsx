@@ -46,6 +46,41 @@ describe("WorkspaceControls", () => {
     expect(trigger).toHaveFocus();
   });
 
+  test("export menu renders with primary variant when designated", () => {
+    render(
+      <WorkspaceExportMenu
+        disabled={false}
+        variant="primary"
+        onExport={vi.fn()}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: "ส่งออก" });
+    expect(trigger.className).toContain("bg-primary");
+  });
+
+  test("advanced tools exposes re-translate current page when handler is provided", () => {
+    const onTranslateCurrent = vi.fn();
+    render(
+      <WorkspaceAdvancedTools
+        canClean
+        canEditMask
+        busy={false}
+        batchFailureCount={0}
+        onClean={vi.fn()}
+        onEditMask={vi.fn()}
+        onTranslateBook={vi.fn()}
+        onTranslateCurrent={onTranslateCurrent}
+        onRetryFailedPages={vi.fn()}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: "เครื่องมือขั้นสูง" });
+    fireEvent.click(trigger);
+    const retranslateItem = screen.getByRole("menuitem", { name: "แปลหน้านี้ใหม่" });
+    expect(retranslateItem).toBeVisible();
+    fireEvent.click(retranslateItem);
+    expect(onTranslateCurrent).toHaveBeenCalledOnce();
+  });
+
   test("menu closes on Escape and restores trigger focus", () => {
     render(
       <WorkspaceAdvancedTools
