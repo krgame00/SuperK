@@ -63,6 +63,18 @@ export interface AdaptiveReadableOptions {
 
 export type AccentLuminanceClass = "bright" | "dark" | "ambiguous";
 
+export const STANDARD_TRANSLATED_TEXT_SHADOW: TextShadowStyle = Object.freeze({
+  color: "#1e1e1e",
+  opacity: 0.80,
+  blurRatio: 0.15,
+  offsetXRatio: 0.08,
+  offsetYRatio: 0.08,
+});
+
+function cloneStandardShadow(): TextShadowStyle {
+  return { ...STANDARD_TRANSLATED_TEXT_SHADOW };
+}
+
 function rgbToHsl(r: number, g: number, b: number): { h: number; s: number; l: number } {
   const rn = r / 255;
   const gn = g / 255;
@@ -303,16 +315,9 @@ export function selectAdaptiveReadableStyle(
     }
   }
 
-  let readabilityHalo: TextShadowStyle | undefined = undefined;
-  if (options.requiresHaloEscalation) {
-    readabilityHalo = {
-      color: isDarkBg ? "#000000" : "#ffffff",
-      opacity: 0.75,
-      blurRatio: 0.25,
-      offsetXRatio: 0,
-      offsetYRatio: 0,
-    };
-  }
+  // ADR 0015: automatic readability never adds a per-region halo. The
+  // uniform proportional shadow is the only automatic shadow treatment.
+  const readabilityHalo: TextShadowStyle | undefined = undefined;
 
   let backgroundPlate: { color: string; opacity: number; paddingRatio?: number } | undefined = undefined;
   let reviewRequired = options.sourceProfile?.reviewRequired ?? false;
@@ -346,6 +351,8 @@ export function selectAdaptiveReadableStyle(
     readabilityHalo,
     backgroundPlate,
     reviewRequired: reviewRequired ? true : undefined,
+    glow: undefined,
+    shadow: cloneStandardShadow(),
   };
 }
 
@@ -395,6 +402,7 @@ function globalResolvedStyle(
     source: "global",
     fillConfidence,
     outlineConfidence,
+    shadow: cloneStandardShadow(),
   };
 }
 
@@ -446,8 +454,11 @@ function resolvedFromProfile(
     fillConfidence: profile.fillConfidence ?? 1.0,
     outlineConfidence: profile.outlineConfidence ?? 1.0,
     fillGradient: profile.fillGradient,
-    shadow: profile.shadow,
-    glow: profile.glow,
+    shadow: isManual && profile.manualShadowMode === "off"
+      ? undefined
+      : cloneStandardShadow(),
+    glow: undefined,
+    readabilityHalo: undefined,
     reviewRequired: profile.reviewRequired ? true : undefined,
   };
 }
@@ -485,6 +496,7 @@ function overlaySubtitleReadableFallback(
     source: "fallback",
     fillConfidence,
     outlineConfidence,
+    shadow: cloneStandardShadow(),
   };
 }
 
@@ -547,6 +559,12 @@ export function resolveBubbleTextStyle(
   // Manual user styling is authoritative until the user explicitly returns to Auto/Original.
   if (profile.ownershipMode === "manual" || profile.source === "manual") {
     return resolvedFromProfile(profile, globalStyle, true, bubble);
+  }
+
+  // Explicit Source-faithful mode uses the same uniform shadow contract while
+  // preserving the admitted non-shadow source styling.
+  if (profile.ownershipMode === "source_faithful") {
+    return resolvedFromProfile(profile, globalStyle, autoOutlineEnabled, bubble);
   }
 
   // If candidate was rejected by evidence gate or background contamination,
@@ -773,7 +791,6 @@ export function recomputeAdaptiveReadableOnLayoutCommit(
             outlineWidthRatio: adaptive.outlineWidthRatio,
             outlineWidth: adaptive.outlineWidth,
             source: "fallback",
-            readabilityHalo: adaptive.readabilityHalo,
             backgroundPlate: adaptive.backgroundPlate,
             reviewRequired: adaptive.reviewRequired,
           }

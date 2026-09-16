@@ -359,6 +359,25 @@ function fitTextInBubble(text, width, height, fontFamily, fontSizeMultiplier = 1
     const origY = offsetY + (rawYmin / 1000) * renderH;
 
     const fit = fitTextInBubble(b.t, origW, origH, fontFamily, fontSizeMultiplier);
+    const bubbleProfile = b.styleProfile || {};
+    const bubbleTextColor = bubbleProfile.fill || textColor;
+    const bubbleTextOutline = bubbleProfile.outline || textOutline;
+    const hasOutline = bubbleProfile.hasOutline !== false;
+    const outlineRatio = Math.max(0.04, Math.min(0.30, bubbleProfile.outlineWidthRatio || 0.09));
+    const isManual = bubbleProfile.ownershipMode === 'manual' || bubbleProfile.source === 'manual';
+    const shadowOff = isManual && bubbleProfile.manualShadowMode === 'off';
+    const outlineShadows = hasOutline ? [
+      `-${outlineRatio}em -${outlineRatio}em 0 ${bubbleTextOutline}`,
+      `${outlineRatio}em -${outlineRatio}em 0 ${bubbleTextOutline}`,
+      `-${outlineRatio}em ${outlineRatio}em 0 ${bubbleTextOutline}`,
+      `${outlineRatio}em ${outlineRatio}em 0 ${bubbleTextOutline}`,
+      `0 ${outlineRatio}em 0 ${bubbleTextOutline}`,
+      `0 -${outlineRatio}em 0 ${bubbleTextOutline}`,
+      `${outlineRatio}em 0 0 ${bubbleTextOutline}`,
+      `-${outlineRatio}em 0 0 ${bubbleTextOutline}`,
+    ] : [];
+    const standardShadow = shadowOff ? null : '0.08em 0.08em 0.15em rgba(30, 30, 30, 0.80)';
+    const textShadowValue = [...outlineShadows, standardShadow].filter(Boolean).join(', ') || 'none';
 
     const bubbleEl = document.createElement('div');
     bubbleEl.className = 'superk-text-bubble';
@@ -375,7 +394,7 @@ function fitTextInBubble(text, width, height, fontFamily, fontSizeMultiplier = 1
       text-align: center;
       pointer-events: auto;
       cursor: move;
-      color: ${textColor};
+      color: ${bubbleTextColor};
       font-family: ${fontFamily};
       font-weight: bold;
       font-size: ${fit.fontSize}px;
@@ -384,11 +403,7 @@ function fitTextInBubble(text, width, height, fontFamily, fontSizeMultiplier = 1
       background: transparent;
       border: none;
       box-shadow: none;
-      text-shadow: 
-        -1.5px -1.5px 0 ${textOutline}, 1.5px -1.5px 0 ${textOutline}, 
-        -1.5px 1.5px 0 ${textOutline}, 1.5px 1.5px 0 ${textOutline},
-        0px 1.5px 0 ${textOutline}, 0px -1.5px 0 ${textOutline},
-        1.5px 0px 0 ${textOutline}, -1.5px 0px 0 ${textOutline};
+      text-shadow: ${textShadowValue};
       user-select: text;
       word-break: break-word;
       z-index: 2;

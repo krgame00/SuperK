@@ -95,6 +95,52 @@ describe('Adaptive Speech Bubble Overlay & Local Persistence (Ticket 03)', () =>
     expect(bubble).not.toBeNull();
     expect(bubble.textContent).toContain('สวัสดี');
     expect(bubble.style.color).toBe('rgb(34, 34, 34)'); // #222222
+    expect(bubble.style.textShadow).toContain('rgba(30, 30, 30, 0.80)');
+  });
+
+  it('keeps source outline separate from the uniform shadow and respects Manual Off', () => {
+    const app = setup();
+    app.send({
+      action: 'TRANSLATION_SUCCESS',
+      cleanMode: 'inpainting',
+      cleanImageBase64: 'fake-png',
+      bubbles: [
+        {
+          t: 'มีเงามาตรฐาน',
+          box: [50, 50, 200, 200],
+          styleProfile: {
+            fill: '#ffffff',
+            outline: '#ff3366',
+            hasOutline: true,
+            outlineWidthRatio: 0.12,
+            source: 'auto',
+            ownershipMode: 'auto',
+            shadow: { color: '#00ff00', opacity: 1, blurRatio: 1, offsetXRatio: 1, offsetYRatio: 1 },
+            glow: { color: '#00ffff', opacity: 1, blurRatio: 1, offsetXRatio: 0, offsetYRatio: 0 },
+          },
+        },
+        {
+          t: 'ปิดเงา',
+          box: [250, 50, 400, 200],
+          styleProfile: {
+            fill: '#ffffff',
+            outline: '#3366ff',
+            hasOutline: true,
+            source: 'manual',
+            ownershipMode: 'manual',
+            manualShadowMode: 'off',
+          },
+        },
+      ],
+    });
+
+    const rendered = Array.from(document.querySelectorAll<HTMLElement>('.superk-text-bubble'));
+    expect(rendered).toHaveLength(2);
+    expect(rendered[0].style.textShadow).toContain('#ff3366');
+    expect(rendered[0].style.textShadow).toContain('rgba(30, 30, 30, 0.80)');
+    expect(rendered[0].style.textShadow).not.toContain('#00ff00');
+    expect(rendered[1].style.textShadow).toContain('#3366ff');
+    expect(rendered[1].style.textShadow).not.toContain('rgba(30, 30, 30, 0.80)');
   });
 
   it('persists translation in chrome.storage.local and provides Delete and Retranslate actions', async () => {
@@ -148,8 +194,9 @@ describe('Adaptive Speech Bubble Overlay & Local Persistence (Ticket 03)', () =>
     await new Promise(r => setTimeout(r, 200));
 
     expect(document.querySelector('.superk-clean-image')).not.toBeNull();
-    const bubble = document.querySelector('.superk-text-bubble');
+    const bubble = document.querySelector<HTMLElement>('.superk-text-bubble');
     expect(bubble).not.toBeNull();
     expect(bubble?.textContent?.replace(/\s+/g, '')).toContain('คำแปลเดิม');
+    expect(bubble?.style.textShadow).toContain('rgba(30, 30, 30, 0.80)');
   });
 });

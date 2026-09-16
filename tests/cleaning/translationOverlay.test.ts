@@ -19,6 +19,10 @@ test("translation overlay contains no browser-side inpainting", () => {
 let fillTextSpy: ReturnType<typeof vi.fn>;
 let strokeTextSpy: ReturnType<typeof vi.fn>;
 let lineWidths: number[];
+let shadowColors: string[];
+let shadowBlurs: number[];
+let shadowOffsetsX: number[];
+let shadowOffsetsY: number[];
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -26,6 +30,10 @@ beforeEach(() => {
   fillTextSpy = vi.fn();
   strokeTextSpy = vi.fn();
   lineWidths = [];
+  shadowColors = [];
+  shadowBlurs = [];
+  shadowOffsetsX = [];
+  shadowOffsetsY = [];
 
   Object.defineProperty(document, "fonts", {
     configurable: true,
@@ -49,9 +57,11 @@ beforeEach(() => {
           return vi.fn();
         },
         set(target, property, value) {
-          if (property === "lineWidth" && typeof value === "number") {
-            lineWidths.push(value);
-          }
+          if (property === "lineWidth" && typeof value === "number") lineWidths.push(value);
+          if (property === "shadowColor" && typeof value === "string") shadowColors.push(value);
+          if (property === "shadowBlur" && typeof value === "number") shadowBlurs.push(value);
+          if (property === "shadowOffsetX" && typeof value === "number") shadowOffsetsX.push(value);
+          if (property === "shadowOffsetY" && typeof value === "number") shadowOffsetsY.push(value);
           return Reflect.set(target as Record<PropertyKey, unknown>, property, value);
         },
       },
@@ -215,6 +225,57 @@ describe("translation overlay live editor and keyboard controls", () => {
     const thickWidth = lineWidths.at(-1) ?? 0;
     expect(strokeTextSpy).toHaveBeenCalled();
     expect(thickWidth).toBeGreaterThan(thinWidth * 2);
+  });
+
+  test("renders the proportional Standard Shadow on automatic text and ignores source glow/shadow", async () => {
+    await renderOverlay("เงามาตรฐาน", {
+      styleProfile: {
+        fill: "#ffffff",
+        outline: "#ff3366",
+        hasOutline: true,
+        outlineWidthRatio: 0.12,
+        fillConfidence: 0.95,
+        outlineConfidence: 0.95,
+        evidenceState: "admitted",
+        sourceAccentColor: "#ff3366",
+        source: "auto",
+        ownershipMode: "auto",
+        shadow: { color: "#00ff00", opacity: 1, blurRatio: 0.6, offsetXRatio: 0.4, offsetYRatio: 0.4 },
+        glow: { color: "#00ffff", opacity: 1, blurRatio: 0.8, offsetXRatio: 0, offsetYRatio: 0 },
+      },
+    });
+
+    expect(shadowColors.at(-1)).toBe("rgba(30, 30, 30, 0.8)");
+    expect(shadowBlurs.at(-1)).toBeGreaterThan(0);
+    expect(shadowOffsetsX.at(-1)).toBeGreaterThan(0);
+    expect(shadowOffsetsY.at(-1)).toBeGreaterThan(0);
+    expect(shadowBlurs.at(-1)! / shadowOffsetsX.at(-1)!).toBeCloseTo(0.15 / 0.08, 2);
+  });
+
+  test("lets Manual shadow toggle between Standard and Off without changing other manual styling", async () => {
+    const { toolbar, bubble } = await renderOverlay("เลือกเงา", {
+      styleProfile: {
+        fill: "#123456",
+        outline: "#abcdef",
+        hasOutline: true,
+        outlineWidthRatio: 0.12,
+        source: "manual",
+        ownershipMode: "manual",
+      },
+    });
+
+    const shadowBtn = toolbar.querySelector<HTMLButtonElement>('[aria-label="เงา: มาตรฐาน"]')!;
+    expect(shadowBtn).not.toBeNull();
+    shadowBtn.click();
+    expect(bubble.styleProfile?.manualShadowMode).toBe("off");
+    expect(shadowColors.at(-1)).toBe("rgba(0,0,0,0)");
+    expect(bubble.styleProfile).toMatchObject({ fill: "#123456", outline: "#abcdef", ownershipMode: "manual" });
+
+    toolbar
+      .querySelector<HTMLButtonElement>('[aria-label="กลับไปใช้สไตล์ต้นฉบับอัตโนมัติ"]')!
+      .click();
+    expect(shadowBtn.getAttribute("aria-label")).toBe("เงา: มาตรฐาน");
+    expect(shadowColors.at(-1)).toBe("rgba(30, 30, 30, 0.8)");
   });
 
   test("keeps the complete manual style profile and offers an explicit Auto/Original reset", async () => {

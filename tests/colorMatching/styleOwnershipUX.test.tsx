@@ -93,6 +93,7 @@ describe("Ticket 11: Auto / Readable / Manual Style Ownership UX", () => {
             hasOutline: true,
             ownershipMode: "manual",
             source: "manual",
+            manualShadowMode: "off",
           },
         },
         {
@@ -129,6 +130,7 @@ describe("Ticket 11: Auto / Readable / Manual Style Ownership UX", () => {
       const preserved = preserveManualStyleProfiles(nextBubbles, previousBubbles);
       expect(preserved[0].styleProfile?.ownershipMode).toBe("manual");
       expect(preserved[0].styleProfile?.fill).toBe("#ff0000");
+      expect(preserved[0].styleProfile?.manualShadowMode).toBe("off");
       expect(preserved[1].styleProfile?.ownershipMode).toBe("readable");
       expect(preserved[1].styleProfile?.fill).toBe("#ffffff");
     });

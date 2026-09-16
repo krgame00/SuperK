@@ -39,6 +39,8 @@ export interface TextShadowStyle {
   offsetYRatio: number;
 }
 
+export type ManualShadowMode = "standard" | "off";
+
 export interface TextStyleProfile {
   fill: string;
   outline: string;
@@ -62,8 +64,10 @@ export interface TextStyleProfile {
   nearbySourceId?: string;
   evidenceState?: EvidenceAdmissionState;
   fallbackReason?: StyleFallbackReason;
-  /** Explicit ownership mode: auto matching, user-selected readable preset, or user-authored manual style */
-  ownershipMode?: "auto" | "readable" | "manual";
+  /** Explicit ownership mode: auto matching, source-faithful rendering, user-selected readable preset, or user-authored manual style */
+  ownershipMode?: "auto" | "source_faithful" | "readable" | "manual";
+  /** Manual-only control for the uniform translated-text shadow. Missing means Standard for backward compatibility. */
+  manualShadowMode?: ManualShadowMode;
   /** Measured clean background luminance (0..255) beneath the text footprint */
   backgroundLuminance?: number;
   /** Measured background luminance samples across the footprint */

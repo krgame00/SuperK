@@ -2,13 +2,13 @@ import { describe, it, expect } from "vitest";
 import {
   resolveBubbleTextStyle,
   selectAdaptiveReadableStyle,
+  STANDARD_TRANSLATED_TEXT_SHADOW,
 } from "@/lib/colorMatching/resolveTextStyle";
 import type { TranslatedBubble } from "@/lib/translationOverlay";
 import type { TextStyleProfile } from "@/lib/colorMatching/types";
 
 describe("Ticket 15: Readability Halo, Overlay Plate & Review Escalation", () => {
-  it("introduces readability halo only on severe contrast failure and distinguishes it from source decorative effects", () => {
-    // Extreme high-frequency / severe contrast collision
+  it("uses the uniform shadow instead of a per-region readability halo on severe contrast failure", () => {
     const severeCollision = selectAdaptiveReadableStyle({
       backgroundLuminance: 120,
       backgroundLuminanceSamples: [10, 240, 15, 235, 12, 245, 18, 250],
@@ -16,10 +16,9 @@ describe("Ticket 15: Readability Halo, Overlay Plate & Review Escalation", () =>
     });
 
     expect(severeCollision.hasOutline).toBe(true);
-    expect(severeCollision.readabilityHalo).toBeDefined();
-    expect(severeCollision.readabilityHalo?.blurRatio).toBeGreaterThan(0);
-    // Must NOT confuse readability aid with recovered decorative source glow
+    expect(severeCollision.readabilityHalo).toBeUndefined();
     expect(severeCollision.glow).toBeUndefined();
+    expect(severeCollision.shadow).toEqual(STANDARD_TRANSLATED_TEXT_SHADOW);
   });
 
   it("escalates to background plate for overlay_subtitle as a last resort on unresolvable backgrounds", () => {

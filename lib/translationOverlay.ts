@@ -25,6 +25,16 @@ const CANVAS_FONT_VARS: Record<string, string> = {
   "chakra petch": "--font-chakra-petch",
 };
 
+const canvasShadowColor = (color: string, opacity: number): string => {
+  const hex = color.trim().match(/^#([0-9a-f]{6})$/i);
+  if (!hex) return color;
+  const value = hex[1];
+  const r = parseInt(value.slice(0, 2), 16);
+  const g = parseInt(value.slice(2, 4), 16);
+  const b = parseInt(value.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${Math.max(0, Math.min(1, opacity))})`;
+};
+
 export const resolveCanvasFontFamily = (fontFamily?: string): string => {
   const fallback = fontFamily || "Itim, sans-serif";
   if (typeof window === "undefined" || typeof document === "undefined") {
@@ -727,9 +737,9 @@ export const applyTranslationOverlay = async (
           fillPaint = canvasGradient;
         }
 
-        const visualEffect = resolvedStyle.glow ?? resolvedStyle.shadow;
+        const visualEffect = resolvedStyle.shadow;
         if (visualEffect) {
-          ctx.shadowColor = visualEffect.color;
+          ctx.shadowColor = canvasShadowColor(visualEffect.color, visualEffect.opacity);
           ctx.shadowBlur = Math.max(0, fontSize * visualEffect.blurRatio);
           ctx.shadowOffsetX = fontSize * visualEffect.offsetXRatio;
           ctx.shadowOffsetY = fontSize * visualEffect.offsetYRatio;
@@ -1298,16 +1308,17 @@ export const applyTranslationOverlay = async (
             b.styleProfile = {
               ...(existing ?? {}),
               fill: newColor,
-              outline: resolved.textOutline,
-              hasOutline: resolved.hasOutline,
-              outlineWidth: resolved.outlineWidth,
-              outlineWidthRatio: resolved.outlineWidthRatio,
-              opacity: resolved.opacity,
+              outline: existing?.outline ?? resolved.textOutline,
+              hasOutline: existing?.hasOutline ?? resolved.hasOutline,
+              outlineWidth: existing?.outlineWidth ?? resolved.outlineWidth,
+              outlineWidthRatio: existing?.outlineWidthRatio ?? resolved.outlineWidthRatio,
+              opacity: existing?.opacity ?? resolved.opacity,
               fillConfidence: 1.0,
               outlineConfidence: 1.0,
               confidenceBand: "high",
               refinementAttempted: existing?.refinementAttempted,
               source: "manual",
+              ownershipMode: "manual",
               category: existing?.category ?? inferTextStyleCategory(b),
               fillGradient: existing?.fillGradient,
               shadow: existing?.shadow,
@@ -1320,6 +1331,37 @@ export const applyTranslationOverlay = async (
             saveAdjustment();
           }
         }
+      );
+
+      const shadowBtn = createToolBtn(
+        b.styleProfile?.manualShadowMode === "off" ? "เงา: ปิด" : "เงา: มาตรฐาน",
+        `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="6"/><path d="M14 14l6 6"/><path d="M15 7a6 6 0 0 1 2 8"/></svg>`,
+        () => {
+          const existing = b.styleProfile;
+          const resolved = resolveBubbleTextStyle(b, textStyleRef?.current || ts);
+          const nextMode = existing?.manualShadowMode === "off" ? "standard" : "off";
+          b.styleProfile = {
+            ...(existing ?? {}),
+            fill: existing?.fill ?? resolved.textColor,
+            outline: existing?.outline ?? resolved.textOutline,
+            hasOutline: existing?.hasOutline ?? resolved.hasOutline,
+            outlineWidth: existing?.outlineWidth ?? resolved.outlineWidth,
+            outlineWidthRatio: existing?.outlineWidthRatio ?? resolved.outlineWidthRatio,
+            opacity: existing?.opacity ?? resolved.opacity,
+            fillConfidence: existing?.fillConfidence ?? 1.0,
+            outlineConfidence: existing?.outlineConfidence ?? 1.0,
+            confidenceBand: existing?.confidenceBand ?? "high",
+            source: "manual",
+            ownershipMode: "manual",
+            category: existing?.category ?? inferTextStyleCategory(b),
+            manualShadowMode: nextMode,
+          };
+          shadowBtn.setAttribute("aria-label", nextMode === "off" ? "เงา: ปิด" : "เงา: มาตรฐาน");
+          shadowBtn.title = nextMode === "off" ? "เงา: ปิด" : "เงา: มาตรฐาน";
+          onBubblesMutated?.();
+          renderBubble();
+          saveAdjustment();
+        },
       );
 
       const originalStyleBtn = createToolBtn(
@@ -1338,6 +1380,8 @@ export const applyTranslationOverlay = async (
             }
           }
           b.styleProfile = recovered;
+          shadowBtn.setAttribute("aria-label", "เงา: มาตรฐาน");
+          shadowBtn.title = "เงา: มาตรฐาน";
           applyNearbyStyleFallbacks(real);
           onBubblesMutated?.();
           renderBubble();
@@ -1393,6 +1437,7 @@ export const applyTranslationOverlay = async (
       toolbar.appendChild(createDivider());
       toolbar.appendChild(editBtn);
       toolbar.appendChild(colorBtn);
+      toolbar.appendChild(shadowBtn);
       toolbar.appendChild(originalStyleBtn);
       toolbar.appendChild(fillBtn);
       toolbar.appendChild(duplicateBtn);
