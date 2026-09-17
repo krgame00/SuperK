@@ -38,6 +38,7 @@ import {
   generateComicInfoXml,
   generateStripFilename,
 } from "@/lib/export/exportManager";
+import { shouldReuseCachedTranslatedRender } from "@/lib/export/renderFreshness";
 import {
   getAskExportDirectory,
   getOrPickExportDirectory,
@@ -78,6 +79,7 @@ export default function WorkspacePage() {
   const [isThumbnailsCollapsed, setIsThumbnailsCollapsed] = useState(false);
   const [isMaskEditorOpen, setIsMaskEditorOpen] = useState(false);
   const uiOperationLockRef = useRef(false);
+  const dirtyExportPagesRef = useRef<Set<string>>(new Set());
   const [isUiOperationBusy, setIsUiOperationBusy] = useState(false);
   const [brokenPages, setBrokenPages] = useState<Set<string>>(new Set());
 
@@ -301,6 +303,7 @@ export default function WorkspacePage() {
     viewMode: "single",
     preparePageForTranslation,
     onPageDirtied: (pageUrl) => {
+      dirtyExportPagesRef.current.add(pageUrl);
       setConfirmedPages((prev) => {
         if (!prev.has(pageUrl)) return prev;
         const next = new Set(prev);
@@ -822,10 +825,18 @@ export default function WorkspacePage() {
         activeBubbles.length > 0
       ) {
         const currentDataUrl = downloadTranslatedImage("single", index, "", true);
-        if (currentDataUrl) return currentDataUrl;
+        if (currentDataUrl) {
+          translatedImageCacheRef.current.set(pageUrl, currentDataUrl);
+          dirtyExportPagesRef.current.delete(pageUrl);
+          return currentDataUrl;
+        }
       }
 
-      if (translatedImageCacheRef.current.has(pageUrl)) {
+      const isExportDirty = dirtyExportPagesRef.current.has(pageUrl);
+      if (
+        shouldReuseCachedTranslatedRender(isExportDirty) &&
+        translatedImageCacheRef.current.has(pageUrl)
+      ) {
         return translatedImageCacheRef.current.get(pageUrl) as string;
       }
 
@@ -869,6 +880,7 @@ export default function WorkspacePage() {
                   clearTimeout(timeout);
                   translatedImageCacheRef.current.set(pageUrl, renderedUrl);
                   markPageDirty(pageUrl, false);
+                  dirtyExportPagesRef.current.delete(pageUrl);
                   resolve(renderedUrl);
                 },
                 textStyleRef,

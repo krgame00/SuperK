@@ -1,5 +1,6 @@
 ﻿import { describe, it, expect, beforeEach } from "vitest";
 import {
+  bubbleKeyOf,
   readOverlayAdjustments,
   saveOverlayAdjustments,
   clearPageAdjustments,
@@ -31,6 +32,21 @@ describe("Translation Overlay Adjustments Persistence", () => {
         configurable: true,
       });
     }
+  });
+
+  it("keeps the same adjustment key when translated text changes", () => {
+    const before = bubbleKeyOf({
+      box: [100, 200, 300, 400],
+      original_text: "SOURCE",
+      t: "คำแปลเดิม",
+    });
+    const after = bubbleKeyOf({
+      box: [100, 200, 300, 400],
+      original_text: "SOURCE",
+      t: "คำแปลที่แก้แล้ว",
+    });
+
+    expect(after).toBe(before);
   });
 
   it("reads and saves adjustments to localStorage", () => {

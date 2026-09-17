@@ -99,6 +99,27 @@ export interface OverlayAdjustment {
   fontSizeMultiplier?: number;
 }
 
+export const bubbleKeyOf = (bubble: TranslatedBubble): string => {
+  if (bubble.id !== undefined && bubble.id !== null) {
+    return `id-${String(bubble.id)}`;
+  }
+
+  const boxKey = Array.isArray(bubble.box)
+    && bubble.box.length === 4
+    && bubble.box.every((value) => typeof value === "number" && Number.isFinite(value))
+    ? bubble.box.map((value) => Number(value).toFixed(3)).join("-")
+    : "";
+  const sourceText = (bubble.original_text || "").trim().slice(0, 40);
+
+  if (sourceText && boxKey) return `source-${sourceText}-${boxKey}`;
+  if (boxKey) return `box-${boxKey}`;
+
+  const fallbackText = (bubble.original_text || bubble.t || bubble.translated || "")
+    .trim()
+    .slice(0, 40);
+  return `text-${fallbackText || "unknown"}`;
+};
+
 // Document-level overlay listeners must not outlive their container —
 // #pageContainer remounts on page switches, orphaning the previous
 // generation's listeners. Registry keyed by container; stale (disconnected)
@@ -594,8 +615,11 @@ export const applyTranslationOverlay = async (
         b.isInvalidBox = true;
       }
 
-      const bubbleId = b.id !== undefined ? `id-${b.id}` : `text-${(b.t || b.translated || "").slice(0, 10)}-${rawX.toFixed(1)}-${rawY.toFixed(1)}`;
-      const adj = savedAdj[bubbleId];
+      const bubbleId = bubbleKeyOf(b);
+      const legacyBubbleId = b.id !== undefined
+        ? `id-${b.id}`
+        : `text-${(b.t || b.translated || "").slice(0, 10)}-${rawX.toFixed(1)}-${rawY.toFixed(1)}`;
+      const adj = savedAdj[bubbleId] ?? savedAdj[legacyBubbleId];
 
       if (adj?.fontSizeMultiplier !== undefined && b.fontSizeMultiplier === undefined) {
         b.fontSizeMultiplier = adj.fontSizeMultiplier;
