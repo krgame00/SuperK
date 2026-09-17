@@ -84,7 +84,7 @@ interface UseTranslationProps {
   onPageDirtied?: (pageUrl: string) => void;
 }
 
-const TRANSLATED_IMAGE_CACHE_LIMIT = 40;
+const TRANSLATED_IMAGE_CACHE_LIMIT = 15;
 
 export const deduplicateBubbleSFX = (
   bubbles: TranslatedBubble[],
@@ -270,10 +270,24 @@ export function useTranslation({
     if (!hasActiveCooldown) return;
 
     setQuotaClockMs(Date.now());
-    const timer = window.setInterval(() => {
-      setQuotaClockMs(Date.now());
+    let timerId: number | null = window.setInterval(() => {
+      const now = Date.now();
+      setQuotaClockMs(now);
+      const stillActive = Object.values(quotaCooldownByGroup).some(
+        (expiry) => expiry > now,
+      );
+      if (!stillActive && timerId !== null) {
+        window.clearInterval(timerId);
+        timerId = null;
+      }
     }, 250);
-    return () => window.clearInterval(timer);
+
+    return () => {
+      if (timerId !== null) {
+        window.clearInterval(timerId);
+        timerId = null;
+      }
+    };
   }, [quotaCooldownByGroup]);
 
   const failureGroups = useMemo(
@@ -284,6 +298,12 @@ export function useTranslation({
   const [targetLang, setTargetLang] = useState("Thai");
   const [sourceLang, setSourceLang] = useState("auto");
   const [modelPreference, setModelPreference] = useState("auto");
+  const [allowPreviewModels, setAllowPreviewModelsState] = useState<boolean>(() => {
+    if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
+      return localStorage.getItem("gemini_allow_preview_models") === "true";
+    }
+    return false;
+  });
   const [textStyle, setTextStyle] = useState({
     fontFamily: "Itim, sans-serif",
     textColor: "#000000",
@@ -370,6 +390,15 @@ export function useTranslation({
     }
     setCacheRevision((rev) => rev + 1);
     onPageDirtiedRef.current?.(pageUrl);
+  }, []);
+
+  const getPageRevision = useCallback((pageUrl: string): number => {
+    return pageRevisionsRef.current.get(pageUrl) ?? 0;
+  }, []);
+
+  const getPageSignature = useCallback((pageUrl: string): string => {
+    const rev = pageRevisionsRef.current.get(pageUrl) ?? 0;
+    return `rev-${rev}`;
   }, []);
   const [translatedImages, setTranslatedImages] = useState<Map<string, string>>(
     new Map(),
@@ -631,6 +660,7 @@ export function useTranslation({
           sourceLang,
           modelPreference,
           apiKey: userApiKey,
+          allowPreview: allowPreviewModels,
           glossary,
         }),
       });
@@ -885,6 +915,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
                 sourceLang,
                 modelPreference,
                 apiKey: userApiKey,
+                allowPreview: allowPreviewModels,
                 glossary,
               }),
               signal,
@@ -1039,6 +1070,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             sourceLang,
             modelPreference,
             apiKey: userApiKey,
+            allowPreview: allowPreviewModels,
             glossary,
           }),
           signal,
@@ -1108,6 +1140,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             sourceLang,
             modelPreference,
             apiKey: userApiKey,
+            allowPreview: allowPreviewModels,
             isRetry: true,
             glossary,
           }),
@@ -1808,10 +1841,28 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     [renderAndCacheTranslation, markPageDirty],
   );
 
+  const flushMemory = useCallback(() => {
+    const currentKey = pages[currentPage];
+    const currentRendered = currentKey ? translatedImageCacheRef.current.get(currentKey) : undefined;
+    translatedImageCacheRef.current.clear();
+    if (currentKey && currentRendered) {
+      translatedImageCacheRef.current.set(currentKey, currentRendered);
+    }
+    setTranslatedImages(new Map(translatedImageCacheRef.current));
+    setCacheRevision((rev) => rev + 1);
+  }, [pages, currentPage]);
+
   return {
     targetLang, setTargetLang,
     sourceLang, setSourceLang,
     modelPreference, setModelPreference,
+    allowPreviewModels,
+    setAllowPreviewModels: (enabled: boolean) => {
+      setAllowPreviewModelsState(enabled);
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem("gemini_allow_preview_models", String(enabled));
+      }
+    },
     textStyle, setTextStyle,
     nsfwBypassMode, setNsfwBypassMode,
     isTranslating,
@@ -1854,5 +1905,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     invalidatePageTranslation,
     replaceBubbleText,
     markPageDirty,
+    getPageRevision,
+    getPageSignature,
+    flushMemory,
   };
 }

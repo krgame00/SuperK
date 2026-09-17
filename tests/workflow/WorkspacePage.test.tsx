@@ -210,6 +210,8 @@ beforeEach(() => {
     workflowPhase: null,
     batchFailures: [],
     invalidatePageTranslation,
+    getPageSignature: vi.fn(() => "rev-0"),
+    getPageRevision: vi.fn(() => 0),
   } as never);
   vi.stubGlobal(
     "fetch",

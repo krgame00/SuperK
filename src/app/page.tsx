@@ -361,6 +361,7 @@ export default function WorkspacePage() {
     invalidatePageTranslation,
     replaceBubbleText,
     markPageDirty,
+    getPageSignature,
     cacheRevision: translationCacheRevision,
   } = useTranslation({
     currentPage,
@@ -388,10 +389,11 @@ export default function WorkspacePage() {
       const renderedUrl = translatedImages?.get?.(page.url);
       if (renderedUrl && !workspaceResourceManager.hasResource(pageId, "translated-render")) {
         const approxBytes = Math.round(renderedUrl.length * 0.75);
-        workspaceResourceManager.registerResource(pageId, "translated-render", renderedUrl, approxBytes);
+        const signature = getPageSignature?.(page.url) ?? "rev-0";
+        workspaceResourceManager.registerRenderedImage(pageId, signature, renderedUrl, approxBytes);
       }
     }
-  }, [pages, translatedImages]);
+  }, [pages, translatedImages, getPageSignature]);
 
   const [pairingToken, setPairingToken] = useState<string>("");
 
@@ -968,9 +970,10 @@ export default function WorkspacePage() {
       ) {
         const currentDataUrl = downloadTranslatedImage("single", index, "", true);
         if (currentDataUrl) {
-          workspaceResourceManager.registerResource(
+          const currentSig = getPageSignature?.(pageUrl) ?? "rev-0";
+          workspaceResourceManager.registerRenderedImage(
             pageId,
-            "translated-render",
+            currentSig,
             currentDataUrl,
             Math.round(currentDataUrl.length * 0.75),
           );
@@ -989,11 +992,12 @@ export default function WorkspacePage() {
       }
 
       const bubbles = bubbleCacheRef.current.get(pageUrl);
+      const expectedSignature = getPageSignature?.(pageUrl) ?? "rev-0";
       if (
         shouldReuseCachedTranslatedRender(isExportDirty) &&
         shouldReuseSpilledTranslatedRender(bubbles)
       ) {
-        const restored = workspaceResourceManager.restoreRenderedImage(pageId, "default");
+        const restored = workspaceResourceManager.restoreRenderedImage(pageId, expectedSignature);
         if (restored) {
           translatedImageCacheRef.current.set(pageUrl, restored);
           return restored;
@@ -1039,9 +1043,10 @@ export default function WorkspacePage() {
                   clearTimeout(timeout);
                   translatedImageCacheRef.current.set(pageUrl, renderedUrl);
                   const approxBytes = Math.round(renderedUrl.length * 0.75);
-                  workspaceResourceManager.registerResource(
+                  const freshSig = getPageSignature?.(pageUrl) ?? "rev-0";
+                  workspaceResourceManager.registerRenderedImage(
                     pageId,
-                    "translated-render",
+                    freshSig,
                     renderedUrl,
                     approxBytes,
                   );
