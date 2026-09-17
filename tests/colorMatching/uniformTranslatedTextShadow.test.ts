@@ -129,4 +129,34 @@ describe("ADR 0015 Uniform translated text shadow", () => {
     };
     expect(resolveBubbleTextStyle(manualOff).shadow).toBeUndefined();
   });
+
+  it("preserves Standard Shadow for color/unknown pages, with confirmed monochrome dialogue as a narrow ADR 0016 exception", () => {
+    const colorBubble: TranslatedBubble = {
+      styleProfile: {
+        fill: "#111111",
+        outline: "#ffffff",
+        source: "auto",
+        ownershipMode: "auto",
+        evidenceState: "admitted",
+        backgroundLuminance: 255,
+        isMonochromePage: false,
+      },
+    };
+    expect(resolveBubbleTextStyle(colorBubble).shadow).toEqual(STANDARD_TRANSLATED_TEXT_SHADOW);
+
+    const monoBubble: TranslatedBubble = {
+      styleProfile: {
+        fill: "#111111",
+        outline: "#ffffff",
+        source: "auto",
+        ownershipMode: "auto",
+        evidenceState: "admitted",
+        backgroundLuminance: 255,
+        isMonochromePage: true,
+        monochromeConfidence: 0.95,
+        category: "dialogue",
+      },
+    };
+    expect(resolveBubbleTextStyle(monoBubble).shadow).toBeUndefined();
+  });
 });

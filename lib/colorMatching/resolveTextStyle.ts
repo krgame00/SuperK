@@ -75,6 +75,17 @@ function cloneStandardShadow(): TextShadowStyle {
   return { ...STANDARD_TRANSLATED_TEXT_SHADOW };
 }
 
+export function shouldUseMonochromeMangaStyle(
+  profile: TextStyleProfile,
+  category: TextStyleCategory,
+): boolean {
+  return (
+    profile.isMonochromePage === true &&
+    (profile.monochromeConfidence ?? 0) >= 0.85 &&
+    (category === "dialogue" || category === "narration")
+  );
+}
+
 function rgbToHsl(r: number, g: number, b: number): { h: number; s: number; l: number } {
   const rn = r / 255;
   const gn = g / 255;
@@ -145,6 +156,17 @@ export function classifyAccentLuminance(accentHex: string): AccentLuminanceClass
   return "ambiguous";
 }
 
+export function isChromatic(hex?: string, bgHex?: string): boolean {
+  if (!hex) return false;
+  const clean = hex.toLowerCase();
+  if (bgHex && clean === bgHex.toLowerCase()) return false;
+  const rgb = parseHexColor(clean);
+  if (!rgb) return false;
+  const max = Math.max(rgb.r, rgb.g, rgb.b);
+  const min = Math.min(rgb.r, rgb.g, rgb.b);
+  return max - min >= 20;
+}
+
 export function deriveSourceAccentColor(
   profile?: TextStyleProfile,
 ): string | undefined {
@@ -166,23 +188,11 @@ export function deriveSourceAccentColor(
   }
 
   const bgHex = profile.backgroundColor?.toLowerCase();
-
-  const isChromatic = (hex?: string) => {
-    if (!hex) return false;
-    const clean = hex.toLowerCase();
-    if (bgHex && clean === bgHex) return false;
-    const rgb = parseHexColor(clean);
-    if (!rgb) return false;
-    const max = Math.max(rgb.r, rgb.g, rgb.b);
-    const min = Math.min(rgb.r, rgb.g, rgb.b);
-    return max - min >= 20;
-  };
-
   const outlineHex = profile.outline;
   const fillHex = profile.fill;
 
-  if (isChromatic(outlineHex)) return outlineHex;
-  if (isChromatic(fillHex)) return fillHex;
+  if (isChromatic(outlineHex, bgHex)) return outlineHex;
+  if (isChromatic(fillHex, bgHex)) return fillHex;
 
   return undefined;
 }
@@ -253,48 +263,40 @@ export function selectAdaptiveReadableStyle(
 
   const isDarkBg = bgLum !== undefined ? bgLum < 150 : (options.category === "overlay_subtitle");
 
-  let textColor: string;
+  // White Fill Policy: All readable and adaptive fallback modes strictly use 100% Pure White Fill (#ffffff).
+  const textColor = "#ffffff";
   let textOutline: string;
 
-  // ADR 0012: Source accent drives preferred binary fallback pair,
-  // but Background-Aware Readability Gate evaluates local background and rejects
-  // preferred pair if it would disappear on the background.
-  const accentColor = options.sourceAccentColor ?? deriveSourceAccentColor(options.sourceProfile);
+  // Source-Colored Outline with Hue Preservation & Safe Dark Outline Fallback
+  const sourceProfile = options.sourceProfile;
+  const sourceColorRejected = Boolean(
+    sourceProfile &&
+    (sourceProfile.evidenceState === "rejected" ||
+      sourceProfile.fallbackReason === "background-contamination" ||
+      sourceProfile.fallbackReason === "insufficient-evidence" ||
+      (sourceProfile.fillConfidence ?? 0) < 0.65),
+  );
+  const accentColor = sourceColorRejected
+    ? undefined
+    : options.sourceAccentColor ?? deriveSourceAccentColor(sourceProfile);
   if (accentColor) {
-    const accentClass = classifyAccentLuminance(accentColor);
-    if (accentClass === "bright") {
-      // Preferred pair: White fill + strengthened accent outline.
-      // If background is bright (e.g. white balloon), white fill fails readability -> select Black fill + light outline.
-      if (isDarkBg) {
-        textColor = "#ffffff";
-        textOutline = strengthenSourceAccentOutline(accentColor, "#ffffff");
-      } else {
-        textColor = "#000000";
-        textOutline = "#ffffff";
-      }
-    } else if (accentClass === "dark") {
-      // Preferred pair: Black fill + light outline.
-      // If background is dark (e.g. night panel), black fill fails readability -> select White fill + dark outline.
-      if (!isDarkBg) {
-        textColor = "#000000";
-        textOutline = "#ffffff";
-      } else {
-        textColor = "#ffffff";
-        textOutline = "#000000";
-      }
+    const rgb = parseHexColor(accentColor);
+    if (!rgb) {
+      textOutline = "#000000";
     } else {
-      // Ambiguous mid-tone: evaluates background context directly
-      if (isDarkBg) {
-        textColor = "#ffffff";
-        textOutline = strengthenSourceAccentOutline(accentColor, "#ffffff");
+      const hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+      // If the accent is neutral/gray (low saturation) or extremely light:
+      if (hsl.s < 0.12) {
+        // Low chroma / gray: on white text, light gray has zero contrast -> safe dark outline
+        textOutline = hsl.l > 0.4 ? "#000000" : rgbToHex(rgb.r, rgb.g, rgb.b);
       } else {
-        textColor = "#000000";
-        textOutline = "#ffffff";
+        // Chromatic accent: strengthen outline for white text
+        textOutline = strengthenSourceAccentOutline(accentColor, "#ffffff");
       }
     }
   } else {
-    textColor = isDarkBg ? "#ffffff" : "#000000";
-    textOutline = isDarkBg ? "#000000" : "#ffffff";
+    // No reliable source accent detected -> Safe Dark Outline
+    textOutline = "#000000";
   }
 
   // Outline Escalation for Mixed or Difficult Backgrounds:
@@ -325,7 +327,7 @@ export function selectAdaptiveReadableStyle(
   if (options.requiresPlateEscalation) {
     if (options.category === "overlay_subtitle") {
       backgroundPlate = {
-        color: isDarkBg ? "#000000" : "#ffffff",
+        color: "#000000",
         opacity: 0.70,
         paddingRatio: 0.15,
       };
@@ -424,8 +426,9 @@ function resolvedFromProfile(
     ? profile.outline || globalStyle.textOutline || "#ffffff"
     : globalStyle.textOutline || "#ffffff";
 
-  // Under Universal Outline Default, ensure outline has sufficient contrast with fill
-  if (hasOutline && !isManual) {
+  // Readable/unverified styles may strengthen an unsafe outline, but a validated
+  // source profile must keep the authored outline exactly as admitted.
+  if (hasOutline && !isManual && !isValidatedSource) {
     const rgbFill = parseHexColor(textColor);
     const rgbOutline = parseHexColor(textOutline);
     const dist = rgbFill && rgbOutline
@@ -561,10 +564,91 @@ export function resolveBubbleTextStyle(
     return resolvedFromProfile(profile, globalStyle, true, bubble);
   }
 
-  // Explicit Source-faithful mode uses the same uniform shadow contract while
-  // preserving the admitted non-shadow source styling.
+  // Explicit Source-faithful mode: preserved without Binary Fill modification.
   if (profile.ownershipMode === "source_faithful") {
-    return resolvedFromProfile(profile, globalStyle, autoOutlineEnabled, bubble);
+    const base = resolvedFromProfile(profile, globalStyle, autoOutlineEnabled, bubble);
+    if (shouldUseMonochromeMangaStyle(profile, category)) {
+      return {
+        ...base,
+        shadow: undefined,
+      };
+    }
+    return base;
+  }
+
+  // Monochrome Manga Text Style Policy (ADR 0016):
+  // When confirmed as a monochrome manga page, dialogue and narration use authentic
+  // monochrome text styling without automatic drop shadow.
+  if (shouldUseMonochromeMangaStyle(profile, category)) {
+    const bgLum = profile.backgroundLuminance;
+    const samples = profile.backgroundLuminanceSamples ?? [];
+    const mixed = samples.length > 0 && Math.max(...samples) - Math.min(...samples) >= 90;
+
+    const hasExplicitSourceOutline =
+      profile.hasOutline === true &&
+      profile.evidenceState === "admitted" &&
+      (profile.outlineConfidence ?? 0) >= 0.80;
+
+    let textColor = "#000000";
+    let textOutline = "#ffffff";
+    let hasOutline = false;
+    let outlineWidthRatio = 0;
+
+    if (bgLum !== undefined && bgLum >= 155 && !mixed) {
+      textColor = "#000000";
+      if (hasExplicitSourceOutline && profile.outline) {
+        hasOutline = true;
+        textOutline = profile.outline;
+        outlineWidthRatio = resolveOutlineRatio(profile, true);
+      } else {
+        hasOutline = false;
+        outlineWidthRatio = 0;
+      }
+    } else if (bgLum !== undefined && bgLum <= 100 && !mixed) {
+      textColor = "#ffffff";
+      textOutline = "#000000";
+      if (hasExplicitSourceOutline && profile.outline) {
+        hasOutline = true;
+        textOutline = profile.outline;
+        outlineWidthRatio = resolveOutlineRatio(profile, true);
+      } else {
+        hasOutline = false;
+        outlineWidthRatio = 0;
+      }
+    } else {
+      // Mixed or intermediate background: contrasting outline for readability, but no shadow
+      const effectiveLum = bgLum ?? 180;
+      if (effectiveLum < 128) {
+        textColor = "#ffffff";
+        textOutline = "#000000";
+      } else {
+        textColor = "#000000";
+        textOutline = "#ffffff";
+      }
+      hasOutline = true;
+      outlineWidthRatio = Math.max(0.12, resolveOutlineRatio(profile, true));
+    }
+
+    return {
+      textColor,
+      textOutline,
+      outlineWidth: hasOutline ? profile.outlineWidth ?? 1.0 : 0,
+      hasOutline,
+      outlineWidthRatio,
+      opacity: profile.opacity ?? 1.0,
+      source: profile.source ?? "auto",
+      fillConfidence: fillConf,
+      outlineConfidence: outlineConf,
+      fillGradient: undefined,
+      shadow: undefined,
+      glow: undefined,
+      readabilityHalo: undefined,
+      backgroundLuminance: profile.backgroundLuminance,
+      backgroundLuminanceSamples: profile.backgroundLuminanceSamples,
+      backgroundColor: profile.backgroundColor,
+      isAdaptiveReadable: mixed || (bgLum !== undefined && bgLum > 100 && bgLum < 155),
+      reviewRequired: profile.reviewRequired ? true : undefined,
+    };
   }
 
   // If candidate was rejected by evidence gate or background contamination,
@@ -631,8 +715,94 @@ export function resolveBubbleTextStyle(
     return globalResolvedStyle(globalStyle, fillConf, outlineConf);
   }
 
-  // Source fidelity wins here. Do not contrast-correct or invent an outline for a
-  // high-confidence source profile; those changes are visibly wrong in manga art.
+  // 1. Decorative SFX (onomatopoeia sound effects) admitted with authored effects remain source-faithful
+  if (category === "sfx" && profile.evidenceState === "admitted") {
+    return resolvedFromProfile(profile, globalStyle, autoOutlineEnabled, bubble);
+  }
+
+  // 2. Standard dark dialogue in a white speech balloon remains dark text
+  const rgbFill = parseHexColor(profile.fill || "#000000");
+  const fillLum = rgbFill ? 0.299 * rgbFill.r + 0.587 * rgbFill.g + 0.114 * rgbFill.b : 0;
+  const isDarkAchromatic = rgbFill
+    ? fillLum < 60 && Math.max(rgbFill.r, rgbFill.g, rgbFill.b) - Math.min(rgbFill.r, rgbFill.g, rgbFill.b) < 25
+    : true;
+  const isWhiteBalloon = typeof profile.backgroundLuminance === "number" && profile.backgroundLuminance >= 160;
+
+  if (isDarkAchromatic && isWhiteBalloon) {
+    return resolvedFromProfile(profile, globalStyle, autoOutlineEnabled, bubble);
+  }
+
+  // 3. Authored high-contrast dark outline around bright fills (e.g. yellow subtitle with solid black outline)
+  const hasSourceOutline = resolveOutlinePresence(profile);
+  const rgbOutline = parseHexColor(profile.outline || "");
+  const outlineFillDist = rgbFill && rgbOutline
+    ? colorDistance(rgbFill.r, rgbFill.g, rgbFill.b, rgbOutline.r, rgbOutline.g, rgbOutline.b)
+    : 0;
+  if (
+    category === "overlay_subtitle" &&
+    hasSourceOutline &&
+    outlineFillDist >= 120 &&
+    rgbOutline &&
+    0.299 * rgbOutline.r + 0.587 * rgbOutline.g + 0.114 * rgbOutline.b < 40
+  ) {
+    return resolvedFromProfile(profile, globalStyle, autoOutlineEnabled, bubble);
+  }
+
+  // 4. White text with chromatic or dark outline (already white fill)
+  if (profile.fill?.toLowerCase() === "#ffffff") {
+    return resolvedFromProfile(profile, globalStyle, autoOutlineEnabled, bubble);
+  }
+
+  // 5. White Fill + Source-Colored Outline Architecture (white-fill-source-outline-plan.md)
+  // For all chromatic or artwork text in Auto mode:
+  // Strictly enforce 100% Pure White Fill (#ffffff) and map the detected source color to outline.
+  // Preserve neon / diffuse glow (Option A) if detected from original manga artwork.
+  const accentColor = profile.sourceAccentColor ?? deriveSourceAccentColor(profile);
+  if (accentColor || isChromatic(profile.fill) || isChromatic(profile.outline)) {
+    const effectiveAccent = accentColor ?? (isChromatic(profile.fill) ? profile.fill : profile.outline);
+    const sourceColorConfidence = Math.min(
+      profile.fillConfidence ?? 0,
+      profile.outlineConfidence ?? profile.fillConfidence ?? 0,
+    );
+    const useSourceOutline = Boolean(
+      effectiveAccent &&
+      sourceColorConfidence >= 0.80 &&
+      profile.evidenceState === "admitted",
+    );
+    const strengthenedOutline = useSourceOutline && effectiveAccent
+      ? effectiveAccent
+      : effectiveAccent && sourceColorConfidence >= 0.65
+        ? strengthenSourceAccentOutline(effectiveAccent, "#ffffff")
+        : "#000000";
+
+    const defaultOutlineRatio = category === "overlay_subtitle" ? 0.18 : 0.13;
+    const outlineRatio = Math.max(
+      defaultOutlineRatio,
+      resolveOutlineRatio(profile, true),
+    );
+
+    return {
+      textColor: "#ffffff",
+      textOutline: strengthenedOutline,
+      outlineWidth: profile.outlineWidth ?? 1.0,
+      hasOutline: true,
+      outlineWidthRatio: outlineRatio,
+      opacity: profile.opacity ?? 1.0,
+      source: profile.source ?? "auto",
+      fillConfidence: fillConf,
+      outlineConfidence: outlineConf,
+      fillGradient: undefined,
+      shadow: cloneStandardShadow(),
+      glow: undefined,
+      readabilityHalo: undefined,
+      backgroundLuminance: profile.backgroundLuminance,
+      backgroundLuminanceSamples: profile.backgroundLuminanceSamples,
+      backgroundColor: profile.backgroundColor,
+      isAdaptiveReadable: true,
+      reviewRequired: profile.reviewRequired ? true : undefined,
+    };
+  }
+
   return resolvedFromProfile(profile, globalStyle, autoOutlineEnabled, bubble);
 }
 
