@@ -21,6 +21,7 @@ import { parseLLMJSON } from "@/lib/parseLLMJSON";
 import { normalizeTranslationPayload } from "@/lib/thaiSpellcheck";
 import { sampleBubbleRegion } from "@/lib/colorMatching/canvasSampler";
 import { extractTextColors } from "@/lib/colorMatching/sampleTextColors";
+import { analyzeImageElementMonochrome } from "@/lib/colorMatching/monochromePage";
 import {
   applyNearbyStyleFallbacks,
   inferTextStyleCategory,
@@ -198,13 +199,15 @@ const waitForImageReady = (src: string, timeoutMs = 3000): Promise<HTMLImageElem
     }
   });
 
-const enrichBubblesWithColorProfiles = async (
+export const enrichBubblesWithColorProfiles = async (
   bubbles: TranslatedBubble[],
   recognitionUrl: string,
 ): Promise<TranslatedBubble[]> => {
   if (!bubbles || bubbles.length === 0 || !recognitionUrl) return bubbles;
   try {
     const img = await waitForImageReady(recognitionUrl, 2000);
+    const pageAnalysis = analyzeImageElementMonochrome(img);
+
     for (const b of bubbles) {
       if (b.styleProfile && b.styleProfile.source === "manual") continue;
       if (!b.box || b.box.length < 4 || b.isInvalidBox) continue;
@@ -219,10 +222,20 @@ const enrichBubblesWithColorProfiles = async (
         if (profile.source === "global" && !profile.fallbackReason) {
           profile.fallbackReason = "low-confidence";
         }
+        profile.isMonochromePage = pageAnalysis.isMonochrome;
+        profile.monochromeConfidence = pageAnalysis.confidence;
         b.styleProfile = profile;
       }
     }
     applyNearbyStyleFallbacks(bubbles);
+
+    // Propagate page monochrome evidence to any non-manual bubbles that received fallbacks
+    for (const b of bubbles) {
+      if (b.styleProfile && b.styleProfile.source !== "manual") {
+        b.styleProfile.isMonochromePage = pageAnalysis.isMonochrome;
+        b.styleProfile.monochromeConfidence = pageAnalysis.confidence;
+      }
+    }
   } catch (err) {
     console.warn("Failed to sample color profiles for bubbles:", err);
   }

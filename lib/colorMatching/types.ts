@@ -88,6 +88,9 @@ export interface TextStyleProfile {
   reviewRequired?: boolean;
   requiresHaloEscalation?: boolean;
   requiresPlateEscalation?: boolean;
+  /** Page-level evidence derived from the original pre-clean source image. */
+  isMonochromePage?: boolean;
+  monochromeConfidence?: number;
   /** Trustworthy source accent color used to tint Readable fallback outline */
   sourceAccentColor?: string;
 }

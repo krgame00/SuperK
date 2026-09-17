@@ -119,3 +119,79 @@ export function analyzeMonochromePage(
     sampledPixelCount,
   };
 }
+
+/**
+ * Safely analyzes an HTMLImageElement or HTMLCanvasElement for monochrome manga classification.
+ * Downscales onto a canvas up to maxDimension (default 512) for fast, deterministic analysis.
+ */
+export function analyzeImageElementMonochrome(
+  image: HTMLImageElement | HTMLCanvasElement,
+  maxDimension = 512,
+): MonochromePageAnalysis {
+  try {
+    const naturalWidth =
+      "naturalWidth" in image ? image.naturalWidth || image.width : image.width;
+    const naturalHeight =
+      "naturalHeight" in image ? image.naturalHeight || image.height : image.height;
+
+    if (!naturalWidth || !naturalHeight) {
+      return {
+        isMonochrome: false,
+        confidence: 0,
+        chromaticPixelRatio: 1,
+        strongChromaticPixelRatio: 1,
+        sampledPixelCount: 0,
+      };
+    }
+
+    if (typeof document === "undefined") {
+      return {
+        isMonochrome: false,
+        confidence: 0,
+        chromaticPixelRatio: 1,
+        strongChromaticPixelRatio: 1,
+        sampledPixelCount: 0,
+      };
+    }
+
+    const scale = Math.min(1, maxDimension / Math.max(naturalWidth, naturalHeight));
+    const targetW = Math.max(1, Math.round(naturalWidth * scale));
+    const targetH = Math.max(1, Math.round(naturalHeight * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx || typeof ctx.drawImage !== "function" || typeof ctx.getImageData !== "function") {
+      return {
+        isMonochrome: false,
+        confidence: 0,
+        chromaticPixelRatio: 1,
+        strongChromaticPixelRatio: 1,
+        sampledPixelCount: 0,
+      };
+    }
+
+    ctx.drawImage(image, 0, 0, naturalWidth, naturalHeight, 0, 0, targetW, targetH);
+    const imgData = ctx.getImageData(0, 0, targetW, targetH);
+    if (!imgData?.data) {
+      return {
+        isMonochrome: false,
+        confidence: 0,
+        chromaticPixelRatio: 1,
+        strongChromaticPixelRatio: 1,
+        sampledPixelCount: 0,
+      };
+    }
+
+    return analyzeMonochromePage(imgData.data, targetW, targetH);
+  } catch {
+    return {
+      isMonochrome: false,
+      confidence: 0,
+      chromaticPixelRatio: 1,
+      strongChromaticPixelRatio: 1,
+      sampledPixelCount: 0,
+    };
+  }
+}
