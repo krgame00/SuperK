@@ -6,9 +6,11 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       - NEXT_TELEMETRY_DISABLED=1
+      - SUPERK_CLEANER_URL=http://backend:8765
+      - OCR_SERVICE_URL=http://backend:8765
     depends_on:
       - backend
 
@@ -17,4 +19,4 @@ services:
       context: ./ocr-service
       dockerfile: Dockerfile
     ports:
-      - "8765:8765"
+      - "127.0.0.1:8765:8765"
