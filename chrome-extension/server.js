@@ -27,17 +27,106 @@ globalThis.SuperKServer = {
     return result;
   },
 
+  splitGeminiKeys(raw) {
+    return [...new Set(String(raw || '').split(',').map(key => key.trim()).filter(Boolean))].slice(0, 5);
+  },
+
+  isPreviewModel(model) {
+    const text = `${model?.id || ''} ${model?.displayName || ''} ${model?.description || ''}`.toLowerCase();
+    return /(?:preview|experimental|\bexp\b)/.test(text);
+  },
+
+  FIXED_AUTO_MODELS: [
+    'gemini-3.5-flash-lite',
+    'gemini-3.8-flash',
+    'gemini-3.7-flash',
+    'gemini-3.6-flash',
+    'gemini-3-flash',
+    'gemini-3.5-flash',
+    'gemini-3.1-flash-lite',
+  ],
+
+  getDirectExecutionRoutes(rawApiKeys, options = {}) {
+    const keys = this.splitGeminiKeys(rawApiKeys);
+    if (!keys.length) throw new Error('กรุณาใส่ Gemini API Key ก่อนใช้งาน');
+    const modelPreference = options.modelPreference || 'auto';
+    const models = (modelPreference !== 'auto' && modelPreference)
+      ? [modelPreference]
+      : this.FIXED_AUTO_MODELS;
+
+    const routes = [];
+    for (const model of models) {
+      for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+        routes.push({ model, apiKey: keys[keyIndex], keyIndex });
+      }
+    }
+    return routes;
+  },
+
+  async discoverGeminiRoutes(rawApiKeys, options = {}) {
+    const keys = this.splitGeminiKeys(rawApiKeys);
+    if (!keys.length) throw new Error('กรุณาใส่ Gemini API Key ก่อนใช้งาน');
+    const modelPreference = options.modelPreference || 'auto';
+    const allowPreview = options.allowPreview === true;
+    const byModel = new Map();
+
+    for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+      const apiKey = keys[keyIndex];
+      let pageToken = '';
+      do {
+        const url = new URL('https://generativelanguage.googleapis.com/v1beta/models');
+        if (pageToken) url.searchParams.set('pageToken', pageToken);
+        const response = await fetch(url.toString(), {
+          method: 'GET',
+          headers: { 'x-goog-api-key': apiKey, Accept: 'application/json' },
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!response.ok) {
+          if (response.status === 401 || response.status === 403) break;
+          throw new Error(`Gemini model discovery failed (HTTP ${response.status})`);
+        }
+        const data = await response.json();
+        for (const item of Array.isArray(data?.models) ? data.models : []) {
+          if (!Array.isArray(item?.supportedGenerationMethods) || !item.supportedGenerationMethods.includes('generateContent')) continue;
+          const id = String(item.name || '').replace(/^models\//, '');
+          if (!id || !id.startsWith('gemini-')) continue;
+          const existing = byModel.get(id) || { id, displayName: item.displayName || id, description: item.description || '', keys: [] };
+          existing.keys.push({ apiKey, keyIndex });
+          byModel.set(id, existing);
+        }
+        pageToken = typeof data?.nextPageToken === 'string' ? data.nextPageToken : '';
+      } while (pageToken);
+    }
+
+    if (modelPreference !== 'auto') {
+      const selected = byModel.get(modelPreference);
+      if (!selected) throw new Error(`โมเดล ${modelPreference} ไม่พร้อมใช้งานกับ API Key ที่ตั้งไว้`);
+      return selected.keys.map(key => ({ model: modelPreference, ...key }));
+    }
+
+    const models = [...byModel.values()].filter(model => allowPreview || !this.isPreviewModel(model));
+    if (!models.length) throw new Error('ไม่พบ Gemini model ที่รองรับ generateContent สำหรับ API Key นี้');
+    return models.flatMap(model => model.keys.map(key => ({ model: model.id, ...key })));
+  },
+
   async translate(image, settings) {
     const base = this.normalizeUrl(settings.serverUrl);
     let response;
+    const headers = { 'Content-Type': 'application/json' };
+    if (settings.pairingToken) {
+      headers['Authorization'] = `Bearer ${settings.pairingToken}`;
+      headers['x-superk-pairing-token'] = settings.pairingToken;
+    }
     try {
       response = await fetch(`${base}/api/translate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           imageBase64: image.base64, mimeType: image.mimeType,
           targetLang: settings.targetLang, sourceLang: settings.sourceLang,
           modelPreference: settings.modelPreference,
+          apiKey: settings.geminiApiKey || settings.apiKey || '',
+          allowPreview: settings.allowPreviewModels === true,
         }),
         signal: AbortSignal.timeout(240000),
       });
@@ -50,28 +139,29 @@ globalThis.SuperKServer = {
     return this.parseResult(data.text);
   },
 
-  _cachedSettings: null,
-  _cacheTimestamp: 0,
+  _cachedSettingsByUrl: new Map(),
   CACHE_TTL_MS: 30000,
 
-  async fetchSettings(rawServerUrl) {
+  async fetchSettings(rawServerUrl, pairingToken) {
     const now = Date.now();
-    if (this._cachedSettings && (now - this._cacheTimestamp) < this.CACHE_TTL_MS) {
-      return { ...this._cachedSettings, isOfflineFallback: false };
+    let serverUrl = 'http://127.0.0.1:3000';
+    try {
+      serverUrl = this.normalizeUrl(rawServerUrl || 'http://127.0.0.1:3000');
+    } catch {
+      // Keep default
+    }
+
+    const cachedEntry = this._cachedSettingsByUrl?.get(serverUrl);
+    if (cachedEntry && (now - cachedEntry.timestamp) < this.CACHE_TTL_MS) {
+      return { ...cachedEntry.settings, isOfflineFallback: false };
     }
 
     const defaultFallback = {
       geminiApiKey: '',
       modelPreference: 'auto',
-      modelHierarchy: [
-        'gemini-3.5-flash-lite',
-        'gemini-3.6-flash',
-        'gemini-3-flash',
-        'gemini-3.5-flash',
-        'gemini-3.1-flash-lite',
-        'gemini-2.5-flash',
-        'gemini-2.5-flash-lite',
-      ],
+      // Compatibility field only; dynamic discovery is the source of truth.
+      modelHierarchy: [],
+      allowPreviewModels: false,
       glossary: [],
       textStyle: {
         fontFamily: 'Itim, sans-serif',
@@ -85,17 +175,17 @@ globalThis.SuperKServer = {
       cleanMode: 'inpainting',
     };
 
-    let serverUrl = 'http://127.0.0.1:3000';
-    try {
-      serverUrl = this.normalizeUrl(rawServerUrl || 'http://127.0.0.1:3000');
-    } catch {
-      // Keep default
-    }
+    const storageKey = `superk_cached_settings_${encodeURIComponent(serverUrl)}`;
 
     try {
+      const headers = { Accept: 'application/json' };
+      if (pairingToken) {
+        headers['Authorization'] = `Bearer ${pairingToken}`;
+        headers['x-superk-pairing-token'] = pairingToken;
+      }
       const response = await fetch(`${serverUrl}/api/extension/settings`, {
         method: 'GET',
-        headers: { Accept: 'application/json' },
+        headers,
         signal: AbortSignal.timeout(5000),
       });
 
@@ -109,22 +199,24 @@ globalThis.SuperKServer = {
       }
 
       const mergedSettings = { ...defaultFallback, ...data };
-      this._cachedSettings = mergedSettings;
-      this._cacheTimestamp = now;
+      if (!this._cachedSettingsByUrl) {
+        this._cachedSettingsByUrl = new Map();
+      }
+      this._cachedSettingsByUrl.set(serverUrl, { settings: mergedSettings, timestamp: now });
 
       if (typeof chrome !== 'undefined' && chrome?.storage?.local?.set) {
-        await chrome.storage.local.set({ superk_cached_settings: mergedSettings }).catch(() => {});
+        await chrome.storage.local.set({ [storageKey]: mergedSettings }).catch(() => {});
       }
 
       return { ...mergedSettings, isOfflineFallback: false };
     } catch {
       if (typeof chrome !== 'undefined' && chrome?.storage?.local?.get) {
         try {
-          const stored = await chrome.storage.local.get('superk_cached_settings');
-          if (stored?.superk_cached_settings) {
+          const stored = await chrome.storage.local.get(storageKey);
+          if (stored?.[storageKey]) {
             return {
               ...defaultFallback,
-              ...stored.superk_cached_settings,
+              ...stored[storageKey],
               isOfflineFallback: true,
             };
           }
