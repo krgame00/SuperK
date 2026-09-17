@@ -301,3 +301,71 @@ test("normalizes raw Base64 cleanUrl to Data URL on handoff append and persists 
   const loadedDataUrl = session?.translatedImageCache.get(pageUrl);
   expect(loadedDataUrl).toMatch(/^data:image\/png;base64,/);
 });
+
+test("invalidates obsolete rendered asset when page is dirty and rendered image is absent from cache", async () => {
+  const pageUrl = "https://manga.example/ch1/p-dirty.jpg";
+  const oldImage = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+  // 1. Initial save with rendered image
+  await saveProjectSession({
+    pages: [{ url: pageUrl, name: "P1" }],
+    currentPage: 0,
+    bubbleCache: new Map([[pageUrl, [{ t: "old text" } as any]]]),
+    translatedImageCache: new Map([[pageUrl, oldImage]]),
+  });
+
+  let session = await loadProjectSession();
+  expect(session?.translatedImageCache.has(pageUrl)).toBe(true);
+
+  // 2. Text modified (dirty), image cleared from memory
+  await saveProjectSession(
+    {
+      pages: [{ url: pageUrl, name: "P1" }],
+      currentPage: 0,
+      bubbleCache: new Map([[pageUrl, [{ t: "new text" } as any]]]),
+      translatedImageCache: new Map(), // Cleared due to text edit
+    },
+    { dirtyPageUrls: new Set([pageUrl]) }
+  );
+
+  // 3. Reload session: new text is present, but obsolete rendered image is gone!
+  session = await loadProjectSession();
+  expect(session?.bubbleCache.get(pageUrl)?.[0].t).toBe("new text");
+  expect(session?.translatedImageCache.has(pageUrl)).toBe(false);
+  expect(session?.translatedImageCache.get(pageUrl)).toBeUndefined();
+});
+
+test("restores a durable source after the runtime blob store is gone", async () => {
+  const source = "data:image/png;base64,c291cmNl";
+
+  await saveProjectSession({
+    pages: [{ url: source, name: "page-1.png" }],
+    currentPage: 0,
+    bubbleCache: new Map(),
+    translatedImageCache: new Map(),
+  });
+
+  const restored = await loadProjectSession();
+  expect(restored?.pages[0].url).toBe(source);
+  expect(restored?.pages[0].url.startsWith("blob:")).toBe(false);
+  expect(restored?.hasUnrecoverableSources).toBe(false);
+});
+
+test("flags legacy sessions containing blob URLs as unrecoverable sources", async () => {
+  const deadBlobUrl = "blob:http://localhost:3000/dead-uuid-1234";
+
+  await saveProjectSession({
+    pages: [{ url: deadBlobUrl, name: "legacy-page.png" }],
+    currentPage: 0,
+    bubbleCache: new Map([[deadBlobUrl, [{ t: "translated bubble" } as any]]]),
+    translatedImageCache: new Map(),
+  });
+
+  const restored = await loadProjectSession();
+  expect(restored).not.toBeNull();
+  expect(restored?.hasUnrecoverableSources).toBe(true);
+  expect(restored?.pages[0].unrecoverableSource).toBe(true);
+  // Bubble cache should be preserved even if source is unrecoverable
+  expect(restored?.bubbleCache.has(deadBlobUrl)).toBe(true);
+});
+

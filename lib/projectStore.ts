@@ -60,40 +60,8 @@ export function dataUrlToBlob(dataUrl: string): Blob {
   return new Blob([payload || ""], { type: mime });
 }
 
-export async function blobToDataUrl(
-  blob: Blob | unknown,
-  mimeType?: string,
-): Promise<string> {
-  const type = (blob as { type?: string })?.type || mimeType || "image/png";
-  if (blob && typeof (blob as Blob).arrayBuffer === "function") {
-    const buffer = await (blob as Blob).arrayBuffer();
-    const bytes = new Uint8Array(buffer);
-    let binary = "";
-    for (let i = 0; i < bytes.byteLength; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    const base64 =
-      typeof btoa === "function"
-        ? btoa(binary)
-        : Buffer.from(bytes).toString("base64");
-    return `data:${type};base64,${base64}`;
-  }
-  if (blob && typeof (blob as { text?: () => Promise<string> }).text === "function") {
-    const txt = await (blob as { text: () => Promise<string> }).text();
-    const base64 = Buffer.from(txt).toString("base64");
-    return `data:${type};base64,${base64}`;
-  }
-  return new Promise((resolve, reject) => {
-    try {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(blob as Blob);
-    } catch (err) {
-      reject(err);
-    }
-  });
-}
+import { blobToDataUrl } from "./imageDataUrl";
+export { blobToDataUrl };
 
 const openDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
@@ -216,19 +184,34 @@ export const saveProjectSession = async (
     // full save.
     for (const pageUrl of referencedPageUrls) {
       const assetId = `translated_${encodeURIComponent(pageUrl)}`;
-      translatedAssetIds.push([pageUrl, assetId]);
-      referencedAssetIds.add(assetId);
-
+      const isDirty = dirty ? dirty.has(pageUrl) : true;
       const imageValue = data.translatedImageCache.get(pageUrl);
-      if (!imageValue || !imageValue.startsWith("data:")) continue;
-      if (dirty && !dirty.has(pageUrl)) continue;
-      const blob = dataUrlToBlob(imageValue);
-      assetStore.put({
-        id: assetId,
-        mimeType: blob.type || "image/png",
-        blob,
-        createdAt: Date.now(),
-      });
+      const hasValidImage = typeof imageValue === "string" && imageValue.startsWith("data:");
+
+      // If the page was explicitly dirtied (e.g. text changed) and has no rendered image in memory,
+      // its previous persisted render is obsolete and must not be linked or preserved.
+      if (dirty && isDirty && !hasValidImage) {
+        continue;
+      }
+
+      if (hasValidImage) {
+        translatedAssetIds.push([pageUrl, assetId]);
+        referencedAssetIds.add(assetId);
+        if (isDirty) {
+          const blob = dataUrlToBlob(imageValue);
+          assetStore.put({
+            id: assetId,
+            mimeType: blob.type || "image/png",
+            blob,
+            createdAt: Date.now(),
+          });
+        }
+      } else if (!dirty || !isDirty) {
+        // Page was not dirtied, but image was evicted from in-memory cache (LRU eviction).
+        // Keep the existing link to the valid persisted asset.
+        translatedAssetIds.push([pageUrl, assetId]);
+        referencedAssetIds.add(assetId);
+      }
     }
 
     // Strip runtime-only fields (functions cannot be structured-cloned)
@@ -310,13 +293,24 @@ export const purgeOrphanAssets = async (): Promise<number> => {
   }
 };
 
-export const loadProjectSession = async (): Promise<{
-  pages: { url: string; name: string; originUrl?: string }[];
+export interface ProjectSessionPage {
+  id?: string;
+  url: string;
+  name: string;
+  originUrl?: string;
+  unrecoverableSource?: boolean;
+}
+
+export interface LoadedProjectSession {
+  pages: ProjectSessionPage[];
   currentPage: number;
   bubbleCache: Map<string, TranslatedBubble[]>;
   translatedImageCache: Map<string, string>;
   updatedAt: number;
-} | null> => {
+  hasUnrecoverableSources: boolean;
+}
+
+export const loadProjectSession = async (): Promise<LoadedProjectSession | null> => {
   try {
     const db = await openDB();
     const tx = db.transaction([STORE_NAME, ASSET_STORE_NAME], "readonly");
@@ -366,12 +360,23 @@ export const loadProjectSession = async (): Promise<{
       }
     }
 
+    const processedPages: ProjectSessionPage[] = (data.pages || []).map((page) => {
+      const isBlob = typeof page.url === "string" && page.url.startsWith("blob:");
+      return {
+        ...page,
+        unrecoverableSource: isBlob,
+      };
+    });
+
+    const hasUnrecoverableSources = processedPages.some((p) => p.unrecoverableSource);
+
     return {
-      pages: data.pages,
+      pages: processedPages,
       currentPage: data.currentPage || 0,
       bubbleCache: new Map(data.bubbleCache || []),
       translatedImageCache,
       updatedAt: data.updatedAt,
+      hasUnrecoverableSources,
     };
   } catch (err) {
     console.warn("Failed to load project session from IndexedDB", err);

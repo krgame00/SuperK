@@ -38,7 +38,10 @@ import {
   generateComicInfoXml,
   generateStripFilename,
 } from "@/lib/export/exportManager";
-import { shouldReuseCachedTranslatedRender } from "@/lib/export/renderFreshness";
+import {
+  shouldReuseCachedTranslatedRender,
+  shouldReuseSpilledTranslatedRender,
+} from "@/lib/export/renderFreshness";
 import {
   getAskExportDirectory,
   getOrPickExportDirectory,
@@ -47,7 +50,9 @@ import {
   saveBlob,
   type DirectoryHandleLike,
 } from "@/lib/export/saveLocation";
-import { dataUrlToBlob } from "@/lib/projectStore";
+import { dataUrlToBlob, blobToDataUrl } from "@/lib/projectStore";
+import { pageBlobStore } from "@/lib/lifecycle/pageBlobStore";
+import { workspaceResourceManager } from "@/lib/lifecycle/workspaceResourceManager";
 import {
   FindReplaceDialog,
   type ReplaceOptions,
@@ -66,7 +71,7 @@ import { recoverDesktopCleaner } from "@/lib/desktopBridge";
 
 export default function WorkspacePage() {
 
-  const [pages, setPages] = useState<{url: string, name: string, originUrl?: string}[]>([]);
+  const [pages, setPages] = useState<{ id?: string; url: string; name: string; originUrl?: string }[]>([]);
   const [currentPage, setCurrentPage] = useState(0);
   const [confirmedPages, setConfirmedPages] = useState<Set<string>>(new Set());
   const [unconfirmedReviewPages, setUnconfirmedReviewPages] = useState<PageReviewInfo[] | null>(null);
@@ -189,6 +194,13 @@ export default function WorkspacePage() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  useEffect(() => {
+    if (pages.length > 0) {
+      const pageIds = pages.map((p, idx) => p.id || `page_${idx}`);
+      workspaceResourceManager.updateNavigation(pageIds, currentPage);
+    }
+  }, [pages, currentPage]);
+
   const pageUrls = useMemo(() => pages.map(p => p.url), [pages]);
   const pageNames = useMemo(() => pages.map(p => p.name), [pages]);
   const {
@@ -200,6 +212,23 @@ export default function WorkspacePage() {
     error: cleaningError,
     resultsByPage: cleaningResultsByPage,
   } = useCleaning({ pages: pageUrls, currentPage });
+
+  useEffect(() => {
+    if (!cleaningResultsByPage) return;
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i];
+      const pageId = page.id || `page_${i}`;
+      const cleanRes = cleaningResultsByPage?.get?.(page.url);
+      if (cleanRes) {
+        if (!workspaceResourceManager.hasResource(pageId, "clean") && cleanRes.cleanUrl) {
+          workspaceResourceManager.registerResource(pageId, "clean", cleanRes.cleanUrl, 1024 * 1024);
+        }
+        if (!workspaceResourceManager.hasResource(pageId, "mask") && cleanRes.maskUrl) {
+          workspaceResourceManager.registerResource(pageId, "mask", cleanRes.maskUrl, 256 * 1024);
+        }
+      }
+    }
+  }, [pages, cleaningResultsByPage]);
 
   const handleCleanCurrentPage = async () => {
     if (
@@ -218,8 +247,26 @@ export default function WorkspacePage() {
       if (!response.ok) {
         throw new Error(`Failed to load page for cleaning (${response.status}).`);
       }
-      const cleanResult = await cleanCurrentPage(await response.blob());
+      const rawBlob = await response.blob();
+      const ext = page.name?.split(".").pop()?.toLowerCase();
+      const fallbackMime =
+        ext === "jpg" || ext === "jpeg"
+          ? "image/jpeg"
+          : ext === "webp"
+            ? "image/webp"
+            : "image/png";
+      const mime =
+        rawBlob.type && rawBlob.type !== "application/octet-stream"
+          ? rawBlob.type
+          : fallbackMime;
+      const typedBlob = rawBlob.type === mime ? rawBlob : new Blob([rawBlob], { type: mime });
+      const cleanResult = await cleanCurrentPage(typedBlob);
       if (cleanResult) {
+        const pageId = page.id || `page_${currentPage}`;
+        workspaceResourceManager.registerResource(pageId, "clean", cleanResult.cleanUrl, 1024 * 1024);
+        if (cleanResult.maskUrl) {
+          workspaceResourceManager.registerResource(pageId, "mask", cleanResult.maskUrl, 256 * 1024);
+        }
         invalidatePageTranslation(page.url);
         setWorkspaceLayer("clean");
       }
@@ -240,7 +287,25 @@ export default function WorkspacePage() {
       if (!response.ok) {
         throw new Error(`Failed to load page for cleaning (${response.status}).`);
       }
-      const result = await cleanPage(pageUrl, await response.blob());
+      const rawBlob = await response.blob();
+      const ext = page.name?.split(".").pop()?.toLowerCase();
+      const fallbackMime =
+        ext === "jpg" || ext === "jpeg"
+          ? "image/jpeg"
+          : ext === "webp"
+            ? "image/webp"
+            : "image/png";
+      const mime =
+        rawBlob.type && rawBlob.type !== "application/octet-stream"
+          ? rawBlob.type
+          : fallbackMime;
+      const typedBlob = rawBlob.type === mime ? rawBlob : new Blob([rawBlob], { type: mime });
+      const result = await cleanPage(pageUrl, typedBlob);
+      const pageId = page.id || `page_${pageIndex}`;
+      workspaceResourceManager.registerResource(pageId, "clean", result.cleanUrl, 1024 * 1024);
+      if (result.maskUrl) {
+        workspaceResourceManager.registerResource(pageId, "mask", result.maskUrl, 256 * 1024);
+      }
       return {
         recognitionUrl: pageUrl,
         textScope: translationScope(result),
@@ -276,6 +341,8 @@ export default function WorkspacePage() {
     setGlossary,
     modelPreference,
     setModelPreference,
+    allowPreviewModels,
+    setAllowPreviewModels,
     targetLang,
     sourceLang,
     setSourceLang,
@@ -312,6 +379,62 @@ export default function WorkspacePage() {
       });
     },
   });
+
+  useEffect(() => {
+    if (!translatedImages) return;
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i];
+      const pageId = page.id || `page_${i}`;
+      const renderedUrl = translatedImages?.get?.(page.url);
+      if (renderedUrl && !workspaceResourceManager.hasResource(pageId, "translated-render")) {
+        const approxBytes = Math.round(renderedUrl.length * 0.75);
+        workspaceResourceManager.registerResource(pageId, "translated-render", renderedUrl, approxBytes);
+      }
+    }
+  }, [pages, translatedImages]);
+
+  const [pairingToken, setPairingToken] = useState<string>("");
+
+  useEffect(() => {
+    fetch("/api/extension/pair")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.pairingToken) setPairingToken(data.pairingToken);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!pairingToken) return;
+    const controller = new AbortController();
+    void fetch("/api/extension/settings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${pairingToken}`,
+      },
+      body: JSON.stringify({
+        geminiApiKey: userApiKey,
+        modelPreference,
+        allowPreviewModels,
+        glossary,
+        textStyle,
+        targetLang,
+        sourceLang,
+      }),
+      signal: controller.signal,
+    }).catch(() => undefined);
+    return () => controller.abort();
+  }, [
+    pairingToken,
+    userApiKey,
+    modelPreference,
+    allowPreviewModels,
+    glossary,
+    textStyle,
+    targetLang,
+    sourceLang,
+  ]);
 
   const [isDiagnosticModalOpen, setIsDiagnosticModalOpen] = useState(false);
   const [cleanerRecoveryByGroup, setCleanerRecoveryByGroup] = useState<
@@ -528,13 +651,17 @@ export default function WorkspacePage() {
     return result;
   };
 
-  const [savedSessionData, setSavedSessionData] = useState<{ pages: { url: string, name: string, originUrl?: string }[], currentPage: number } | null>(null);
+  const [savedSessionData, setSavedSessionData] = useState<{ pages: { url: string, name: string, originUrl?: string, unrecoverableSource?: boolean }[], currentPage: number, hasUnrecoverableSources?: boolean } | null>(null);
 
   // Check for saved IndexedDB session on mount
   useEffect(() => {
     restoreSavedSession().then(saved => {
       if (saved && saved.pages && saved.pages.length > 0) {
-        setSavedSessionData({ pages: saved.pages, currentPage: saved.currentPage });
+        setSavedSessionData({
+          pages: saved.pages,
+          currentPage: saved.currentPage,
+          hasUnrecoverableSources: saved.hasUnrecoverableSources,
+        });
       }
     });
   }, [restoreSavedSession]);
@@ -743,7 +870,21 @@ export default function WorkspacePage() {
 
     setIsPublishingBack(true);
     try {
-      const cleanUrl = cleaningResultsByPage.get(page.url)?.cleanUrl || translatedImages.get(page.url);
+      let cleanUrl = cleaningResultsByPage.get(page.url)?.cleanUrl || translatedImages.get(page.url);
+      if (cleanUrl && cleanUrl.startsWith("blob:")) {
+        try {
+          const blobRes = await fetch(cleanUrl);
+          const blob = await blobRes.blob();
+          cleanUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+        } catch (blobErr) {
+          console.warn("Failed to convert blob cleanUrl to base64 data URL for publish-back:", blobErr);
+        }
+      }
       const res = await fetch("/api/extension/publish-back", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -819,6 +960,7 @@ export default function WorkspacePage() {
     };
 
     const getExportDataUrl = async (pageUrl: string, index: number): Promise<string | null> => {
+      const pageId = pages[index]?.id || `page_${index}`;
       if (
         index === currentPage &&
         workspaceLayer === "translated" &&
@@ -826,6 +968,12 @@ export default function WorkspacePage() {
       ) {
         const currentDataUrl = downloadTranslatedImage("single", index, "", true);
         if (currentDataUrl) {
+          workspaceResourceManager.registerResource(
+            pageId,
+            "translated-render",
+            currentDataUrl,
+            Math.round(currentDataUrl.length * 0.75),
+          );
           translatedImageCacheRef.current.set(pageUrl, currentDataUrl);
           dirtyExportPagesRef.current.delete(pageUrl);
           return currentDataUrl;
@@ -841,6 +989,17 @@ export default function WorkspacePage() {
       }
 
       const bubbles = bubbleCacheRef.current.get(pageUrl);
+      if (
+        shouldReuseCachedTranslatedRender(isExportDirty) &&
+        shouldReuseSpilledTranslatedRender(bubbles)
+      ) {
+        const restored = workspaceResourceManager.restoreRenderedImage(pageId, "default");
+        if (restored) {
+          translatedImageCacheRef.current.set(pageUrl, restored);
+          return restored;
+        }
+      }
+
       if (bubbles && bubbles.length > 0) {
         setTranslationResult(`⏳ กำลังเตรียมรูปภาพหน้า ${index + 1}/${pages.length}...`);
         try {
@@ -879,6 +1038,13 @@ export default function WorkspacePage() {
                 (renderedUrl) => {
                   clearTimeout(timeout);
                   translatedImageCacheRef.current.set(pageUrl, renderedUrl);
+                  const approxBytes = Math.round(renderedUrl.length * 0.75);
+                  workspaceResourceManager.registerResource(
+                    pageId,
+                    "translated-render",
+                    renderedUrl,
+                    approxBytes,
+                  );
                   markPageDirty(pageUrl, false);
                   dirtyExportPagesRef.current.delete(pageUrl);
                   resolve(renderedUrl);
@@ -1216,7 +1382,7 @@ export default function WorkspacePage() {
         a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
       );
 
-      const newPages: {url: string, name: string}[] = [];
+      const newPages: { id?: string; url: string; name: string; originUrl?: string }[] = [];
       let failureCount = 0;
 
       for (let fileIdx = 0; fileIdx < sorted.length; fileIdx++) {
@@ -1243,10 +1409,14 @@ export default function WorkspacePage() {
             for (let zIdx = 0; zIdx < zipFiles.length; zIdx++) {
               const zipFile = zipFiles[zIdx];
               setImportStatusMessage(`กำลังอ่านไฟล์ ${file.name} (รูปที่ ${zIdx + 1}/${zipFiles.length})...`);
-              const base64 = await zipFile.async("base64");
               const ext = zipFile.name.split('.').pop()?.toLowerCase();
               const mimeType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : ext === 'gif' ? 'image/gif' : 'image/jpeg';
-              newPages.push({ url: `data:${mimeType};base64,${base64}`, name: zipFile.name });
+              const rawBlob = await zipFile.async("blob");
+              const blob = new Blob([rawBlob], { type: mimeType });
+              const pageId = `page_zip_${Date.now()}_${fileIdx}_${zIdx}`;
+              pageBlobStore.set(pageId, blob, mimeType);
+              const durableUrl = await blobToDataUrl(blob);
+              newPages.push({ id: pageId, url: durableUrl, name: zipFile.name });
             }
           } catch (e) {
             console.error("Failed to extract zip/cbz", e);
@@ -1285,8 +1455,14 @@ export default function WorkspacePage() {
                 viewport,
               } as unknown as Parameters<typeof page.render>[0];
               await page.render(renderParams).promise;
-              const base64 = canvas.toDataURL("image/jpeg", 0.95);
-              newPages.push({ url: base64, name: `${file.name.replace('.pdf', '')}_page${i}.jpg` });
+              const blob = await new Promise<Blob | null>((resolve) => {
+                canvas.toBlob((b) => resolve(b), "image/jpeg", 0.95);
+              });
+              if (!blob) continue;
+              const pageId = `page_pdf_${Date.now()}_${fileIdx}_${i}`;
+              pageBlobStore.set(pageId, blob, "image/jpeg");
+              const durableUrl = await blobToDataUrl(blob);
+              newPages.push({ id: pageId, url: durableUrl, name: `${file.name.replace('.pdf', '')}_page${i}.jpg` });
             }
           } catch (e) {
             console.error("Failed to parse PDF", e);
@@ -1296,12 +1472,14 @@ export default function WorkspacePage() {
           }
         } else if (file.type.startsWith("image/")) {
           setImportStatusMessage(`กำลังโหลดรูป: ${file.name} (${fileIdx + 1}/${sorted.length})...`);
-          const base64 = await new Promise<string>((resolve) => {
-            const reader = new FileReader();
-            reader.onload = (event) => resolve(event.target?.result as string);
-            reader.readAsDataURL(file);
-          });
-          newPages.push({ url: base64, name: file.name });
+          const ext = file.name.split('.').pop()?.toLowerCase();
+          const fallbackMime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'webp' ? 'image/webp' : 'image/png';
+          const resolvedMime = file.type && file.type !== "application/octet-stream" ? file.type : fallbackMime;
+          const typedBlob = file.type === resolvedMime ? file : new Blob([file], { type: resolvedMime });
+          const pageId = `page_img_${Date.now()}_${fileIdx}`;
+          pageBlobStore.set(pageId, typedBlob, resolvedMime);
+          const durableUrl = await blobToDataUrl(typedBlob);
+          newPages.push({ id: pageId, url: durableUrl, name: file.name });
         }
       }
 
@@ -2121,6 +2299,10 @@ export default function WorkspacePage() {
                 }}
                 onViewLayoutChange={setViewLayout}
                 onRemovePage={(idx) => {
+                  const targetPage = pages[idx];
+                  if (targetPage?.id) {
+                    pageBlobStore.delete(targetPage.id);
+                  }
                   setPages((prev) => {
                     const newPages = prev.filter((_, i) => i !== idx);
                     if (newPages.length === 0) setCurrentPage(0);
@@ -2152,12 +2334,20 @@ export default function WorkspacePage() {
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center w-full max-w-2xl px-4 gap-4">
             {savedSessionData && (
-              <div className="w-full bg-primary/10 border border-primary/30 rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left animate-in fade-in slide-in-from-top-2 duration-300">
+              <div className={`w-full ${savedSessionData.hasUnrecoverableSources ? 'bg-amber-500/10 border-amber-500/30' : 'bg-primary/10 border-primary/30'} border rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left animate-in fade-in slide-in-from-top-2 duration-300`}>
                 <div className="flex items-center gap-3">
-                  <div className="text-2xl">💾</div>
+                  <div className="text-2xl">{savedSessionData.hasUnrecoverableSources ? '⚠️' : '💾'}</div>
                   <div>
-                    <h4 className="text-sm font-semibold text-foreground">พบงานแปลค้างไว้ล่าสุด ({savedSessionData.pages.length} หน้า)</h4>
-                    <p className="text-xs text-muted">ระบบจำสถานะคำแปลและรูปภาพเดิมไว้ สามารถดึงกลับมาทำต่อได้ทันที</p>
+                    <h4 className="text-sm font-semibold text-foreground">
+                      {savedSessionData.hasUnrecoverableSources
+                        ? `พบข้อมูลคำแปลค้างไว้ (${savedSessionData.pages.length} หน้า) แต่รูปต้นฉบับหมดอายุ`
+                        : `พบงานแปลค้างไว้ล่าสุด (${savedSessionData.pages.length} หน้า)`}
+                    </h4>
+                    <p className="text-xs text-muted">
+                      {savedSessionData.hasUnrecoverableSources
+                        ? 'ระบบจำข้อมูลคำแปลและตำแหน่งบอลลูนไว้ แต่รูปต้นฉบับ session เดิมหมดอายุแล้ว กรุณานำเข้ารูปภาพใหม่เพื่อทำต่อ'
+                        : 'ระบบจำสถานะคำแปลและรูปภาพเดิมไว้ สามารถดึงกลับมาทำต่อได้ทันที'}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
@@ -2169,7 +2359,11 @@ export default function WorkspacePage() {
                         setCurrentPage(restored.currentPage || 0);
                         setSavedSessionData(null);
                       }
-                      import('react-hot-toast').then(m => m.default("ดึงค่างานเดิมกลับมาเรียบร้อย!", { duration: 2000 }));
+                      if (savedSessionData.hasUnrecoverableSources) {
+                        import('react-hot-toast').then(m => m.default("ดึงข้อมูลคำแปลกลับมาแล้ว กรุณานำเข้ารูปภาพต้นฉบับใหม่", { duration: 4000, icon: '⚠️' }));
+                      } else {
+                        import('react-hot-toast').then(m => m.default("ดึงค่างานเดิมกลับมาเรียบร้อย!", { duration: 2000 }));
+                      }
                     }}
                     className="bg-primary text-primary-content hover:bg-primary-hover px-3.5 py-1.5 rounded-md text-xs font-semibold shadow-sm transition-colors cursor-pointer"
                   >
@@ -2231,6 +2425,10 @@ export default function WorkspacePage() {
         currentPage={currentPage}
         onSelectPage={setCurrentPage}
         onDeletePage={(i) => {
+          const targetPage = pages[i];
+          if (targetPage?.id) {
+            pageBlobStore.delete(targetPage.id);
+          }
           setPages((prev) => {
             const newPages = prev.filter((_, idx) => idx !== i);
             if (newPages.length === 0) setCurrentPage(0);
@@ -2242,6 +2440,7 @@ export default function WorkspacePage() {
         onReorderPages={setPages}
         onAddImages={handleImageUpload}
         onClearAll={() => {
+          workspaceResourceManager.clear();
           setPages([]);
           setCurrentPage(0);
           clearSavedSession();
@@ -2270,6 +2469,8 @@ export default function WorkspacePage() {
         onTextStyleChange={setTextStyle}
         modelPreference={modelPreference}
         onModelPreferenceChange={setModelPreference}
+        allowPreviewModels={allowPreviewModels}
+        onAllowPreviewModelsChange={setAllowPreviewModels}
         userApiKey={userApiKey}
         onUserApiKeyChange={setUserApiKey}
         focusApiKey={settingsFocusTarget === "apiKey"}
