@@ -199,4 +199,88 @@ describe('Adaptive Speech Bubble Overlay & Local Persistence (Ticket 03)', () =>
     expect(bubble?.textContent?.replace(/\s+/g, '')).toContain('คำแปลเดิม');
     expect(bubble?.style.textShadow).toContain('rgba(30, 30, 30, 0.80)');
   });
+
+  it('renders confirmed monochrome dialogue with black/white text and no automatic shadow', () => {
+    const app = setup();
+    app.send({
+      action: 'TRANSLATION_SUCCESS',
+      cleanMode: 'inpainting',
+      cleanImageBase64: 'fake-png',
+      pageStyle: {
+        isMonochromePage: true,
+        monochromeConfidence: 0.95,
+      },
+      bubbles: [
+        {
+          t: 'ฟองขาวบนหน้าขาวดำ',
+          box: [50, 50, 200, 200],
+          styleProfile: {
+            fill: '#000000',
+            outline: '#ffffff',
+            backgroundLuminance: 245,
+            isMonochromePage: true,
+            monochromeConfidence: 0.95,
+            category: 'dialogue',
+          },
+        },
+        {
+          t: 'ฟองดำบนหน้าขาวดำ',
+          box: [250, 50, 400, 200],
+          styleProfile: {
+            fill: '#ffffff',
+            outline: '#000000',
+            backgroundLuminance: 20,
+            isMonochromePage: true,
+            monochromeConfidence: 0.95,
+            category: 'dialogue',
+          },
+        },
+      ],
+    });
+
+    const rendered = Array.from(document.querySelectorAll<HTMLElement>('.superk-text-bubble'));
+    expect(rendered).toHaveLength(2);
+
+    // Light bubble -> black text, no shadow
+    expect(rendered[0].style.color).toBe('rgb(0, 0, 0)');
+    expect(rendered[0].style.textShadow).toBe('none');
+
+    // Dark bubble -> white text, no shadow
+    expect(rendered[1].style.color).toBe('rgb(255, 255, 255)');
+    expect(rendered[1].style.textShadow).toBe('none');
+  });
+
+  it('restores monochrome text styling without shadow from cached local storage', async () => {
+    localStorageMock['superk_trans_https://manga.test/cached-mono.png'] = {
+      imageUrl: 'https://manga.test/cached-mono.png',
+      bubbles: [
+        {
+          t: 'แคชขาวดำ',
+          box: [20, 20, 150, 150],
+          styleProfile: {
+            isMonochromePage: true,
+            monochromeConfidence: 0.95,
+            backgroundLuminance: 240,
+            category: 'dialogue',
+          },
+        },
+      ],
+      pageStyle: {
+        isMonochromePage: true,
+        monochromeConfidence: 0.95,
+      },
+      cleanMode: 'inpainting',
+      cleanImageBase64: 'cached-clean-bg',
+      textStyle: { fontFamily: 'Prompt' },
+    };
+
+    setup('https://manga.test/cached-mono.png');
+
+    await new Promise(r => setTimeout(r, 200));
+
+    const bubble = document.querySelector<HTMLElement>('.superk-text-bubble');
+    expect(bubble).not.toBeNull();
+    expect(bubble?.style.color).toBe('rgb(0, 0, 0)');
+    expect(bubble?.style.textShadow).toBe('none');
+  });
 });

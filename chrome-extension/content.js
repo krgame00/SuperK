@@ -15,7 +15,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       message.bubbles,
       message.cleanMode,
       message.cleanImageBase64,
-      message.textStyle
+      message.textStyle,
+      message.pageStyle
     );
   } else if (message.action === "TRANSLATION_ERROR") {
     handleTranslationError(message.imageUrl, message.error);
@@ -131,7 +132,7 @@ function handleTranslationStart(imageUrl) {
 }
 
 // 2. Handle Translation Success (Render Text Overlay)
-function handleTranslationSuccess(imageUrl, bubbles, cleanMode, cleanImageBase64, textStyle) {
+function handleTranslationSuccess(imageUrl, bubbles, cleanMode, cleanImageBase64, textStyle, pageStyle) {
   const img = findImageElement(imageUrl);
   if (!img) return;
 
@@ -197,7 +198,7 @@ function handleTranslationSuccess(imageUrl, bubbles, cleanMode, cleanImageBase64
   if (cleanImageBase64) {
     const cleanImg = document.createElement('img');
     cleanImg.className = 'superk-clean-image';
-    cleanImg.src = cleanImageBase64.startsWith('data:')
+    cleanImg.src = (cleanImageBase64.startsWith('data:') || cleanImageBase64.startsWith('http://') || cleanImageBase64.startsWith('https://'))
       ? cleanImageBase64
       : `data:image/png;base64,${cleanImageBase64}`;
     cleanImg.style.cssText = `
@@ -360,12 +361,58 @@ function fitTextInBubble(text, width, height, fontFamily, fontSizeMultiplier = 1
 
     const fit = fitTextInBubble(b.t, origW, origH, fontFamily, fontSizeMultiplier);
     const bubbleProfile = b.styleProfile || {};
-    const bubbleTextColor = bubbleProfile.fill || textColor;
-    const bubbleTextOutline = bubbleProfile.outline || textOutline;
-    const hasOutline = bubbleProfile.hasOutline !== false;
-    const outlineRatio = Math.max(0.04, Math.min(0.30, bubbleProfile.outlineWidthRatio || 0.09));
+    const category = bubbleProfile.category || b.styleCategory || 'dialogue';
     const isManual = bubbleProfile.ownershipMode === 'manual' || bubbleProfile.source === 'manual';
     const shadowOff = isManual && bubbleProfile.manualShadowMode === 'off';
+
+    const isMonoPage = bubbleProfile.isMonochromePage ?? pageStyle?.isMonochromePage ?? false;
+    const monoConfidence = bubbleProfile.monochromeConfidence ?? pageStyle?.monochromeConfidence ?? 0;
+    const isMonochromeAuto =
+      isMonoPage === true &&
+      monoConfidence >= 0.85 &&
+      !isManual &&
+      (category === 'dialogue' || category === 'narration');
+
+    const bgLum = bubbleProfile.backgroundLuminance;
+    let monochromeTextColor = null;
+    let monochromeHasOutline = false;
+    let monochromeOutlineColor = '#ffffff';
+
+    if (isMonochromeAuto && typeof bgLum === 'number') {
+      if (bgLum >= 155) {
+        monochromeTextColor = '#000000';
+        if (bubbleProfile.hasOutline === true && bubbleProfile.outline) {
+          monochromeHasOutline = true;
+          monochromeOutlineColor = bubbleProfile.outline;
+        } else {
+          monochromeHasOutline = false;
+        }
+      } else if (bgLum <= 100) {
+        monochromeTextColor = '#ffffff';
+        monochromeOutlineColor = '#000000';
+        if (bubbleProfile.hasOutline === true && bubbleProfile.outline) {
+          monochromeHasOutline = true;
+          monochromeOutlineColor = bubbleProfile.outline;
+        } else {
+          monochromeHasOutline = false;
+        }
+      } else {
+        // 100 < bgLum < 155: contrasting outline
+        monochromeTextColor = bgLum < 128 ? '#ffffff' : '#000000';
+        monochromeOutlineColor = bgLum < 128 ? '#000000' : '#ffffff';
+        monochromeHasOutline = true;
+      }
+    }
+
+    const bubbleTextColor = (isMonochromeAuto && monochromeTextColor) ? monochromeTextColor : (bubbleProfile.fill || textColor);
+    const hasOutline = (isMonochromeAuto && typeof bgLum === 'number')
+      ? monochromeHasOutline
+      : (bubbleProfile.hasOutline !== false);
+    const bubbleTextOutline = (isMonochromeAuto && monochromeTextColor)
+      ? monochromeOutlineColor
+      : (bubbleProfile.outline || textOutline);
+    const outlineRatio = Math.max(0.04, Math.min(0.30, bubbleProfile.outlineWidthRatio || 0.09));
+
     const outlineShadows = hasOutline ? [
       `-${outlineRatio}em -${outlineRatio}em 0 ${bubbleTextOutline}`,
       `${outlineRatio}em -${outlineRatio}em 0 ${bubbleTextOutline}`,
@@ -376,7 +423,11 @@ function fitTextInBubble(text, width, height, fontFamily, fontSizeMultiplier = 1
       `${outlineRatio}em 0 0 ${bubbleTextOutline}`,
       `-${outlineRatio}em 0 0 ${bubbleTextOutline}`,
     ] : [];
-    const standardShadow = shadowOff ? null : '0.08em 0.08em 0.15em rgba(30, 30, 30, 0.80)';
+
+    const standardShadow = (shadowOff || (isMonochromeAuto && typeof bgLum === 'number'))
+      ? null
+      : '0.08em 0.08em 0.15em rgba(30, 30, 30, 0.80)';
+
     const textShadowValue = [...outlineShadows, standardShadow].filter(Boolean).join(', ') || 'none';
 
     const bubbleEl = document.createElement('div');
@@ -486,6 +537,7 @@ function fitTextInBubble(text, width, height, fontFamily, fontSizeMultiplier = 1
         cleanMode,
         cleanImageBase64,
         textStyle,
+        pageStyle,
         timestamp: Date.now(),
       },
     }).catch(() => {});
@@ -690,7 +742,8 @@ function restoreSavedTranslations() {
           saved.bubbles,
           saved.cleanMode,
           saved.cleanImageBase64,
-          saved.textStyle
+          saved.textStyle,
+          saved.pageStyle
         );
       }
     }).catch(() => {});

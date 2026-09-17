@@ -76,7 +76,12 @@ describe('Chrome extension translation workflow', () => {
       apiKey: 'test-key', allowPreview: false,
     });
     expect(app.sendMessage).toHaveBeenLastCalledWith(1, expect.objectContaining({
-      action: 'TRANSLATION_SUCCESS', bubbles: [{ t: 'สวัสดี', box: [10, 20, 100, 200] }],
+      action: 'TRANSLATION_SUCCESS',
+      bubbles: [expect.objectContaining({ t: 'สวัสดี', box: [10, 20, 100, 200] })],
+      pageStyle: expect.objectContaining({
+        isMonochromePage: expect.any(Boolean),
+        monochromeConfidence: expect.any(Number),
+      }),
     }), { frameId: 7 });
     expect(app.clearInterval).toHaveBeenCalledWith(1);
   });
@@ -113,7 +118,11 @@ describe('Chrome extension translation workflow', () => {
 
     expect(app.sendMessage).toHaveBeenLastCalledWith(1, expect.objectContaining({
       action: 'TRANSLATION_SUCCESS',
-      bubbles: [{ t: 'ผลลัพธ์โมเดลสอง', box: [0, 0, 100, 100] }],
+      bubbles: [expect.objectContaining({ t: 'ผลลัพธ์โมเดลสอง', box: [0, 0, 100, 100] })],
+      pageStyle: expect.objectContaining({
+        isMonochromePage: expect.any(Boolean),
+        monochromeConfidence: expect.any(Number),
+      }),
     }), { frameId: 7 });
   });
 

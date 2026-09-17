@@ -63,14 +63,42 @@ async function runTranslationFlow(tabId, frameId, imageUrl) {
     const result = settings.translationMode === "direct"
       ? await translateImageWithGemini(image.base64, settings, image.mimeType)
       : await SuperKServer.translate(image, settings);
+
+    let visual = {
+      pageStyle: { isMonochromePage: false, monochromeConfidence: 0 },
+      bubbleBackgroundLuminance: {},
+    };
+    try {
+      if (typeof SuperKServer?.analyzeImageStyle === 'function') {
+        visual = await SuperKServer.analyzeImageStyle(
+          image.base64,
+          image.mimeType,
+          result.bubbles,
+        );
+      }
+    } catch (visErr) {
+      console.warn('[SuperK] Image style analysis fallback:', visErr);
+    }
+
+    const enrichedBubbles = (result.bubbles || []).map((bubble, index) => ({
+      ...bubble,
+      styleProfile: {
+        ...(bubble.styleProfile || {}),
+        backgroundLuminance: visual.bubbleBackgroundLuminance?.[index] ?? bubble.styleProfile?.backgroundLuminance,
+        isMonochromePage: visual.pageStyle?.isMonochromePage ?? false,
+        monochromeConfidence: visual.pageStyle?.monochromeConfidence ?? 0,
+      },
+    }));
+
     await send({
       action: "TRANSLATION_SUCCESS",
-      bubbles: result.bubbles,
+      bubbles: enrichedBubbles,
       cleanMode: settings.cleanMode,
       cleanImageBase64,
       cleanJobId,
       textStyle: settings.textStyle,
       isOfflineFallback: synced.isOfflineFallback || false,
+      pageStyle: visual.pageStyle,
     });
   } catch (error) {
     await send({ action: "TRANSLATION_ERROR", error: error.message || "แปลภาพไม่สำเร็จ" })

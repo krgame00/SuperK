@@ -321,4 +321,156 @@ globalThis.SuperKServer = {
       cleanMimeType: 'image/png',
     };
   },
+
+  MONOCHROME_THRESHOLDS: {
+    MAX_SAMPLES: 20000,
+    MIN_ALPHA: 32,
+    CHROMA_THRESHOLD: 18,
+    SATURATION_THRESHOLD: 0.08,
+    STRONG_CHROMA_THRESHOLD: 35,
+    STRONG_SATURATION_THRESHOLD: 0.18,
+    MAX_CHROMATIC_RATIO: 0.02,
+    MAX_STRONG_CHROMATIC_RATIO: 0.005,
+  },
+
+  classifyMonochromeRgba(rgba, width, height) {
+    const totalPixels = width * height;
+    if (totalPixels <= 0 || rgba.length < totalPixels * 4) {
+      return { isMonochromePage: false, monochromeConfidence: 0 };
+    }
+    const stride = Math.max(1, Math.ceil(totalPixels / this.MONOCHROME_THRESHOLDS.MAX_SAMPLES));
+    let sampledPixelCount = 0;
+    let chromaticPixelCount = 0;
+    let strongChromaticPixelCount = 0;
+
+    for (let i = 0; i < totalPixels; i += stride) {
+      const offset = i * 4;
+      const a = rgba[offset + 3];
+      if (a < this.MONOCHROME_THRESHOLDS.MIN_ALPHA) continue;
+
+      const r = rgba[offset];
+      const g = rgba[offset + 1];
+      const b = rgba[offset + 2];
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const chroma = max - min;
+      const saturation = max > 0 ? chroma / max : 0;
+
+      sampledPixelCount++;
+      if (chroma >= this.MONOCHROME_THRESHOLDS.CHROMA_THRESHOLD && saturation >= this.MONOCHROME_THRESHOLDS.SATURATION_THRESHOLD) {
+        chromaticPixelCount++;
+      }
+      if (chroma >= this.MONOCHROME_THRESHOLDS.STRONG_CHROMA_THRESHOLD && saturation >= this.MONOCHROME_THRESHOLDS.STRONG_SATURATION_THRESHOLD) {
+        strongChromaticPixelCount++;
+      }
+    }
+
+    if (sampledPixelCount === 0) {
+      return { isMonochromePage: false, monochromeConfidence: 0 };
+    }
+
+    const chromaticRatio = chromaticPixelCount / sampledPixelCount;
+    const strongRatio = strongChromaticPixelCount / sampledPixelCount;
+    const isMonochrome =
+      chromaticRatio <= this.MONOCHROME_THRESHOLDS.MAX_CHROMATIC_RATIO &&
+      strongRatio <= this.MONOCHROME_THRESHOLDS.MAX_STRONG_CHROMATIC_RATIO;
+
+    const penaltyRatio = Math.max(
+      chromaticRatio / this.MONOCHROME_THRESHOLDS.MAX_CHROMATIC_RATIO,
+      strongRatio / this.MONOCHROME_THRESHOLDS.MAX_STRONG_CHROMATIC_RATIO,
+    );
+    const confidence = Math.max(0, Math.min(1, 1 - penaltyRatio * 0.5));
+
+    return {
+      isMonochromePage: isMonochrome,
+      monochromeConfidence: Number(confidence.toFixed(4)),
+    };
+  },
+
+  sampleBubbleLuminance(ctx, bubbles, canvasWidth, canvasHeight) {
+    const luminances = {};
+    if (!ctx || !Array.isArray(bubbles) || canvasWidth <= 0 || canvasHeight <= 0) {
+      return luminances;
+    }
+    bubbles.forEach((b, idx) => {
+      if (!b || !Array.isArray(b.box) || b.box.length < 4) return;
+      const [ymin, xmin, ymax, xmax] = b.box;
+      const x = Math.floor((Math.min(xmin, xmax) / 1000) * canvasWidth);
+      const y = Math.floor((Math.min(ymin, ymax) / 1000) * canvasHeight);
+      const w = Math.max(1, Math.ceil((Math.abs(xmax - xmin) / 1000) * canvasWidth));
+      const h = Math.max(1, Math.ceil((Math.abs(ymax - ymin) / 1000) * canvasHeight));
+
+      try {
+        const data = ctx.getImageData(x, y, w, h).data;
+        let sumLum = 0;
+        let count = 0;
+        for (let p = 0; p < data.length; p += 4) {
+          if (data[p + 3] < 32) continue;
+          sumLum += 0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2];
+          count++;
+        }
+        if (count > 0) {
+          luminances[idx] = Math.round(sumLum / count);
+        }
+      } catch {}
+    });
+    return luminances;
+  },
+
+  async analyzeImageStyle(base64, mimeType, bubbles) {
+    try {
+      if (typeof createImageBitmap === 'undefined') {
+        return {
+          pageStyle: { isMonochromePage: false, monochromeConfidence: 0 },
+          bubbleBackgroundLuminance: {},
+        };
+      }
+      const binaryString = atob(base64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: mimeType || 'image/png' });
+      const bitmap = await createImageBitmap(blob);
+      const scale = Math.min(1, 512 / Math.max(bitmap.width, bitmap.height));
+      const width = Math.max(1, Math.round(bitmap.width * scale));
+      const height = Math.max(1, Math.round(bitmap.height * scale));
+
+      let ctx = null;
+      let rgba = null;
+      if (typeof OffscreenCanvas !== 'undefined') {
+        const canvas = new OffscreenCanvas(width, height);
+        ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (ctx) {
+          ctx.drawImage(bitmap, 0, 0, width, height);
+          rgba = ctx.getImageData(0, 0, width, height).data;
+        }
+      } else if (typeof document !== 'undefined') {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (ctx) {
+          ctx.drawImage(bitmap, 0, 0, width, height);
+          rgba = ctx.getImageData(0, 0, width, height).data;
+        }
+      }
+
+      if (!rgba || !ctx) {
+        return {
+          pageStyle: { isMonochromePage: false, monochromeConfidence: 0 },
+          bubbleBackgroundLuminance: {},
+        };
+      }
+
+      const pageStyle = this.classifyMonochromeRgba(rgba, width, height);
+      const bubbleBackgroundLuminance = this.sampleBubbleLuminance(ctx, bubbles, width, height);
+      return { pageStyle, bubbleBackgroundLuminance };
+    } catch {
+      return {
+        pageStyle: { isMonochromePage: false, monochromeConfidence: 0 },
+        bubbleBackgroundLuminance: {},
+      };
+    }
+  },
 };
