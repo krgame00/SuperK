@@ -250,7 +250,16 @@ describe('SuperK Extension Inpainting Pipeline (Ticket 02)', () => {
           headers: { 'Content-Type': 'image/png' },
         });
       }
-      if (url.includes('generativelanguage.googleapis.com')) {
+      if (url === 'https://generativelanguage.googleapis.com/v1beta/models') {
+        return Response.json({
+          models: [{
+            name: 'models/gemini-direct-dynamic',
+            displayName: 'Gemini Direct Dynamic',
+            supportedGenerationMethods: ['generateContent'],
+          }],
+        });
+      }
+      if (url.includes(':generateContent')) {
         const text = JSON.stringify({ bubbles: [{ t: 'ตรงไปตรงมา', box: [10, 10, 50, 50] }] });
         return Response.json({
           candidates: [{ content: { parts: [{ text }] } }],
@@ -312,7 +321,7 @@ describe('SuperK Extension Inpainting Pipeline (Ticket 02)', () => {
       action: 'TRANSLATION_SUCCESS',
       cleanMode: 'inpainting',
       cleanImageBase64: null,
-      bubbles: [{ t: 'ตรงไปตรงมา', box: [10, 10, 50, 50] }],
+      bubbles: [expect.objectContaining({ t: 'ตรงไปตรงมา', box: [10, 10, 50, 50] })],
     }), expect.anything());
   });
 });
