@@ -476,4 +476,39 @@ describe("translation overlay live editor and keyboard controls", () => {
     const exported = downloadTranslatedImage("single", 0, "legacy.png", true, container);
     expect(exported).toBeTruthy();
   });
+
+  test("renders confirmed monochrome dialogue without a canvas shadow and color page with Standard Shadow", async () => {
+    await renderOverlay("ข้อความขาวดำ", {
+      styleProfile: {
+        fill: "#000000",
+        outline: "#ffffff",
+        source: "auto",
+        ownershipMode: "auto",
+        category: "dialogue",
+        isMonochromePage: true,
+        monochromeConfidence: 0.98,
+        backgroundLuminance: 245,
+      },
+    });
+
+    expect(shadowBlurs.at(-1) ?? 0).toBe(0);
+    expect(shadowOffsetsX.at(-1) ?? 0).toBe(0);
+
+    // Paired test: Color page still renders Standard Shadow
+    await renderOverlay("ข้อความสี", {
+      styleProfile: {
+        fill: "#000000",
+        outline: "#ffffff",
+        source: "auto",
+        ownershipMode: "auto",
+        category: "dialogue",
+        isMonochromePage: false,
+        monochromeConfidence: 0.98,
+        backgroundLuminance: 245,
+      },
+    });
+
+    expect(shadowBlurs.at(-1) ?? 0).toBeGreaterThan(0);
+    expect(shadowOffsetsX.at(-1) ?? 0).toBeGreaterThan(0);
+  });
 });
