@@ -388,9 +388,10 @@ globalThis.SuperKServer = {
   },
 
   sampleBubbleLuminance(ctx, bubbles, canvasWidth, canvasHeight) {
-    const luminances = {};
+    const mean = {};
+    const samples = {};
     if (!ctx || !Array.isArray(bubbles) || canvasWidth <= 0 || canvasHeight <= 0) {
-      return luminances;
+      return { mean, samples };
     }
     bubbles.forEach((b, idx) => {
       if (!b || !Array.isArray(b.box) || b.box.length < 4) return;
@@ -402,19 +403,31 @@ globalThis.SuperKServer = {
 
       try {
         const data = ctx.getImageData(x, y, w, h).data;
+        const pixelCount = Math.max(1, Math.floor(data.length / 4));
+        const sampleStep = Math.max(1, Math.ceil(pixelCount / 16));
+        const regionSamples = [];
         let sumLum = 0;
         let count = 0;
-        for (let p = 0; p < data.length; p += 4) {
+        let pixelIndex = 0;
+        for (let p = 0; p < data.length; p += 4, pixelIndex++) {
           if (data[p + 3] < 32) continue;
-          sumLum += 0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2];
+          const lum = 0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2];
+          sumLum += lum;
           count++;
+          if (pixelIndex % sampleStep === 0 && regionSamples.length < 16) {
+            regionSamples.push(Math.round(lum));
+          }
         }
         if (count > 0) {
-          luminances[idx] = Math.round(sumLum / count);
+          mean[idx] = Math.round(sumLum / count);
+          if (regionSamples.length === 0) {
+            regionSamples.push(mean[idx]);
+          }
+          samples[idx] = regionSamples;
         }
       } catch {}
     });
-    return luminances;
+    return { mean, samples };
   },
 
   async analyzeImageStyle(base64, mimeType, bubbles) {
@@ -423,6 +436,7 @@ globalThis.SuperKServer = {
         return {
           pageStyle: { isMonochromePage: false, monochromeConfidence: 0 },
           bubbleBackgroundLuminance: {},
+          bubbleBackgroundLuminanceSamples: {},
         };
       }
       const binaryString = atob(base64);
@@ -460,16 +474,22 @@ globalThis.SuperKServer = {
         return {
           pageStyle: { isMonochromePage: false, monochromeConfidence: 0 },
           bubbleBackgroundLuminance: {},
+          bubbleBackgroundLuminanceSamples: {},
         };
       }
 
       const pageStyle = this.classifyMonochromeRgba(rgba, width, height);
-      const bubbleBackgroundLuminance = this.sampleBubbleLuminance(ctx, bubbles, width, height);
-      return { pageStyle, bubbleBackgroundLuminance };
+      const bubbleEvidence = this.sampleBubbleLuminance(ctx, bubbles, width, height);
+      return {
+        pageStyle,
+        bubbleBackgroundLuminance: bubbleEvidence.mean,
+        bubbleBackgroundLuminanceSamples: bubbleEvidence.samples,
+      };
     } catch {
       return {
         pageStyle: { isMonochromePage: false, monochromeConfidence: 0 },
         bubbleBackgroundLuminance: {},
+        bubbleBackgroundLuminanceSamples: {},
       };
     }
   },

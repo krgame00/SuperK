@@ -283,4 +283,86 @@ describe('Adaptive Speech Bubble Overlay & Local Persistence (Ticket 03)', () =>
     expect(bubble?.style.color).toBe('rgb(0, 0, 0)');
     expect(bubble?.style.textShadow).toBe('none');
   });
+
+  it('suppresses the standard shadow on confirmed monochrome dialogue even when region luminance is unavailable', () => {
+    const app = setup();
+    app.send({
+      action: 'TRANSLATION_SUCCESS',
+      cleanMode: 'inpainting',
+      cleanImageBase64: 'fake-png',
+      pageStyle: { isMonochromePage: true, monochromeConfidence: 0.96 },
+      bubbles: [
+        {
+          t: 'ไม่มีค่า luminance',
+          box: [50, 50, 200, 200],
+          styleProfile: {
+            fill: '#000000',
+            isMonochromePage: true,
+            monochromeConfidence: 0.96,
+            category: 'dialogue',
+          },
+        },
+      ],
+    });
+
+    const bubble = document.querySelector<HTMLElement>('.superk-text-bubble')!;
+    expect(bubble.style.textShadow).not.toContain('rgba(30, 30, 30, 0.80)');
+  });
+
+  it('treats mixed monochrome regions like Web: contrasting outline, no standard shadow', () => {
+    const app = setup();
+    app.send({
+      action: 'TRANSLATION_SUCCESS',
+      cleanMode: 'inpainting',
+      cleanImageBase64: 'fake-png',
+      bubbles: [
+        {
+          t: 'พื้นหลังขาวดำสลับกัน',
+          box: [50, 50, 200, 200],
+          styleProfile: {
+            fill: '#000000',
+            backgroundLuminance: 220,
+            backgroundLuminanceSamples: [35, 225, 50, 235],
+            isMonochromePage: true,
+            monochromeConfidence: 0.96,
+            category: 'dialogue',
+          },
+        },
+      ],
+    });
+
+    const bubble = document.querySelector<HTMLElement>('.superk-text-bubble')!;
+    expect(bubble.style.color).toBe('rgb(0, 0, 0)');
+    expect(bubble.style.textShadow).toContain('#ffffff');
+    expect(bubble.style.textShadow).not.toContain('rgba(30, 30, 30, 0.80)');
+  });
+
+  it('does not preserve an untrusted source outline on a plain monochrome light bubble', () => {
+    const app = setup();
+    app.send({
+      action: 'TRANSLATION_SUCCESS',
+      cleanMode: 'inpainting',
+      cleanImageBase64: 'fake-png',
+      bubbles: [
+        {
+          t: 'ขอบที่ไม่ผ่าน evidence gate',
+          box: [50, 50, 200, 200],
+          styleProfile: {
+            fill: '#000000',
+            outline: '#ff3366',
+            hasOutline: true,
+            outlineConfidence: 0.25,
+            evidenceState: 'rejected',
+            backgroundLuminance: 240,
+            isMonochromePage: true,
+            monochromeConfidence: 0.96,
+            category: 'dialogue',
+          },
+        },
+      ],
+    });
+
+    const bubble = document.querySelector<HTMLElement>('.superk-text-bubble')!;
+    expect(bubble.style.textShadow).toBe('none');
+  });
 });

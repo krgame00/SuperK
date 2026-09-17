@@ -161,4 +161,19 @@ describe("Monochrome Manga Text Style Policy (Task 3 - ADR 0016)", () => {
     expect(resolved.textOutline).toBe("#111111");
     expect(resolved.shadow).toBeUndefined();
   });
+
+  it("keeps explicit Readable dialogue shadowless on a confirmed monochrome page", () => {
+    const bubble = makeBubble({
+      isMonochromePage: true,
+      monochromeConfidence: 0.95,
+      ownershipMode: "readable",
+      backgroundLuminance: 225,
+      category: "dialogue",
+    });
+    const resolved = resolveBubbleTextStyle(bubble);
+    expect(resolved.isAdaptiveReadable).toBe(true);
+    expect(resolved.shadow).toBeUndefined();
+    expect(resolved.glow).toBeUndefined();
+    expect(resolved.readabilityHalo).toBeUndefined();
+  });
 });

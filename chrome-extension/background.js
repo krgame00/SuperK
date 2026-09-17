@@ -67,6 +67,7 @@ async function runTranslationFlow(tabId, frameId, imageUrl) {
     let visual = {
       pageStyle: { isMonochromePage: false, monochromeConfidence: 0 },
       bubbleBackgroundLuminance: {},
+      bubbleBackgroundLuminanceSamples: {},
     };
     try {
       if (typeof SuperKServer?.analyzeImageStyle === 'function') {
@@ -85,6 +86,7 @@ async function runTranslationFlow(tabId, frameId, imageUrl) {
       styleProfile: {
         ...(bubble.styleProfile || {}),
         backgroundLuminance: visual.bubbleBackgroundLuminance?.[index] ?? bubble.styleProfile?.backgroundLuminance,
+        backgroundLuminanceSamples: visual.bubbleBackgroundLuminanceSamples?.[index] ?? bubble.styleProfile?.backgroundLuminanceSamples,
         isMonochromePage: visual.pageStyle?.isMonochromePage ?? false,
         monochromeConfidence: visual.pageStyle?.monochromeConfidence ?? 0,
       },

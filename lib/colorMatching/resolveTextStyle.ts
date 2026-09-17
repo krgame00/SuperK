@@ -546,7 +546,7 @@ export function resolveBubbleTextStyle(
 
   // Explicit user-selected readable preset
   if (profile.ownershipMode === "readable") {
-    return selectAdaptiveReadableStyle({
+    const readable = selectAdaptiveReadableStyle({
       backgroundLuminance: profile.backgroundLuminance,
       backgroundLuminanceSamples: profile.backgroundLuminanceSamples,
       backgroundColor: profile.backgroundColor,
@@ -557,6 +557,15 @@ export function resolveBubbleTextStyle(
       requiresPlateEscalation: profile.requiresPlateEscalation,
       sourceProfile: profile,
     });
+    if (shouldUseMonochromeMangaStyle(profile, category)) {
+      return {
+        ...readable,
+        shadow: undefined,
+        glow: undefined,
+        readabilityHalo: undefined,
+      };
+    }
+    return readable;
   }
 
   // Manual user styling is authoritative until the user explicitly returns to Auto/Original.
