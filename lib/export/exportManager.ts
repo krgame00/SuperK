@@ -13,24 +13,6 @@ export function sanitizeExportFilename(
   return sanitized.length > 0 ? sanitized : fallback;
 }
 
-export function generatePageFilename(
-  index: number,
-  originalName: string,
-  defaultExtension = "png",
-): string {
-  const sanitizedName = sanitizeExportFilename(originalName);
-  const dotIndex = sanitizedName.lastIndexOf(".");
-  const extension =
-    dotIndex !== -1 && dotIndex < sanitizedName.length - 1
-      ? sanitizedName.substring(dotIndex + 1)
-      : defaultExtension;
-  const baseName =
-    dotIndex !== -1 ? sanitizedName.substring(0, dotIndex) : sanitizedName;
-
-  const pageNum = String(index + 1).padStart(3, "0");
-  return `SuperK_Page_${pageNum}_${baseName}.${extension}`;
-}
-
 export interface WebtoonStripChunk {
   chunkIndex: number;
   totalChunks: number;

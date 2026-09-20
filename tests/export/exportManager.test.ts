@@ -5,7 +5,6 @@ import {
   escapeXml,
   generateArchiveFilename,
   generateComicInfoXml,
-  generatePageFilename,
   generateStripFilename,
   sanitizeExportFilename,
 } from "@/lib/export/exportManager";
@@ -66,18 +65,6 @@ describe("deriveProjectExportName & generateArchiveFilename", () => {
       "SuperK_Bleach_Ch01.pdf",
     );
     expect(generateArchiveFilename("zip")).toBe("SuperK_Translations.zip");
-  });
-});
-
-describe("generatePageFilename", () => {
-  it("formats zero-padded page numbers with original basename and extension", () => {
-    expect(generatePageFilename(0, "cover.jpg")).toBe("SuperK_Page_001_cover.jpg");
-    expect(generatePageFilename(9, "page_10.png")).toBe("SuperK_Page_010_page_10.png");
-    expect(generatePageFilename(99, "last_page.webp")).toBe("SuperK_Page_100_last_page.webp");
-  });
-
-  it("applies default extension when missing in original name", () => {
-    expect(generatePageFilename(4, "raw_page", "png")).toBe("SuperK_Page_005_raw_page.png");
   });
 });
 

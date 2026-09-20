@@ -63,6 +63,7 @@ describe("SidecarSupervisor (Ticket 02)", () => {
       spawnFn: mockSpawn as any,
       execFn: mockExec as any,
       fetchFn: mockFetch as any,
+      existsSync: () => true,
     });
 
     supervisor.start();
@@ -92,6 +93,7 @@ describe("SidecarSupervisor (Ticket 02)", () => {
       spawnFn: mockSpawn as any,
       execFn: mockExec as any,
       fetchFn: mockFetch as any,
+      existsSync: () => true,
       platform: "win32",
       ownershipManager,
     });
@@ -118,6 +120,7 @@ describe("SidecarSupervisor (Ticket 02)", () => {
       spawnFn: mockSpawn as any,
       execFn: mockExec as any,
       fetchFn: mockFetch as any,
+      existsSync: () => true,
     });
 
     const readyPromise = supervisor.start();
@@ -135,6 +138,7 @@ describe("SidecarSupervisor (Ticket 02)", () => {
       spawnFn: mockSpawn as any,
       execFn: mockExec as any,
       fetchFn: mockFetch as any,
+      existsSync: () => true,
     });
 
     const readyPromise = supervisor.start();
@@ -161,6 +165,7 @@ describe("SidecarSupervisor (Ticket 02)", () => {
       spawnFn: mockSpawn as any,
       execFn: mockExec as any,
       fetchFn: mockFetch as any,
+      existsSync: () => true,
     });
 
     const readyPromise = supervisor.start();
@@ -179,6 +184,7 @@ describe("SidecarSupervisor (Ticket 02)", () => {
       spawnFn: mockSpawn as any,
       execFn: mockExec as any,
       fetchFn: mockFetch as any,
+      existsSync: () => true,
     });
     const statuses: string[] = [];
 
@@ -203,6 +209,7 @@ describe("SidecarSupervisor (Ticket 02)", () => {
       spawnFn: mockSpawn as any,
       execFn: mockExec as any,
       fetchFn: mockFetch as any,
+      existsSync: () => true,
     });
     const statuses: string[] = [];
 
@@ -222,6 +229,7 @@ describe("SidecarSupervisor (Ticket 02)", () => {
       spawnFn: mockSpawn as any,
       execFn: mockExec as any,
       fetchFn: mockFetch as any,
+      existsSync: () => true,
       config: { initialBackoffMs: 10, maxBackoffMs: 10, timeoutMs: 15 },
     });
 
@@ -239,6 +247,7 @@ describe("SidecarSupervisor (Ticket 02)", () => {
       spawnFn: mockSpawn as any,
       execFn: mockExec as any,
       fetchFn: mockFetch as any,
+      existsSync: () => true,
       platform: "win32",
     });
 
@@ -259,6 +268,7 @@ describe("SidecarSupervisor (Ticket 02)", () => {
       spawnFn: mockSpawn as any,
       execFn: mockExec as any,
       fetchFn: mockFetch as any,
+      existsSync: () => true,
     });
 
     supervisor.on("unexpected-exit", exitListener);
@@ -282,6 +292,7 @@ describe("SidecarSupervisor (Ticket 02)", () => {
       spawnFn: mockSpawn as any,
       execFn: mockExec as any,
       fetchFn: mockFetch as any,
+      existsSync: () => true,
     });
 
     supervisor.on("unexpected-exit", exitListener);

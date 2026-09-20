@@ -139,18 +139,6 @@ export const deleteAsset = async (id: string): Promise<void> => {
   }
 };
 
-export const clearAssets = async (): Promise<void> => {
-  try {
-    const db = await openDB();
-    const tx = db.transaction(ASSET_STORE_NAME, "readwrite");
-    const done = transactionDone(tx);
-    tx.objectStore(ASSET_STORE_NAME).clear();
-    await done;
-  } catch (err) {
-    console.warn("Failed to clear assets from IndexedDB", err);
-  }
-};
-
 export const saveProjectSession = async (
   data: {
     pages: { url: string; name: string; originUrl?: string }[];

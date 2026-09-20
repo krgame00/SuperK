@@ -7,6 +7,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 
 # Install dependencies
 COPY package*.json ./
+COPY scripts/ ./scripts/
 RUN npm ci
 
 # Copy source code and build
