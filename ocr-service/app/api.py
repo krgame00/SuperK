@@ -30,7 +30,15 @@ from app.settings import Settings
 
 LOGGER = logging.getLogger(__name__)
 
-SUPPORTED_MEDIA_TYPES = {"image/png", "image/jpeg", "image/webp"}
+SUPPORTED_MEDIA_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/jpg",
+    "image/pjpeg",
+    "image/x-png",
+    "application/octet-stream",
+}
 SUPPORTED_FORMATS = {"PNG", "JPEG", "WEBP"}
 RETRY_CLEANERS = {"auto", "flat", "opencv", "aot", "anime-lama", "lama-large"}
 
@@ -48,6 +56,7 @@ def create_app(
         max_workers=runtime_settings.max_workers,
         retention_hours=runtime_settings.job_retention_hours,
         job_timeout_seconds=runtime_settings.job_timeout_minutes * 60.0,
+        model_idle_timeout_seconds=runtime_settings.model_idle_timeout_seconds,
     )
 
     @asynccontextmanager
@@ -67,6 +76,20 @@ def create_app(
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/v1/models/status")
+    def model_status() -> dict[str, object]:
+        """Return model loading and idle status."""
+        return {
+            "loaded": store.is_model_loaded(),
+            "idle_timeout_seconds": store.model_idle_timeout_seconds,
+        }
+
+    @app.post("/v1/models/unload")
+    def unload_models() -> dict[str, object]:
+        """Manually release heavy model memory if no jobs are active."""
+        unloaded = store.unload_models(force=False)
+        return {"unloaded": unloaded, "loaded": store.is_model_loaded()}
 
     @app.post("/v1/jobs", status_code=202)
     async def create_job(
@@ -100,6 +123,13 @@ def create_app(
         """Manually sweep finished job assets (retention window = 0)."""
         removed = store.sweep_completed(retention_hours=0.0)
         return {"deleted": removed}
+
+    @app.post("/v1/jobs/flush-memory")
+    def flush_memory() -> dict[str, str]:
+        """Manually trigger model release, garbage collection and OS working set trim."""
+        store.unload_models(force=False)
+        store.trim_memory()
+        return {"status": "ok"}
 
     @app.delete("/v1/jobs/{job_id}")
     def delete_job(job_id: str) -> dict[str, str]:

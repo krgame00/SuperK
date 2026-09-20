@@ -1,14 +1,13 @@
 /**
  * SuperK — Workspace Resource & Eviction Manager (ADR 0013)
  *
- * Coordinates ResourceBudgetManager, PageBlobStore, SessionProcessedPageSpillCache,
+ * Coordinates ResourceBudgetManager and PageBlobStore,
  * and pageLifecycle to ensure bounded memory residency across long sessions.
  */
 
 import { ResourceBudgetManager, type ResourceItem } from "./resourceBudget";
 import { getWarmPageIndices } from "./pageLifecycle";
 import { pageBlobStore } from "./pageBlobStore";
-import { SessionProcessedPageSpillCache } from "./sessionSpillCache";
 
 export interface WorkspaceResourceHookConfig {
   hostRamMB?: number;
@@ -25,7 +24,6 @@ export interface RenderedImageCacheEntry {
 
 export class WorkspaceResourceManager {
   private budgetManager: ResourceBudgetManager<any>;
-  private spillCache = new SessionProcessedPageSpillCache<string>();
   private pageIds: string[] = [];
   private currentPage = 0;
   private onEvictCallback?: (key: string, category: ResourceItem["category"]) => void;
@@ -167,8 +165,9 @@ export class WorkspaceResourceManager {
   }
 
   /**
-   * Restores a spilled rendered page translation if present in memory or session spill cache,
-   * verifying that the revision signature matches exactly.
+   * Returns a resident render only when its revision matches. Evicted renders
+   * are recomputed by the caller from saved bubbles/edits, not retained in a
+   * second in-memory cache outside the resource budget.
    */
   restoreRenderedImage(pageId: string, expectedSignature: string): string | null {
     const memKey = `${pageId}:translated-render`;
@@ -188,20 +187,6 @@ export class WorkspaceResourceManager {
       }
     }
 
-    const spilled = this.spillCache.restore(pageId, expectedSignature);
-    if (spilled) {
-      // Restore back into budget with authoritative signature
-      const approxBytes = Math.round(spilled.length * 0.75);
-      this.budgetManager.set(
-        memKey,
-        { signature: expectedSignature, dataUrl: spilled } satisfies RenderedImageCacheEntry,
-        approxBytes,
-        "translated-render",
-        this.isWarm,
-        this.handleEvictedItem,
-      );
-      return spilled;
-    }
     return null;
   }
 
@@ -214,13 +199,6 @@ export class WorkspaceResourceManager {
     if (category === "source") {
       // Revoke the object URL to immediately reclaim browser memory
       pageBlobStore.revokeObjectUrl(pageId);
-    } else if (category === "translated-render") {
-      // Spills with the entry's actual signature
-      if (item.data && typeof item.data === "object" && "signature" in item.data && "dataUrl" in item.data) {
-        this.spillCache.spill(pageId, item.data.signature, item.data.dataUrl);
-      } else if (typeof item.data === "string") {
-        this.spillCache.spill(pageId, "default", item.data);
-      }
     }
 
     if (this.onEvictCallback) {
@@ -233,7 +211,6 @@ export class WorkspaceResourceManager {
    */
   clear(): void {
     this.budgetManager.clear();
-    this.spillCache.clear();
     pageBlobStore.clear();
     this.pageIds = [];
     this.currentPage = 0;

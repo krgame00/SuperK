@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -64,6 +66,71 @@ def test_confirm_then_approve_changes_only_inspected_mask():
         pipeline.retry_region(approved, "region-1", changed, "flat", ManualRegionAction.AUTOMATIC)
 
 
+def test_force_clean_shrinking_mask_restores_erased_pixels_and_replaces_region_mask():
+    pipeline = CleaningPipeline(detector=NoTextDetector(), cleaners={"flat": SolidCleaner(0)})
+    original = _single_region_output()
+    previous_mask = np.zeros_like(original.mask)
+    previous_mask[9:15, 9:15] = 255
+    already_cleaned = original.clean_image.copy()
+    already_cleaned[previous_mask > 0] = 0
+    confirmed_record = original.regions[0].model_copy(update={"text_confirmed": True})
+    previous = replace(
+        original,
+        clean_image=already_cleaned,
+        mask=previous_mask,
+        regions=[confirmed_record],
+    )
+
+    edited_mask = np.zeros_like(previous_mask)
+    edited_mask[10:12, 10:12] = 255
+    retried = pipeline.retry_region(
+        previous,
+        "region-1",
+        edited_mask,
+        "flat",
+        ManualRegionAction.FORCE_CLEAN,
+    )
+
+    erased_from_mask = (previous_mask > 0) & (edited_mask == 0)
+    assert np.array_equal(
+        retried.clean_image[erased_from_mask],
+        previous.source_image[erased_from_mask],
+    )
+    assert (retried.clean_image[edited_mask > 0] == 0).all()
+    assert np.array_equal(retried.mask, edited_mask)
+
+
+def test_force_clean_empty_edited_mask_restores_region_instead_of_reusing_old_clean():
+    pipeline = CleaningPipeline(detector=NoTextDetector(), cleaners={"flat": SolidCleaner(0)})
+    original = _single_region_output()
+    previous_mask = np.zeros_like(original.mask)
+    previous_mask[9:15, 9:15] = 255
+    already_cleaned = original.clean_image.copy()
+    already_cleaned[previous_mask > 0] = 0
+    confirmed_record = original.regions[0].model_copy(update={"text_confirmed": True})
+    previous = replace(
+        original,
+        clean_image=already_cleaned,
+        mask=previous_mask,
+        regions=[confirmed_record],
+    )
+
+    empty_mask = np.zeros_like(previous_mask)
+    retried = pipeline.retry_region(
+        previous,
+        "region-1",
+        empty_mask,
+        "flat",
+        ManualRegionAction.FORCE_CLEAN,
+    )
+
+    selected = previous_mask > 0
+    assert np.array_equal(retried.clean_image[selected], previous.source_image[selected])
+    assert not retried.mask.any()
+    assert retried.regions[0].text_confirmed
+    assert retried.regions[0].mask_approved
+
+
 @pytest.mark.parametrize("confidence", [0.59, 0.60, 0.90])
 def test_real_hybrid_path_preserves_isolated_stroke_for_review(confidence):
     from app.detector import DetectedBlock, DetectionResult, HybridTextDetector, LetterboxTransform
@@ -88,7 +155,6 @@ def test_real_hybrid_path_preserves_isolated_stroke_for_review(confidence):
 def test_job_restart_retains_confirmation_and_exact_mask_approval(tmp_path):
     from app.jobs import JobStore
     from test_jobs import _wait_for_job, _make_png
-    from dataclasses import replace
     import io
     from PIL import Image
     class Pipeline(CleaningPipeline):

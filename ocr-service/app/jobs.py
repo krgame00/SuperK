@@ -61,6 +61,25 @@ def _trim_process_memory() -> None:
 
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+                if hasattr(torch.cuda, "ipc_collect"):
+                    torch.cuda.ipc_collect()
+        except Exception:
+            pass
+
+        try:
+            import ctypes
+
+            # On Windows: EmptyWorkingSet releases idle pages back to the OS memory manager
+            if hasattr(ctypes, "windll") and hasattr(ctypes.windll, "psapi") and hasattr(ctypes.windll, "kernel32"):
+                ctypes.windll.psapi.EmptyWorkingSet(ctypes.windll.kernel32.GetCurrentProcess())
+            # On Linux/glibc: malloc_trim
+            elif hasattr(ctypes, "CDLL"):
+                try:
+                    libc = ctypes.CDLL("libc.so.6")
+                    if hasattr(libc, "malloc_trim"):
+                        libc.malloc_trim(0)
+                except Exception:
+                    pass
         except Exception:
             pass
     except Exception:
@@ -117,11 +136,13 @@ class JobStore:
         max_workers: int = 1,
         retention_hours: float = 24.0,
         job_timeout_seconds: float = 900.0,
+        model_idle_timeout_seconds: float = 300.0,
     ) -> None:
         self.pipeline_factory = pipeline_factory
         self.cache_dir = cache_dir / "jobs"
         self.retention_hours = retention_hours
         self.job_timeout_seconds = job_timeout_seconds
+        self.model_idle_timeout_seconds = model_idle_timeout_seconds
         self.executor = ThreadPoolExecutor(
             max_workers=max_workers,
             thread_name_prefix="superk-cleaner",
@@ -129,6 +150,7 @@ class JobStore:
         self._jobs: dict[str, JobState] = {}
         self._jobs_lock = threading.RLock()
         self._pipeline_instance: Pipeline | None = None
+        self._idle_timer: threading.Timer | None = None
         self._last_sweep_at = 0.0
         if self.cache_dir.exists():
             for tmp in self.cache_dir.glob(".*.tmp"):
@@ -149,6 +171,9 @@ class JobStore:
             project_id=project_id,
         )
         with self._jobs_lock:
+            if self._idle_timer is not None:
+                self._idle_timer.cancel()
+                self._idle_timer = None
             self._jobs[job_id] = job
         self.executor.submit(self._run, job)
         return job_id
@@ -177,6 +202,9 @@ class JobStore:
             project_id=parent.project_id,
         )
         with self._jobs_lock:
+            if self._idle_timer is not None:
+                self._idle_timer.cancel()
+                self._idle_timer = None
             self._jobs[job_id] = job
         self.executor.submit(
             self._run_retry,
@@ -232,6 +260,11 @@ class JobStore:
             return None
 
     def shutdown(self) -> None:
+        with self._jobs_lock:
+            if self._idle_timer is not None:
+                self._idle_timer.cancel()
+                self._idle_timer = None
+        self.unload_models(force=True)
         self.executor.shutdown(wait=True, cancel_futures=False)
 
     # -- Retention / cleanup -------------------------------------------------
@@ -360,6 +393,87 @@ class JobStore:
                 pass
         return removed
 
+    def is_model_loaded(self) -> bool:
+        with self._jobs_lock:
+            return self._pipeline_instance is not None
+
+    def unload_models(self, force: bool = False) -> bool:
+        """Unload heavy pipeline models if no jobs are actively running (or if force=True)."""
+        with self._jobs_lock:
+            if self._idle_timer is not None:
+                self._idle_timer.cancel()
+                self._idle_timer = None
+            if self._active_job_ids() and not force:
+                LOGGER.info("Cannot unload models: active jobs are running")
+                return False
+            if self._pipeline_instance is None:
+                self.trim_memory()
+                return True
+            LOGGER.info("Unloading heavy models from memory...")
+            pipeline = self._pipeline_instance
+            self._pipeline_instance = None
+
+            unload_fn = getattr(pipeline, "unload", None) or getattr(pipeline, "close", None)
+            if callable(unload_fn):
+                try:
+                    unload_fn()
+                except Exception:
+                    LOGGER.exception("Error during pipeline.unload()")
+
+            cleaners = getattr(pipeline, "cleaners", {})
+            if isinstance(cleaners, dict):
+                for cleaner in cleaners.values():
+                    c_unload = getattr(cleaner, "unload", None)
+                    if callable(c_unload):
+                        try:
+                            c_unload()
+                        except Exception:
+                            pass
+            detector = getattr(pipeline, "detector", None)
+            if detector is not None:
+                d_unload = getattr(detector, "unload", None)
+                if callable(d_unload):
+                    try:
+                        d_unload()
+                    except Exception:
+                        pass
+
+            del pipeline
+            self.trim_memory()
+            return True
+
+    def _schedule_idle_unload_if_idle(self) -> None:
+        with self._jobs_lock:
+            if self._idle_timer is not None:
+                self._idle_timer.cancel()
+                self._idle_timer = None
+            if self.model_idle_timeout_seconds <= 0:
+                return
+            if self._pipeline_instance is None:
+                return
+            if not self._active_job_ids():
+                self._idle_timer = threading.Timer(
+                    self.model_idle_timeout_seconds,
+                    self._on_idle_timeout,
+                )
+                self._idle_timer.daemon = True
+                self._idle_timer.start()
+
+    def _on_idle_timeout(self) -> None:
+        with self._jobs_lock:
+            self._idle_timer = None
+            if self._active_job_ids():
+                return
+            LOGGER.info(
+                "Idle timeout reached (%s s); releasing heavy models",
+                self.model_idle_timeout_seconds,
+            )
+            self.unload_models()
+
+    def trim_memory(self) -> None:
+        """Purge unreferenced objects and trim the OS working set."""
+        _trim_process_memory()
+
     def _pipeline(self) -> Pipeline:
         if self._pipeline_instance is None:
             self._pipeline_instance = self.pipeline_factory()
@@ -425,6 +539,7 @@ class JobStore:
             if watchdog is not None:
                 watchdog.cancel()
             _trim_process_memory()
+            self._schedule_idle_unload_if_idle()
 
     def _run_retry(
         self,
@@ -469,6 +584,7 @@ class JobStore:
             if watchdog is not None:
                 watchdog.cancel()
             _trim_process_memory()
+            self._schedule_idle_unload_if_idle()
 
     def _complete(
         self,

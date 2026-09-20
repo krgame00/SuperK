@@ -25,5 +25,7 @@ class Settings(BaseSettings):
     # Pixel ceiling checked before decode — compressed bombs pass the byte
     # limit but would allocate gigabytes of RAM.
     max_image_megapixels: int = Field(default=64, gt=0)
+    # Model idle timeout in seconds (default ~5 min / 300s; 0 disables auto-unload)
+    model_idle_timeout_seconds: float = Field(default=300.0, ge=0.0)
     ocr_engine: str = Field(default="paddle")
     service_url: AnyHttpUrl = AnyHttpUrl("http://127.0.0.1:8765")

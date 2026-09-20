@@ -52,6 +52,38 @@ def test_upload_rejects_unsupported_media_type(client: TestClient) -> None:
     assert response.status_code == 415
 
 
+def test_upload_accepts_octet_stream_with_valid_image(
+    client: TestClient,
+    png_bytes: bytes,
+) -> None:
+    response = client.post(
+        "/v1/jobs",
+        files={"image": ("page.png", png_bytes, "application/octet-stream")},
+    )
+    assert response.status_code == 202
+
+
+def test_upload_accepts_jpg_alias_with_valid_image(
+    client: TestClient,
+    png_bytes: bytes,
+) -> None:
+    response = client.post(
+        "/v1/jobs",
+        files={"image": ("page.jpg", png_bytes, "image/jpg")},
+    )
+    assert response.status_code == 202
+
+
+def test_upload_rejects_octet_stream_with_invalid_bytes(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/v1/jobs",
+        files={"image": ("page.bin", b"not an image", "application/octet-stream")},
+    )
+    assert response.status_code == 415
+
+
 def test_upload_rejects_invalid_image_magic(
     client: TestClient,
 ) -> None:
@@ -428,3 +460,23 @@ def test_upload_rejects_oversize_pixel_dimensions(tmp_path) -> None:
         )
     assert response.status_code == 413
     assert "dimensions" in response.json()["detail"]
+
+
+def test_flush_memory_endpoint_returns_ok(client: TestClient) -> None:
+    response = client.post("/v1/jobs/flush-memory")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_model_status_and_unload_endpoints(client: TestClient) -> None:
+    # 1. Check initial model status
+    status_resp = client.get("/v1/models/status")
+    assert status_resp.status_code == 200
+    assert status_resp.json()["loaded"] is False
+
+    # 2. Unload when already idle
+    unload_resp = client.post("/v1/models/unload")
+    assert unload_resp.status_code == 200
+    assert unload_resp.json()["unloaded"] is True
+    assert unload_resp.json()["loaded"] is False
+

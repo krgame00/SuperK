@@ -80,24 +80,22 @@ describe("End-to-End System Health Remediation Acceptance (P0-P4)", () => {
       expect(manager.restoreRenderedImage(pageId, "rev-2")).toBe("data:rendered-v2");
     });
 
-    it("spills with actual revision signature upon budget eviction and verifies signature on spill restore", () => {
+    it("drops evicted renders even when their revision still matches", () => {
       const manager = new WorkspaceResourceManager({ minCapMB: 2, maxCapMB: 2 });
 
       // Register p1 at rev-1 (~1.5 MB)
       manager.registerRenderedImage("p1", "rev-1", "data:rendered-p1-v1", 1.5 * 1024 * 1024);
 
-      // Register p2 at rev-1 (~1.5 MB) -> evicts cold p1 into spill cache
+      // Register p2 at rev-1 (~1.5 MB) -> evicts cold p1.
       manager.registerRenderedImage("p2", "rev-1", "data:rendered-p2-v1", 1.5 * 1024 * 1024);
 
-      // p1 is spilled with signature "rev-1".
-      // Requesting rev-2 from spill must return null and purge stale entry
+      // An evicted render cannot be returned for either revision.
+      expect(manager.restoreRenderedImage("p1", "rev-1")).toBeNull();
       expect(manager.restoreRenderedImage("p1", "rev-2")).toBeNull();
 
-      // If user had not changed revision, restoring with rev-1 works
-      // (Re-register p1 to evict and test valid spill restore)
+      // The matching revision must not recover an unbudgeted copy either.
       manager.registerRenderedImage("p3", "rev-1", "data:rendered-p3-v1", 1.5 * 1024 * 1024);
-      // p2 is now spilled with rev-1
-      expect(manager.restoreRenderedImage("p2", "rev-1")).toBe("data:rendered-p2-v1");
+      expect(manager.restoreRenderedImage("p2", "rev-1")).toBeNull();
     });
 
     it("export dirty gate flags dirty pages for complete re-render instead of reusing stale cache", () => {

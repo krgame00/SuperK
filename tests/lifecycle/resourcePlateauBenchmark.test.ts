@@ -114,7 +114,7 @@ describe("Resource Budget Integration & Memory Plateau Benchmark (Ticket PR-4 / 
       expect(store.size()).toBe(0);
     });
 
-    it("WorkspaceResourceManager maintains warm neighborhood and restores evicted representations without loss of bubbles or edits", () => {
+    it("WorkspaceResourceManager keeps warm renders and drops cold renders for recomputation", () => {
       const manager = new WorkspaceResourceManager({ minCapMB: 10, maxCapMB: 10 });
       const pageIds = Array.from({ length: 20 }, (_, i) => `page_${i}`);
 
@@ -138,12 +138,12 @@ describe("Resource Budget Integration & Memory Plateau Benchmark (Ticket PR-4 / 
       expect(manager.hasResource("page_4", "translated-render")).toBe(true);
       expect(manager.hasResource("page_5", "translated-render")).toBe(true);
 
-      // Cold page 0 was evicted to fit the 10 MB budget, but spilled into SessionProcessedPageSpillCache!
+      // Cold page 0 must not survive in a second unbudgeted in-memory cache.
       expect(manager.hasResource("page_0", "translated-render")).toBe(false);
 
-      // Restore evicted page 0 on return / export
+      // A miss makes the caller use its existing re-render path.
       const restored = manager.restoreRenderedImage("page_0", "default");
-      expect(restored).toBe("data:rendered-0");
+      expect(restored).toBeNull();
     });
 
     it("does not restore an in-memory render from another revision", () => {
@@ -158,16 +158,15 @@ describe("Resource Budget Integration & Memory Plateau Benchmark (Ticket PR-4 / 
       expect(manager.restoreRenderedImage("p1", "rev-2")).toBe("data:new");
     });
 
-    it("does not restore a spilled render from another revision and preserves actual signature on eviction", () => {
+    it("does not restore an evicted render from another revision", () => {
       const manager = new WorkspaceResourceManager({ minCapMB: 2, maxCapMB: 2 });
       // Evict p1 by filling budget
       manager.registerRenderedImage("p1", "rev-1", "data:old-render", 1.5 * 1024 * 1024);
       manager.registerRenderedImage("p2", "rev-1", "data:other-render", 1.5 * 1024 * 1024);
 
-      // p1 is now evicted and spilled with "rev-1"
+      // p1 is now evicted.
       // Attempting to restore with "rev-2" must return null
       expect(manager.restoreRenderedImage("p1", "rev-2")).toBeNull();
     });
   });
 });
-

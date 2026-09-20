@@ -24,11 +24,30 @@ export class CleaningClientError extends Error {
 
 export async function createCleaningJob(file: Blob): Promise<CleaningJob> {
   const form = new FormData();
+  let resolvedFile = file;
   const filename =
     typeof File !== "undefined" && file instanceof File
       ? file.name
       : "page.png";
-  form.append("image", file, filename);
+
+  const ext = filename.split(".").pop()?.toLowerCase();
+  const fallbackMime =
+    ext === "jpg" || ext === "jpeg"
+      ? "image/jpeg"
+      : ext === "webp"
+        ? "image/webp"
+        : "image/png";
+
+  const resolvedMime =
+    file.type && file.type !== "application/octet-stream"
+      ? file.type
+      : fallbackMime;
+
+  if (file.type !== resolvedMime) {
+    resolvedFile = new Blob([file], { type: resolvedMime });
+  }
+
+  form.append("image", resolvedFile, filename);
   return decodeJob(
     await requestJson(`${PROXY_BASE}/v1/jobs`, {
       method: "POST",
@@ -61,7 +80,9 @@ export async function retryCleaningRegion(
   action: ManualRegionAction,
 ): Promise<CleaningJob> {
   const form = new FormData();
-  form.append("mask", mask, "mask.png");
+  const typedMask =
+    mask.type === "image/png" ? mask : new Blob([mask], { type: "image/png" });
+  form.append("mask", typedMask, "mask.png");
   form.append("cleaner", cleaner);
   form.append("action", action);
   return decodeJob(

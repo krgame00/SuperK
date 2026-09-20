@@ -566,3 +566,38 @@ def test_detector_extracts_magenta_and_chromatic_strokes_on_dark_background() ->
     assert len(res.blocks) >= 1
 
 
+def test_hybrid_detector_recovers_narrow_sparse_text_cluster() -> None:
+    """Ensure vertical/sparse text clusters where the bounding-box mean is diluted
+    by background margins are properly recovered using the component mask probability."""
+    from app.detector import (
+        DetectionResult,
+        HybridTextDetector,
+        LetterboxTransform,
+    )
+
+    class SparseTextCTD:
+        def detect(self, img):
+            h, w = img.shape[:2]
+            probability = np.zeros((h, w), dtype=np.float32)
+            # Vertical column of text at x=80..95, y=20..140 (sparse inside 120x60 box)
+            probability[20:140, 80:95] = 0.85
+            return DetectionResult(
+                mask_probability=probability,
+                blocks=[],  # CTD YOLO missed it
+                scale=LetterboxTransform(w, h, 1024, 1.0, 0, 0),
+            )
+
+    # Image with high-contrast text lines at the vertical column
+    image = np.full((160, 160, 3), 245, dtype=np.uint8)
+    for y in range(22, 138, 4):
+        image[y : y + 2, 82:93] = 15
+
+    detector = HybridTextDetector(SparseTextCTD(), paddle_engine=None)
+    res = detector.detect(image)
+
+    recovered = [b for b in res.blocks if b.rect.x <= 95 and b.rect.x + b.rect.width >= 80]
+    assert len(recovered) >= 1, "Expected vertical text column to be recovered despite sparse bounding box"
+    assert np.any(res.mask_probability[30:130, 80:95] > 0)
+
+
+

@@ -754,9 +754,53 @@ class CleaningPipeline:
                 raise ValueError("removal-mask approval is required")
             if not record.approval_revision and np.any((binary_mask > 0) & (output.mask == 0)):
                 raise ValueError("expanded mask requires fresh removal-mask approval")
+        working_image = output.clean_image.copy()
+        eligible = output.mask.copy()
+        if action is ManualRegionAction.FORCE_CLEAN:
+            # Manual mask edits replace the selected region's previous
+            # removal authorization. Restore pixels that the user erased from
+            # the mask before applying the newly approved mask; otherwise a
+            # retry would start from already-inpainted pixels.
+            selected_bounds = record.rect
+            ys = slice(selected_bounds.y, selected_bounds.y + selected_bounds.height)
+            xs = slice(selected_bounds.x, selected_bounds.x + selected_bounds.width)
+            previous_region_mask = eligible[ys, xs] > 0
+            edited_region_mask = binary_mask[ys, xs] > 0
+            removed_from_mask = previous_region_mask & ~edited_region_mask
+            working_region = working_image[ys, xs]
+            source_region = output.source_image[ys, xs]
+            working_region[removed_from_mask] = source_region[removed_from_mask]
+            eligible[ys, xs] = 0
+
         points = cv2.findNonZero(binary_mask)
         if points is None:
-            raise ValueError("retry mask is empty")
+            if action is not ManualRegionAction.FORCE_CLEAN:
+                raise ValueError("retry mask is empty")
+            review = output.review_mask.copy()
+            review[ys, xs] = 0
+            updated_records = list(output.regions)
+            updated_records[record_index] = record.model_copy(
+                update={
+                    "status": RegionStatus.PRESERVED,
+                    "residual_score": 0.0,
+                    "damage_score": 0.0,
+                    "text_confirmed": True,
+                    "mask_approved": True,
+                    "approval_revision": revision,
+                    "automatic_action": AutomaticAction.PRESERVE,
+                    "text_role": TextRole.DIALOGUE,
+                },
+            )
+            return PipelineOutput(
+                source_image=output.source_image,
+                clean_image=working_image,
+                mask=eligible,
+                review_mask=review,
+                protected_mask=output.protected_mask.copy(),
+                regions=updated_records,
+                timings_ms=dict(output.timings_ms),
+                awaiting_review=_has_awaiting_review(updated_records),
+            )
         x, y, width, height = cv2.boundingRect(points)
         bounds = record.rect
         if (x < bounds.x or y < bounds.y or x + width > bounds.x + bounds.width
@@ -855,9 +899,9 @@ class CleaningPipeline:
             raise RuntimeError(f"cleaner is unavailable: {cleaner}")
 
         started = perf_counter()
-        repaired = selected.clean(output.clean_image, binary_mask, region)
+        repaired = selected.clean(working_image, binary_mask, region)
         candidate, support = compose(
-            output.clean_image,
+            working_image,
             repaired,
             binary_mask,
             feather_radius=0,
@@ -870,7 +914,7 @@ class CleaningPipeline:
                 output.protected_mask,
             )
         report = verify_region(
-            output.clean_image,
+            working_image,
             candidate,
             binary_mask,
             support,
@@ -883,7 +927,7 @@ class CleaningPipeline:
             or action is ManualRegionAction.FORCE_CLEAN
         )
         accepted_image = (
-            candidate if accepted else output.clean_image.copy()
+            candidate if accepted else working_image.copy()
         )
         updated_records[record_index] = record.model_copy(
             update={
@@ -912,7 +956,7 @@ class CleaningPipeline:
         timings = dict(output.timings_ms)
         timings["retry"] = _elapsed_ms(started)
         timings["total"] = timings.get("total", 0) + timings["retry"]
-        eligible = np.maximum(output.mask, binary_mask)
+        eligible = np.maximum(eligible, binary_mask)
         review = output.review_mask.copy()
         review[binary_mask > 0] = 0
         protected = output.protected_mask.copy()

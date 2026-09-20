@@ -488,17 +488,17 @@ class HybridTextDetector:
 
         # Recover unassigned high-confidence text clusters from segmentation probability
         prob = ctd_res.mask_probability
-        seed_uncovered = (prob >= 0.35).astype(np.uint8) * 255
+        seed_uncovered = (prob >= 0.25).astype(np.uint8) * 255
         for b in merged_blocks:
             seed_uncovered[b.rect.y : b.rect.y + b.rect.height, b.rect.x : b.rect.x + b.rect.width] = 0
 
         close_k = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 25))
         uncovered_closed = cv2.morphologyEx(seed_uncovered, cv2.MORPH_CLOSE, close_k)
-        num_cc, _, stats, _ = cv2.connectedComponentsWithStats(uncovered_closed, connectivity=8)
+        num_cc, labels, stats, _ = cv2.connectedComponentsWithStats(uncovered_closed, connectivity=8)
         recovered_blocks: list[DetectedBlock] = []
         for i in range(1, num_cc):
             bx, by, bw, bh, area = stats[i]
-            if area < 180 or min(bw, bh) < 12:
+            if area < 100 or min(bw, bh) < 8:
                 continue
             crop = image_rgb[by : by + bh, bx : bx + bw]
             if crop.size == 0:
@@ -507,8 +507,28 @@ class HybridTextDetector:
             lap_var = float(cv2.Laplacian(crop_gray, cv2.CV_64F).var())
             crop_edges = cv2.Canny(crop_gray, 80, 160)
             edge_density = float(np.count_nonzero(crop_edges)) / max(crop_edges.size, 1)
-            comp_prob = float(np.mean(prob[by : by + bh, bx : bx + bw]))
-            if lap_var > 120 and edge_density > 0.02 and comp_prob >= 0.25:
+
+            # Compute probability on the actual connected component mask rather than whole bounding box
+            comp_mask = (labels[by : by + bh, bx : bx + bw] == i)
+            if np.any(comp_mask):
+                comp_prob = float(np.mean(prob[by : by + bh, bx : bx + bw][comp_mask]))
+            else:
+                comp_prob = float(np.mean(prob[by : by + bh, bx : bx + bw]))
+
+            # Guard against face/skin false positives (blush hatching, eyes, lips)
+            crop_ycrcb = cv2.cvtColor(crop, cv2.COLOR_RGB2YCrCb)
+            crop_cr = crop_ycrcb[:, :, 1]
+            crop_cb = crop_ycrcb[:, :, 2]
+            crop_skin = (crop_cr >= 135) & (crop_cr <= 170) & (crop_cb >= 85) & (crop_cb <= 125)
+            skin_ratio = float(np.count_nonzero(crop_skin)) / max(crop_skin.size, 1)
+
+            is_valid_uncovered = lap_var > 120 and edge_density > 0.02 and comp_prob >= 0.25
+            if skin_ratio > 0.25:
+                is_valid_uncovered = is_valid_uncovered and lap_var > 2000.0 and edge_density > 0.08
+            else:
+                is_valid_uncovered = is_valid_uncovered and lap_var > 300.0
+
+            if is_valid_uncovered:
                 pad = 6
                 rx = max(0, bx - pad)
                 ry = max(0, by - pad)
@@ -520,6 +540,7 @@ class HybridTextDetector:
                         confidence=comp_prob,
                     ),
                 )
+
 
         if recovered_blocks:
             merged_blocks = _merge_adjacent_blocks(merged_blocks + recovered_blocks, max_gap=30)
