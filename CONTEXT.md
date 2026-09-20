@@ -45,7 +45,7 @@ The separately detected fill and outline colors of a glyph. A profile is usable 
 _Avoid_: Average crop color, foreground color
 
 **Source text style profile**:
-The source-faithful visual style recovered from original glyph evidence, including fill color, whether an outline exists, outline color and relative thickness, opacity, and any confidently detected gradient, shadow, or glow.
+The visual style recovered from original glyph evidence, including fill color, outline presence, outline color and relative thickness, opacity, and any confidently detected decorative effects. Detected shadow or glow remains source evidence but does not override the Uniform translated text shadow used by automatic translated rendering.
 _Avoid_: Readability preset, global text style, average crop style
 
 **Style confidence band**:
@@ -61,7 +61,7 @@ The semantic visual class of a source text region used to constrain style inheri
 _Avoid_: Ambiguous Caption, nearest bubble type, color family
 
 **Readable fallback style**:
-A background-aware Binary Fill + Source Outline style used when source-style evidence is invalid/insufficient or when the user explicitly selects Readable. Its glyph fill is restricted to pure white or pure black, it always includes an outline, and local readability against the Inpainted clean background remains authoritative. A trustworthy Source accent color may tint the outline and may be strengthened while preserving hue when practical; a safe neutral outline is allowed when the accent cannot provide enough separation.
+A background-aware Binary Fill + Source Outline style used when source-style evidence is invalid/insufficient or when the user explicitly selects Readable. Its glyph fill is restricted to pure white or pure black, it always includes an outline, and local readability against the Inpainted clean background remains authoritative. A trustworthy Source accent color may tint the outline and may be strengthened while preserving hue when practical; a safe neutral outline is allowed when the accent cannot provide enough separation. Automatic readability may strengthen the outline or escalate to the permitted background treatment, but it does not add a stronger per-region shadow than the Uniform translated text shadow.
 _Avoid_: Chromatic fallback fill, source text style profile, fixed white fallback, silent style inheritance
 
 **Binary Fill + Source Outline**:
@@ -71,6 +71,10 @@ _Avoid_: Universal outline on validated source, arbitrary chromatic fill, hue-na
 **Source accent color**:
 A trustworthy detected source color used primarily as the thematic outline accent for Binary Fill Readable output. It may come from source fill or outline evidence and may have its lightness/value strengthened for readability while preserving hue where practical.
 _Avoid_: Background crop color, mandatory exact RGB, fallback fill color
+
+**Uniform translated text shadow**:
+The single neutral dark drop-shadow treatment applied consistently and proportionally to automatically rendered translated text so one region does not gain a stronger, weaker, or missing shadow merely because its source effect detection or local readability differs. Manual style override may intentionally replace or disable it.
+_Avoid_: Per-region detected shadow, readability halo, source decorative shadow
 
 **Translated glyph footprint**:
 The page area actually occupied by the laid-out translated glyphs plus the small margin needed to evaluate outline or readability separation. Binary Fill Readable decisions sample the Inpainted clean background against this footprint instead of treating the whole OCR box as the readability surface.
@@ -85,8 +89,8 @@ A user-owned text style that automation may warn about but must not modify until
 _Avoid_: Temporary auto style, gate-corrected manual style
 
 **Source-faithful rendering**:
-Rendering translated text from a validated Source text style profile. Source fidelity takes precedence when the profile passes the Source style evidence gate and remains legible against its local background. The admitted source profile preserves authored outline presence or absence, so a validated no-outline source may remain no-outline; mandatory automatic outline belongs to the Readable fallback path.
-_Avoid_: Binary fallback styling presented as source, unvalidated source fidelity, forced outline on admitted no-outline source
+Rendering translated text from a validated Source text style profile while preserving the admitted source fill, outline presence, outline color/relative thickness, opacity, and other supported non-shadow styling. Detected source shadow or glow does not bypass the Uniform translated text shadow, so automatic rendering remains visually consistent across regions; a validated no-outline source may still remain no-outline.
+_Avoid_: Binary fallback styling presented as source, unvalidated source fidelity, per-region source shadow preservation
 
 **Legacy universal outline default**:
 The superseded policy that automatically added a contrasting outline to all translated text lacking a detected source outline. ADR 0012 narrows this rule: Binary Fill Readable output always has an outline, while an admitted Source text style profile may preserve no-outline source styling.
@@ -176,9 +180,49 @@ _Avoid_: Blind restart, automatic page retry
 The absolute wait-until time attached to one quota failure group during which that group's retry action is disabled; expiration enables user-initiated retry but never sends a request by itself.
 _Avoid_: Global retry lock, auto-retry timer
 
+**Gemini key pool**:
+The active set of Gemini credentials eligible to serve a translation request. A user-provided pool and the server-provided pool are separate ownership domains rather than one implicitly mixed source of quota.
+_Avoid_: Comma-separated key string, global API key
+
+**Gemini model catalog**:
+The current set of Gemini models available to the active Gemini key pool, including which credentials can reach each model and whether SuperK has verified that model for a translation workflow.
+_Avoid_: Hard-coded model list, fixed fallback hierarchy
+
+**Translation model compatibility**:
+SuperK's workflow-specific knowledge that a discovered Gemini model can satisfy the contract for text translation or image/multimodal translation. An unverified model is not the same as an incompatible model, and transient quota or network failures do not change compatibility.
+_Avoid_: Model availability, quota status, one global compatible flag
+
+**Gemini model route**:
+An eligible pairing of one Gemini model with one credential from the active key pool for a specific translation request. Route-level availability and cooldown are evaluated before treating an entire credential as unavailable.
+_Avoid_: Global key rotation, model-only fallback
+
+**Last-known-good translation model**:
+The most recently successful compatible Gemini model remembered separately for each translation workflow and preferred by Auto when it remains eligible.
+_Avoid_: Global default model, permanent pinned model
+
 **Owned desktop child process**:
 A workspace or sidecar process for which the desktop application can verify launch ownership strongly enough to reclaim it safely after an abnormal prior termination.
 _Avoid_: Any process using port 3000 or 8765
+
+**Balanced resource lifecycle**:
+The policy that keeps resources needed for active translation responsive while bounding or releasing inactive page, model, and background resources so long-running sessions settle instead of growing continuously.
+_Avoid_: Minimum-memory mode, unlimited warm cache, gaming mode
+
+**Warm page set**:
+The small neighborhood of manga pages intentionally kept immediately ready for navigation around the current page. The current policy treats the current page and its immediate previous and next pages as the warm page set.
+_Avoid_: Whole-book preload, prepared-page prefetch
+
+**Resource memory pressure**:
+A condition indicating that SuperK should reclaim optional resident resources sooner because either its own bounded resource allowance or the host system's available memory is under pressure.
+_Avoid_: Out-of-memory crash, fixed per-page limit
+
+**Temporary processed-page cache**:
+A session-scoped disk-backed copy of recomputable page artifacts used to restore an evicted page without retaining its heavy representation in memory or repeating expensive processing. It is distinct from durable project assets and is discarded when the application session ends.
+_Avoid_: Project storage, prepared-page identity, permanent cache
+
+**Idle resource mode**:
+The low-activity state entered after active work is complete, in which optional model residency, hidden-window rendering, and background activity may be reduced while preserving the user's saved work and the ability to resume.
+_Avoid_: Application exit, cancelled job, gaming mode
 
 **Remembered export destination**:
 The persistent local filesystem directory path configured in user preferences where exported manga archives, documents, or images are written directly without repeated save-dialog prompts.
