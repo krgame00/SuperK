@@ -740,6 +740,7 @@ export function extractTextColors(
       {
         fill: chromHex,
         outline: outlineColor,
+        sourceAccentColor: chromHex,
         hasOutline: true,
         outlineWidthRatio: outlineRatio,
         outlineWidth: 1.0,

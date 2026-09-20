@@ -7,14 +7,14 @@ import type { TranslatedBubble } from "@/lib/translationOverlay";
 import type { TextStyleProfile } from "@/lib/colorMatching/types";
 
 describe("Ticket 13: Adaptive Readable on Bright & White Backgrounds", () => {
-  it("selects dark fill with light outline on bright/white backgrounds for Adaptive Readable fallback", () => {
+  it("selects white fill with safe dark outline on bright/white backgrounds for Adaptive Readable fallback", () => {
     const adaptive = selectAdaptiveReadableStyle({
       backgroundLuminance: 245,
       backgroundColor: "#ffffff",
     });
 
-    expect(adaptive.textColor).toBe("#000000");
-    expect(adaptive.textOutline).toBe("#ffffff");
+    expect(adaptive.textColor).toBe("#ffffff");
+    expect(adaptive.textOutline).toBe("#000000");
     expect(adaptive.hasOutline).toBe(true);
     expect(adaptive.outlineWidthRatio).toBeGreaterThanOrEqual(0.10);
     expect(adaptive.source).toBe("fallback");
@@ -33,7 +33,7 @@ describe("Ticket 13: Adaptive Readable on Bright & White Backgrounds", () => {
     expect(adaptive.source).toBe("fallback");
   });
 
-  it("resolves Auto → Readable fallback on bright/white speech balloons to dark-fill outlined text", () => {
+  it("resolves Auto → Readable fallback on bright/white speech balloons to white-fill dark-outlined text", () => {
     const bubble: TranslatedBubble = {
       id: "bubble_white_balloon",
       box: [100, 300, 250, 500],
@@ -51,8 +51,8 @@ describe("Ticket 13: Adaptive Readable on Bright & White Backgrounds", () => {
     };
 
     const resolved = resolveBubbleTextStyle(bubble);
-    expect(resolved.textColor).toBe("#000000");
-    expect(resolved.textOutline).toBe("#ffffff");
+    expect(resolved.textColor).toBe("#ffffff");
+    expect(resolved.textOutline).toBe("#000000");
     expect(resolved.hasOutline).toBe(true);
     expect(resolved.source).toBe("fallback");
   });
@@ -98,8 +98,8 @@ describe("Ticket 13: Adaptive Readable on Bright & White Backgrounds", () => {
     };
 
     const resolvedBright = resolveBubbleTextStyle(bubbleBright);
-    expect(resolvedBright.textColor).toBe("#000000");
-    expect(resolvedBright.textOutline).toBe("#ffffff");
+    expect(resolvedBright.textColor).toBe("#ffffff");
+    expect(resolvedBright.textOutline).toBe("#000000");
     expect(resolvedBright.hasOutline).toBe(true);
 
     const bubbleDark: TranslatedBubble = {
@@ -192,7 +192,8 @@ describe("Ticket 13: Adaptive Readable on Bright & White Backgrounds", () => {
 
     const resolved = resolveBubbleTextStyle(autoBubble);
     expect(resolved.source).toBe("fallback");
-    expect(resolved.textColor).toBe("#000000");
+    expect(resolved.textColor).toBe("#ffffff");
+    expect(resolved.textOutline).toBe("#000000");
     expect(resolved.hasOutline).toBe(true);
     // Profile preserves ownershipMode: "auto"
     expect(autoBubble.styleProfile?.ownershipMode).toBe("auto");

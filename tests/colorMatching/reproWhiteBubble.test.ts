@@ -121,6 +121,8 @@ describe("Reproduction: speech bubble on dark artwork background", () => {
       t: "เนโร?",
       styleProfile: profile,
     });
-    expect(resolved.textColor).not.toBe("#ffffff");
+    expect(resolved.textColor).toBe("#ffffff");
+    expect(resolved.hasOutline).toBe(true);
+    expect(resolved.textOutline).toBe("#000000");
   });
 });

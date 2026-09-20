@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { resolveBubbleTextStyle, selectAdaptiveReadableStyle } from "@/lib/colorMatching/resolveTextStyle";
+import { resolveBubbleTextStyle, selectAdaptiveReadableStyle, STANDARD_TRANSLATED_TEXT_SHADOW } from "@/lib/colorMatching/resolveTextStyle";
 import type { TranslatedBubble } from "@/lib/translationOverlay";
 import type { TextStyleProfile } from "@/lib/colorMatching/types";
 
 describe("Ticket 18: Binary Fill Readable Foundation", () => {
-  it("emits only pure white or pure black glyph fill in selectAdaptiveReadableStyle", () => {
+  it("emits pure white glyph fill in selectAdaptiveReadableStyle", () => {
     const darkBgStyle = selectAdaptiveReadableStyle({
       backgroundLuminance: 40,
     });
@@ -14,7 +14,7 @@ describe("Ticket 18: Binary Fill Readable Foundation", () => {
     const brightBgStyle = selectAdaptiveReadableStyle({
       backgroundLuminance: 220,
     });
-    expect(brightBgStyle.textColor).toBe("#000000");
+    expect(brightBgStyle.textColor).toBe("#ffffff");
     expect(brightBgStyle.hasOutline).toBe(true);
   });
 
@@ -47,6 +47,7 @@ describe("Ticket 18: Binary Fill Readable Foundation", () => {
         hasOutline: false,
         outlineWidthRatio: 0,
         source: "auto",
+        ownershipMode: "source_faithful",
         fillConfidence: 0.95,
         outlineConfidence: 0.95,
         evidenceState: "admitted",
@@ -66,16 +67,16 @@ describe("Ticket 18: Binary Fill Readable Foundation", () => {
       styleProfile: {
         fill: "#e91e63",
         outline: "#000000",
-        hasOutline: false,
-        outlineWidthRatio: 0,
         source: "manual",
         ownershipMode: "manual",
+        hasOutline: true,
+        outlineWidthRatio: 0.15,
       } as TextStyleProfile,
     };
 
     const resolved = resolveBubbleTextStyle(bubble);
     expect(resolved.textColor).toBe("#e91e63");
-    expect(resolved.hasOutline).toBe(false);
+    expect(resolved.source).toBe("manual");
   });
 
   it("explicit Readable mode emits pure white or pure black and always has an outline", () => {
@@ -83,10 +84,10 @@ describe("Ticket 18: Binary Fill Readable Foundation", () => {
       id: 4,
       t: "โหมดอ่านง่าย",
       styleProfile: {
-        fill: "#4caf50",
-        outline: "#000000",
-        ownershipMode: "readable",
+        fill: "#ff0077",
+        outline: "#ffffff",
         source: "auto",
+        ownershipMode: "readable",
         backgroundLuminance: 50,
       } as TextStyleProfile,
     };
@@ -106,6 +107,7 @@ describe("Ticket 18: Binary Fill Readable Foundation", () => {
         outline: "#ffffff",
         hasOutline: true,
         source: "auto",
+        ownershipMode: "source_faithful",
         fillConfidence: 0.92,
         outlineConfidence: 0.92,
         evidenceState: "admitted",
@@ -121,7 +123,8 @@ describe("Ticket 18: Binary Fill Readable Foundation", () => {
 
     const resolved = resolveBubbleTextStyle(bubble);
     expect(resolved.textColor).toBe("#ff5722");
-    expect(resolved.glow).toBeDefined();
-    expect(resolved.glow?.color).toBe("#ffeb3b");
+    expect(resolved.glow).toBeUndefined();
+    expect(resolved.shadow).toEqual(STANDARD_TRANSLATED_TEXT_SHADOW);
+    expect(bubble.styleProfile?.glow?.color).toBe("#ffeb3b");
   });
 });

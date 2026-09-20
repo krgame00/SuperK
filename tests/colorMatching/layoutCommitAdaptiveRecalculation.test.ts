@@ -74,8 +74,8 @@ describe("Ticket 16: Layout-Commit Adaptive Recalculation & Ownership Persistenc
     expect(readableBubble.styleProfile?.backgroundLuminance).toBeGreaterThan(200);
 
     const resolved = resolveBubbleTextStyle(readableBubble);
-    expect(resolved.textColor).toBe("#000000");
-    expect(resolved.textOutline).toBe("#ffffff");
+    expect(resolved.textColor).toBe("#ffffff");
+    expect(resolved.textOutline).toBe("#000000");
     expect(resolved.hasOutline).toBe(true);
   });
 

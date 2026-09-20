@@ -40,7 +40,7 @@ describe("Ticket 21: Binary Fill Ownership, UI State & Persistence", () => {
       };
 
       const resolved = resolveBubbleTextStyle(bubble);
-      expect(resolved.textColor).toBe("#000000"); // Binary fill on bright bg
+      expect(resolved.textColor).toBe("#ffffff"); // White fill on bright bg
       expect(resolved.hasOutline).toBe(true);
       expect(resolved.source).toBe("fallback");
       expect(profile.ownershipMode).toBe("auto");
@@ -176,8 +176,8 @@ describe("Ticket 21: Binary Fill Ownership, UI State & Persistence", () => {
         styleProfile: {
           ownershipMode: "auto",
           source: "fallback",
-          fill: "#000000",
-          outline: "#ffffff",
+          fill: "#ffffff",
+          outline: "#000000",
           hasOutline: true,
           outlineWidthRatio: 0.16,
           backgroundLuminance: 240,
@@ -195,8 +195,8 @@ describe("Ticket 21: Binary Fill Ownership, UI State & Persistence", () => {
       expect(deserialized.styleProfile?.reviewRequired).toBe(true);
 
       const resolved = resolveBubbleTextStyle(deserialized);
-      expect(resolved.textColor).toBe("#000000");
-      expect(resolved.textOutline).toBe("#ffffff");
+      expect(resolved.textColor).toBe("#ffffff");
+      expect(resolved.textOutline).toBe("#000000");
       expect(resolved.hasOutline).toBe(true);
       expect(resolved.reviewRequired).toBe(true);
     });

@@ -39,9 +39,8 @@ function getHue(hex: string): number {
 
 describe("Ticket 20: Background-Aware Binary Readability Gate", () => {
   describe("Preferred Pair Rejection & Alternate Binary Fill Selection", () => {
-    it("rejects bright-accent white-fill preference on white/bright speech balloon and selects black fill", () => {
-      // Source text has bright cyan accent (#00e5ff), which normally prefers white fill.
-      // But text is inside a bright white speech balloon (bgLum = 245).
+    it("uses white fill with strengthened cyan source outline on white/bright speech balloon", () => {
+      // Source text has bright cyan accent (#00e5ff) inside a bright white speech balloon (bgLum = 245).
       const style = selectAdaptiveReadableStyle({
         sourceAccentColor: "#00e5ff",
         backgroundLuminance: 245,
@@ -49,15 +48,16 @@ describe("Ticket 20: Background-Aware Binary Readability Gate", () => {
         backgroundLuminanceSamples: [240, 245, 250, 248, 242],
       });
 
-      // White fill on white background would disappear. Gate must select Black fill (#000000).
-      expect(style.textColor).toBe("#000000");
+      // White fill is preserved and outline is strengthened cyan (darkened with hue preserved)
+      expect(style.textColor).toBe("#ffffff");
       expect(style.hasOutline).toBe(true);
-      expect(style.textOutline).toBe("#ffffff");
+      const hue = getHue(style.textOutline);
+      expect(hue).toBeGreaterThan(170);
+      expect(hue).toBeLessThan(200);
     });
 
-    it("rejects dark-accent black-fill preference on dark panel and selects white fill", () => {
-      // Source text has dark slate accent (#1a1a2e), which normally prefers black fill.
-      // But text is over a dark night panel (bgLum = 30).
+    it("uses white fill with dark outline on dark panel", () => {
+      // Source text has dark slate accent (#1a1a2e) over a dark night panel (bgLum = 30).
       const style = selectAdaptiveReadableStyle({
         sourceAccentColor: "#1a1a2e",
         backgroundLuminance: 30,
@@ -65,10 +65,9 @@ describe("Ticket 20: Background-Aware Binary Readability Gate", () => {
         backgroundLuminanceSamples: [25, 30, 35, 28, 32],
       });
 
-      // Black fill on dark background would blend in. Gate must select White fill (#ffffff).
       expect(style.textColor).toBe("#ffffff");
       expect(style.hasOutline).toBe(true);
-      expect(style.textOutline).toBe("#000000");
+      expect(style.textOutline).not.toBe("#ffffff");
     });
 
     it("accepts bright-accent white-fill preference on dark/artwork backgrounds", () => {
@@ -88,7 +87,7 @@ describe("Ticket 20: Background-Aware Binary Readability Gate", () => {
       expect(hue).toBeLessThan(200);
     });
 
-    it("accepts dark-accent black-fill preference on bright backgrounds", () => {
+    it("uses white fill with safe dark outline for dark accent on bright background", () => {
       // Source text has dark accent (#111827) on bright speech balloon (bgLum = 240).
       const style = selectAdaptiveReadableStyle({
         sourceAccentColor: "#111827",
@@ -96,9 +95,9 @@ describe("Ticket 20: Background-Aware Binary Readability Gate", () => {
         backgroundColor: "#ffffff",
       });
 
-      expect(style.textColor).toBe("#000000");
+      expect(style.textColor).toBe("#ffffff");
       expect(style.hasOutline).toBe(true);
-      expect(style.textOutline).toBe("#ffffff");
+      expect(style.textOutline).not.toBe("#ffffff");
     });
   });
 
@@ -111,8 +110,7 @@ describe("Ticket 20: Background-Aware Binary Readability Gate", () => {
         category: "dialogue",
       });
 
-      // Bright majority selects black fill (#000000)
-      expect(style.textColor).toBe("#000000");
+      expect(style.textColor).toBe("#ffffff");
       expect(style.hasOutline).toBe(true);
       // Escalated outline (0.16–0.20) to ensure legibility across the dark patch
       expect(style.outlineWidthRatio).toBeGreaterThanOrEqual(0.16);
@@ -190,28 +188,29 @@ describe("Ticket 20: Background-Aware Binary Readability Gate", () => {
   });
 
   describe("resolveBubbleTextStyle Integration", () => {
-    it("re-evaluates and switches fill when bright accent text is in a bright speech balloon", () => {
+    it("does not reuse a rejected source accent and falls back to a safe dark outline", () => {
       const bubble: TranslatedBubble = {
         id: "bubble_cyan_on_white",
         box: [100, 100, 200, 300],
         t: "ข้อความบนบอลลูนขาว",
         styleProfile: {
-          sourceAccentColor: "#00ffff", // Bright cyan accent
+          sourceAccentColor: "#00ffff", // Candidate color was detected, but evidence rejected it.
           fill: "#00ffff",
           outline: "#ffffff",
           source: "fallback",
           fallbackReason: "low-readability",
           evidenceState: "rejected",
+          fillConfidence: 0.52,
+          outlineConfidence: 0.48,
           backgroundLuminance: 245,
           backgroundColor: "#ffffff",
         } as TextStyleProfile,
       };
 
       const resolved = resolveBubbleTextStyle(bubble);
-      // On white balloon, must NOT use white fill; must switch to black fill
-      expect(resolved.textColor).toBe("#000000");
+      expect(resolved.textColor).toBe("#ffffff");
       expect(resolved.hasOutline).toBe(true);
-      expect(resolved.textOutline).toBe("#ffffff");
+      expect(resolved.textOutline).toBe("#000000");
     });
   });
 });

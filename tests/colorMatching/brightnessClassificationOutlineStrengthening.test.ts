@@ -148,16 +148,16 @@ describe("Ticket 19: Brightness Classification & Outline Strengthening", () => {
       expect(hue).toBeLessThan(200);
     });
 
-    it("prefers black fill + high-contrast light outline for dark accents", () => {
+    it("uses white fill with strengthened dark outline for dark accents", () => {
       const style = selectAdaptiveReadableStyle({
         sourceAccentColor: "#0f172a", // Dark Slate
       });
-      expect(style.textColor).toBe("#000000");
+      expect(style.textColor).toBe("#ffffff");
       expect(style.hasOutline).toBe(true);
-      expect(style.textOutline).toBe("#ffffff");
+      expect(style.textOutline).not.toBe("#ffffff");
     });
 
-    it("evaluates ambiguous mid-tone accents according to background context", () => {
+    it("uses white fill with strengthened mid-tone accent outline across background contexts", () => {
       const darkBgStyle = selectAdaptiveReadableStyle({
         sourceAccentColor: "#3b82f6", // Mid-tone blue
         backgroundLuminance: 30, // Dark background
@@ -169,11 +169,12 @@ describe("Ticket 19: Brightness Classification & Outline Strengthening", () => {
         sourceAccentColor: "#3b82f6",
         backgroundLuminance: 230, // Bright background
       });
-      expect(brightBgStyle.textColor).toBe("#000000");
+      expect(brightBgStyle.textColor).toBe("#ffffff");
       expect(brightBgStyle.hasOutline).toBe(true);
+      expect(brightBgStyle.textOutline).not.toBe("#ffffff");
     });
 
-    it("ensures glyph fill is strictly pure white or pure black across all accent variations", () => {
+    it("ensures glyph fill is strictly pure white across all accent variations", () => {
       const testAccents = [
         "#ff0055", // Bright rose
         "#ffff00", // Yellow
@@ -186,7 +187,7 @@ describe("Ticket 19: Brightness Classification & Outline Strengthening", () => {
 
       for (const accent of testAccents) {
         const style = selectAdaptiveReadableStyle({ sourceAccentColor: accent });
-        expect(["#ffffff", "#000000"]).toContain(style.textColor);
+        expect(style.textColor).toBe("#ffffff");
         expect(style.hasOutline).toBe(true);
       }
     });

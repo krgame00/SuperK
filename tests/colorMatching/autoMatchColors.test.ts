@@ -45,6 +45,7 @@ describe("autoMatchColors style resolution", () => {
         fillConfidence: 0.88,
         outlineConfidence: 0.82,
         source: "auto",
+        ownershipMode: "source_faithful",
       },
     };
 

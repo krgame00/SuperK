@@ -4,6 +4,7 @@ import {
   recomputeAdaptiveReadableOnLayoutCommit,
   resolveBubbleTextStyle,
   selectAdaptiveReadableStyle,
+  STANDARD_TRANSLATED_TEXT_SHADOW,
 } from "@/lib/colorMatching/resolveTextStyle";
 import { extractTextColors } from "@/lib/colorMatching/sampleTextColors";
 import { inferTextStyleCategory } from "@/lib/colorMatching/nearbyStyleFallback";
@@ -103,7 +104,9 @@ describe("Ticket 22: Binary Fill Regression, Batch & Export Parity", () => {
       // Retains exact source chromatic styling
       expect(resolved.textColor).toBe("#ff5722");
       expect(resolved.textOutline).toBe("#ffff00");
-      expect(resolved.glow?.color).toBe("#ff0000");
+      expect(resolved.glow).toBeUndefined();
+      expect(resolved.shadow).toEqual(STANDARD_TRANSLATED_TEXT_SHADOW);
+      expect(decorativeBubble.styleProfile?.glow?.color).toBe("#ff0000");
       expect(resolved.source).toBe("auto");
     });
 
@@ -149,32 +152,34 @@ describe("Ticket 22: Binary Fill Regression, Batch & Export Parity", () => {
           sourceAccentColor: tc.accent,
           category: tc.cat,
         });
-        expect(["#ffffff", "#000000"]).toContain(style.textColor);
+        expect(style.textColor).toBe("#ffffff");
         expect(style.hasOutline).toBe(true);
       }
     });
 
-    it("prevents white-on-white text in white speech balloons by rejecting white fill preference", () => {
+    it("falls back to a safe dark outline when cyan detection is rejected as background contamination", () => {
       const bubble: TranslatedBubble = {
         id: "white_balloon",
         box: [100, 100, 200, 300],
         t: "ข้อความบนบอลลูนขาว",
         styleProfile: {
-          sourceAccentColor: "#00ffff", // Bright cyan (prefers white fill normally)
+          sourceAccentColor: "#00ffff", // Candidate color is rejected as background contamination.
           fill: "#00ffff",
           outline: "#ffffff",
           source: "fallback",
           fallbackReason: "background-contamination",
           evidenceState: "rejected",
+          fillConfidence: 0.50,
+          outlineConfidence: 0.45,
           backgroundLuminance: 250,
           backgroundColor: "#ffffff",
         },
       };
 
       const resolved = resolveBubbleTextStyle(bubble);
-      expect(resolved.textColor).toBe("#000000"); // Must switch to black fill
+      expect(resolved.textColor).toBe("#ffffff");
       expect(resolved.hasOutline).toBe(true);
-      expect(resolved.textOutline).toBe("#ffffff");
+      expect(resolved.textOutline).toBe("#000000");
     });
 
     it("prevents black-on-dark text on dark artwork by rejecting black fill preference", () => {
@@ -197,7 +202,7 @@ describe("Ticket 22: Binary Fill Regression, Batch & Export Parity", () => {
       const resolved = resolveBubbleTextStyle(bubble);
       expect(resolved.textColor).toBe("#ffffff"); // Must switch to white fill
       expect(resolved.hasOutline).toBe(true);
-      expect(resolved.textOutline).toBe("#000000");
+      expect(resolved.textOutline).not.toBe("#ffffff");
     });
 
     it("strengthens pastel source accent outlines while preserving hue", () => {
@@ -241,7 +246,7 @@ describe("Ticket 22: Binary Fill Regression, Batch & Export Parity", () => {
       };
 
       const resolved = resolveBubbleTextStyle(bubble);
-      expect(resolved.textColor).toBe("#000000");
+      expect(resolved.textColor).toBe("#ffffff");
       expect(resolved.hasOutline).toBe(true);
       expect(resolved.source).toBe("fallback");
       // Uncertain source glow is not rendered in fallback
@@ -289,7 +294,7 @@ describe("Ticket 22: Binary Fill Regression, Batch & Export Parity", () => {
 
       expect(singleResults[0]).toEqual(batchResults[0]);
       expect(singleResults[1]).toEqual(batchResults[1]);
-      expect(singleResults[0].textColor).toBe("#000000");
+      expect(singleResults[0].textColor).toBe("#ffffff");
       expect(singleResults[1].textColor).toBe("#ffffff");
     });
 

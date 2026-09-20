@@ -64,9 +64,9 @@ describe("Ticket 17: Adaptive Readable Regression & Export Parity", () => {
       };
 
       const resolved = resolveBubbleTextStyle(whiteBalloonBubble);
-      // Must NOT be white-on-white!
-      expect(resolved.textColor).toBe("#000000");
-      expect(resolved.textOutline).toBe("#ffffff");
+      // White fill + safe dark outline prevents invisible white-on-white text
+      expect(resolved.textColor).toBe("#ffffff");
+      expect(resolved.textOutline).toBe("#000000");
       expect(resolved.hasOutline).toBe(true);
       expect(resolved.source).toBe("fallback");
     });
