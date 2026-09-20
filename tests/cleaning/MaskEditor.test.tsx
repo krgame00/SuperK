@@ -209,4 +209,109 @@ describe("MaskEditor", () => {
     // Status should not have changed during arrow movements
     expect(status.textContent).toBe(initialText);
   });
+
+  test("One-Click Clean automatically chains confirm-text and force-clean for unconfirmed regions", async () => {
+    HTMLCanvasElement.prototype.toBlob = vi.fn((callback) => {
+      callback(new Blob(["mock-mask"], { type: "image/png" }));
+    }) as unknown as typeof HTMLCanvasElement.prototype.toBlob;
+
+    const onRetry = vi.fn().mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    renderMaskEditor({ onRetry, onClose });
+
+    await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+
+    const oneClickCleanBtn = screen.getByRole("button", { name: /คลีนจุดนี้ทันที/ });
+    expect(oneClickCleanBtn).toBeTruthy();
+
+    fireEvent.click(oneClickCleanBtn);
+
+    await waitFor(() => {
+      // First call confirms text because textConfirmed was false
+      expect(onRetry).toHaveBeenCalledWith("region-1", expect.any(Blob), "auto", "confirm-text");
+      // Second call executes force-clean
+      expect(onRetry).toHaveBeenCalledWith("region-1", expect.any(Blob), "auto", "force-clean");
+      // Closes dialog after completion
+      expect(onClose).toHaveBeenCalled();
+    });
+  });
+
+  test("Region stepper and overlay badges switch between speech bubbles", async () => {
+    const secondRegion: CleaningRegion = {
+      id: "region-2",
+      rect: { x: 50, y: 40, width: 30, height: 20 },
+      route: "artwork",
+      confidence: 0.95,
+      status: "needs_review",
+      residualScore: 0,
+      damageScore: 0,
+      pageRole: "comic",
+      textRole: "review",
+      eligibilityConfidence: 0.8,
+      automaticAction: "clean",
+      protectionReasons: [],
+    };
+
+    renderMaskEditor({ regions: [preservedRegion, secondRegion] });
+
+    // Initial region is #1
+    expect(screen.getByText("1 / 2")).toBeTruthy();
+
+    // Click Next Balloon button
+    const nextBtn = screen.getByRole("button", { name: "บอลลูนถัดไป" });
+    fireEvent.click(nextBtn);
+    expect(screen.getByText("2 / 2")).toBeTruthy();
+
+    // Click badge for #1 directly on the canvas overlay
+    const badge1 = await screen.findByRole("button", { name: "เลือกบอลลูนที่ 1: region-1" });
+    fireEvent.click(badge1);
+    expect(screen.getByText("1 / 2")).toBeTruthy();
+  });
+
+  test("Smart Fill Box and Clear Box modify the mask and support Undo", async () => {
+    renderMaskEditor();
+
+    await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+
+    const fillBtn = screen.getByRole("button", { name: "เติมเต็มกรอบ" });
+    fireEvent.click(fillBtn);
+    expect(screen.getByRole("status")).toHaveTextContent("เติม Mask เต็มกรอบแล้ว");
+
+    // Undo fill
+    expect(undoManager.undo()).toBe("เติม Mask เต็มกรอบ");
+
+    const clearBtn = screen.getByRole("button", { name: "ล้างกรอบนี้" });
+    fireEvent.click(clearBtn);
+    expect(screen.getByRole("status")).toHaveTextContent("ล้าง Mask ในกรอบแล้ว");
+
+    // Undo clear
+    expect(undoManager.undo()).toBe("ล้าง Mask ในกรอบ");
+  });
+
+  test("Zoom controls allow zooming in, out, and resetting zoom", () => {
+    renderMaskEditor();
+
+    const zoomInBtn = screen.getByRole("button", { name: "ซูมเข้า" });
+    const zoomOutBtn = screen.getByRole("button", { name: "ซูมออก" });
+    const resetBtn = screen.getByRole("button", { name: "พอดีหน้าจอ" });
+
+    // Initial zoom is 100%
+    expect(screen.getByText("100%")).toBeTruthy();
+
+    // Zoom in to 125%
+    fireEvent.click(zoomInBtn);
+    expect(screen.getByText("125%")).toBeTruthy();
+
+    // Zoom in to 150%
+    fireEvent.click(zoomInBtn);
+    expect(screen.getByText("150%")).toBeTruthy();
+
+    // Zoom out to 125%
+    fireEvent.click(zoomOutBtn);
+    expect(screen.getByText("125%")).toBeTruthy();
+
+    // Reset zoom
+    fireEvent.click(resetBtn);
+    expect(screen.getByText("100%")).toBeTruthy();
+  });
 });
