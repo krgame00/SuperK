@@ -13,7 +13,6 @@ import {
   GeminiRequestError,
   requestGemini,
 } from "@/lib/server/geminiRequest";
-import { resetRateLimits } from "@/lib/server/rateLimiter";
 import { POST as translateImage } from "@/src/app/api/translate/route";
 import { POST as translateText } from "@/src/app/api/translate-text/route";
 import { POST as validateGeminiKey } from "@/src/app/api/translate/validate-key/route";
@@ -24,7 +23,6 @@ const requestGeminiMock = vi.mocked(requestGemini);
 beforeEach(() => {
   vi.restoreAllMocks();
   requestGeminiMock.mockReset();
-  resetRateLimits();
 });
 
 afterEach(() => {
