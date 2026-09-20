@@ -67,8 +67,29 @@ def create_app(
                 LOGGER.info("startup sweep removed %d old job(s)", removed)
         except Exception:
             LOGGER.exception("startup retention sweep failed")
-        yield
-        store.shutdown()
+
+        async def _periodic_sweep() -> None:
+            while True:
+                await asyncio.sleep(3600)
+                try:
+                    sweep_count = await asyncio.to_thread(store.sweep_completed)
+                    if sweep_count:
+                        LOGGER.info("periodic retention sweep removed %d old job(s)", sweep_count)
+                except asyncio.CancelledError:
+                    break
+                except Exception:
+                    LOGGER.exception("periodic retention sweep failed")
+
+        sweep_task = asyncio.create_task(_periodic_sweep())
+        try:
+            yield
+        finally:
+            sweep_task.cancel()
+            try:
+                await sweep_task
+            except asyncio.CancelledError:
+                pass
+            store.shutdown()
 
     app = FastAPI(title="SuperK Cleaner", version="0.1.0", lifespan=lifespan)
     app.state.job_store = store
