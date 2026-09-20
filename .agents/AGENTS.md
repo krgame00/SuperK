@@ -19,15 +19,15 @@
   - **Quality First**: When solving problems, perform deep root-cause analysis. Ensure the code is clean, covers edge cases, and follows best practices. Do not provide band-aid fixes.
   - **Exceptional Communication**: Explain issues and solutions clearly and engagingly, similar to the Thai tech creator "9arm". Break down complex technical concepts so they are easy to understand. Explain *why* something broke and *why* your solution is the best approach, avoiding unnecessary jargon.
 
-## Gemini API Key & Model Priority Rules
-- **Model Preference & Fallback Hierarchy**:
-  1. `gemini-3.5-flash-lite` — **Primary Default** (High Quota: 500 RPD, 15 RPM; optimal for fast batch translation)
-  2. `gemini-3.6-flash` — **High-Precision Model** (20 RPD, 5 RPM; default first choice for Auto-Retry OCR mode)
-  3. `gemini-3-flash` (20 RPD, 5 RPM)
-  4. `gemini-3.5-flash` (20 RPD, 5 RPM)
-  5. `gemini-3.1-flash-lite` (500 RPD, 15 RPM)
-  6. `gemini-2.5-flash` (20 RPD, 5 RPM)
-  7. `gemini-2.5-flash-lite` (20 RPD, 10 RPM)
-- **Quota & Key Management**:
-  - Automatically rotate to the next fallback model upon encountering `429 (Quota Exceeded)` or `404 (Model Not Found)`.
-  - Support multi-API key rotation (comma-separated string in user settings) to bypass single-key rate limits.
+## Project Working-State Notes
+- **Must read before changing translation/Gemini/masking/desktop behavior**: `docs/AI-WORKING-NOTES.md` records approaches that were actually tried, what the user confirmed works, regressions, paused directions, and verification evidence. Update it when a new approach is validated or rejected.
+
+## Gemini API Key & Model Routing Rules
+- **Current production baseline**: Image and text translation use the fixed `requestGemini()` routing path. The user confirmed this path works after rollback from the dynamic router. Do not silently replace it with `executeGeminiTranslation()` or make the Dynamic Gemini Model Catalog authoritative on the live translation path.
+- **Dynamic catalog status**: `geminiCatalog.ts`, `geminiTranslationRouter.ts`, `/api/translate/models`, and related Settings/Extension code remain experimental infrastructure. They may be investigated or feature-flagged, but must pass the real manga image workload before replacing the fixed route.
+- **Key-pool ownership**: A user-supplied Gemini key string takes precedence over server `GEMINI_API_KEY`; otherwise use the server key(s). Never log raw keys or place them in URLs.
+- **Auto routing**: Preserve the current fixed model hierarchy in the translation routes unless the user explicitly approves a new routing experiment. Keep a direct rollback path.
+- **Manual model selection**: Manual selection may pass a selected model ID to the fixed route, but models outside the known-good Auto list are not broadly live-verified; do not assume discovery implies workload compatibility.
+- **Validation evidence**: Mock/catalog tests alone are not sufficient for a routing replacement. Require TypeScript/tests plus the same real image workload that previously regressed.
+- **Safety-filter failures**: Do not infer that dynamic discovery, a key, a model, or the cleaning pipeline caused a Google Safety Filter response without reproducing and tracing the request path.
+- **Dynamic-routing experiments**: If revisited, keep the fixed route available behind an immediate rollback switch and verify the same real manga images before promoting the experiment.
