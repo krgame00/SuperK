@@ -21,8 +21,9 @@ not removed by this change.
 - Add regressions for oversized renders and a 100-page sequence, including
   registering a freshly rebuilt render after eviction.
 
-The standalone sessionSpillCache utility and its tests are retained; it no longer
-participates in the workspace manager. No unrelated cleanup is included.
+The unused standalone sessionSpillCache utility and its dedicated tests were
+removed in the follow-up cleanup. WorkspaceResourceManager still returns a
+cache miss after eviction, and callers regenerate the render from saved bubbles.
 
 ## Verification and limits
 
