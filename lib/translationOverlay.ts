@@ -73,6 +73,8 @@ export interface TranslatedBubble {
   deleted?: boolean;
   /** runtime font size multiplier for this bubble */
   fontSizeMultiplier?: number;
+  /** persisted interactive layout; source of truth for move/resize/rotation */
+  layoutAdjustment?: OverlayAdjustment;
   /** redraw callback attached to overlay bubbles */
   render?: () => void;
   styleProfile?: TextStyleProfile;
@@ -149,6 +151,21 @@ export const saveOverlayAdjustments = (adjustments: Record<string, Record<string
   try {
     localStorage.setItem(ADJ_KEY, JSON.stringify(adjustments));
   } catch {}
+};
+
+const compactOverlayPageKey = (pageKey: string): string => {
+  if (pageKey.length <= 512) return pageKey;
+
+  // Imported pages are durable data URLs. Using the full base64 payload as a
+  // localStorage object key can consume megabytes per page and silently hit
+  // browser quota. Keep localStorage as a compact legacy/fallback index only;
+  // the bubble itself owns the authoritative layout state.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < pageKey.length; i += 1) {
+    hash ^= pageKey.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `page-${(hash >>> 0).toString(36)}-${pageKey.length}`;
 };
 
 export const clearPageAdjustments = (pageIndex: number): void => {
@@ -541,7 +558,12 @@ export const applyTranslationOverlay = async (
     // Adjustments are keyed by page URL — keying by array index re-mapped
     // every saved position whenever pages were reordered or deleted.
     const pageKey = pageKeyOverride ?? `page-${currentPage}`;
-    const savedAdj = readOverlayAdjustments()[pageKey] || {};
+    const storagePageKey = compactOverlayPageKey(pageKey);
+    const allSavedAdjustments = readOverlayAdjustments();
+    const savedAdj =
+      allSavedAdjustments[storagePageKey]
+      ?? allSavedAdjustments[pageKey]
+      ?? {};
 
     const tlContainer = document.createElement("div");
     tlContainer.className = "tl-canvas";
@@ -619,10 +641,11 @@ export const applyTranslationOverlay = async (
       const legacyBubbleId = b.id !== undefined
         ? `id-${b.id}`
         : `text-${(b.t || b.translated || "").slice(0, 10)}-${rawX.toFixed(1)}-${rawY.toFixed(1)}`;
-      const adj = savedAdj[bubbleId] ?? savedAdj[legacyBubbleId];
+      const legacyAdj = savedAdj[bubbleId] ?? savedAdj[legacyBubbleId];
+      const adj = b.layoutAdjustment ?? legacyAdj;
 
-      if (adj?.fontSizeMultiplier !== undefined && b.fontSizeMultiplier === undefined) {
-        b.fontSizeMultiplier = adj.fontSizeMultiplier;
+      if (legacyAdj?.fontSizeMultiplier !== undefined && b.fontSizeMultiplier === undefined) {
+        b.fontSizeMultiplier = legacyAdj.fontSizeMultiplier;
       }
 
       let currentBx = adj ? adj.bx : (rawX / 100) * iw - ((rawW / 100) * iw) / 2;
@@ -632,9 +655,7 @@ export const applyTranslationOverlay = async (
       let currentRotation = adj?.rotation !== undefined ? adj.rotation : ((b.rotation as number) || 0);
 
       const saveAdjustment = () => {
-        const all = readOverlayAdjustments();
-        if (!all[pageKey]) all[pageKey] = {};
-        all[pageKey][bubbleId] = {
+        const persistedLayout: OverlayAdjustment = {
           bx: currentBx,
           by: currentBy,
           bw: currentBw,
@@ -642,6 +663,13 @@ export const applyTranslationOverlay = async (
           iw,
           ih,
           rotation: currentRotation,
+        };
+        b.layoutAdjustment = persistedLayout;
+
+        const all = readOverlayAdjustments();
+        if (!all[storagePageKey]) all[storagePageKey] = {};
+        all[storagePageKey][bubbleId] = {
+          ...persistedLayout,
           ...(typeof b.fontSizeMultiplier === "number" ? { fontSizeMultiplier: b.fontSizeMultiplier } : {}),
         };
         saveOverlayAdjustments(all);

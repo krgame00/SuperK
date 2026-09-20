@@ -27,6 +27,30 @@ let shadowOffsetsY: number[];
 beforeEach(() => {
   vi.useFakeTimers();
   undoManager.clear();
+
+  const storageValues = new Map<string, string>();
+  const storage: Storage = {
+    get length() {
+      return storageValues.size;
+    },
+    clear: () => storageValues.clear(),
+    getItem: (key: string) => storageValues.get(key) ?? null,
+    key: (index: number) => [...storageValues.keys()][index] ?? null,
+    removeItem: (key: string) => {
+      storageValues.delete(key);
+    },
+    setItem: (key: string, value: string) => {
+      storageValues.set(key, String(value));
+    },
+  };
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: storage,
+  });
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: storage,
+  });
   fillTextSpy = vi.fn();
   strokeTextSpy = vi.fn();
   lineWidths = [];
@@ -82,6 +106,10 @@ afterEach(() => {
 async function renderOverlay(
   text = "ข้อความแปล",
   bubbleOverrides: Partial<TranslatedBubble> = {},
+  options: {
+    pageKeyOverride?: string;
+    onBubblesMutated?: () => void;
+  } = {},
 ) {
   const container = document.createElement("div");
   const image = document.createElement("img");
@@ -113,6 +141,8 @@ async function renderOverlay(
       },
     },
     container,
+    options.pageKeyOverride,
+    options.onBubblesMutated,
   );
   await vi.runAllTimersAsync();
 
@@ -377,6 +407,78 @@ describe("translation overlay live editor and keyboard controls", () => {
     expect(Number.parseFloat(wrapper.style.width)).toBeGreaterThanOrEqual(widthBefore);
     expect(pageNavigation).not.toHaveBeenCalled();
     window.removeEventListener("keydown", pageNavigation);
+  });
+
+  test("persists moved position and font size on the bubble across a page remount", async () => {
+    window.localStorage.clear();
+    const pageKey = `data:image/png;base64,${"A".repeat(20_000)}`;
+    const onBubblesMutated = vi.fn();
+    const first = await renderOverlay(
+      "จำตำแหน่ง",
+      {},
+      { pageKeyOverride: pageKey, onBubblesMutated },
+    );
+
+    first.wrapper.focus();
+    first.wrapper.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "ArrowRight",
+        shiftKey: true,
+        bubbles: true,
+      }),
+    );
+    first.toolbar
+      .querySelector<HTMLButtonElement>('[aria-label^="เพิ่มขนาดข้อความ"]')!
+      .click();
+
+    const movedLeft = first.wrapper.style.left;
+    const fontSizeMultiplier = first.bubble.fontSizeMultiplier;
+    expect(fontSizeMultiplier).toBeGreaterThan(1);
+    expect(onBubblesMutated).toHaveBeenCalled();
+
+    const sessionRoundTrip = JSON.parse(
+      JSON.stringify(first.bubble),
+    ) as TranslatedBubble;
+    expect(
+      (sessionRoundTrip as TranslatedBubble & {
+        layoutAdjustment?: { bx: number };
+      }).layoutAdjustment?.bx,
+    ).toBeTypeOf("number");
+
+    window.localStorage.clear();
+    first.container.remove();
+
+    const restored = await renderOverlay(
+      "จำตำแหน่ง",
+      sessionRoundTrip,
+      { pageKeyOverride: pageKey },
+    );
+
+    expect(restored.wrapper.style.left).toBe(movedLeft);
+    expect(restored.bubble.fontSizeMultiplier).toBe(fontSizeMultiplier);
+  });
+
+  test("uses a compact localStorage key instead of embedding the full page data URL", async () => {
+    window.localStorage.clear();
+    const pageKey = `data:image/png;base64,${"B".repeat(20_000)}`;
+    const { wrapper } = await renderOverlay(
+      "คีย์สั้น",
+      {},
+      { pageKeyOverride: pageKey },
+    );
+
+    wrapper.focus();
+    wrapper.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "ArrowRight",
+        bubbles: true,
+      }),
+    );
+
+    const stored = window.localStorage.getItem("superk:overlay-adjustments");
+    expect(stored).toBeTruthy();
+    expect(stored).not.toContain(pageKey);
+    expect(stored!.length).toBeLessThan(2_000);
   });
 
   test("supports deletion and undo", async () => {

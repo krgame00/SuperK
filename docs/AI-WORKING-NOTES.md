@@ -2,7 +2,7 @@
 
 > **Purpose:** This file records approaches that were actually tried in this repository, what worked in the user's real workflow, what regressed, and what is intentionally paused. Future AI agents should read this before changing translation, Gemini routing, masking, or desktop packaging behavior.
 >
-> **Last updated:** 2026-09-17
+> **Last updated:** 2026-09-20
 
 ## Current product direction
 
@@ -105,6 +105,28 @@ A prior regression caused removed mask areas to remain cleaned because FORCE_CLE
 The fix in `ocr-service/app/pipeline.py` changed the behavior so the approved/selected mask authorizes the final removal region, removed areas are restored from the source, and an empty approved mask removes nothing.
 
 That fix was covered by backend and frontend regression tests. Do not reintroduce old-mask union behavior without a new explicit requirement.
+
+## Overlay edit persistence — validated 2026-09-20
+
+### VERIFIED WORKING: move/resize/rotation/font-size edits survive page remounts
+
+The web workspace previously split translated-bubble state between two persistence paths: `fontSizeMultiplier` lived on `TranslatedBubble`, while move/resize/rotation geometry lived only in `superk:overlay-adjustments` localStorage. Imported image pages are represented by durable base64 data URLs, and the full page URL was used as the localStorage object key. That made geometry persistence depend on storing a potentially multi-megabyte key; `saveOverlayAdjustments()` silently catches quota failures, so a page remount could fall back to the original OCR box.
+
+Current contract:
+
+- `TranslatedBubble.layoutAdjustment` is the authoritative persisted geometry for move/resize/rotation.
+- `TranslatedBubble.fontSizeMultiplier` remains the authoritative per-bubble font-size override.
+- `saveAdjustment()` writes geometry back to the bubble before marking the page dirty, so the existing IndexedDB bubble-session autosave carries the edit.
+- Page restore prefers `bubble.layoutAdjustment`; localStorage is only a legacy fallback.
+- Long page keys (including `data:image/...` URLs) are compacted before fallback localStorage writes, while old raw keys are still readable for compatibility.
+
+Verification evidence:
+
+- TDD regression reproduced the bug before the fix: session-style JSON roundtrip had no geometry, and fallback localStorage contained the full data URL.
+- Focused overlay regression: **18/18 passed** after the fix.
+- Focused overlay/session/export persistence set: **35/35 passed**.
+- Full Vitest suite: **141/141 files, 846/846 tests passed**.
+- `npx tsc --noEmit`, scoped ESLint, `git diff --check`, and `npm run build`: passed.
 
 ## Desktop build history — successful but paused
 
