@@ -570,29 +570,43 @@ export const applyTranslationOverlay = async (
     tlContainer.style.cssText = `position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:10;`;
     container.appendChild(tlContainer);
 
+    const chromeRoot =
+      viewMode === "single"
+        ? (container.parentElement?.querySelector<HTMLElement>("[data-overlay-chrome-layer]")
+          ?? document.getElementById("overlayChromeLayer"))
+        : null;
+    chromeRoot?.querySelectorAll("[data-translation-chrome]").forEach((el) => el.remove());
+
+    type BubbleChromeControls = {
+      toolbar: HTMLElement;
+      handles: HTMLElement[];
+      position: () => void;
+      setVisible: (visible: boolean) => void;
+    };
+    const chromeControlsByWrapper = new WeakMap<HTMLElement, BubbleChromeControls>();
+
     let fallbackY2 = 10;
 
     let selectedBubbleWrapper: HTMLElement | null = null;
     const setSelectedBubble = (wrapper: HTMLElement | null) => {
+      (chromeRoot ?? tlContainer).querySelectorAll<HTMLElement>("[data-bubble-more-menu]").forEach((menu) => {
+        menu.style.display = "none";
+      });
       if (selectedBubbleWrapper && selectedBubbleWrapper !== wrapper) {
         selectedBubbleWrapper.style.outline = "none";
         selectedBubbleWrapper.style.zIndex = "10";
         selectedBubbleWrapper.removeAttribute("data-selected");
-        selectedBubbleWrapper.querySelectorAll(".action-handle, .bubble-quick-toolbar, .delete-btn, .edit-btn").forEach((h) => {
-          (h as HTMLElement).style.opacity = "0";
-          (h as HTMLElement).style.pointerEvents = "none";
-        });
+        chromeControlsByWrapper.get(selectedBubbleWrapper)?.setVisible(false);
       }
       selectedBubbleWrapper = wrapper;
-      if (wrapper) {
-        wrapper.style.outline = "2px solid #3b82f6";
-        wrapper.style.zIndex = "30";
-        wrapper.setAttribute("data-selected", "true");
-        wrapper.querySelectorAll(".action-handle, .bubble-quick-toolbar, .delete-btn, .edit-btn").forEach((h) => {
-          (h as HTMLElement).style.opacity = "1";
-          (h as HTMLElement).style.pointerEvents = "auto";
-        });
-      }
+      if (!wrapper) return;
+
+      wrapper.style.outline = "2px solid #3b82f6";
+      wrapper.style.zIndex = "30";
+      wrapper.setAttribute("data-selected", "true");
+      const controls = chromeControlsByWrapper.get(wrapper);
+      controls?.position();
+      controls?.setVisible(true);
     };
 
     if (img && (img.naturalWidth > 0 || img.width > 0)) {
@@ -700,6 +714,7 @@ export const applyTranslationOverlay = async (
       const bCanvas = document.createElement("canvas");
       bCanvas.style.cssText = `display:block; width:100%; height:100%; pointer-events:none;`;
       wrapper.appendChild(bCanvas);
+      let activeEditorPosition: (() => void) | null = null;
       const ts = textStyleRef?.current || { fontFamily: "Itim, sans-serif", textColor: "#000000", textOutline: "#FFFFFF", fontSizeMultiplier: 1.0 };
       const fontFam = resolvedFontFam;
       const fontMult = ts.fontSizeMultiplier || 1.0;
@@ -812,6 +827,7 @@ export const applyTranslationOverlay = async (
           ctx.fillStyle = fillPaint;
           ctx.fillText(l, currentBw / 2, yPos);
         });
+        chromeControlsByWrapper.get(wrapper)?.position();
       };
 
       b.render = renderBubble;
@@ -875,38 +891,71 @@ export const applyTranslationOverlay = async (
       });
 
       const openLiveEditor = () => {
-        tlContainer.querySelectorAll("[data-translation-editor]").forEach((el) => el.remove());
+        chromeControlsByWrapper.get(wrapper)?.setVisible(false);
+        const editorHost = chromeRoot ?? tlContainer;
+        editorHost.querySelectorAll("[data-translation-editor]").forEach((el) => el.remove());
 
         const openingText = (b.t || b.translated || "").trim();
         const editor = document.createElement("div");
         editor.setAttribute("data-translation-editor", "true");
+        editor.setAttribute("data-translation-chrome", "true");
         editor.className = "translation-editor-bubble";
-        editor.style.cssText = `position:absolute; z-index:50; pointer-events:auto; display:flex; align-items:center; gap:4px; background:#18181b; border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:6px; box-shadow:0 8px 24px rgba(0,0,0,0.5);`;
+        editor.style.cssText = `position:absolute; z-index:60; pointer-events:auto; display:grid; gap:7px; box-sizing:border-box; background:rgba(24,24,27,0.98); backdrop-filter:blur(14px); border:1px solid rgba(255,255,255,0.22); border-radius:11px; padding:7px; box-shadow:0 12px 32px rgba(0,0,0,0.55);`;
 
-        const input = document.createElement("input");
-        input.type = "text";
-        input.value = openingText;
-        input.setAttribute("aria-label", "แก้ไขข้อความแปล");
-        input.className = "translation-editor-input";
-        input.style.cssText = `background:#27272a; color:#f4f4f5; border:1px solid #3f3f46; border-radius:6px; padding:4px 8px; font-size:12px; min-width:180px; outline:none;`;
+        const textarea = document.createElement("textarea");
+        textarea.rows = 2;
+        textarea.value = openingText;
+        textarea.setAttribute("aria-label", "แก้ไขข้อความแปล");
+        textarea.className = "translation-editor-input";
+        textarea.style.cssText = `display:block; width:100%; min-width:320px; min-height:48px; max-height:160px; box-sizing:border-box; resize:none; overflow-y:auto; background:#27272a; color:#f4f4f5; border:1px solid #52525b; border-radius:9px; padding:10px 12px; font-size:16px; line-height:1.45; font-family:inherit; outline:none;`;
 
-        editor.appendChild(input);
+        editor.appendChild(textarea);
 
-        const rect = tlContainer.getBoundingClientRect();
-        const bLeftPx = (currentBx / iw) * (rect.width || iw);
-        const bTopPx = (currentBy / ih) * (rect.height || ih);
-        const editorTop = bTopPx - 44 >= 0 ? bTopPx - 44 : bTopPx + (currentBh / ih) * (rect.height || ih) + 6;
-        const editorLeft = Math.max(8, Math.min((rect.width || iw) - 220, bLeftPx));
+        const editorActions = document.createElement("div");
+        editorActions.style.cssText = `display:flex; justify-content:flex-end; align-items:center; gap:6px;`;
+        editor.appendChild(editorActions);
 
-        editor.style.left = `${editorLeft}px`;
-        editor.style.top = `${editorTop}px`;
+        const positionEditor = () => {
+          const hostRect = editorHost.getBoundingClientRect();
+          const stageRect = tlContainer.getBoundingClientRect();
+          const hostScale = chromeRoot
+            ? 1
+            : (stageRect.width > 0 ? Math.max(0.01, stageRect.width / iw) : 1);
+          const viewportWidth = (hostRect.width || iw * hostScale) / hostScale;
+          const viewportHeight = (hostRect.height || ih * hostScale) / hostScale;
+          const editorWidth = Math.max(220, Math.min(320, viewportWidth - 16));
+          const bubbleRect = wrapper.getBoundingClientRect();
+          const bubbleLeft = bubbleRect.width > 0
+            ? (bubbleRect.left - hostRect.left) / hostScale
+            : currentBx;
+          const bubbleTop = bubbleRect.height > 0
+            ? (bubbleRect.top - hostRect.top) / hostScale
+            : currentBy;
+          const bubbleWidth = bubbleRect.width > 0 ? bubbleRect.width / hostScale : currentBw;
+          const bubbleHeight = bubbleRect.height > 0 ? bubbleRect.height / hostScale : currentBh;
+          const editorHeight = (editor.offsetHeight || 108) / (chromeRoot ? 1 : hostScale);
+          const aboveTop = bubbleTop - editorHeight - 10;
+          const belowTop = bubbleTop + bubbleHeight + 10;
+          const top = aboveTop >= 8
+            ? aboveTop
+            : Math.max(8, Math.min(viewportHeight - editorHeight - 8, belowTop));
+          const preferredLeft = bubbleLeft + bubbleWidth / 2 - editorWidth / 2;
+          const left = Math.max(8, Math.min(viewportWidth - editorWidth - 8, preferredLeft));
+
+          editor.style.width = `${editorWidth}px`;
+          editor.style.maxWidth = "calc(100% - 16px)";
+          textarea.style.minWidth = `${Math.min(300, editorWidth)}px`;
+          editor.style.left = `${left}px`;
+          editor.style.top = `${top}px`;
+        };
+        activeEditorPosition = positionEditor;
 
         let isCommitted = false;
 
         const commit = () => {
           if (isCommitted) return;
           isCommitted = true;
-          const finalVal = input.value.trim();
+          const finalVal = textarea.value.trim();
           b.t = finalVal;
           b.translated = finalVal;
           renderBubble();
@@ -929,6 +978,7 @@ export const applyTranslationOverlay = async (
               },
             });
           }
+          activeEditorPosition = null;
           editor.remove();
           wrapper.focus();
         };
@@ -939,34 +989,68 @@ export const applyTranslationOverlay = async (
           b.t = openingText;
           b.translated = openingText;
           renderBubble();
+          activeEditorPosition = null;
           editor.remove();
           wrapper.focus();
         };
 
-        input.addEventListener("input", () => {
-          b.t = input.value;
-          b.translated = input.value;
+        const createEditorAction = (label: string, glyph: string, onClick: () => void, primary = false) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.setAttribute("aria-label", label);
+          button.title = label;
+          button.textContent = glyph;
+          button.style.cssText = `width:40px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:8px; border:1px solid ${primary ? "#3b82f6" : "#52525b"}; background:${primary ? "#2563eb" : "#27272a"}; color:#fff; font-size:18px; font-weight:700; cursor:pointer;`;
+          button.addEventListener("pointerdown", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          });
+          button.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onClick();
+          });
+          return button;
+        };
+
+        editorActions.appendChild(createEditorAction("ยกเลิกการแก้ไข", "×", cancel));
+        editorActions.appendChild(createEditorAction("บันทึกข้อความ", "✓", commit, true));
+
+        const autoGrowEditor = () => {
+          textarea.style.height = "auto";
+          textarea.style.height = `${Math.min(160, Math.max(48, textarea.scrollHeight || 48))}px`;
+          positionEditor();
+        };
+
+        textarea.addEventListener("input", () => {
+          b.t = textarea.value;
+          b.translated = textarea.value;
           renderBubble();
+          autoGrowEditor();
         });
 
-        input.addEventListener("keydown", (e) => {
+        textarea.addEventListener("keydown", (e) => {
           e.stopPropagation();
-          if (e.key === "Enter") {
-            e.preventDefault();
-            commit();
-          } else if (e.key === "Escape") {
+          if (e.key === "Escape") {
             e.preventDefault();
             cancel();
+          } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            commit();
           }
         });
 
-        input.addEventListener("blur", () => {
-          commit();
+        textarea.addEventListener("blur", () => {
+          queueMicrotask(() => {
+            if (!isCommitted && !editor.contains(document.activeElement)) commit();
+          });
         });
 
-        tlContainer.appendChild(editor);
-        input.focus();
-        input.select();
+        editorHost.appendChild(editor);
+        positionEditor();
+        autoGrowEditor();
+        textarea.focus();
+        textarea.select();
       };
 
       const deleteBubbleWithUndo = () => {
@@ -1115,15 +1199,15 @@ export const applyTranslationOverlay = async (
         }
       });
 
-      // 1. Interactive Handles with SVG icons matching reference design (4 main handles)
+      // 1. Interactive handles live in the unscaled chrome layer.
+      const chromeHandles: HTMLElement[] = [];
       const handlesConfig = [
         {
           id: 'rotate',
           pos: 'nw',
           cursor: 'grab',
           title: 'หมุนข้อความ',
-          size: 48,
-          offset: -24,
+          size: 38,
           icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>`
         },
         {
@@ -1131,8 +1215,7 @@ export const applyTranslationOverlay = async (
           pos: 'ne',
           cursor: 'nesw-resize',
           title: 'ปรับขนาดเฉียง',
-          size: 48,
-          offset: -24,
+          size: 38,
           icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" x2="14" y1="3" y2="10"/><line x1="3" x2="10" y1="21" y2="14"/></svg>`
         },
         {
@@ -1140,8 +1223,7 @@ export const applyTranslationOverlay = async (
           pos: 'e',
           cursor: 'ew-resize',
           title: 'ปรับความกว้าง',
-          size: 48,
-          offset: -24,
+          size: 38,
           icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 8 22 12 18 16"/><polyline points="6 8 2 12 6 16"/><line x1="2" x2="22" y1="12" y2="12"/></svg>`
         },
         {
@@ -1149,33 +1231,28 @@ export const applyTranslationOverlay = async (
           pos: 'sw',
           cursor: 'move',
           title: 'ย้ายตำแหน่ง (ลากเพื่อย้ายกล่อง)',
-          size: 52,
-          offset: -26,
+          size: 40,
           icon: `<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" x2="22" y1="12" y2="12"/><line x1="12" x2="12" y1="2" y2="22"/></svg>`
         }
       ];
 
-      handlesConfig.forEach(({ id, pos, cursor, title, icon, size, offset }) => {
+      handlesConfig.forEach(({ id, pos, cursor, title, icon, size }) => {
         const handle = document.createElement("div");
         handle.className = `action-handle action-handle--${id}`;
+        handle.setAttribute("data-translation-chrome", "true");
+        handle.setAttribute("data-handle-position", pos);
         handle.title = title;
         const handleSize = size || 36;
-        const handleOffset = offset || -18;
-        handle.style.cssText = `position:absolute; width:${handleSize}px; height:${handleSize}px; background:#ffffff; border:3px solid #3b82f6; border-radius:50%; z-index:35; opacity:0; pointer-events:none; display:flex; align-items:center; justify-content:center; color:#2563eb; cursor:${cursor}; box-shadow:0 4px 14px rgba(0,0,0,0.4); transition:transform 120ms ease, opacity 150ms ease, box-shadow 120ms ease; touch-action:none; user-select:none;`;
+        handle.style.cssText = `position:absolute; width:${handleSize}px; height:${handleSize}px; background:#ffffff; border:2.5px solid #3b82f6; border-radius:50%; z-index:45; opacity:0; pointer-events:none; display:flex; align-items:center; justify-content:center; color:#2563eb; cursor:${cursor}; box-shadow:0 3px 10px rgba(0,0,0,0.35); transition:opacity 120ms ease, box-shadow 120ms ease, filter 120ms ease; touch-action:none; user-select:none; transform:translate(-50%, -50%);`;
         handle.innerHTML = icon;
 
-        if (pos === 'nw') { handle.style.top = `${handleOffset}px`; handle.style.left = `${handleOffset}px`; }
-        else if (pos === 'ne') { handle.style.top = `${handleOffset}px`; handle.style.right = `${handleOffset}px`; }
-        else if (pos === 'e') { handle.style.top = '50%'; handle.style.right = `${handleOffset}px`; handle.style.transform = 'translateY(-50%)'; }
-        else if (pos === 'sw') { handle.style.bottom = `${handleOffset}px`; handle.style.left = `${handleOffset}px`; }
-
         handle.addEventListener('mouseenter', () => {
-          handle.style.transform = pos === 'e' ? 'translateY(-50%) scale(1.15)' : 'scale(1.15)';
+          handle.style.filter = 'brightness(1.04)';
           handle.style.boxShadow = '0 6px 16px rgba(37,99,235,0.45)';
           handle.style.borderColor = '#1d4ed8';
         });
         handle.addEventListener('mouseleave', () => {
-          handle.style.transform = pos === 'e' ? 'translateY(-50%) scale(1)' : 'scale(1)';
+          handle.style.filter = '';
           handle.style.boxShadow = '0 3px 10px rgba(0,0,0,0.35)';
           handle.style.borderColor = '#3b82f6';
         });
@@ -1244,30 +1321,34 @@ export const applyTranslationOverlay = async (
           saveAdjustment();
         });
 
-        wrapper.appendChild(handle);
+        chromeHandles.push(handle);
+        (chromeRoot ?? wrapper).appendChild(handle);
       });
 
       // 2. Top Floating Quick Action Toolbar
       const toolbar = document.createElement("div");
       toolbar.className = "bubble-quick-toolbar action-handle";
+      toolbar.setAttribute("data-translation-chrome", "true");
       toolbar.style.cssText = `
         position: absolute;
-        bottom: 100%;
-        left: 50%;
-        transform: translateX(-50%) translateY(-14px);
+        left: 0;
+        top: 0;
+        transform: translate(-50%, -100%);
         background: rgba(24, 24, 27, 0.96);
         backdrop-filter: blur(12px);
-        border: 1.5px solid rgba(255, 255, 255, 0.25);
-        border-radius: 9999px;
-        box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55);
-        padding: 6px 12px;
+        border: 1px solid rgba(255, 255, 255, 0.24);
+        border-radius: 11px;
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+        padding: 4px 6px;
         display: flex;
         align-items: center;
-        gap: 3px;
-        z-index: 40;
+        gap: 2px;
+        max-width: calc(100% - 16px);
+        overflow: visible;
+        z-index: 50;
         opacity: 0;
         pointer-events: none;
-        transition: opacity 150ms ease-out, transform 150ms ease-out;
+        transition: opacity 120ms ease-out;
         user-select: none;
       `;
 
@@ -1279,9 +1360,9 @@ export const applyTranslationOverlay = async (
         btn.className = "action-handle";
         btn.innerHTML = svg;
         btn.style.cssText = `
-          width: 42px;
-          height: 42px;
-          border-radius: 10px;
+          width: 36px;
+          height: 36px;
+          border-radius: 8px;
           background: transparent;
           color: ${isDanger ? '#ef4444' : '#e4e4e7'};
           border: none;
@@ -1484,25 +1565,150 @@ export const applyTranslationOverlay = async (
         true
       );
 
-      toolbar.appendChild(decreaseFontBtn);
-      toolbar.appendChild(increaseFontBtn);
-      toolbar.appendChild(createDivider());
-      toolbar.appendChild(editBtn);
-      toolbar.appendChild(colorBtn);
-      toolbar.appendChild(shadowBtn);
-      toolbar.appendChild(originalStyleBtn);
-      toolbar.appendChild(fillBtn);
+      const moreMenu = document.createElement("div");
+      moreMenu.setAttribute("data-bubble-more-menu", "true");
+      moreMenu.style.cssText = `position:absolute; top:calc(100% + 8px); right:0; display:none; align-items:center; gap:2px; padding:5px; background:rgba(24,24,27,0.98); border:1px solid rgba(255,255,255,0.2); border-radius:10px; box-shadow:0 10px 28px rgba(0,0,0,0.5); z-index:45;`;
+      moreMenu.appendChild(decreaseFontBtn);
+      moreMenu.appendChild(increaseFontBtn);
+      moreMenu.appendChild(shadowBtn);
+      moreMenu.appendChild(originalStyleBtn);
+      moreMenu.appendChild(fillBtn);
+      moreMenu.addEventListener("click", (event) => {
+        if ((event.target as HTMLElement | null)?.closest("button")) {
+          moreMenu.style.display = "none";
+        }
+      });
+
+      const moreBtn = createToolBtn(
+        "เครื่องมือเพิ่มเติม",
+        `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>`,
+        () => {
+          moreMenu.style.display = moreMenu.style.display === "flex" ? "none" : "flex";
+        },
+      );
+
       toolbar.appendChild(duplicateBtn);
       toolbar.appendChild(copyBtn);
+      toolbar.appendChild(editBtn);
+      toolbar.appendChild(colorBtn);
       toolbar.appendChild(layerBtn);
+      toolbar.appendChild(moreBtn);
       toolbar.appendChild(createDivider());
       toolbar.appendChild(deleteBtn);
-      wrapper.appendChild(toolbar);
+      toolbar.appendChild(moreMenu);
+      (chromeRoot ?? wrapper).appendChild(toolbar);
 
-      renderBubble();
+      const positionChromeControls = () => {
+        if (wrapper.style.display === "none") return;
+
+        if (!chromeRoot) {
+          const localPoints: Record<string, [string, string]> = {
+            nw: ["0", "0"],
+            ne: ["100%", "0"],
+            e: ["100%", "50%"],
+            sw: ["0", "100%"],
+          };
+          chromeHandles.forEach((handle) => {
+            const [left, top] = localPoints[handle.dataset.handlePosition ?? "nw"];
+            handle.style.left = left;
+            handle.style.top = top;
+          });
+          toolbar.style.left = "50%";
+          toolbar.style.top = "-10px";
+          toolbar.style.transform = "translate(-50%, -100%)";
+          activeEditorPosition?.();
+          return;
+        }
+
+        const rootRect = chromeRoot.getBoundingClientRect();
+        const bubbleRect = wrapper.getBoundingClientRect();
+        const left = bubbleRect.left - rootRect.left;
+        const top = bubbleRect.top - rootRect.top;
+        const right = bubbleRect.right - rootRect.left;
+        const bottom = bubbleRect.bottom - rootRect.top;
+        const centerX = left + bubbleRect.width / 2;
+        const centerY = top + bubbleRect.height / 2;
+
+        chromeHandles.forEach((handle) => {
+          const pos = handle.dataset.handlePosition;
+          let x = left;
+          let y = top;
+          if (pos === "ne") x = right;
+          else if (pos === "e") { x = right; y = centerY; }
+          else if (pos === "sw") y = bottom;
+          handle.style.left = `${x}px`;
+          handle.style.top = `${y}px`;
+        });
+
+        const toolbarWidth = toolbar.offsetWidth || 286;
+        const toolbarHeight = toolbar.offsetHeight || 46;
+        const rootWidth = rootRect.width || Math.max(right + 16, toolbarWidth + 16);
+        const placeBelow = top < toolbarHeight + 14;
+        const minCenter = toolbarWidth / 2 + 8;
+        const maxCenter = Math.max(minCenter, rootWidth - toolbarWidth / 2 - 8);
+        const toolbarX = Math.max(minCenter, Math.min(maxCenter, centerX));
+        const toolbarY = placeBelow ? bottom + 10 : top - 10;
+        toolbar.style.left = `${toolbarX}px`;
+        toolbar.style.top = `${toolbarY}px`;
+        toolbar.style.transformOrigin = placeBelow ? "center top" : "center bottom";
+        toolbar.style.transform = placeBelow ? "translate(-50%, 0)" : "translate(-50%, -100%)";
+        activeEditorPosition?.();
+      };
+
+      const setChromeVisible = (visible: boolean) => {
+        toolbar.style.opacity = visible ? "1" : "0";
+        toolbar.style.pointerEvents = visible ? "auto" : "none";
+        if (!visible) moreMenu.style.display = "none";
+        chromeHandles.forEach((handle) => {
+          handle.style.opacity = visible ? "1" : "0";
+          handle.style.pointerEvents = visible ? "auto" : "none";
+        });
+      };
+
+      chromeControlsByWrapper.set(wrapper, {
+        toolbar,
+        handles: chromeHandles,
+        position: positionChromeControls,
+        setVisible: setChromeVisible,
+      });
+
       tlContainer.appendChild(wrapper);
+      renderBubble();
     });
 
+    const syncSelectedChrome = () => {
+      if (!selectedBubbleWrapper) return;
+      chromeControlsByWrapper.get(selectedBubbleWrapper)?.position();
+    };
+    let chromeSyncFrame: number | null = null;
+    let chromeSyncFramesRemaining = 0;
+    const runChromeSyncFrame = () => {
+      chromeSyncFrame = null;
+      syncSelectedChrome();
+      chromeSyncFramesRemaining = Math.max(0, chromeSyncFramesRemaining - 1);
+      if (chromeSyncFramesRemaining > 0) {
+        chromeSyncFrame = requestAnimationFrame(runChromeSyncFrame);
+      }
+    };
+    const scheduleChromeSync = (frames = 1) => {
+      chromeSyncFramesRemaining = Math.max(chromeSyncFramesRemaining, frames);
+      if (chromeSyncFrame === null) chromeSyncFrame = requestAnimationFrame(runChromeSyncFrame);
+    };
+
+    const stageObserver = chromeRoot && typeof MutationObserver !== "undefined"
+      ? new MutationObserver(() => scheduleChromeSync(12))
+      : null;
+    stageObserver?.observe(container, { attributes: true, attributeFilter: ["style", "class"] });
+
+    const chromeResizeObserver = chromeRoot && typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(() => scheduleChromeSync(2))
+      : null;
+    if (chromeRoot && chromeResizeObserver) {
+      chromeResizeObserver.observe(chromeRoot);
+      chromeResizeObserver.observe(container);
+    }
+
+    const handleViewportChange = () => scheduleChromeSync(2);
     const handleDocumentPointerDown = (e: PointerEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && !target.closest('.translation-bubble-wrapper') && !target.closest('.action-handle') && !target.closest('[data-translation-editor]')) {
@@ -1513,9 +1719,17 @@ export const applyTranslationOverlay = async (
     const detachDocumentListeners = () => {
       document.removeEventListener('pointerdown', handleDocumentPointerDown);
       document.removeEventListener('keydown', handleDocumentKeyDown);
+      window.removeEventListener('resize', handleViewportChange);
+      window.removeEventListener('scroll', handleViewportChange, true);
+      stageObserver?.disconnect();
+      chromeResizeObserver?.disconnect();
+      if (chromeSyncFrame !== null) cancelAnimationFrame(chromeSyncFrame);
+      chromeRoot?.querySelectorAll('[data-translation-chrome]').forEach((el) => el.remove());
     };
     document.addEventListener('pointerdown', handleDocumentPointerDown);
     document.addEventListener('keydown', handleDocumentKeyDown);
+    window.addEventListener('resize', handleViewportChange);
+    window.addEventListener('scroll', handleViewportChange, true);
     (tlContainer as unknown as { _cleanupListeners: () => void })._cleanupListeners = detachDocumentListeners;
     overlayCleanups.set(container, detachDocumentListeners);
 

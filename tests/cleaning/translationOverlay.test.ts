@@ -111,7 +111,10 @@ async function renderOverlay(
     onBubblesMutated?: () => void;
   } = {},
 ) {
+  const viewport = document.createElement("div");
   const container = document.createElement("div");
+  const chromeRoot = document.createElement("div");
+  chromeRoot.setAttribute("data-overlay-chrome-layer", "true");
   const image = document.createElement("img");
   Object.defineProperties(image, {
     complete: { configurable: true, value: true },
@@ -119,7 +122,9 @@ async function renderOverlay(
     naturalHeight: { configurable: true, value: 1200 },
   });
   container.appendChild(image);
-  document.body.appendChild(container);
+  viewport.appendChild(container);
+  viewport.appendChild(chromeRoot);
+  document.body.appendChild(viewport);
 
   const bubble: TranslatedBubble = {
     box: [100, 100, 300, 400],
@@ -148,9 +153,9 @@ async function renderOverlay(
 
   const wrapper = container.querySelector<HTMLElement>(".translation-bubble-wrapper")!;
   const canvas = wrapper.querySelector<HTMLCanvasElement>("canvas")!;
-  const toolbar = wrapper.querySelector<HTMLElement>(".bubble-quick-toolbar")!;
+  const toolbar = chromeRoot.querySelector<HTMLElement>(".bubble-quick-toolbar")!;
 
-  return { container, wrapper, canvas, toolbar, bubble };
+  return { viewport, container, chromeRoot, wrapper, canvas, toolbar, bubble };
 }
 
 describe("translation overlay live editor and keyboard controls", () => {
@@ -368,14 +373,118 @@ describe("translation overlay live editor and keyboard controls", () => {
     expect(wrapper.contains(editor)).toBe(false);
   });
 
+  test("keeps the floating toolbar compact and moves secondary actions behind a more menu", async () => {
+    const { toolbar } = await renderOverlay();
+    const directButtons = Array.from(toolbar.children).filter(
+      (node): node is HTMLButtonElement => node instanceof HTMLButtonElement,
+    );
+    expect(directButtons.length).toBeLessThanOrEqual(7);
+    expect(toolbar.querySelector<HTMLButtonElement>('[aria-label="เครื่องมือเพิ่มเติม"]')).toBeTruthy();
+    expect(
+      directButtons.some((button) => button.getAttribute("aria-label")?.startsWith("เงา:")),
+    ).toBe(false);
+
+    toolbar.querySelector<HTMLButtonElement>('[aria-label="เครื่องมือเพิ่มเติม"]')!.click();
+    const moreMenu = document.querySelector<HTMLElement>("[data-bubble-more-menu]")!;
+    expect(moreMenu).toBeTruthy();
+    expect(moreMenu.querySelector<HTMLButtonElement>('[aria-label="เพิ่มขนาดข้อความ (A+ หรือคีย์ +)"]')).toBeTruthy();
+    expect(moreMenu.querySelector<HTMLButtonElement>('[aria-label^="เงา:"]')).toBeTruthy();
+  });
+
+  test("renders editor chrome in the dedicated unscaled chrome layer", async () => {
+    const { container, chromeRoot, wrapper, toolbar } = await renderOverlay();
+    const moveHandle = chromeRoot.querySelector<HTMLElement>(".action-handle--move")!;
+
+    expect(container.contains(toolbar)).toBe(false);
+    expect(wrapper.contains(toolbar)).toBe(false);
+    expect(toolbar.parentElement).toBe(chromeRoot);
+    expect(moveHandle.parentElement).toBe(chromeRoot);
+    expect(toolbar.style.getPropertyValue("scale")).toBe("");
+    expect(moveHandle.style.getPropertyValue("scale")).toBe("");
+
+    toolbar.querySelector<HTMLButtonElement>('[aria-label="แก้ไขข้อความ"]')!.click();
+    const editor = document.querySelector<HTMLElement>("[data-translation-editor]")!;
+    expect(editor.parentElement).toBe(chromeRoot);
+    expect(editor.style.getPropertyValue("scale")).toBe("");
+  });
+
+  test("anchors toolbar and handles to the bubble screen rect", async () => {
+    const { chromeRoot, wrapper, toolbar } = await renderOverlay();
+    chromeRoot.getBoundingClientRect = vi.fn(() => ({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 900,
+      bottom: 700,
+      width: 900,
+      height: 700,
+      toJSON: () => ({}),
+    } as DOMRect));
+    wrapper.getBoundingClientRect = vi.fn(() => ({
+      x: 200,
+      y: 150,
+      left: 200,
+      top: 150,
+      right: 320,
+      bottom: 230,
+      width: 120,
+      height: 80,
+      toJSON: () => ({}),
+    } as DOMRect));
+    Object.defineProperty(toolbar, "offsetWidth", { configurable: true, value: 286 });
+    Object.defineProperty(toolbar, "offsetHeight", { configurable: true, value: 46 });
+
+    wrapper.focus();
+
+    expect(toolbar.style.left).toBe("260px");
+    expect(toolbar.style.top).toBe("140px");
+    expect(toolbar.style.transform).toBe("translate(-50%, -100%)");
+
+    const rotate = chromeRoot.querySelector<HTMLElement>(".action-handle--rotate")!;
+    const scale = chromeRoot.querySelector<HTMLElement>(".action-handle--scale")!;
+    const width = chromeRoot.querySelector<HTMLElement>(".action-handle--width")!;
+    const move = chromeRoot.querySelector<HTMLElement>(".action-handle--move")!;
+
+    expect([rotate.style.left, rotate.style.top]).toEqual(["200px", "150px"]);
+    expect([scale.style.left, scale.style.top]).toEqual(["320px", "150px"]);
+    expect([width.style.left, width.style.top]).toEqual(["320px", "190px"]);
+    expect([move.style.left, move.style.top]).toEqual(["200px", "230px"]);
+  });
+
+  test("opens a larger multiline editor with explicit save and cancel controls", async () => {
+    const { toolbar } = await renderOverlay("บรรทัดแรก");
+    toolbar.querySelector<HTMLButtonElement>('[aria-label="แก้ไขข้อความ"]')!.click();
+
+    const editor = document.querySelector<HTMLElement>("[data-translation-editor]")!;
+    const textarea = editor.querySelector<HTMLTextAreaElement>("textarea")!;
+    expect(textarea).toBeTruthy();
+    expect(textarea.style.fontSize).toBe("16px");
+    expect(textarea.style.minHeight).toBe("48px");
+    expect(Number.parseInt(textarea.style.minWidth, 10)).toBeGreaterThanOrEqual(300);
+    expect(editor.querySelector<HTMLButtonElement>('[aria-label="บันทึกข้อความ"]')).toBeTruthy();
+    expect(editor.querySelector<HTMLButtonElement>('[aria-label="ยกเลิกการแก้ไข"]')).toBeTruthy();
+
+    textarea.value = "บรรทัดแรก\nบรรทัดสอง";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(document.querySelector("[data-translation-editor]")).toBeTruthy();
+
+    textarea.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }),
+    );
+    expect(document.querySelector("[data-translation-editor]")).toBeNull();
+    expect(undoManager.undo()).toBe("แก้ไขข้อความ");
+  });
+
   test("renders every input on the real canvas and creates one undo transaction", async () => {
     const { toolbar } = await renderOverlay("เดิม");
     toolbar.querySelector<HTMLButtonElement>('[aria-label="แก้ไขข้อความ"]')!.click();
-    const input = document.querySelector<HTMLInputElement>('[data-translation-editor] input')!;
+    const input = document.querySelector<HTMLTextAreaElement>('[data-translation-editor] textarea')!;
     input.value = "ข้อความใหม่";
     input.dispatchEvent(new Event("input", { bubbles: true }));
     expect(fillTextSpy).toHaveBeenCalled();
-    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
     expect(undoManager.undo()).toBe("แก้ไขข้อความ");
     expect(undoManager.undo()).toBeNull();
   });
@@ -383,7 +492,7 @@ describe("translation overlay live editor and keyboard controls", () => {
   test("escape restores opening text without creating an undo record", async () => {
     const { toolbar } = await renderOverlay("ข้อความเดิม");
     toolbar.querySelector<HTMLButtonElement>('[aria-label="แก้ไขข้อความ"]')!.click();
-    const input = document.querySelector<HTMLInputElement>('[data-translation-editor] input')!;
+    const input = document.querySelector<HTMLTextAreaElement>('[data-translation-editor] textarea')!;
     input.value = "แก้ไขชั่วคราว";
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
@@ -522,9 +631,9 @@ describe("translation overlay live editor and keyboard controls", () => {
 
     // Edit text
     toolbar.querySelector<HTMLButtonElement>('[aria-label="แก้ไขข้อความ"]')!.click();
-    const input = document.querySelector<HTMLInputElement>('[data-translation-editor] input')!;
+    const input = document.querySelector<HTMLTextAreaElement>('[data-translation-editor] textarea')!;
     input.value = "ข้อความใหม่";
-    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
     expect(bubble.styleProfile).toEqual(profile);
   });
 

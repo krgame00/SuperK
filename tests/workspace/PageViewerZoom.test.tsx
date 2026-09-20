@@ -31,10 +31,16 @@ describe("PageViewer Zoom Integration", () => {
     expect(pageContainer).toBeInTheDocument();
     expect(pageContainer).toHaveStyle({ transform: "translate3d(0px, 0px, 0) scale(1)" });
 
+    const chromeLayer = document.querySelector<HTMLElement>("[data-overlay-chrome-layer]");
+    expect(chromeLayer).toBeInTheDocument();
+    expect(chromeLayer?.parentElement).toBe(pageContainer?.parentElement);
+    expect(pageContainer?.contains(chromeLayer)).toBe(false);
+
     fireEvent.click(zoomInBtn);
 
-    // After clicking zoom in, scale should increase (next preset is 1.5)
+    // After clicking zoom in, only the page stage scales; editor chrome stays outside it.
     expect(pageContainer?.getAttribute("style")).toContain("scale(1.5)");
+    expect(chromeLayer?.getAttribute("style") ?? "").not.toContain("scale(");
   });
 
   test("renders the zoom stage at natural size so Fit is applied exactly once", () => {

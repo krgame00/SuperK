@@ -458,6 +458,12 @@ export function PageViewer({
             )}
           </div>
 
+          <div
+            id="overlayChromeLayer"
+            data-overlay-chrome-layer="true"
+            className="pointer-events-none absolute inset-0 z-40 overflow-visible"
+          />
+
           {/* Right Arrow Floating Button */}
           {currentPage < pages.length - 1 && (
             <button
