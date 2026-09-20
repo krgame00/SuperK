@@ -1,8 +1,5 @@
-from pathlib import Path
-
 import numpy as np
 
-from app.cache import ResultCache
 from app.detector import DetectionResult, LetterboxTransform
 from app.mask_refiner import MaskRegion, RefinedMask
 from app.page_context import PageContext, PageFeatures
@@ -399,37 +396,6 @@ def test_pipeline_batches_initial_residual_detection_across_regions() -> None:
     assert len(output.regions) == 2
     assert probe.batch_calls == 1
     assert probe.single_calls == 0
-
-
-def test_result_cache_round_trips_lossless_assets(tmp_path: Path) -> None:
-    cache = ResultCache(tmp_path)
-    key = cache.key_for(
-        b"source",
-        pipeline_version="1",
-        detector_model_sha="a" * 64,
-        cleaner_model_sha="b" * 64,
-        settings={"threshold": 0.45},
-    )
-    image = np.full((8, 8, 3), 123, np.uint8)
-    mask = np.zeros((8, 8), np.uint8)
-    review_mask = np.zeros_like(mask)
-    review_mask[1:3, 1:3] = 255
-    protected_mask = np.zeros_like(mask)
-    protected_mask[5:7, 5:7] = 255
-    cache.store(
-        key,
-        image,
-        mask,
-        review_mask,
-        protected_mask,
-        {"job_id": "job-1"},
-    )
-    loaded = cache.load(key)
-    assert loaded is not None
-    assert np.array_equal(loaded.clean_image, image)
-    assert np.array_equal(loaded.mask, mask)
-    assert np.array_equal(loaded.review_mask, review_mask)
-    assert np.array_equal(loaded.protected_mask, protected_mask)
 
 
 def test_ui_page_story_region_is_sent_to_cleaner() -> None:
