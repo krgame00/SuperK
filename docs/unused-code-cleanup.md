@@ -66,3 +66,21 @@ full suite.
 The cleanup therefore has clean-install, production-build, TypeScript and full
 suite evidence. Existing jsdom canvas/React test warnings remain warnings rather
 than failing assertions and were not expanded into this cleanup scope.
+
+## Follow-up unused files cleanup
+
+Executed the 4 surgical unused file deletions planned in `docs/superpowers/plans/2026-09-20-unused-files-cleanup.md`:
+
+- `components/workspace/MobileToolsMenu.tsx`: Removed unused mobile tools menu component with 0 production or test callers.
+- `lib/lifecycle/sessionSpillCache.ts` & `tests/lifecycle/sessionSpillCache.test.ts`: Removed orphaned in-memory spill cache utility and its 4 dedicated tests; documented in `docs/ram-render-cache-fix.md`. WorkspaceResourceManager retains standard cache-miss eviction behavior.
+- `lib/server/rateLimiter.ts` & `tests/server/rateLimiter.test.ts`: Removed disconnected server rate limiter helper and its 11 dedicated tests; removed unused `resetRateLimits()` test hook from `tests/translation/routes.test.ts`. Active route behavior and request limits remain unchanged.
+- `ocr-service/app/cache.py`: Removed unused `ResultCache` abstraction and its dedicated test in `test_pipeline.py`. Maintained pipeline version contract verification in `test_api.py` via `test_api_reports_pipeline_version`. Active jobs storage under `cache_dir / "jobs"` is untouched.
+
+Retained all 10 editor components, benchmarks, models, caches, and user data.
+
+Verification evidence:
+- TypeScript (`tsc --noEmit --incremental false`): passed with 0 errors.
+- Vitest suite: **139 test files / 831 tests passed** (4 tests removed from sessionSpillCache + 11 from rateLimiter; 846 -> 831).
+- Python non-model suite: **176 passed, 3 deselected** (1 test removed from test_pipeline; 177 -> 176).
+- Production build (`npm run build`): passed with exit code 0.
+- Scoped `git diff --check`: passed.
