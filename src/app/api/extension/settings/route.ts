@@ -1,9 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
+import { geminiCatalogManager } from "@/lib/server/geminiCatalog";
+import { verifyPairingToken } from "@/lib/server/pairing";
 
 export interface ExtensionSettingsPayload {
   geminiApiKey: string;
   modelPreference: string;
   modelHierarchy: string[];
+  allowPreviewModels: boolean;
+  modelCatalog?: {
+    source: string;
+    stale: boolean;
+    models: Array<{
+      id: string;
+      displayName: string;
+      releaseChannel: "stable" | "preview" | "experimental";
+      availabilityCount: number;
+      totalKeys: number;
+    }>;
+  };
   glossary: Array<{ original: string; translation: string }>;
   textStyle: {
     fontFamily: string;
@@ -17,22 +31,12 @@ export interface ExtensionSettingsPayload {
   cleanMode: "inpainting" | "stroke" | "solid";
 }
 
-const DEFAULT_MODEL_HIERARCHY = [
-  "gemini-3.5-flash-lite",
-  "gemini-3.8-flash",
-  "gemini-3.7-flash",
-  "gemini-3.6-flash",
-  "gemini-3-flash",
-  "gemini-3.5-flash",
-  "gemini-3.1-flash-lite",
-  "gemini-2.5-flash",
-  "gemini-2.5-flash-lite",
-];
-
 const defaultSettings: ExtensionSettingsPayload = {
-  geminiApiKey: process.env.GEMINI_API_KEY || "",
+  geminiApiKey: "", // Never use server key as default!
   modelPreference: "auto",
-  modelHierarchy: DEFAULT_MODEL_HIERARCHY,
+  // Compatibility field for older extension builds. The dynamic catalog/router is authoritative.
+  modelHierarchy: [],
+  allowPreviewModels: false,
   glossary: [],
   textStyle: {
     fontFamily: "Itim, sans-serif",
@@ -51,7 +55,7 @@ let currentSettings: ExtensionSettingsPayload = { ...defaultSettings };
 export function _resetSettingsForTest() {
   currentSettings = {
     ...defaultSettings,
-    geminiApiKey: process.env.GEMINI_API_KEY || "",
+    geminiApiKey: "",
   };
 }
 
@@ -95,15 +99,64 @@ export async function OPTIONS(request: NextRequest) {
   });
 }
 
+function extractPairingToken(request: NextRequest): string | null {
+  const auth = request.headers.get("authorization");
+  if (auth && auth.startsWith("Bearer ")) {
+    return auth.slice(7).trim();
+  }
+  const headerToken = request.headers.get("x-superk-pairing-token");
+  if (headerToken) return headerToken.trim();
+  const url = new URL(request.url);
+  const queryToken = url.searchParams.get("token") || url.searchParams.get("pairingToken");
+  if (queryToken) return queryToken.trim();
+  return null;
+}
+
 export async function GET(request: NextRequest) {
   const origin = request.headers.get("origin");
   if (!isOriginAllowed(origin)) {
     return NextResponse.json({ error: "Forbidden origin" }, { status: 403 });
   }
 
+  const pairingToken = extractPairingToken(request);
+  if (!verifyPairingToken(pairingToken)) {
+    return NextResponse.json(
+      { error: "Unauthorized: Invalid or missing pairing token" },
+      { status: 401, headers: buildCorsHeaders(origin) }
+    );
+  }
+
+  const userApiKey = currentSettings.geminiApiKey || "";
+  const activeApiKeyForCatalog = userApiKey || process.env.GEMINI_API_KEY || "";
+  let modelCatalog: ExtensionSettingsPayload["modelCatalog"];
+  if (activeApiKeyForCatalog) {
+    try {
+      const { snapshot } = await geminiCatalogManager.getCatalog({
+        userApiKeyRaw: userApiKey || undefined,
+        serverApiKeyRaw: process.env.GEMINI_API_KEY || undefined,
+      });
+      modelCatalog = {
+        source: snapshot.source,
+        stale: snapshot.stale,
+        models: snapshot.models.map((model) => ({
+          id: model.id,
+          displayName: model.displayName,
+          releaseChannel: model.releaseChannel,
+          availabilityCount: model.availabilityCount,
+          totalKeys: model.totalKeys,
+        })),
+      };
+    } catch {
+      modelCatalog = currentSettings.modelCatalog;
+    }
+  }
+
   const responsePayload = {
     ...currentSettings,
-    geminiApiKey: currentSettings.geminiApiKey || process.env.GEMINI_API_KEY || "",
+    // Never expose secret keys to callers!
+    geminiApiKey: "",
+    hasServerKey: Boolean(process.env.GEMINI_API_KEY),
+    modelCatalog,
   };
 
   return NextResponse.json(responsePayload, {
@@ -117,6 +170,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Forbidden origin" }, { status: 403 });
   }
 
+  const pairingToken = extractPairingToken(request);
+  if (!verifyPairingToken(pairingToken)) {
+    return NextResponse.json(
+      { error: "Unauthorized: Invalid or missing pairing token" },
+      { status: 401, headers: buildCorsHeaders(origin) }
+    );
+  }
+
   try {
     const body = await request.json();
     if (typeof body !== "object" || body === null) {
@@ -128,6 +189,9 @@ export async function POST(request: NextRequest) {
     }
     if (typeof body.modelPreference === "string") {
       currentSettings.modelPreference = body.modelPreference;
+    }
+    if (typeof body.allowPreviewModels === "boolean") {
+      currentSettings.allowPreviewModels = body.allowPreviewModels;
     }
     if (Array.isArray(body.glossary)) {
       currentSettings.glossary = body.glossary;
@@ -151,8 +215,14 @@ export async function POST(request: NextRequest) {
       currentSettings.cleanMode = body.cleanMode;
     }
 
+    const safeSettings = {
+      ...currentSettings,
+      geminiApiKey: "", // Never echo secret keys back!
+      hasServerKey: Boolean(process.env.GEMINI_API_KEY),
+    };
+
     return NextResponse.json(
-      { success: true, settings: currentSettings },
+      { success: true, settings: safeSettings },
       { headers: buildCorsHeaders(origin) }
     );
   } catch {

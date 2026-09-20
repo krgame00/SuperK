@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { type GlossaryEntry } from "@/lib/translation/glossary";
 import { Plus, Trash2, BookText, Flame, X, ChevronDown, Download, Folder } from "lucide-react";
 import {
@@ -20,6 +20,51 @@ export interface WorkspaceTextStyle {
   textOutline: string;
 }
 
+interface GeminiCatalogModelView {
+  id: string;
+  displayName: string;
+  description?: string;
+  releaseChannel: "stable" | "preview" | "experimental";
+  availabilityCount: number;
+  totalKeys: number;
+  cooldownKeys: number;
+  compatibility: {
+    text: "unverified" | "compatible" | "incompatible";
+    image: "unverified" | "compatible" | "incompatible";
+  };
+}
+
+interface GeminiCatalogView {
+  owner: "user" | "server";
+  source: "live" | "cache" | "bootstrap";
+  stale: boolean;
+  totalKeys: number;
+  models: GeminiCatalogModelView[];
+}
+
+function splitApiKeySlots(raw: string): string[] {
+  const values = raw
+    .split(/[,;\n]+/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, 5);
+  return Array.from({ length: 5 }, (_, index) => values[index] ?? "");
+}
+
+function joinApiKeySlots(values: string[]): string {
+  return values.map((value) => value.trim()).filter(Boolean).slice(0, 5).join(",");
+}
+
+function catalogModelLabel(model: GeminiCatalogModelView): string {
+  const tags = [`${model.availabilityCount}/${model.totalKeys} Keys`];
+  if (model.releaseChannel !== "stable") tags.push(model.releaseChannel === "preview" ? "Preview" : "Experimental");
+  if (model.compatibility.image === "compatible") tags.push("Compatible");
+  else if (model.compatibility.image === "incompatible") tags.push("Incompatible");
+  else tags.push("Unverified");
+  if (model.cooldownKeys > 0) tags.push(`Cooldown ${model.cooldownKeys}`);
+  return `${model.displayName} (${tags.join(" · ")})`;
+}
+
 export interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -29,6 +74,8 @@ export interface SettingsModalProps {
   onTextStyleChange: (style: WorkspaceTextStyle | ((prev: WorkspaceTextStyle) => WorkspaceTextStyle)) => void;
   modelPreference: string;
   onModelPreferenceChange: (model: string) => void;
+  allowPreviewModels?: boolean;
+  onAllowPreviewModelsChange?: (enabled: boolean) => void;
   userApiKey: string;
   onUserApiKeyChange: (key: string) => void;
   focusApiKey?: boolean;
@@ -49,6 +96,8 @@ export function SettingsModal({
   onTextStyleChange,
   modelPreference,
   onModelPreferenceChange,
+  allowPreviewModels = false,
+  onAllowPreviewModelsChange,
   userApiKey,
   onUserApiKeyChange,
   focusApiKey = false,
@@ -67,6 +116,9 @@ export function SettingsModal({
     status: "idle" | "checking" | "valid" | "invalid";
     message?: string;
   }>({ status: "idle" });
+  const [geminiCatalog, setGeminiCatalog] = useState<GeminiCatalogView | null>(null);
+  const [catalogStatus, setCatalogStatus] = useState<"idle" | "loading" | "error">("idle");
+  const apiKeySlots = splitApiKeySlots(userApiKey);
   const [newSource, setNewSource] = useState("");
   const [newTarget, setNewTarget] = useState("");
   const [isPurging, setIsPurging] = useState(false);
@@ -78,12 +130,42 @@ export function SettingsModal({
     () => getRememberedDirectoryName(),
   );
 
+  const loadGeminiCatalog = useCallback(async (force: boolean) => {
+    setCatalogStatus("loading");
+    try {
+      const response = await fetch("/api/translate/models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: userApiKey, force }),
+      });
+      if (!response.ok) throw new Error(`Catalog HTTP ${response.status}`);
+      const nextCatalog = (await response.json()) as GeminiCatalogView;
+      setGeminiCatalog(nextCatalog);
+      setCatalogStatus("idle");
+    } catch {
+      setCatalogStatus("error");
+    }
+  }, [userApiKey]);
+
+  const [pairingToken, setPairingToken] = useState<string>("");
+  const [isCopiedToken, setIsCopiedToken] = useState(false);
+
   useEffect(() => {
     if (isOpen) {
       setRememberedDirName(getRememberedDirectoryName());
       setAskExportDirectoryState(getAskExportDirectory());
+      fetch("/api/extension/pair")
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.pairingToken) setPairingToken(data.pairingToken);
+        })
+        .catch(() => {});
+      const timer = window.setTimeout(() => {
+        void loadGeminiCatalog(false);
+      }, 150);
+      return () => window.clearTimeout(timer);
     }
-  }, [isOpen]);
+  }, [isOpen, loadGeminiCatalog]);
 
   const handlePurgeServerCache = async () => {
     if (isPurging) return;
@@ -159,6 +241,7 @@ export function SettingsModal({
         status: "valid",
         message: result.message || "API Key พร้อมใช้งาน",
       });
+      void loadGeminiCatalog(true);
       onApiKeyValidated?.();
     } else {
       setApiKeyValidation({
@@ -429,9 +512,20 @@ export function SettingsModal({
           </div>
 
           <div className="border-t border-surface-hover pt-2">
-            <label htmlFor="settings-model-preference" className="mb-1 block text-xs font-medium text-muted">
-              Model Preference (โมเดล Gemini)
-            </label>
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <label htmlFor="settings-model-preference" className="block text-xs font-medium text-muted">
+                Model Preference (โมเดล Gemini)
+              </label>
+              <button
+                type="button"
+                aria-label="รีเฟรชรายการโมเดล"
+                onClick={() => void loadGeminiCatalog(true)}
+                disabled={catalogStatus === "loading"}
+                className="rounded px-2 py-1 text-[10px] font-medium text-primary hover:bg-surface-hover disabled:cursor-wait disabled:opacity-60"
+              >
+                {catalogStatus === "loading" ? "กำลังรีเฟรช..." : "รีเฟรช"}
+              </button>
+            </div>
             <div className="relative">
               <select
                 id="settings-model-preference"
@@ -440,51 +534,77 @@ export function SettingsModal({
                 onChange={(e) => onModelPreferenceChange(e.target.value)}
                 className="w-full appearance-none rounded-md border border-surface-hover bg-background px-3 py-2 pr-8 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
               >
-                <option value="auto">Auto (สลับโมเดลอัตโนมัติเมื่อโควต้าเต็ม)</option>
-                <option value="gemini-3.5-flash-lite">
-                  Gemini 3.5 Flash Lite (แนะนำ! โควต้าเหลือเพียบ 500 RPD)
-                </option>
-                <option value="gemini-3.8-flash">
-                  Gemini 3.8 Flash (ใหม่ล่าสุด! ความแม่นยำสูงสุด)
-                </option>
-                <option value="gemini-3.7-flash">Gemini 3.7 Flash</option>
-                <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
-                <option value="gemini-3-flash">Gemini 3.0 Flash</option>
-                <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
-                <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite</option>
-                <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-                <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
+                <option value="auto">Auto (ใช้โมเดลและ Key ที่พร้อมใช้อัตโนมัติ)</option>
+                {modelPreference !== "auto" &&
+                  !geminiCatalog?.models.some((model) => model.id === modelPreference) && (
+                    <option value={modelPreference}>{modelPreference} (Unavailable)</option>
+                  )}
+                {geminiCatalog?.models.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {catalogModelLabel(model)}
+                  </option>
+                ))}
               </select>
               <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" aria-hidden="true" />
             </div>
+            <div className="mt-1 flex items-start justify-between gap-3 text-[10px] leading-relaxed text-muted">
+              <span>
+                {catalogStatus === "loading" && !geminiCatalog
+                  ? "กำลังโหลดโมเดลจาก Gemini..."
+                  : catalogStatus === "error"
+                    ? "โหลดรายการโมเดลไม่ได้ ระบบจะใช้ข้อมูลแคชหรือโหมดกู้คืนเมื่อแปล"
+                    : geminiCatalog
+                      ? `${geminiCatalog.models.length} โมเดล · ${geminiCatalog.totalKeys} Keys${geminiCatalog.stale ? " · ข้อมูลแคช" : ""}`
+                      : "รายการโมเดลจะถูกค้นหาจาก Gemini API Key ที่ใช้งานจริง"}
+              </span>
+            </div>
+            <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-muted">
+              <input
+                type="checkbox"
+                aria-label="อนุญาต Preview models ใน Auto"
+                checked={allowPreviewModels}
+                onChange={(event) => onAllowPreviewModelsChange?.(event.target.checked)}
+                className="accent-primary"
+              />
+              ใช้ Preview / Experimental models ใน Auto
+            </label>
           </div>
 
           <div>
-            <label htmlFor="settings-api-key" className="mb-1 block text-xs font-medium text-muted">
-              Gemini API Key (Optional)
-            </label>
-            <input
-              ref={apiKeyInputRef}
-              id="settings-api-key"
-              aria-label="Gemini API Key"
-              aria-describedby={apiKeyValidation.status === "invalid" ? "settings-api-key-error" : undefined}
-              aria-invalid={apiKeyValidation.status === "invalid"}
-              type="password"
-              value={userApiKey}
-              onChange={(e) => {
-                onUserApiKeyChange(e.target.value);
-                if (apiKeyValidation.status !== "idle") {
-                  setApiKeyValidation({ status: "idle" });
-                }
-              }}
-              placeholder="AIzaSy..."
-              className="w-full rounded-md border border-surface-hover bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-            />
+            <span className="mb-1 block text-xs font-medium text-muted">
+              Gemini API Keys (สูงสุด 5 Keys)
+            </span>
+            <div className="space-y-1.5">
+              {apiKeySlots.map((value, index) => {
+                const slot = index + 1;
+                const isPrimary = index === 0;
+                return (
+                  <input
+                    key={slot}
+                    ref={isPrimary ? apiKeyInputRef : undefined}
+                    id={isPrimary ? "settings-api-key" : `settings-api-key-${slot}`}
+                    aria-label={isPrimary ? "Gemini API Key" : `API Key ${slot}`}
+                    aria-describedby={isPrimary && apiKeyValidation.status === "invalid" ? "settings-api-key-error" : undefined}
+                    aria-invalid={isPrimary ? apiKeyValidation.status === "invalid" : undefined}
+                    type="password"
+                    value={value}
+                    onChange={(event) => {
+                      const next = [...apiKeySlots];
+                      next[index] = event.target.value;
+                      onUserApiKeyChange(joinApiKeySlots(next));
+                      if (apiKeyValidation.status !== "idle") {
+                        setApiKeyValidation({ status: "idle" });
+                      }
+                    }}
+                    placeholder={`API Key ${slot}${isPrimary ? " (หลัก)" : ""}`}
+                    className="w-full rounded-md border border-surface-hover bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                );
+              })}
+            </div>
             <p className="mt-1 text-[10px] leading-relaxed text-muted">
-              The app uses the server key configured in{" "}
-              <code className="text-foreground">.env.local</code>. To avoid
-              &quot;Quota exceeded&quot; errors (especially in 18+ mode), enter
-              your own free Gemini API key from{" "}
+              ใส่ได้สูงสุด 5 Keys ระบบจะค้นหาโมเดลที่แต่ละ Key ใช้งานได้และสลับ Key ภายในโมเดลก่อนเปลี่ยนโมเดล หากไม่ใส่จะใช้ Key จาก{" "}
+              <code className="text-foreground">.env.local</code>. สร้าง Key ได้ที่{" "}
               <a
                 href="https://aistudio.google.com/app/apikey"
                 target="_blank"
@@ -668,6 +788,39 @@ export function SettingsModal({
                 </div>
               </div>
             )}
+          </div>
+
+          <div className="border-t border-surface-hover pt-3">
+            <span className="mb-1 block text-xs font-medium text-muted">
+              Chrome Extension Pairing (จับคู่ส่วนเสริม)
+            </span>
+            <div className="rounded-lg bg-surface border border-surface-hover p-2.5 space-y-2">
+              <p className="text-[11px] text-muted leading-relaxed">
+                คัดลอกรหัส Pairing Token นี้ไปใส่ในเมนูตั้งค่าของ SuperK Extension เพื่อเชื่อมต่อระบบอย่างปลอดภัย
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="password"
+                  readOnly
+                  aria-label="Pairing Token สำหรับ Chrome Extension"
+                  value={pairingToken || "กำลังโหลด..."}
+                  className="w-full rounded bg-background px-2.5 py-1 text-xs font-mono text-muted select-all border border-surface-hover focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (pairingToken) {
+                      await navigator.clipboard.writeText(pairingToken);
+                      setIsCopiedToken(true);
+                      setTimeout(() => setIsCopiedToken(false), 2000);
+                    }
+                  }}
+                  className="shrink-0 rounded bg-primary/20 hover:bg-primary/30 text-primary px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer"
+                >
+                  {isCopiedToken ? "คัดลอกแล้ว!" : "คัดลอก"}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>

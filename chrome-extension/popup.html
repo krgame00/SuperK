@@ -19,6 +19,9 @@ button:disabled { cursor:wait; opacity:.65; }
 :focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
 #btnSave { background:var(--accent); color:#171717; border:0; font-weight:650; }
 small { display:block; color:var(--muted); margin-top:6px; font-size:12px; }
+.check-row { display:flex; align-items:center; gap:8px; margin-top:10px; }
+.check-row input { width:auto; }
+.inline-button { margin-top:8px; }
 #statusBadge { margin:12px 0 0; overflow-wrap:anywhere; }
 .status-warn { color:#ffaaaa; }
 .status-ready { color:#a7e5bf; }
@@ -38,7 +41,9 @@ small { display:block; color:var(--muted); margin-top:6px; font-size:12px; }
 <div id="serverSettings">
 <label for="serverUrl">URL ระบบ SuperK</label>
 <input id="serverUrl" type="url" placeholder="http://127.0.0.1:3000" aria-describedby="serverHint">
-<small id="serverHint">เปิดระบบหลักไว้ระหว่างแปล ส่วนเสริมจะใช้คีย์ที่ตั้งไว้บนเซิร์ฟเวอร์</small>
+<label for="pairingToken" style="margin-top:8px">Pairing Token (รหัสจับคู่)</label>
+<input id="pairingToken" type="password" autocomplete="off" placeholder="คัดลอกจากหน้าต่างตั้งค่าของ SuperK">
+<small id="serverHint">เปิดระบบหลักไว้ระหว่างแปล ส่วนเสริมจะแปลผ่านเซิร์ฟเวอร์โดยตรง</small>
 </div>
 <div id="directSettings" hidden>
 <label for="apiKey">Gemini API Key</label>
@@ -52,14 +57,13 @@ small { display:block; color:var(--muted); margin-top:6px; font-size:12px; }
 <details style="margin-top:14px"><summary>ตัวเลือกการแปลและแสดงผล</summary>
 <label for="modelPreference">โมเดลแปล</label>
 <select id="modelPreference">
-<option value="auto">อัตโนมัติ</option>
-<option value="gemini-3.5-flash-lite">Gemini 3.5 Flash Lite</option>
-<option value="gemini-3.8-flash">Gemini 3.8 Flash</option>
-<option value="gemini-3.7-flash">Gemini 3.7 Flash</option>
-<option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
-<option value="gemini-3-flash">Gemini 3 Flash</option>
-<option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+<option value="auto">อัตโนมัติ (เลือกจากโมเดลที่ API Key ใช้ได้)</option>
 </select>
+<button id="btnRefreshModels" class="inline-button" type="button">รีเฟรชโมเดล</button>
+<label class="check-row" for="allowPreviewModels">
+<input id="allowPreviewModels" type="checkbox">
+<span>อนุญาต Preview / Experimental ในโหมดอัตโนมัติ</span>
+</label>
 <label for="cleanMode">การลบข้อความเดิม</label>
 <select id="cleanMode">
 <option value="inpainting" selected>ลบข้อความต้นฉบับเนียนกริบ (Inpainting - แนะนำ)</option>

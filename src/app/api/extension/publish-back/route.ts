@@ -14,11 +14,20 @@ interface StoredPublication extends PublishBackPayload {
 }
 
 let globalSequenceId = 0;
+let serverEpoch = "epoch_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
 const publishedMap = new Map<string, StoredPublication>();
 
 export function _resetPublishedForTest() {
   publishedMap.clear();
   globalSequenceId = 0;
+}
+
+export function _setServerEpochForTest(epoch: string) {
+  serverEpoch = epoch;
+}
+
+export function _getServerEpoch() {
+  return serverEpoch;
 }
 
 function isOriginAllowed(origin: string | null): boolean {
@@ -86,6 +95,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         success: true,
+        epoch: serverEpoch,
         seq,
         publishedAt: updatedAt,
       },
@@ -106,25 +116,33 @@ export async function GET(request: NextRequest) {
   const pageUrl = url.searchParams.get("pageUrl");
   const sinceParam = url.searchParams.get("since");
   const sinceSeqParam = url.searchParams.get("sinceSeq");
+  const sinceEpochParam = url.searchParams.get("sinceEpoch");
 
   if (pageUrl) {
     const record = publishedMap.get(pageUrl);
     if (!record) {
       return NextResponse.json({ error: "Published update not found" }, { status: 404 });
     }
-    return NextResponse.json(record, { headers: buildCorsHeaders(origin) });
+    return NextResponse.json({ ...record, epoch: serverEpoch }, { headers: buildCorsHeaders(origin) });
   }
 
-  const since = sinceParam ? parseInt(sinceParam, 10) : 0;
-  const sinceSeq = sinceSeqParam ? parseInt(sinceSeqParam, 10) : 0;
-  const updates = Array.from(publishedMap.values()).filter((record) => {
-    if (sinceSeq > 0) return record.seq > sinceSeq;
-    if (since > 0) return record.updatedAt > since;
-    return true;
-  });
+  const epochChanged = Boolean(sinceEpochParam && sinceEpochParam !== serverEpoch);
+  const since = epochChanged ? 0 : (sinceParam ? parseInt(sinceParam, 10) : 0);
+  const sinceSeq = epochChanged ? 0 : (sinceSeqParam ? parseInt(sinceSeqParam, 10) : 0);
+  const updates = Array.from(publishedMap.values())
+    .filter((record) => {
+      if (sinceSeq > 0) return record.seq > sinceSeq;
+      if (since > 0) return record.updatedAt > since;
+      return true;
+    })
+    .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
 
   return NextResponse.json(
-    { updates },
+    {
+      epoch: serverEpoch,
+      epochChanged,
+      updates,
+    },
     { headers: buildCorsHeaders(origin) }
   );
 }

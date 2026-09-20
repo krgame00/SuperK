@@ -15,6 +15,8 @@ export interface TranslationObservabilityMeta {
   attemptCount: number;
   elapsedMs: number;
   fallbackCount: number;
+  keySlot?: number;
+  keyId?: string;
   finalErrorCode?: TranslationErrorCode;
 }
 

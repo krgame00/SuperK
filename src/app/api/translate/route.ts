@@ -231,8 +231,6 @@ export async function POST(req: Request) {
       "gemini-3-flash", // Fresh quota: 20 RPD, 5 RPM
       "gemini-3.5-flash",
       "gemini-3.1-flash-lite",
-      "gemini-2.5-flash",
-      "gemini-2.5-flash-lite",
     ];
 
     if (isRetry && (!modelPreference || modelPreference === "auto")) {
@@ -245,7 +243,6 @@ export async function POST(req: Request) {
         "gemini-3-flash",
         "gemini-3.5-flash",
         "gemini-3.1-flash-lite",
-        "gemini-2.5-flash",
       ];
     } else if (modelPreference && modelPreference !== "auto") {
       MODELS = [modelPreference];

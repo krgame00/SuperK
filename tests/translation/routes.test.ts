@@ -72,6 +72,53 @@ test("image route returns 504 for Gemini timeout", async () => {
   expect(body.error).not.toBe("Internal Server Error");
 });
 
+test("image route Auto uses the legacy fixed routing path with current Gemini models", async () => {
+  process.env.GEMINI_API_KEY = "server-key-a,server-key-b";
+  requestGeminiMock.mockResolvedValue({
+    data: {
+      candidates: [{ content: { parts: [{ text: '{"bubbles":[]}' }] } }],
+    },
+    keyIndex: 0,
+    model: "gemini-3.5-flash-lite",
+    meta: {
+      provider: "gemini",
+      model: "gemini-3.5-flash-lite",
+      attemptCount: 1,
+      elapsedMs: 10,
+      fallbackCount: 0,
+    },
+  });
+
+  const response = await translateImage(new Request("http://localhost/api/translate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      imageBase64: "valid-base64",
+      mimeType: "image/png",
+      targetLang: "Thai",
+      modelPreference: "auto",
+    }),
+  }));
+
+  expect(response.status).toBe(200);
+  expect(requestGeminiMock).toHaveBeenCalledWith(
+    expect.objectContaining({
+      apiKeys: ["server-key-a", "server-key-b"],
+      models: [
+        "gemini-3.5-flash-lite",
+        "gemini-3.8-flash",
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+        "gemini-3-flash",
+        "gemini-3.5-flash",
+        "gemini-3.1-flash-lite",
+      ],
+      attemptTimeoutMs: 60_000,
+      totalBudgetMs: 180_000,
+    }),
+  );
+});
+
 test("image route keeps the missing API key response", async () => {
   delete process.env.GEMINI_API_KEY;
   const request = new Request("http://localhost/api/translate", {

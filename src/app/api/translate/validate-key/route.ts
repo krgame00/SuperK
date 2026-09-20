@@ -30,7 +30,7 @@ export async function POST(req: Request) {
   try {
     await requestGemini({
       apiKeys: [apiKey],
-      models: ["gemini-2.5-flash-lite"],
+      models: ["gemini-3.8-flash"],
       payload: {
         contents: [{ parts: [{ text: "Reply only with OK." }] }],
         generationConfig: { maxOutputTokens: 1, temperature: 0 },

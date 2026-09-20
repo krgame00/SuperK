@@ -3,6 +3,7 @@
 import {
   GeminiRequestError,
   requestGemini,
+  requestGeminiRoutes,
   requestOpenAICompatible,
 } from "@/lib/server/geminiRequest";
 
@@ -168,6 +169,78 @@ describe("requestGemini", () => {
       status: 504,
     });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  test("route failures are reported per attempted model-key route", async () => {
+    const onRouteFailure = vi.fn();
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "quota" } }, 429))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "unsupported input" } }, 400))
+      .mockResolvedValueOnce(jsonResponse(successBody));
+
+    await requestGeminiRoutes({
+      routes: [
+        { model: "model-a", apiKey: "secret-a", keyId: "key-aaa", keyIndex: 0, keySlot: 1 },
+        { model: "model-a", apiKey: "secret-b", keyId: "key-bbb", keyIndex: 1, keySlot: 2 },
+        { model: "model-b", apiKey: "secret-a", keyId: "key-aaa", keyIndex: 0, keySlot: 1 },
+      ],
+      payload: { contents: [] },
+      fetchImpl,
+      onRouteFailure,
+    });
+
+    expect(onRouteFailure).toHaveBeenNthCalledWith(1, expect.objectContaining({ model: "model-a", keyId: "key-aaa" }), expect.objectContaining({ status: 429 }));
+    expect(onRouteFailure).toHaveBeenNthCalledWith(2, expect.objectContaining({ model: "model-a", keyId: "key-bbb" }), expect.objectContaining({ status: 400 }));
+  });
+
+  test("a model-wide capability failure skips the remaining keys for that model", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "model does not support this request" } }, 404))
+      .mockResolvedValueOnce(jsonResponse(successBody));
+
+    const result = await requestGeminiRoutes({
+      routes: [
+        { model: "model-a", apiKey: "secret-a", keyId: "key-aaa", keyIndex: 0, keySlot: 1 },
+        { model: "model-a", apiKey: "secret-b", keyId: "key-bbb", keyIndex: 1, keySlot: 2 },
+        { model: "model-b", apiKey: "secret-a", keyId: "key-aaa", keyIndex: 0, keySlot: 1 },
+      ],
+      payload: { contents: [] },
+      fetchImpl,
+      onRouteFailure: async (_route, error) => error.status === 404 ? "skip-model" : undefined,
+    });
+
+    expect(result.model).toBe("model-b");
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(String(fetchImpl.mock.calls[0][0])).toContain("/models/model-a:generateContent");
+    expect(String(fetchImpl.mock.calls[1][0])).toContain("/models/model-b:generateContent");
+  });
+
+  test("explicit catalog routes preserve model-key order and return safe route diagnostics", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "quota" } }, 429))
+      .mockResolvedValueOnce(jsonResponse(successBody));
+
+    const result = await requestGeminiRoutes({
+      routes: [
+        { model: "model-a", apiKey: "secret-a", keyId: "key-aaa", keyIndex: 0, keySlot: 1 },
+        { model: "model-a", apiKey: "secret-b", keyId: "key-bbb", keyIndex: 1, keySlot: 2 },
+        { model: "model-b", apiKey: "secret-a", keyId: "key-aaa", keyIndex: 0, keySlot: 1 },
+      ],
+      payload: { contents: [] },
+      fetchImpl,
+    });
+
+    expect(result).toMatchObject({ model: "model-a", keyIndex: 1, keyId: "key-bbb", keySlot: 2 });
+    expect(result.meta).toMatchObject({ model: "model-a", keySlot: 2, attemptCount: 2, fallbackCount: 1 });
+    expect(fetchImpl.mock.calls.map(([url]) => String(url))).toEqual([
+      expect.stringContaining("/models/model-a:generateContent"),
+      expect.stringContaining("/models/model-a:generateContent"),
+    ]);
+    expect(JSON.stringify(result)).not.toContain("secret-a");
+    expect(JSON.stringify(result)).not.toContain("secret-b");
   });
 });
 

@@ -156,5 +156,50 @@ describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
       const repeatPollData = await repeatPollRes.json();
       expect(repeatPollData.updates.length).toBe(0);
     });
+
+    it("returns updates strictly sorted by seq ascending even when existing keys are updated", async () => {
+      // 1. Post p1 (seq: 1)
+      await publishEndpoint(
+        new NextRequest("http://127.0.0.1:3000/api/extension/publish-back", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000" },
+          body: JSON.stringify({ pageUrl: "https://manga.example.com/p1.jpg", bubbles: [{ t: "1" }] }),
+        }),
+      );
+
+      // 2. Post p2 (seq: 2)
+      await publishEndpoint(
+        new NextRequest("http://127.0.0.1:3000/api/extension/publish-back", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000" },
+          body: JSON.stringify({ pageUrl: "https://manga.example.com/p2.jpg", bubbles: [{ t: "2" }] }),
+        }),
+      );
+
+      // 3. Re-post p1 (seq: 3) - in JS Map, p1 stays at index 0 of insertion order
+      await publishEndpoint(
+        new NextRequest("http://127.0.0.1:3000/api/extension/publish-back", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000" },
+          body: JSON.stringify({ pageUrl: "https://manga.example.com/p1.jpg", bubbles: [{ t: "1-v2" }] }),
+        }),
+      );
+
+      // 4. Poll all updates
+      const pollReq = new NextRequest(
+        "http://127.0.0.1:3000/api/extension/publish-back",
+        {
+          method: "GET",
+          headers: { origin: "chrome-extension://my-extension" },
+        },
+      );
+      const pollRes = await getPublishedEndpoint(pollReq);
+      const pollData = await pollRes.json();
+      expect(pollData.updates.length).toBe(2);
+      expect(pollData.updates[0].pageUrl).toBe("https://manga.example.com/p2.jpg");
+      expect(pollData.updates[0].seq).toBe(2);
+      expect(pollData.updates[1].pageUrl).toBe("https://manga.example.com/p1.jpg");
+      expect(pollData.updates[1].seq).toBe(3);
+    });
   });
 });
