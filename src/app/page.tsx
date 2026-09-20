@@ -2115,20 +2115,24 @@ export default function WorkspacePage() {
                   : "px-1 pb-20 sm:pb-22"
             }`}
           >
-            {/* Cleaning Toolbar: Floating at top or bottom with collapse support */}
+            {/* Top controls participate in layout so they never cover manga content.
+                Bottom controls intentionally remain floating. */}
             <div
-              className={`w-full absolute ${
+              data-page-controls-dock={toolbarPosition}
+              className={`w-full z-30 flex justify-center pointer-events-none px-2 transition-all duration-300 ease-out ${
                 toolbarPosition === "top"
-                  ? "top-2.5"
-                  : isFocusMode
-                    ? "bottom-3 sm:bottom-4"
-                    : isThumbnailsCollapsed
-                      ? "bottom-9 sm:bottom-10"
-                      : "bottom-23 sm:bottom-25"
-              } left-1/2 -translate-x-1/2 z-30 flex justify-center pointer-events-none px-2 transition-all duration-300 ease-out ${
+                  ? "relative shrink-0"
+                  : `absolute ${
+                      isFocusMode
+                        ? "bottom-3 sm:bottom-4"
+                        : isThumbnailsCollapsed
+                          ? "bottom-9 sm:bottom-10"
+                          : "bottom-23 sm:bottom-25"
+                    } left-1/2 -translate-x-1/2`
+              } ${
                 isFocusMode && !isFocusToolbarVisible
                   ? `${toolbarPosition === "top" ? "-translate-y-24" : "translate-y-24"} opacity-0 pointer-events-none max-h-0 py-0 overflow-hidden`
-                  : "translate-y-0 opacity-100 py-0"
+                  : `${toolbarPosition === "top" ? "translate-y-0 pt-2.5 pb-2" : "translate-y-0 py-0"} opacity-100`
               }`}
             >
               <div

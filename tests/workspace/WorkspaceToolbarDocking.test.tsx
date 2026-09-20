@@ -158,21 +158,27 @@ describe("Workspace Toolbar Docking and Collapse", () => {
     fireEvent.click(restoreBtn);
 
     const toolbar = await screen.findByRole("region", { name: "Cleaning toolbar" });
-    const container = toolbar.closest(".pointer-events-none");
+    const container = toolbar.closest<HTMLElement>("[data-page-controls-dock]");
     expect(container).toBeTruthy();
 
-    // Default position is top
-    expect(container?.className).toContain("top-2.5");
+    // Default top mode must participate in layout instead of covering the page image.
+    expect(container?.dataset.pageControlsDock).toBe("top");
+    expect(container?.className).toContain("relative");
+    expect(container?.className).toContain("shrink-0");
+    expect(container?.className).not.toContain("absolute");
 
     // Click toggle position button
     const togglePosBtn = screen.getByRole("button", { name: "Toggle position" });
     fireEvent.click(togglePosBtn);
 
-    // Should now be positioned at the bottom (bottom-23 or bottom-25 when filmstrip is visible)
+    // Bottom mode intentionally remains floating.
+    expect(container?.dataset.pageControlsDock).toBe("bottom");
+    expect(container?.className).toContain("absolute");
     expect(container?.className).toContain("bottom-23");
 
-    // Click again to return to top
+    // Click again to return to top flow docking.
     fireEvent.click(togglePosBtn);
-    expect(container?.className).toContain("top-2.5");
+    expect(container?.dataset.pageControlsDock).toBe("top");
+    expect(container?.className).not.toContain("absolute");
   });
 });
