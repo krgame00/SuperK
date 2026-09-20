@@ -22,13 +22,13 @@ if %errorlevel% neq 0 (
 )
 
 :: 2. Check Python Virtual Environment for OCR Service
-set "PYTHON_EXE=%~dp0ocr-service\venv\Scripts\python.exe"
-if not exist "%PYTHON_EXE%" (
-    set "PYTHON_EXE=%~dp0ocr-service\.venv\Scripts\python.exe"
+set "UVICORN_EXE=%~dp0ocr-service\venv\Scripts\uvicorn.exe"
+if not exist "%UVICORN_EXE%" (
+    set "UVICORN_EXE=%~dp0ocr-service\.venv\Scripts\uvicorn.exe"
 )
 
-if not exist "%PYTHON_EXE%" (
-    echo [ERROR] ไม่พบ Python venv ในโฟลเดอร์ ocr-service
+if not exist "%UVICORN_EXE%" (
+    echo [ERROR] ไม่พบ uvicorn ในโฟลเดอร์ ocr-service\venv\Scripts
     echo กรุณาตรวจสอบว่ามี ocr-service\venv อยู่หรือไม่
     pause
     exit /b 1
@@ -53,11 +53,11 @@ if exist "F:\" (
 
 :: 4. Start Backend OCR & Cleaner Service (Port 8765)
 echo [1/2] กำลังเปิด Backend OCR Service (Port 8765)...
-start "SuperK - Backend OCR Cleaner (:8765)" cmd /k "chcp 65001 > nul && title SuperK - Backend OCR Cleaner (:8765) && cd /d ""%~dp0ocr-service"" && ""%PYTHON_EXE%"" -m uvicorn app.api:app --host 127.0.0.1 --port 8765"
+start /min "SuperK - Backend OCR Cleaner (:8765)" cmd /k "chcp 65001 > nul && title SuperK - Backend OCR Cleaner (:8765) && cd /d ""%~dp0ocr-service"" && ""%UVICORN_EXE%"" app.api:app --host 127.0.0.1 --port 8765"
 
 :: 5. Start Frontend Web App (Port 3000)
 echo [2/2] กำลังเปิด Frontend Next.js (Port 3000)...
-start "SuperK - Frontend Web (:3000)" cmd /k "chcp 65001 > nul && title SuperK - Frontend Web (:3000) && cd /d ""%~dp0"" && npm run dev"
+start /min "SuperK - Frontend Web (:3000)" cmd /k "chcp 65001 > nul && title SuperK - Frontend Web (:3000) && cd /d ""%~dp0"" && npm run dev"
 
 :: 6. Wait for servers to initialize
 echo.

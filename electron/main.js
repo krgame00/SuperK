@@ -50,7 +50,7 @@ const BASE_WINDOW_CONFIG = {
     contextIsolation: true,
     nodeIntegration: false,
     preload: path.join(__dirname, "preload.js"),
-    backgroundThrottling: false,
+    backgroundThrottling: true,
   },
   backgroundColor: "#111111",
   show: false,
@@ -353,11 +353,60 @@ function bootstrap(
       win.on?.("move", saveState);
     }
 
-    win.on?.("close", (event) => {
-      if (!isQuitting && trayManager) {
+    win.on?.("close", async (event) => {
+      if (isQuitting) return;
+
+      const pref = windowStateManager ? windowStateManager.getClosePreference() : null;
+      if (pref === "minimize_to_tray") {
         if (event && typeof event.preventDefault === "function") {
           event.preventDefault();
         }
+        win.hide?.();
+        return;
+      }
+
+      if (pref === "exit") {
+        if (event && typeof event.preventDefault === "function") {
+          event.preventDefault();
+        }
+        isQuitting = true;
+        app.quit();
+        return;
+      }
+
+      if (event && typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
+
+      if (dialog && typeof dialog.showMessageBox === "function") {
+        try {
+          const res = await dialog.showMessageBox(win, {
+            type: "question",
+            title: "SuperK — Close Preference",
+            message: "Choose what happens when you close the SuperK window.",
+            buttons: ["Minimize to Tray", "Exit SuperK", "Cancel"],
+            defaultId: 0,
+            cancelId: 2,
+            checkboxLabel: "Remember my choice",
+            checkboxChecked: true,
+          });
+
+          if (res.response === 0) {
+            if (res.checkboxChecked && windowStateManager) {
+              windowStateManager.setClosePreference("minimize_to_tray");
+            }
+            win.hide?.();
+          } else if (res.response === 1) {
+            if (res.checkboxChecked && windowStateManager) {
+              windowStateManager.setClosePreference("exit");
+            }
+            isQuitting = true;
+            app.quit();
+          }
+        } catch {
+          win.hide?.();
+        }
+      } else {
         win.hide?.();
       }
     });
@@ -500,6 +549,55 @@ function bootstrap(
     return await openExportDirectory(shell, dirPath);
   };
 
+  const flushMemoryHandler = async () => {
+    const results = { webCache: false, sidecar: false, gc: false };
+    try {
+      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents?.session) {
+        await mainWindow.webContents.session.clearCache();
+        results.webCache = true;
+      }
+    } catch (err) {
+      console.warn("[Memory] Failed to clear session cache:", err.message);
+    }
+
+    try {
+      const cleanerUrl = getSidecarBaseUrl();
+      const res = await (globalThis.fetch || fetch)(`${cleanerUrl}/v1/jobs/flush-memory`, {
+        method: "POST",
+      });
+      results.sidecar = res.ok;
+    } catch (err) {
+      console.warn("[Memory] Failed to flush sidecar memory:", err.message);
+    }
+
+    if (typeof global.gc === "function") {
+      try {
+        global.gc();
+        results.gc = true;
+      } catch {}
+    }
+
+    return results;
+  };
+
+  const getMemoryUsageHandler = async () => {
+    return {
+      process: process.memoryUsage ? process.memoryUsage() : null,
+    };
+  };
+
+  const getClosePreferenceHandler = async () => {
+    return windowStateManager ? windowStateManager.getClosePreference() : null;
+  };
+
+  const setClosePreferenceHandler = async (_event, pref) => {
+    if (windowStateManager) {
+      windowStateManager.setClosePreference(pref);
+      return true;
+    }
+    return false;
+  };
+
   if (ipcMain) {
     ipcMain.on("splash:retry", retryHandler);
     ipcMain.on("desktop:notify", notifyHandler);
@@ -507,6 +605,10 @@ function bootstrap(
     ipcMain.handle?.("desktop:pick-export-directory", pickExportDirectoryHandler);
     ipcMain.handle?.("desktop:save-export-file", saveExportFileHandler);
     ipcMain.handle?.("desktop:open-export-directory", openExportDirectoryHandler);
+    ipcMain.handle?.("desktop:flush-memory", flushMemoryHandler);
+    ipcMain.handle?.("desktop:get-memory-usage", getMemoryUsageHandler);
+    ipcMain.handle?.("desktop:get-close-preference", getClosePreferenceHandler);
+    ipcMain.handle?.("desktop:set-close-preference", setClosePreferenceHandler);
   }
 
   app.whenReady().then(() => {
@@ -554,6 +656,10 @@ function bootstrap(
       ipcMain.removeHandler?.("desktop:pick-export-directory");
       ipcMain.removeHandler?.("desktop:save-export-file");
       ipcMain.removeHandler?.("desktop:open-export-directory");
+      ipcMain.removeHandler?.("desktop:flush-memory");
+      ipcMain.removeHandler?.("desktop:get-memory-usage");
+      ipcMain.removeHandler?.("desktop:get-close-preference");
+      ipcMain.removeHandler?.("desktop:set-close-preference");
     }
 
     cleanupPromise = Promise.allSettled([

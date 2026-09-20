@@ -75,6 +75,22 @@ describe("WindowStateManager & System Tray (Ticket 05)", () => {
         isMaximized: false,
       });
     });
+
+    it("gets and sets close preference correctly", () => {
+      const mockStore = {
+        get: vi.fn().mockReturnValue(null),
+        set: vi.fn(),
+      };
+      const manager = new WindowStateManager({ store: mockStore as any });
+
+      expect(manager.getClosePreference()).toBeNull();
+
+      manager.setClosePreference("minimize_to_tray");
+      expect(mockStore.set).toHaveBeenCalledWith("closePreference", "minimize_to_tray");
+
+      mockStore.get.mockReturnValue("exit");
+      expect(manager.getClosePreference()).toBe("exit");
+    });
   });
 
   describe("createTrayManager", () => {

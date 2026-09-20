@@ -77,6 +77,20 @@ class WindowStateManager {
       this.store.set("windowState", state);
     }, this.debounceMs);
   }
+
+  getClosePreference() {
+    const saved = this.store.get("closePreference");
+    if (saved === "exit" || saved === "minimize_to_tray") {
+      return saved;
+    }
+    return null;
+  }
+
+  setClosePreference(preference) {
+    if (preference === "exit" || preference === "minimize_to_tray" || preference === null) {
+      this.store.set("closePreference", preference);
+    }
+  }
 }
 
 function createTrayManager(options = {}) {

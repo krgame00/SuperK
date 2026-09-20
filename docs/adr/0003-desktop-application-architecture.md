@@ -4,7 +4,7 @@ Date: 2026-09-08
 
 ## Status
 
-Accepted — amended 2026-09-09
+Accepted — amended 2026-09-09; close/tray and idle resource lifecycle further amended by ADR 0013
 
 ## Context
 

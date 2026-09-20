@@ -411,12 +411,12 @@ describe("Constants (Ticket 01)", () => {
       height: 900,
       minWidth: 1024,
       minHeight: 700,
-      webPreferences: { contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
+      webPreferences: { contextIsolation: true, nodeIntegration: false, backgroundThrottling: true },
     });
   });
 
-  it("disables background timer throttling in webPreferences for full-speed background execution", () => {
-    expect(BASE_WINDOW_CONFIG.webPreferences.backgroundThrottling).toBe(false);
+  it("enables background timer throttling in webPreferences for balanced idle efficiency", () => {
+    expect(BASE_WINDOW_CONFIG.webPreferences.backgroundThrottling).toBe(true);
   });
 });
 
@@ -459,7 +459,7 @@ describe("Background Execution & System Tray", () => {
     expect(mockTrayInstance.destroy).toHaveBeenCalled();
   });
 
-  it("intercepts window close event to hide to tray instead of terminating app", async () => {
+  it("prompts on first close and remembers Minimize to Tray choice", async () => {
     appMock.whenReady = vi.fn(() => new Promise(() => {}));
     const mockTrayInstance = {
       setToolTip: vi.fn(),
@@ -474,18 +474,59 @@ describe("Background Execution & System Tray", () => {
       buildFromTemplate: vi.fn((items) => items),
     };
 
+    const mockStore = {
+      get: vi.fn().mockReturnValue(null),
+      set: vi.fn(),
+    };
+    const windowStateManager = {
+      getBounds: vi.fn(() => ({})),
+      saveState: vi.fn(),
+      getClosePreference: () => mockStore.get("closePreference"),
+      setClosePreference: (pref: any) => mockStore.set("closePreference", pref),
+    };
+
+    const dialogMock = {
+      showMessageBox: vi.fn(async () => ({ response: 0, checkboxChecked: true })),
+    };
+
     const runtime = bootstrapForTest(appMock, BrowserWindowMock, {
       Tray: MockTray,
       Menu: MockMenu,
+      windowStateManager,
+      dialog: dialogMock,
     });
 
     await runtime.runStartup();
 
     const preventDefault = vi.fn();
-    windowMock.emit("close", { preventDefault });
+    await windowMock.emit("close", { preventDefault });
 
     expect(preventDefault).toHaveBeenCalled();
+    expect(dialogMock.showMessageBox).toHaveBeenCalled();
+    expect(mockStore.set).toHaveBeenCalledWith("closePreference", "minimize_to_tray");
     expect(windowMock.hide).toHaveBeenCalled();
+  });
+
+  it("respects saved 'exit' close preference to quit app immediately", async () => {
+    appMock.whenReady = vi.fn(() => new Promise(() => {}));
+    const windowStateManager = {
+      getBounds: vi.fn(() => ({})),
+      saveState: vi.fn(),
+      getClosePreference: vi.fn().mockReturnValue("exit"),
+      setClosePreference: vi.fn(),
+    };
+
+    const runtime = bootstrapForTest(appMock, BrowserWindowMock, {
+      windowStateManager,
+    });
+
+    await runtime.runStartup();
+
+    const preventDefault = vi.fn();
+    await windowMock.emit("close", { preventDefault });
+
+    expect(preventDefault).toHaveBeenCalled();
+    expect(appMock.quit).toHaveBeenCalled();
   });
 
   it("handles desktop:notify IPC to trigger native OS notification", async () => {
@@ -551,6 +592,8 @@ describe("Background Execution & System Tray", () => {
     expect(handleChannels).toContain("desktop:pick-export-directory");
     expect(handleChannels).toContain("desktop:save-export-file");
     expect(handleChannels).toContain("desktop:open-export-directory");
+    expect(handleChannels).toContain("desktop:get-close-preference");
+    expect(handleChannels).toContain("desktop:set-close-preference");
 
     // Trigger pick-export-directory
     const pickHandler = ipcMain.handle.mock.calls.find(
@@ -572,6 +615,8 @@ describe("Background Execution & System Tray", () => {
     expect(ipcMain.removeHandler).toHaveBeenCalledWith("desktop:pick-export-directory");
     expect(ipcMain.removeHandler).toHaveBeenCalledWith("desktop:save-export-file");
     expect(ipcMain.removeHandler).toHaveBeenCalledWith("desktop:open-export-directory");
+    expect(ipcMain.removeHandler).toHaveBeenCalledWith("desktop:get-close-preference");
+    expect(ipcMain.removeHandler).toHaveBeenCalledWith("desktop:set-close-preference");
   });
 });
 

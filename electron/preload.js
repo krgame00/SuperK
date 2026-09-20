@@ -22,5 +22,17 @@ contextBridge.exposeInMainWorld("superkDesktop", {
   openExportDirectory(dirPath) {
     return ipcRenderer.invoke("desktop:open-export-directory", dirPath);
   },
+  flushMemory() {
+    return ipcRenderer.invoke("desktop:flush-memory");
+  },
+  getMemoryUsage() {
+    return ipcRenderer.invoke("desktop:get-memory-usage");
+  },
+  getClosePreference() {
+    return ipcRenderer.invoke("desktop:get-close-preference");
+  },
+  setClosePreference(preference) {
+    return ipcRenderer.invoke("desktop:set-close-preference", preference);
+  },
 });
 
