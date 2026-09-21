@@ -72,6 +72,15 @@ const catalog = {
       cooldownKeys: 0,
       compatibility: { text: "compatible", image: "incompatible" },
     },
+    {
+      id: "gemini-3.6-flash",
+      displayName: "Gemini 3.6 Flash",
+      releaseChannel: "stable",
+      availabilityCount: 2,
+      totalKeys: 2,
+      cooldownKeys: 0,
+      compatibility: { text: "compatible", image: "unverified" },
+    },
   ],
 };
 
@@ -101,6 +110,10 @@ describe("SettingsModal dynamic Gemini catalog", () => {
     expect(screen.getByRole("searchbox", { name: /ค้นหาโมเดล/i })).toBeInTheDocument();
     expect(await screen.findByRole("option", { name: /Gemini Dynamic Stable/i })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Gemini Dynamic Preview/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: /Gemini 3\.6 Flash.*Experimental \/ Unstable/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("ยังไม่ยืนยันเสถียรกับงานแปลภาพ")).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Gemini Unavailable/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Gemini Incompatible/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Gemini 2\.5 Flash/i })).not.toBeInTheDocument();
@@ -148,7 +161,7 @@ describe("SettingsModal dynamic Gemini catalog", () => {
     const onPreview = vi.fn();
     render(<SettingsModal {...defaultProps} userApiKey="key-a" onAllowPreviewModelsChange={onPreview} />);
 
-    await waitFor(() => expect(screen.getByText(/2 ใช้ได้ จาก 4 โมเดล · 2 Keys/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/3 ใช้ได้ จาก 5 โมเดล · 2 Keys/i)).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: /รีเฟรชรายการโมเดล/i }));
 
     await waitFor(() => {

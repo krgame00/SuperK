@@ -55,9 +55,16 @@ function joinApiKeySlots(values: string[]): string {
   return values.map((value) => value.trim()).filter(Boolean).slice(0, 5).join(",");
 }
 
+const UNSTABLE_IMAGE_MODEL_IDS = new Set(["gemini-3.6-flash"]);
+
+function isUnstableImageModel(modelId: string): boolean {
+  return UNSTABLE_IMAGE_MODEL_IDS.has(modelId);
+}
+
 function catalogModelMeta(model: GeminiCatalogModelView): string {
   const tags = [`${model.availabilityCount}/${model.totalKeys} Keys`];
   if (model.releaseChannel !== "stable") tags.push(model.releaseChannel === "preview" ? "Preview" : "Experimental");
+  if (isUnstableImageModel(model.id)) tags.push("Experimental / Unstable");
   if (model.compatibility.image === "compatible") tags.push("Compatible");
   else if (model.compatibility.image === "incompatible") tags.push("Incompatible");
   else tags.push("Unverified");
@@ -733,8 +740,20 @@ export function SettingsModal({
                         }`}
                       >
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-xs font-semibold">{model.displayName}</span>
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <span className="block truncate text-xs font-semibold">{model.displayName}</span>
+                            {isUnstableImageModel(model.id) && (
+                              <span className="shrink-0 rounded-full border border-amber-400/40 bg-amber-400/10 px-1.5 py-0.5 text-[9px] font-semibold text-amber-300">
+                                Experimental / Unstable
+                              </span>
+                            )}
+                          </span>
                           <span className="block truncate text-[10px] text-muted">{catalogModelMeta(model)}</span>
+                          {isUnstableImageModel(model.id) && (
+                            <span className="mt-0.5 block text-[10px] leading-tight text-amber-300">
+                              ยังไม่ยืนยันเสถียรกับงานแปลภาพ
+                            </span>
+                          )}
                         </span>
                         {modelPreference === model.id && <Check className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}
                       </button>

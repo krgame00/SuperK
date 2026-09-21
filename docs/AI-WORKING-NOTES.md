@@ -226,7 +226,7 @@ Verification evidence:
 
 ### NOT VERIFIED / currently unreliable: `gemini-3.6-flash` for image translation
 
-A live probe through SuperK's actual `/api/translate` image path did not establish `gemini-3.6-flash` as reliable. Repeated attempts timed out or returned `Unable to process input image`. This is not evidence that the model is permanently unavailable; keep it out of any "verified usable" claim until a later health probe succeeds.
+A live probe through SuperK's actual `/api/translate` image path did not establish `gemini-3.6-flash` as reliable. Repeated attempts timed out or returned `Unable to process input image`. This is not evidence that the model is permanently unavailable; keep it out of any "verified usable" claim until a later health probe succeeds. The Settings picker may still expose it when the live catalog reports availability, but it must be visibly labeled `Experimental / Unstable` with an image-translation stability warning so manual selection remains possible without implying verification.
 
 A broader live probe of the discovered catalog confirmed that discovery alone is not proof of image-translation compatibility. Several models returned 200 successfully, while others failed because of deprecation, modality mismatch, quota, high demand, or timeout. Do not promote catalog discovery metadata to production-routing authority without real image probes.
 
