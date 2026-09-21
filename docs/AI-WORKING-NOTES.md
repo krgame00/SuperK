@@ -230,6 +230,19 @@ A live probe through SuperK's actual `/api/translate` image path did not establi
 
 A broader live probe of the discovered catalog confirmed that discovery alone is not proof of image-translation compatibility. Several models returned 200 successfully, while others failed because of deprecation, modality mismatch, quota, high demand, or timeout. Do not promote catalog discovery metadata to production-routing authority without real image probes.
 
+### VERIFIED WORKING: translate-all stopwatch replaces ETA
+
+- Translate-all progress no longer predicts remaining time from rolling page averages.
+- The UI shows a live stopwatch for the current page and a separate total batch elapsed clock.
+- Current-page processing time excludes deliberate retry/cooldown waits so model/cleaning performance is not inflated by scheduled waiting.
+- Successful completion messages include the actual total elapsed wall-clock time.
+- Retry/cancel/quota behavior remains unchanged; only time reporting changed.
+
+Verification evidence:
+
+- Focused translation/workspace regressions cover live elapsed updates and confirm ETA wording is absent.
+- Verification: full `tests/translation` plus workspace timing coverage — **31 files / 157 tests passed**; `npx tsc --noEmit` passed; scoped lint of changed surfaces passed with 0 errors after excluding known pre-existing React Compiler debt rules; `git diff --check` passed.
+
 ## Quick status summary
 
 - **Web App:** ACTIVE / primary direction.

@@ -179,6 +179,32 @@ test("starts only batch translation when batch and single are called in the same
   ).toHaveLength(1);
 });
 
+test("exposes elapsed stopwatch fields instead of ETA fields during batch translation", async () => {
+  const preparation = deferred<PreparedTranslationPage>();
+  const preparePageForTranslation = vi.fn(() => preparation.promise);
+  installSuccessfulFetch();
+  const { result } = renderTranslation(preparePageForTranslation);
+
+  let batchPromise!: Promise<void>;
+  await act(async () => {
+    batchPromise = result.current.handleTranslateAll();
+    await Promise.resolve();
+  });
+
+  expect(result.current.translateAllProgress?.elapsedMs).toBeGreaterThanOrEqual(0);
+  expect(result.current.translateAllProgress?.pageElapsedMs).toBeGreaterThanOrEqual(0);
+  expect(result.current.translateAllProgress).not.toHaveProperty("remainingSeconds");
+  expect(result.current.translateAllProgress).not.toHaveProperty("estimating");
+
+  act(() => {
+    result.current.cancelTranslateAll();
+  });
+  await act(async () => {
+    preparation.resolve(preparedPage);
+    await batchPromise;
+  });
+});
+
 test("keeps batch busy and blocks single translation until pending preparation settles after cancel", async () => {
   const preparation = deferred<PreparedTranslationPage>();
   const preparePageForTranslation = vi

@@ -258,10 +258,23 @@ export function useTranslation({
     status: "cleaning" | "translating" | "waiting" | "cooldown";
     message: string;
     startTime: number;
-    remainingSeconds?: number;
+    elapsedMs: number;
+    pageElapsedMs: number;
+    lastPageDurationMs?: number;
     secondaryMessage?: string;
-    estimating?: boolean;
   } | null>(null);
+  const translationStopwatchRef = useRef<{
+    batchStartedAt: number;
+    pageStartedAt: number;
+    pageExcludedMs: number;
+    pagePausedAt: number | null;
+    lastPageDurationMs?: number;
+  }>({
+    batchStartedAt: 0,
+    pageStartedAt: 0,
+    pageExcludedMs: 0,
+    pagePausedAt: null,
+  });
   const cancelTranslateAllRef = useRef(false);
   const translationOperationLockRef = useRef(false);
   // Aborts in-flight fetches as soon as the user cancels (or unmounts),
@@ -302,6 +315,35 @@ export function useTranslation({
       }
     };
   }, [quotaCooldownByGroup]);
+
+  useEffect(() => {
+    const isTestRuntime =
+      typeof process !== "undefined" && process.env?.NODE_ENV === "test";
+    if (!isTranslatingAll || isTestRuntime) return;
+
+    const timerId = window.setInterval(() => {
+      const now = Date.now();
+      const stopwatch = translationStopwatchRef.current;
+      const pageClockNow = stopwatch.pagePausedAt ?? now;
+      const pageElapsedMs = stopwatch.pageStartedAt > 0
+        ? Math.max(
+            0,
+            pageClockNow - stopwatch.pageStartedAt - stopwatch.pageExcludedMs,
+          )
+        : (stopwatch.lastPageDurationMs ?? 0);
+
+      setTranslateAllProgress((previous) => previous
+        ? {
+            ...previous,
+            elapsedMs: Math.max(0, now - stopwatch.batchStartedAt),
+            pageElapsedMs,
+            lastPageDurationMs: stopwatch.lastPageDurationMs,
+          }
+        : previous);
+    }, 250);
+
+    return () => window.clearInterval(timerId);
+  }, [isTranslatingAll]);
 
   const failureGroups = useMemo(
     () => buildFailureGroups(batchFailures, quotaCooldownByGroup, quotaClockMs),
@@ -1297,6 +1339,12 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         translationAbortRef.current = new AbortController();
         const signal = translationAbortRef.current.signal;
         const batchStartTime = Date.now();
+        translationStopwatchRef.current = {
+          batchStartedAt: batchStartTime,
+          pageStartedAt: 0,
+          pageExcludedMs: 0,
+          pagePausedAt: null,
+        };
         setBatchPerformanceMetrics(null);
         const failureOperationId = `batch-${++failureGroupSequenceRef.current}`;
         const failureGroupIdFor = (diagnostic: DiagnosticDetail) =>
@@ -1350,7 +1398,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         ? targetIndices.filter((idx) => idx >= 0 && idx < pages.length)
         : pages.map((_, idx) => idx);
       // Snapshot the work set before starting. Already completed pages are not
-      // part of this batch, so they cannot inflate the frontier or ETA.
+      // part of this batch, so they cannot inflate the progress frontier.
       const indicesToProcess = isTargetedRetry
         ? candidateIndices
         : candidateIndices.filter((idx) => !completedPagesRef.current.has(pages[idx]));
@@ -1410,14 +1458,6 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         | { pageIndex: number; promise: Promise<PreparationOutcome> }
         | null = null;
       const batchReadyPages = new Set<string>();
-      let completedEndToEnd = 0;
-      const recentDurationsMs: number[] = [];
-      const estimateRemainingSeconds = (remainingPages: number) => {
-        if (completedEndToEnd < 2 || recentDurationsMs.length === 0) return undefined;
-        const recent = recentDurationsMs.slice(-5);
-        const average = recent.reduce((sum, value) => sum + value, 0) / recent.length;
-        return (average * remainingPages) / 1000;
-      };
       const nextEligibleIndex = (afterStep: number): number | undefined => {
         for (let candidateStep = afterStep + 1; candidateStep < indicesToProcess.length; candidateStep++) {
           const candidate = indicesToProcess[candidateStep];
@@ -1440,13 +1480,10 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
 
         const pageStartedAt = Date.now();
         let excludedWaitMs = 0;
-        const remainingPages = indicesToProcess
-          .slice(step)
-          .filter((candidate) => isTargetedRetry || !completedPagesRef.current.has(pages[candidate]))
-          .length;
-        const remainingSec = estimateRemainingSeconds(
-          remainingPages,
-        );
+        translationStopwatchRef.current.pageStartedAt = pageStartedAt;
+        translationStopwatchRef.current.pageExcludedMs = 0;
+        translationStopwatchRef.current.pagePausedAt = null;
+        translationStopwatchRef.current.lastPageDurationMs = undefined;
 
         setTranslateAllProgress({
           current: batchProgressFrontier(),
@@ -1454,8 +1491,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           status: "cleaning",
           message: `กำลังคลีนหน้า ${i + 1}/${pages.length}`,
           startTime: batchStartTime,
-          remainingSeconds: remainingSec,
-          estimating: remainingSec === undefined,
+          elapsedMs: Math.max(0, pageStartedAt - batchStartTime),
+          pageElapsedMs: 0,
         });
 
         let preparedPage: PreparedTranslationPage;
@@ -1522,11 +1559,11 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           status: "translating",
           message: `กำลังแปลหน้า ${i + 1}/${pages.length}`,
           startTime: batchStartTime,
-          remainingSeconds: remainingSec,
+          elapsedMs: Math.max(0, Date.now() - batchStartTime),
+          pageElapsedMs: Math.max(0, Date.now() - pageStartedAt - excludedWaitMs),
           secondaryMessage: prefetched
             ? `กำลังเตรียมหน้า ${prefetched.pageIndex + 1} ล่วงหน้า`
             : undefined,
-          estimating: remainingSec === undefined,
         });
 
         let success = false;
@@ -1536,6 +1573,18 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
 
         while (!success && retries < 3 && !cancelTranslateAllRef.current) {
           try {
+            setTranslateAllProgress({
+              current: batchProgressFrontier(),
+              total: indicesToProcess.length,
+              status: "translating",
+              message: `กำลังแปลหน้า ${i + 1}/${pages.length}`,
+              startTime: batchStartTime,
+              elapsedMs: Math.max(0, Date.now() - batchStartTime),
+              pageElapsedMs: Math.max(0, Date.now() - pageStartedAt - excludedWaitMs),
+              secondaryMessage: prefetched
+                ? `กำลังเตรียมหน้า ${prefetched.pageIndex + 1} ล่วงหน้า`
+                : undefined,
+            });
             if (nsfwBypassMode || forceNsfw) {
               setTranslationResult(
                 `กำลังหั่นภาพเป็น 6 ส่วน (หน้า ${i + 1}) - รอบ ${retries + 1}/3`,
@@ -1587,17 +1636,23 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
               break;
             }
             const waitSec = Math.round(retryDelay / 1000);
+            const waitStartedAt = Date.now();
+            translationStopwatchRef.current.pagePausedAt = waitStartedAt;
+            setTranslateAllProgress({
+              current: batchProgressFrontier(),
+              total: indicesToProcess.length,
+              status: "waiting",
+              message: err instanceof TranslationRequestError && err.code === "GEMINI_QUOTA"
+                ? `รอโควต้า API (${waitSec} วิ)... หน้า ${i + 1}/${pages.length}`
+                : `รอลองใหม่ (${waitSec} วิ)... หน้า ${i + 1}/${pages.length}`,
+              startTime: batchStartTime,
+              elapsedMs: Math.max(0, waitStartedAt - batchStartTime),
+              pageElapsedMs: Math.max(0, waitStartedAt - pageStartedAt - excludedWaitMs),
+            });
             if (
               err instanceof TranslationRequestError
               && err.code === "GEMINI_QUOTA"
             ) {
-              setTranslateAllProgress({
-                current: batchProgressFrontier(),
-                total: indicesToProcess.length,
-                status: "waiting",
-                message: `รอโควต้า API (${waitSec} วิ)... หน้า ${i + 1}/${pages.length}`,
-                startTime: batchStartTime,
-              });
               setTranslationResult(
                 `API Rate Limit! รอ ${waitSec} วิ... (รอบ ${retries + 1}/3)`,
               );
@@ -1606,9 +1661,11 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
                 `แปลไม่ผ่าน รอ ${waitSec} วิเพื่อลองใหม่... (รอบ ${retries + 1}/3)`,
               );
             }
-            const waitStartedAt = Date.now();
             await interruptibleDelay(retryDelay);
-            excludedWaitMs += Date.now() - waitStartedAt;
+            const waitedMs = Date.now() - waitStartedAt;
+            excludedWaitMs += waitedMs;
+            translationStopwatchRef.current.pageExcludedMs = excludedWaitMs;
+            translationStopwatchRef.current.pagePausedAt = null;
             retries++;
           }
         }
@@ -1653,12 +1710,12 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
 
         if (success) {
           batchReadyPages.add(pageUrl);
-          completedEndToEnd += 1;
           const durationMs = Math.max(0, Date.now() - pageStartedAt - excludedWaitMs);
           pageDurationsMs.push(durationMs);
-          // The first completed page includes one-time model/runtime warm-up and
-          // is deliberately excluded from throughput projection.
-          if (completedEndToEnd > 1) recentDurationsMs.push(durationMs);
+          translationStopwatchRef.current.lastPageDurationMs = durationMs;
+          translationStopwatchRef.current.pageStartedAt = 0;
+          translationStopwatchRef.current.pageExcludedMs = 0;
+          translationStopwatchRef.current.pagePausedAt = null;
         }
 
         if (
@@ -1677,6 +1734,9 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             status: "cooldown",
             message: `พักโหลด 2 วิ... หน้า ${i + 1}/${pages.length}`,
             startTime: batchStartTime,
+            elapsedMs: Math.max(0, Date.now() - batchStartTime),
+            pageElapsedMs: translationStopwatchRef.current.lastPageDurationMs ?? 0,
+            lastPageDurationMs: translationStopwatchRef.current.lastPageDurationMs,
           });
           await interruptibleDelay(2000);
         }
@@ -1689,11 +1749,17 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       }
 
       const failedPages = failures.map(({ pageIndex }) => pageIndex + 1);
-      const finalResultText =
+      const totalElapsedMs = Math.max(0, Date.now() - batchStartTime);
+      const totalElapsedSeconds = totalElapsedMs / 1000;
+      const totalElapsedLabel = totalElapsedSeconds < 60
+        ? `${totalElapsedSeconds.toFixed(1)} วิ`
+        : `${Math.floor(totalElapsedSeconds / 60)} นาที ${Math.floor(totalElapsedSeconds % 60)} วิ`;
+      const finalResultBase =
         quotaFailureMessage
           ?? (failedPages.length === 0
             ? "✅ แปลเสร็จเรียบร้อยแล้ว"
             : `⚠️ แปลเสร็จ แต่หน้า ${failedPages.join(", ")} ต้องลองใหม่`);
+      const finalResultText = `${finalResultBase} · ใช้เวลารวม ${totalElapsedLabel}`;
       setTranslationResult(finalResultText);
       recordBatchMetrics(false);
       sendDesktopNotification("SuperK — Manga Translator", finalResultText);

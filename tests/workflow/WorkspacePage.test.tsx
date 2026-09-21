@@ -225,6 +225,31 @@ beforeEach(() => {
   );
 });
 
+test("shows elapsed stopwatch time instead of an ETA during batch translation", () => {
+  const baseTranslationState = vi.mocked(useTranslation)({} as never);
+  vi.mocked(useTranslation).mockClear();
+  vi.mocked(useTranslation).mockReturnValue({
+    ...baseTranslationState,
+    isTranslatingAll: true,
+    translateAllProgress: {
+      current: 1,
+      total: 4,
+      status: "translating",
+      message: "กำลังแปลหน้า 1/4",
+      startTime: 0,
+      elapsedMs: 12_345,
+      pageElapsedMs: 6_789,
+    },
+  } as never);
+
+  render(<WorkspacePage />);
+
+  expect(
+    screen.getByText(/กำลังแปลหน้า 1\/4.*⏱ 00:06\.7.*รวม 00:12\.3.*25%/),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/เหลืออีก|ประเมินเวลาที่เหลือ/)).not.toBeInTheDocument();
+});
+
 describe("workspace clean-then-translate integration", () => {
   test("supplies clean-page preparation to translation", () => {
     render(<WorkspacePage />);

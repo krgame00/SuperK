@@ -69,6 +69,22 @@ import {
 } from "@/components/workspace/TranslationDiagnosticModal";
 import { recoverDesktopCleaner } from "@/lib/desktopBridge";
 
+function formatStopwatchTime(elapsedMs: number): string {
+  const safeMs = Math.max(0, Number.isFinite(elapsedMs) ? elapsedMs : 0);
+  const totalTenths = Math.floor(safeMs / 100);
+  const tenths = totalTenths % 10;
+  const totalSeconds = Math.floor(totalTenths / 10);
+  const seconds = totalSeconds % 60;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const minutes = totalMinutes % 60;
+  const hours = Math.floor(totalMinutes / 60);
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${tenths}`;
+  }
+  return `${String(totalMinutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${tenths}`;
+}
+
 export default function WorkspacePage() {
 
   const [pages, setPages] = useState<{ id?: string; url: string; name: string; originUrl?: string }[]>([]);
@@ -512,17 +528,7 @@ export default function WorkspacePage() {
         translateAllProgress.secondaryMessage
           ? ` · ${translateAllProgress.secondaryMessage}`
           : ""
-      }${
-        translateAllProgress.estimating
-          ? " · กำลังประเมินเวลาที่เหลือ..."
-          : typeof translateAllProgress.remainingSeconds === "number"
-            ? ` · ${
-                translateAllProgress.remainingSeconds < 60
-                  ? `เหลืออีก ~${Math.ceil(translateAllProgress.remainingSeconds)} วิ`
-                  : `เหลืออีก ~${Math.ceil(translateAllProgress.remainingSeconds / 60)} นาที`
-              }`
-            : ""
-      } (${Math.round((translateAllProgress.current / translateAllProgress.total) * 100)}%)`
+      } · ⏱ ${formatStopwatchTime(translateAllProgress.pageElapsedMs)} · รวม ${formatStopwatchTime(translateAllProgress.elapsedMs)} (${Math.round((translateAllProgress.current / translateAllProgress.total) * 100)}%)`
     : null;
 
   const cleaningStatusText = cleaningProgress
@@ -1887,15 +1893,12 @@ export default function WorkspacePage() {
                       {translateAllProgress.secondaryMessage}
                     </span>
                   )}
-                  {translateAllProgress?.estimating ? (
-                    <span className="text-[10px] text-muted">กำลังประเมินเวลาที่เหลือ...</span>
-                  ) : translateAllProgress && typeof translateAllProgress.remainingSeconds === 'number' ? (
-                    <span className="text-[10px] text-muted">
-                      {translateAllProgress.remainingSeconds < 60
-                        ? `เหลืออีก ~${Math.ceil(translateAllProgress.remainingSeconds)} วินาที`
-                        : `เหลืออีก ~${Math.ceil(translateAllProgress.remainingSeconds / 60)} นาที`}
-                    </span>
-                  ) : null}
+                  {translateAllProgress && (
+                    <div className="flex items-center justify-between gap-3 text-[10px] text-muted tabular-nums">
+                      <span>⏱ หน้านี้ {formatStopwatchTime(translateAllProgress.pageElapsedMs)}</span>
+                      <span>รวม {formatStopwatchTime(translateAllProgress.elapsedMs)}</span>
+                    </div>
+                  )}
                   <button
                     onClick={cancelTranslateAll}
                     className="w-full bg-red-500/15 text-red-400 hover:bg-red-500/25 px-4 py-2 rounded-md text-sm font-semibold flex justify-center items-center gap-2 transition-all"
