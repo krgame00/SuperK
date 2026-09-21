@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { type GlossaryEntry } from "@/lib/translation/glossary";
-import { Plus, Trash2, BookText, Flame, X, ChevronDown, Download, Folder } from "lucide-react";
+import { Plus, Trash2, BookText, Flame, X, ChevronDown, Download, Folder, Search, Check } from "lucide-react";
 import {
   getAskExportDirectory,
   setAskExportDirectory,
@@ -55,14 +55,14 @@ function joinApiKeySlots(values: string[]): string {
   return values.map((value) => value.trim()).filter(Boolean).slice(0, 5).join(",");
 }
 
-function catalogModelLabel(model: GeminiCatalogModelView): string {
+function catalogModelMeta(model: GeminiCatalogModelView): string {
   const tags = [`${model.availabilityCount}/${model.totalKeys} Keys`];
   if (model.releaseChannel !== "stable") tags.push(model.releaseChannel === "preview" ? "Preview" : "Experimental");
   if (model.compatibility.image === "compatible") tags.push("Compatible");
   else if (model.compatibility.image === "incompatible") tags.push("Incompatible");
   else tags.push("Unverified");
   if (model.cooldownKeys > 0) tags.push(`Cooldown ${model.cooldownKeys}`);
-  return `${model.displayName} (${tags.join(" · ")})`;
+  return tags.join(" · ");
 }
 
 export interface SettingsModalProps {
@@ -121,6 +121,14 @@ export function SettingsModal({
   const apiKeySlots = splitApiKeySlots(userApiKey);
   const [newSource, setNewSource] = useState("");
   const [newTarget, setNewTarget] = useState("");
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [modelSearch, setModelSearch] = useState("");
+  const [draftTextColor, setDraftTextColor] = useState(textStyle.textColor || "#000000");
+  const [draftTextOutline, setDraftTextOutline] = useState(textStyle.textOutline || "#ffffff");
+  const colorCommitTimersRef = useRef<Record<"textColor" | "textOutline", number | null>>({
+    textColor: null,
+    textOutline: null,
+  });
   const [isPurging, setIsPurging] = useState(false);
   const isPurgingBrowserRef = useRef(false);
   const [askExportDirectory, setAskExportDirectoryState] = useState(
@@ -151,21 +159,58 @@ export function SettingsModal({
   const [isCopiedToken, setIsCopiedToken] = useState(false);
 
   useEffect(() => {
-    if (isOpen) {
+    if (!isOpen) return;
+
+    const refreshFrame = window.requestAnimationFrame(() => {
       setRememberedDirName(getRememberedDirectoryName());
       setAskExportDirectoryState(getAskExportDirectory());
-      fetch("/api/extension/pair")
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.pairingToken) setPairingToken(data.pairingToken);
-        })
-        .catch(() => {});
-      const timer = window.setTimeout(() => {
-        void loadGeminiCatalog(false);
-      }, 150);
-      return () => window.clearTimeout(timer);
+      setDraftTextColor(textStyle.textColor || "#000000");
+      setDraftTextOutline(textStyle.textOutline || "#ffffff");
+    });
+    void fetch("/api/extension/pair")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.pairingToken) setPairingToken(data.pairingToken);
+      })
+      .catch(() => {});
+    const timer = window.setTimeout(() => {
+      void loadGeminiCatalog(false);
+    }, 150);
+
+    return () => {
+      window.cancelAnimationFrame(refreshFrame);
+      window.clearTimeout(timer);
+    };
+  }, [isOpen, loadGeminiCatalog, textStyle.textColor, textStyle.textOutline]);
+
+  useEffect(() => {
+    const timers = colorCommitTimersRef.current;
+    return () => {
+      Object.values(timers).forEach((timerId) => {
+        if (timerId !== null) window.clearTimeout(timerId);
+      });
+    };
+  }, []);
+
+  const commitColor = useCallback((key: "textColor" | "textOutline", value: string) => {
+    const timerId = colorCommitTimersRef.current[key];
+    if (timerId !== null) {
+      window.clearTimeout(timerId);
+      colorCommitTimersRef.current[key] = null;
     }
-  }, [isOpen, loadGeminiCatalog]);
+    onTextStyleChange((prev: WorkspaceTextStyle) => ({ ...prev, [key]: value }));
+  }, [onTextStyleChange]);
+
+  const queueColorCommit = useCallback((key: "textColor" | "textOutline", value: string) => {
+    const timerId = colorCommitTimersRef.current[key];
+    if (timerId !== null) {
+      window.clearTimeout(timerId);
+    }
+    colorCommitTimersRef.current[key] = window.setTimeout(() => {
+      colorCommitTimersRef.current[key] = null;
+      onTextStyleChange((prev: WorkspaceTextStyle) => ({ ...prev, [key]: value }));
+    }, 180);
+  }, [onTextStyleChange]);
 
   const handlePurgeServerCache = async () => {
     if (isPurging) return;
@@ -208,16 +253,23 @@ export function SettingsModal({
   useEffect(() => {
     if (isOpen) {
       previousActiveElementRef.current = document.activeElement as HTMLElement | null;
-      setApiKeyValidation({ status: "idle" });
       if (focusApiKey) {
-        window.requestAnimationFrame(() => {
+        const focusFrame = window.requestAnimationFrame(() => {
+          setApiKeyValidation({ status: "idle" });
           apiKeyInputRef.current?.focus();
           apiKeyInputRef.current?.select();
         });
-      } else {
-        closeRef.current?.focus();
+        return () => window.cancelAnimationFrame(focusFrame);
       }
-    } else if (previousActiveElementRef.current) {
+
+      closeRef.current?.focus();
+      const resetFrame = window.requestAnimationFrame(() => {
+        setApiKeyValidation({ status: "idle" });
+      });
+      return () => window.cancelAnimationFrame(resetFrame);
+    }
+
+    if (previousActiveElementRef.current) {
       previousActiveElementRef.current.focus?.();
       previousActiveElementRef.current = null;
     }
@@ -270,9 +322,34 @@ export function SettingsModal({
     onGlossaryChange?.(updated);
   };
 
+  const usableModels = (geminiCatalog?.models ?? []).filter(
+    (model) => model.availabilityCount > 0 && model.compatibility.image !== "incompatible",
+  );
+  const selectedCatalogModel = usableModels.find((model) => model.id === modelPreference);
+  const selectedModelUnavailable =
+    modelPreference !== "auto" && !selectedCatalogModel;
+  const normalizedModelSearch = modelSearch.trim().toLowerCase();
+  const visibleUsableModels = usableModels.filter((model) => {
+    if (!normalizedModelSearch) return true;
+    return [
+      model.id,
+      model.displayName,
+      catalogModelMeta(model),
+      model.releaseChannel,
+    ].some((value) => value.toLowerCase().includes(normalizedModelSearch));
+  });
+  const autoMatchesSearch =
+    !normalizedModelSearch ||
+    "auto automatic อัตโนมัติ".includes(normalizedModelSearch);
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
       event.preventDefault();
+      if (modelPickerOpen) {
+        setModelPickerOpen(false);
+        setModelSearch("");
+        return;
+      }
       onClose();
       return;
     }
@@ -308,12 +385,17 @@ export function SettingsModal({
         aria-modal="true"
         aria-labelledby="settings-title"
         onKeyDown={handleKeyDown}
-        className="fixed inset-x-4 top-16 z-[100] mx-auto max-h-[85vh] w-auto max-w-sm overflow-y-auto rounded-xl border border-surface-hover bg-surface/95 p-4 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-200 sm:absolute sm:inset-auto sm:right-6 sm:top-14 sm:w-84"
+        className="fixed inset-x-4 top-16 z-[100] mx-auto max-h-[85vh] w-auto max-w-lg overflow-y-auto rounded-2xl border border-surface-hover bg-surface/95 p-4 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-200 sm:absolute sm:inset-auto sm:right-6 sm:top-14 sm:w-[30rem]"
       >
-        <div className="mb-4 flex items-center justify-between">
-          <h3 id="settings-title" className="font-medium text-foreground">
-            Settings
-          </h3>
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <h3 id="settings-title" className="text-base font-semibold text-foreground">
+              ตั้งค่า
+            </h3>
+            <p className="mt-0.5 text-[11px] text-muted">
+              ภาษา รูปแบบข้อความ AI และการจัดเก็บ
+            </p>
+          </div>
           <button
             ref={closeRef}
             type="button"
@@ -325,8 +407,8 @@ export function SettingsModal({
           </button>
         </div>
 
-        <div className="space-y-4">
-          <div>
+        <div className="space-y-3">
+          <div className="rounded-xl border border-border/70 bg-background/45 p-3">
             <label htmlFor="settings-source-lang" className="mb-1 block text-xs font-medium text-muted">
               Source Language (ภาษาต้นฉบับ)
             </label>
@@ -348,7 +430,7 @@ export function SettingsModal({
             </div>
           </div>
 
-          <div className="border-t border-surface-hover pt-2">
+          <div className="rounded-xl border border-border/70 bg-background/45 p-3">
             <span className="mb-2 block text-xs font-medium text-muted">
               Typography (รูปแบบข้อความ)
             </span>
@@ -389,13 +471,13 @@ export function SettingsModal({
                   id="settings-text-color"
                   aria-label="Text Color (สีข้อความ)"
                   type="color"
-                  value={textStyle.textColor || "#000000"}
-                  onChange={(e) =>
-                    onTextStyleChange((prev: WorkspaceTextStyle) => ({
-                      ...prev,
-                      textColor: e.target.value,
-                    }))
-                  }
+                  value={draftTextColor}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setDraftTextColor(next);
+                    queueColorCommit("textColor", next);
+                  }}
+                  onBlur={() => commitColor("textColor", draftTextColor)}
                   className="h-8 w-8 cursor-pointer rounded border-0 bg-transparent p-0"
                 />
               </div>
@@ -408,13 +490,13 @@ export function SettingsModal({
                   id="settings-text-outline"
                   aria-label="Outline Color (สีขอบตัวอักษร)"
                   type="color"
-                  value={textStyle.textOutline || "#ffffff"}
-                  onChange={(e) =>
-                    onTextStyleChange((prev: WorkspaceTextStyle) => ({
-                      ...prev,
-                      textOutline: e.target.value,
-                    }))
-                  }
+                  value={draftTextOutline}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setDraftTextOutline(next);
+                    queueColorCommit("textOutline", next);
+                  }}
+                  onBlur={() => commitColor("textOutline", draftTextOutline)}
                   className="h-8 w-8 cursor-pointer rounded border-0 bg-transparent p-0"
                 />
               </div>
@@ -441,10 +523,31 @@ export function SettingsModal({
                   className="w-full accent-primary"
                 />
               </div>
+
+              <div
+                aria-label="ตัวอย่างรูปแบบข้อความ"
+                className="rounded-lg border border-border/70 bg-surface/70 px-4 py-3 text-center"
+              >
+                <span className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-muted">
+                  Live Preview
+                </span>
+                <span
+                  className="inline-block"
+                  style={{
+                    fontFamily: textStyle.fontFamily,
+                    fontSize: `${Math.round(18 * textStyle.fontSizeMultiplier)}px`,
+                    color: draftTextColor,
+                    WebkitTextStroke: `1px ${draftTextOutline}`,
+                    paintOrder: "stroke fill",
+                  }}
+                >
+                  ตัวอย่างข้อความแปล
+                </span>
+              </div>
             </div>
           </div>
 
-          <div className="border-t border-surface-hover pt-2">
+          <div className="rounded-xl border border-border/70 bg-background/45 p-3">
             <div className="mb-2 flex items-center justify-between">
               <span className="flex items-center gap-1.5 text-xs font-medium text-muted">
                 <BookText className="h-3.5 w-3.5 text-primary" />
@@ -511,7 +614,7 @@ export function SettingsModal({
             </form>
           </div>
 
-          <div className="border-t border-surface-hover pt-2">
+          <div className="rounded-xl border border-border/70 bg-background/45 p-3">
             <div className="mb-1 flex items-center justify-between gap-2">
               <label htmlFor="settings-model-preference" className="block text-xs font-medium text-muted">
                 Model Preference (โมเดล Gemini)
@@ -526,35 +629,141 @@ export function SettingsModal({
                 {catalogStatus === "loading" ? "กำลังรีเฟรช..." : "รีเฟรช"}
               </button>
             </div>
-            <div className="relative">
-              <select
+
+            <div className="w-full max-w-full">
+              <button
                 id="settings-model-preference"
+                type="button"
                 aria-label="Model Preference (โมเดล Gemini)"
-                value={modelPreference}
-                onChange={(e) => onModelPreferenceChange(e.target.value)}
-                className="w-full appearance-none rounded-md border border-surface-hover bg-background px-3 py-2 pr-8 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                aria-haspopup="listbox"
+                aria-expanded={modelPickerOpen}
+                aria-controls="settings-model-listbox"
+                onClick={() => {
+                  setModelPickerOpen((open) => !open);
+                  setModelSearch("");
+                }}
+                className="flex w-full min-w-0 items-center justify-between gap-3 rounded-md border border-surface-hover bg-background px-3 py-2 text-left text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
               >
-                <option value="auto">Auto (ใช้โมเดลและ Key ที่พร้อมใช้อัตโนมัติ)</option>
-                {modelPreference !== "auto" &&
-                  !geminiCatalog?.models.some((model) => model.id === modelPreference) && (
-                    <option value={modelPreference}>{modelPreference} (Unavailable)</option>
-                  )}
-                {geminiCatalog?.models.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {catalogModelLabel(model)}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" aria-hidden="true" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">
+                    {modelPreference === "auto"
+                      ? "Auto"
+                      : selectedCatalogModel?.displayName ?? modelPreference}
+                  </span>
+                  <span className="block truncate text-[10px] font-normal text-muted">
+                    {modelPreference === "auto"
+                      ? "ใช้โมเดลและ Key ที่พร้อมใช้อัตโนมัติ"
+                      : selectedCatalogModel
+                        ? catalogModelMeta(selectedCatalogModel)
+                        : "Unavailable · ไม่สามารถเลือกซ้ำได้"}
+                  </span>
+                </span>
+                <ChevronDown
+                  className={`h-4 w-4 shrink-0 text-muted transition-transform ${modelPickerOpen ? "rotate-180" : ""}`}
+                  aria-hidden="true"
+                />
+              </button>
+
+              {modelPickerOpen && (
+                <div className="mt-2 overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
+                  <div className="border-b border-border/70 p-2">
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" aria-hidden="true" />
+                      <input
+                        type="search"
+                        role="searchbox"
+                        aria-label="ค้นหาโมเดล"
+                        autoFocus
+                        value={modelSearch}
+                        onChange={(event) => setModelSearch(event.target.value)}
+                        placeholder="ค้นหาโมเดล..."
+                        className="w-full rounded-md border border-border bg-background py-2 pl-8 pr-3 text-xs text-foreground placeholder:text-muted/60 focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                    </div>
+                  </div>
+
+                  <div
+                    id="settings-model-listbox"
+                    role="listbox"
+                    aria-label="รายการโมเดล Gemini"
+                    className="max-h-64 overflow-y-auto p-1.5 [scrollbar-width:thin]"
+                  >
+                    {autoMatchesSearch && (
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={modelPreference === "auto"}
+                        onClick={() => {
+                          onModelPreferenceChange("auto");
+                          setModelPickerOpen(false);
+                          setModelSearch("");
+                        }}
+                        className={`flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left transition-colors ${
+                          modelPreference === "auto"
+                            ? "bg-primary/15 text-primary"
+                            : "text-foreground hover:bg-surface-hover"
+                        }`}
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-xs font-semibold">Auto</span>
+                          <span className="block text-[10px] text-muted">
+                            เลือกโมเดลและ Key ที่พร้อมใช้อัตโนมัติ
+                          </span>
+                        </span>
+                        {modelPreference === "auto" && <Check className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}
+                      </button>
+                    )}
+
+                    {visibleUsableModels.map((model) => (
+                      <button
+                        key={model.id}
+                        type="button"
+                        role="option"
+                        aria-selected={modelPreference === model.id}
+                        aria-label={`${model.displayName} ${catalogModelMeta(model)}`}
+                        onClick={() => {
+                          onModelPreferenceChange(model.id);
+                          setModelPickerOpen(false);
+                          setModelSearch("");
+                        }}
+                        className={`flex w-full min-w-0 items-start gap-2 rounded-md px-2.5 py-2 text-left transition-colors ${
+                          modelPreference === model.id
+                            ? "bg-primary/15 text-primary"
+                            : "text-foreground hover:bg-surface-hover"
+                        }`}
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-xs font-semibold">{model.displayName}</span>
+                          <span className="block truncate text-[10px] text-muted">{catalogModelMeta(model)}</span>
+                        </span>
+                        {modelPreference === model.id && <Check className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}
+                      </button>
+                    ))}
+
+                    {!autoMatchesSearch && visibleUsableModels.length === 0 && (
+                      <div className="px-3 py-5 text-center text-xs text-muted">
+                        ไม่พบโมเดลที่ใช้งานได้ตรงกับคำค้น
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="mt-1 flex items-start justify-between gap-3 text-[10px] leading-relaxed text-muted">
+
+            {selectedModelUnavailable && (
+              <p className="mt-1.5 text-[10px] leading-relaxed text-amber-400">
+                โมเดลที่บันทึกไว้ใช้งานไม่ได้ในตอนนี้ กรุณาเลือก Auto หรือโมเดลที่พร้อมใช้งานจากรายการ
+              </p>
+            )}
+
+            <div className="mt-1.5 flex items-start justify-between gap-3 text-[10px] leading-relaxed text-muted">
               <span>
                 {catalogStatus === "loading" && !geminiCatalog
                   ? "กำลังโหลดโมเดลจาก Gemini..."
                   : catalogStatus === "error"
                     ? "โหลดรายการโมเดลไม่ได้ ระบบจะใช้ข้อมูลแคชหรือโหมดกู้คืนเมื่อแปล"
                     : geminiCatalog
-                      ? `${geminiCatalog.models.length} โมเดล · ${geminiCatalog.totalKeys} Keys${geminiCatalog.stale ? " · ข้อมูลแคช" : ""}`
+                      ? `${usableModels.length} ใช้ได้ จาก ${geminiCatalog.models.length} โมเดล · ${geminiCatalog.totalKeys} Keys${geminiCatalog.stale ? " · ข้อมูลแคช" : ""}`
                       : "รายการโมเดลจะถูกค้นหาจาก Gemini API Key ที่ใช้งานจริง"}
               </span>
             </div>
@@ -570,10 +779,15 @@ export function SettingsModal({
             </label>
           </div>
 
-          <div>
-            <span className="mb-1 block text-xs font-medium text-muted">
-              Gemini API Keys (สูงสุด 5 Keys)
-            </span>
+          <div className="rounded-xl border border-border/70 bg-background/45 p-3">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <span className="block text-xs font-medium text-muted">
+                Gemini API Keys
+              </span>
+              <span className="rounded-full border border-border/70 bg-surface px-2 py-0.5 text-[10px] font-medium text-muted">
+                เชื่อมต่อ {apiKeySlots.filter(Boolean).length}/5 Keys
+              </span>
+            </div>
             <div className="space-y-1.5">
               {apiKeySlots.map((value, index) => {
                 const slot = index + 1;
@@ -641,7 +855,7 @@ export function SettingsModal({
             )}
           </div>
 
-          <div className="border-t border-surface-hover pt-2">
+          <div className="rounded-xl border border-border/70 bg-background/45 p-3">
             <span className="mb-1 block text-xs font-medium text-muted">
               Maintenance (ล้างข้อมูลค้าง)
             </span>
@@ -668,7 +882,7 @@ export function SettingsModal({
             </button>
           </div>
 
-          <div className="border-t border-surface-hover pt-3">
+          <div className="rounded-xl border border-border/70 bg-background/45 p-3">
             <div className="flex items-center justify-between">
               <div>
                 <label className="flex items-center gap-1.5 text-xs font-medium text-foreground">
@@ -698,7 +912,7 @@ export function SettingsModal({
             </div>
           </div>
 
-          <div className="border-t border-surface-hover pt-3">
+          <div className="rounded-xl border border-border/70 bg-background/45 p-3">
             <div className="flex items-center justify-between">
               <div>
                 <label className="flex items-center gap-1.5 text-xs font-medium text-foreground">
@@ -790,7 +1004,7 @@ export function SettingsModal({
             )}
           </div>
 
-          <div className="border-t border-surface-hover pt-3">
+          <div className="rounded-xl border border-border/70 bg-background/45 p-3">
             <span className="mb-1 block text-xs font-medium text-muted">
               Chrome Extension Pairing (จับคู่ส่วนเสริม)
             </span>

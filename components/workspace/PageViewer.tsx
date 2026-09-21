@@ -25,6 +25,7 @@ export interface PageViewerProps {
   onImageError: (url: string) => void;
   isFocusMode?: boolean;
   onToggleFocusMode?: () => void;
+  isFilmstripVisible?: boolean;
 }
 
 function VirtualPageItem({
@@ -115,6 +116,7 @@ export function PageViewer({
   onImageError,
   isFocusMode = false,
   onToggleFocusMode,
+  isFilmstripVisible = false,
 }: PageViewerProps): ReactElement | null {
   const touchStartXRef = useRef<number | null>(null);
   const touchStartYRef = useRef<number | null>(null);
@@ -310,6 +312,7 @@ export function PageViewer({
             onToggleScrollZoomMode={zoom.toggleScrollZoomMode}
             isFocusMode={isFocusMode}
             onToggleFocusMode={onToggleFocusMode}
+            avoidBottomChrome={isFilmstripVisible}
           />
         </div>
       ) : (
@@ -478,7 +481,7 @@ export function PageViewer({
           )}
 
           {/* Floating Page Badge */}
-          <div className="absolute bottom-2 bg-background/90 backdrop-blur-xs text-foreground text-xs font-medium px-3.5 py-1.5 rounded-full border border-border shadow-md pointer-events-none z-30" aria-live="polite">
+          <div className={`absolute ${isFilmstripVisible ? "bottom-[8.5rem]" : "bottom-2"} bg-background/90 backdrop-blur-xs text-foreground text-xs font-medium px-3.5 py-1.5 rounded-full border border-border shadow-md pointer-events-none z-30 transition-[bottom] duration-200`} aria-live="polite">
             <span className="sr-only">หน้าปัจจุบัน: </span>{currentPage + 1} / {pages.length}
           </div>
 
@@ -497,6 +500,7 @@ export function PageViewer({
             onToggleScrollZoomMode={zoom.toggleScrollZoomMode}
             isFocusMode={isFocusMode}
             onToggleFocusMode={onToggleFocusMode}
+            avoidBottomChrome={isFilmstripVisible}
           />
         </div>
       )}

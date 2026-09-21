@@ -54,6 +54,24 @@ const catalog = {
       cooldownKeys: 1,
       compatibility: { text: "unverified", image: "unverified" },
     },
+    {
+      id: "gemini-unavailable",
+      displayName: "Gemini Unavailable",
+      releaseChannel: "stable",
+      availabilityCount: 0,
+      totalKeys: 2,
+      cooldownKeys: 0,
+      compatibility: { text: "compatible", image: "compatible" },
+    },
+    {
+      id: "gemini-incompatible",
+      displayName: "Gemini Incompatible",
+      releaseChannel: "stable",
+      availabilityCount: 2,
+      totalKeys: 2,
+      cooldownKeys: 0,
+      compatibility: { text: "compatible", image: "incompatible" },
+    },
   ],
 };
 
@@ -72,12 +90,26 @@ describe("SettingsModal dynamic Gemini catalog", () => {
     );
   });
 
-  it("loads model options from the dynamic catalog instead of a hard-coded hierarchy", async () => {
+  it("loads model options in a constrained searchable picker instead of a native select", async () => {
     render(<SettingsModal {...defaultProps} userApiKey="key-a,key-b" />);
 
+    const trigger = screen.getByRole("button", { name: /Model Preference/i });
+    fireEvent.click(trigger);
+
+    const listbox = await screen.findByRole("listbox", { name: /รายการโมเดล Gemini/i });
+    expect(listbox).toHaveClass("max-h-64", "overflow-y-auto");
+    expect(screen.getByRole("searchbox", { name: /ค้นหาโมเดล/i })).toBeInTheDocument();
     expect(await screen.findByRole("option", { name: /Gemini Dynamic Stable/i })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Gemini Dynamic Preview/i })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Gemini Unavailable/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Gemini Incompatible/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Gemini 2\.5 Flash/i })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("searchbox", { name: /ค้นหาโมเดล/i }), {
+      target: { value: "preview" },
+    });
+    expect(screen.queryByRole("option", { name: /Gemini Dynamic Stable/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Gemini Dynamic Preview/i })).toBeInTheDocument();
 
     const fetchMock = vi.mocked(fetch);
     expect(fetchMock).toHaveBeenCalledWith(
@@ -92,9 +124,12 @@ describe("SettingsModal dynamic Gemini catalog", () => {
   it("keeps a saved Manual model visible as Unavailable when fresh discovery no longer lists it", async () => {
     render(<SettingsModal {...defaultProps} modelPreference="retired-model" />);
 
-    const option = await screen.findByRole("option", { name: /retired-model.*Unavailable/i });
-    expect(option).toHaveValue("retired-model");
-    expect(screen.getByLabelText(/Model Preference/i)).toHaveValue("retired-model");
+    const trigger = screen.getByRole("button", { name: /Model Preference/i });
+    expect(trigger).toHaveTextContent("retired-model");
+    fireEvent.click(trigger);
+
+    await waitFor(() => expect(trigger).toHaveTextContent(/retired-model.*Unavailable/i));
+    expect(screen.queryByRole("option", { name: /retired-model/i })).not.toBeInTheDocument();
   });
 
   it("renders five masked key slots and stores the active pool through the existing key string boundary", () => {
@@ -113,7 +148,7 @@ describe("SettingsModal dynamic Gemini catalog", () => {
     const onPreview = vi.fn();
     render(<SettingsModal {...defaultProps} userApiKey="key-a" onAllowPreviewModelsChange={onPreview} />);
 
-    await screen.findByRole("option", { name: /Gemini Dynamic Stable/i });
+    await waitFor(() => expect(screen.getByText(/2 ใช้ได้ จาก 4 โมเดล · 2 Keys/i)).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: /รีเฟรชรายการโมเดล/i }));
 
     await waitFor(() => {

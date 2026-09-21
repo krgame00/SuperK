@@ -39,7 +39,7 @@ describe("Monochrome Manga Text Style Policy (Task 3 - ADR 0016)", () => {
     expect(resolved.glow).toBeUndefined();
   });
 
-  it("resolves black/dark bubble on monochrome page to white text without shadow", () => {
+  it("keeps black text on a dark monochrome background and adds only a thin white outline", () => {
     const bubble = makeBubble({
       isMonochromePage: true,
       monochromeConfidence: 0.95,
@@ -47,7 +47,10 @@ describe("Monochrome Manga Text Style Policy (Task 3 - ADR 0016)", () => {
       category: "dialogue",
     });
     const resolved = resolveBubbleTextStyle(bubble);
-    expect(resolved.textColor).toBe("#ffffff");
+    expect(resolved.textColor).toBe("#000000");
+    expect(resolved.textOutline).toBe("#ffffff");
+    expect(resolved.hasOutline).toBe(true);
+    expect(resolved.outlineWidthRatio).toBeLessThanOrEqual(0.08);
     expect(resolved.shadow).toBeUndefined();
     expect(resolved.glow).toBeUndefined();
   });
@@ -64,7 +67,7 @@ describe("Monochrome Manga Text Style Policy (Task 3 - ADR 0016)", () => {
     expect(resolved.shadow).toBeUndefined();
   });
 
-  it("resolves mixed grayscale background on monochrome page with contrasting outline and no shadow", () => {
+  it("keeps black text on mixed grayscale background with a thin white outline and no shadow", () => {
     const bubble = makeBubble({
       isMonochromePage: true,
       monochromeConfidence: 0.95,
@@ -73,8 +76,11 @@ describe("Monochrome Manga Text Style Policy (Task 3 - ADR 0016)", () => {
       category: "dialogue",
     });
     const resolved = resolveBubbleTextStyle(bubble);
+    expect(resolved.textColor).toBe("#000000");
+    expect(resolved.textOutline).toBe("#ffffff");
     expect(resolved.hasOutline).toBe(true);
-    expect(resolved.outlineWidthRatio).toBeGreaterThanOrEqual(0.10);
+    expect(resolved.outlineWidthRatio).toBeGreaterThan(0);
+    expect(resolved.outlineWidthRatio).toBeLessThanOrEqual(0.08);
     expect(resolved.shadow).toBeUndefined();
   });
 
@@ -146,7 +152,7 @@ describe("Monochrome Manga Text Style Policy (Task 3 - ADR 0016)", () => {
     expect(resolved.textColor).toBe("#ff5500");
   });
 
-  it("preserves source-faithful dialogue style on monochrome page but removes automatic shadow", () => {
+  it("applies the monochrome black-text policy ahead of source-faithful auto styling", () => {
     const bubble = makeBubble({
       isMonochromePage: true,
       monochromeConfidence: 0.95,
@@ -154,15 +160,16 @@ describe("Monochrome Manga Text Style Policy (Task 3 - ADR 0016)", () => {
       fill: "#ffffff",
       outline: "#111111",
       evidenceState: "admitted",
+      backgroundLuminance: 235,
       category: "dialogue",
     });
     const resolved = resolveBubbleTextStyle(bubble);
-    expect(resolved.textColor).toBe("#ffffff");
-    expect(resolved.textOutline).toBe("#111111");
+    expect(resolved.textColor).toBe("#000000");
+    expect(resolved.hasOutline).toBe(false);
     expect(resolved.shadow).toBeUndefined();
   });
 
-  it("keeps explicit Readable dialogue shadowless on a confirmed monochrome page", () => {
+  it("applies black text to explicit Readable dialogue on a confirmed monochrome page", () => {
     const bubble = makeBubble({
       isMonochromePage: true,
       monochromeConfidence: 0.95,
@@ -171,7 +178,8 @@ describe("Monochrome Manga Text Style Policy (Task 3 - ADR 0016)", () => {
       category: "dialogue",
     });
     const resolved = resolveBubbleTextStyle(bubble);
-    expect(resolved.isAdaptiveReadable).toBe(true);
+    expect(resolved.textColor).toBe("#000000");
+    expect(resolved.hasOutline).toBe(false);
     expect(resolved.shadow).toBeUndefined();
     expect(resolved.glow).toBeUndefined();
     expect(resolved.readabilityHalo).toBeUndefined();

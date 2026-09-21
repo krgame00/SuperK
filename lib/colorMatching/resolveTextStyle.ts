@@ -171,8 +171,8 @@ export function deriveSourceAccentColor(
   profile?: TextStyleProfile,
 ): string | undefined {
   if (!profile) return undefined;
-  if ((profile as any).sourceAccentColor) {
-    return (profile as any).sourceAccentColor;
+  if (profile.sourceAccentColor) {
+    return profile.sourceAccentColor;
   }
   // If the profile was rejected due to background contamination or insufficient evidence,
   // or is already a generic fallback/global/readable profile, its fill/outline colors are not trustworthy source accents.
@@ -230,7 +230,7 @@ export function strengthenSourceAccentOutline(
     return rgbToHex(newRgb.r, newRgb.g, newRgb.b);
   } else {
     let targetL = hsl.l;
-    let targetS = hsl.s;
+    const targetS = hsl.s;
 
     if (targetL < 0.60) {
       targetL = 0.70;
@@ -411,17 +411,15 @@ function globalResolvedStyle(
 function resolvedFromProfile(
   profile: TextStyleProfile,
   globalStyle: OverlayTextStyle,
-  autoOutlineEnabled: boolean,
-  bubble?: TranslatedBubble,
 ): ResolvedTextStyle {
   const isManual = profile.ownershipMode === "manual" || profile.source === "manual";
   const isValidatedSource = profile.evidenceState === "admitted";
   const hasOutline = resolveOutlinePresence(profile);
-  let outlineWidthRatio = hasOutline
+  const outlineWidthRatio = hasOutline
     ? resolveOutlineRatio(profile, hasOutline)
     : 0;
 
-  let textColor = profile.fill || globalStyle.textColor || "#000000";
+  const textColor = profile.fill || globalStyle.textColor || "#000000";
   let textOutline = hasOutline
     ? profile.outline || globalStyle.textOutline || "#ffffff"
     : globalStyle.textOutline || "#ffffff";
@@ -530,7 +528,6 @@ export function resolveBubbleTextStyle(
 ): ResolvedTextStyle {
   const minConfidence = options.minConfidence ?? 0.80;
   const autoMatchEnabled = options.autoMatchColors ?? true;
-  const autoOutlineEnabled = options.autoMatchOutline ?? true;
   const profile = bubble.styleProfile as TextStyleProfile | undefined;
   const category = inferTextStyleCategory(bubble);
 
@@ -544,105 +541,30 @@ export function resolveBubbleTextStyle(
   const fillConf = profile.fillConfidence ?? 1.0;
   const outlineConf = profile.outlineConfidence ?? 1.0;
 
-  // Explicit user-selected readable preset
-  if (profile.ownershipMode === "readable") {
-    const readable = selectAdaptiveReadableStyle({
-      backgroundLuminance: profile.backgroundLuminance,
-      backgroundLuminanceSamples: profile.backgroundLuminanceSamples,
-      backgroundColor: profile.backgroundColor,
-      category,
-      fillConfidence: fillConf,
-      outlineConfidence: outlineConf,
-      requiresHaloEscalation: profile.requiresHaloEscalation,
-      requiresPlateEscalation: profile.requiresPlateEscalation,
-      sourceProfile: profile,
-    });
-    if (shouldUseMonochromeMangaStyle(profile, category)) {
-      return {
-        ...readable,
-        shadow: undefined,
-        glow: undefined,
-        readabilityHalo: undefined,
-      };
-    }
-    return readable;
-  }
-
   // Manual user styling is authoritative until the user explicitly returns to Auto/Original.
+  // This is the only mode allowed to override the monochrome page policy.
   if (profile.ownershipMode === "manual" || profile.source === "manual") {
-    return resolvedFromProfile(profile, globalStyle, true, bubble);
+    return resolvedFromProfile(profile, globalStyle);
   }
 
-  // Explicit Source-faithful mode: preserved without Binary Fill modification.
-  if (profile.ownershipMode === "source_faithful") {
-    const base = resolvedFromProfile(profile, globalStyle, autoOutlineEnabled, bubble);
-    if (shouldUseMonochromeMangaStyle(profile, category)) {
-      return {
-        ...base,
-        shadow: undefined,
-      };
-    }
-    return base;
-  }
-
-  // Monochrome Manga Text Style Policy (ADR 0016):
-  // When confirmed as a monochrome manga page, dialogue and narration use authentic
-  // monochrome text styling without automatic drop shadow.
+  // Monochrome Manga Text Style Policy:
+  // Confirmed B&W dialogue/narration always uses black fill with no shadow/glow.
+  // A thin white outline is added only when the local grayscale background is
+  // dark or strongly mixed, preserving readability without turning the fill white.
   if (shouldUseMonochromeMangaStyle(profile, category)) {
     const bgLum = profile.backgroundLuminance;
     const samples = profile.backgroundLuminanceSamples ?? [];
     const mixed = samples.length > 0 && Math.max(...samples) - Math.min(...samples) >= 90;
-
-    const hasExplicitSourceOutline =
-      profile.hasOutline === true &&
-      profile.evidenceState === "admitted" &&
-      (profile.outlineConfidence ?? 0) >= 0.80;
-
-    let textColor = "#000000";
-    let textOutline = "#ffffff";
-    let hasOutline = false;
-    let outlineWidthRatio = 0;
-
-    if (bgLum !== undefined && bgLum >= 155 && !mixed) {
-      textColor = "#000000";
-      if (hasExplicitSourceOutline && profile.outline) {
-        hasOutline = true;
-        textOutline = profile.outline;
-        outlineWidthRatio = resolveOutlineRatio(profile, true);
-      } else {
-        hasOutline = false;
-        outlineWidthRatio = 0;
-      }
-    } else if (bgLum !== undefined && bgLum <= 100 && !mixed) {
-      textColor = "#ffffff";
-      textOutline = "#000000";
-      if (hasExplicitSourceOutline && profile.outline) {
-        hasOutline = true;
-        textOutline = profile.outline;
-        outlineWidthRatio = resolveOutlineRatio(profile, true);
-      } else {
-        hasOutline = false;
-        outlineWidthRatio = 0;
-      }
-    } else {
-      // Mixed or intermediate background: contrasting outline for readability, but no shadow
-      const effectiveLum = bgLum ?? 180;
-      if (effectiveLum < 128) {
-        textColor = "#ffffff";
-        textOutline = "#000000";
-      } else {
-        textColor = "#000000";
-        textOutline = "#ffffff";
-      }
-      hasOutline = true;
-      outlineWidthRatio = Math.max(0.12, resolveOutlineRatio(profile, true));
-    }
+    const needsOutline = mixed || (bgLum !== undefined && bgLum < 155);
+    const outlineWidthRatio = needsOutline
+      ? Math.min(0.08, Math.max(0.04, resolveOutlineRatio(profile, true)))
+      : 0;
 
     return {
-      textColor,
-      textOutline,
-      outlineWidth: hasOutline ? profile.outlineWidth ?? 1.0 : 0,
-      hasOutline,
+      textColor: "#000000",
+      textOutline: "#ffffff",
+      outlineWidth: needsOutline ? Math.min(0.75, profile.outlineWidth ?? 0.75) : 0,
+      hasOutline: needsOutline,
       outlineWidthRatio,
       opacity: profile.opacity ?? 1.0,
       source: profile.source ?? "auto",
@@ -655,9 +577,29 @@ export function resolveBubbleTextStyle(
       backgroundLuminance: profile.backgroundLuminance,
       backgroundLuminanceSamples: profile.backgroundLuminanceSamples,
       backgroundColor: profile.backgroundColor,
-      isAdaptiveReadable: mixed || (bgLum !== undefined && bgLum > 100 && bgLum < 155),
+      isAdaptiveReadable: needsOutline || undefined,
       reviewRequired: profile.reviewRequired ? true : undefined,
     };
+  }
+
+  // Explicit user-selected readable preset.
+  if (profile.ownershipMode === "readable") {
+    return selectAdaptiveReadableStyle({
+      backgroundLuminance: profile.backgroundLuminance,
+      backgroundLuminanceSamples: profile.backgroundLuminanceSamples,
+      backgroundColor: profile.backgroundColor,
+      category,
+      fillConfidence: fillConf,
+      outlineConfidence: outlineConf,
+      requiresHaloEscalation: profile.requiresHaloEscalation,
+      requiresPlateEscalation: profile.requiresPlateEscalation,
+      sourceProfile: profile,
+    });
+  }
+
+  // Explicit Source-faithful mode for non-monochrome pages.
+  if (profile.ownershipMode === "source_faithful") {
+    return resolvedFromProfile(profile, globalStyle);
   }
 
   // If candidate was rejected by evidence gate or background contamination,
@@ -726,7 +668,7 @@ export function resolveBubbleTextStyle(
 
   // 1. Decorative SFX (onomatopoeia sound effects) admitted with authored effects remain source-faithful
   if (category === "sfx" && profile.evidenceState === "admitted") {
-    return resolvedFromProfile(profile, globalStyle, autoOutlineEnabled, bubble);
+    return resolvedFromProfile(profile, globalStyle);
   }
 
   // 2. Standard dark dialogue in a white speech balloon remains dark text
@@ -738,7 +680,7 @@ export function resolveBubbleTextStyle(
   const isWhiteBalloon = typeof profile.backgroundLuminance === "number" && profile.backgroundLuminance >= 160;
 
   if (isDarkAchromatic && isWhiteBalloon) {
-    return resolvedFromProfile(profile, globalStyle, autoOutlineEnabled, bubble);
+    return resolvedFromProfile(profile, globalStyle);
   }
 
   // 3. Authored high-contrast dark outline around bright fills (e.g. yellow subtitle with solid black outline)
@@ -754,12 +696,12 @@ export function resolveBubbleTextStyle(
     rgbOutline &&
     0.299 * rgbOutline.r + 0.587 * rgbOutline.g + 0.114 * rgbOutline.b < 40
   ) {
-    return resolvedFromProfile(profile, globalStyle, autoOutlineEnabled, bubble);
+    return resolvedFromProfile(profile, globalStyle);
   }
 
   // 4. White text with chromatic or dark outline (already white fill)
   if (profile.fill?.toLowerCase() === "#ffffff") {
-    return resolvedFromProfile(profile, globalStyle, autoOutlineEnabled, bubble);
+    return resolvedFromProfile(profile, globalStyle);
   }
 
   // 5. White Fill + Source-Colored Outline Architecture (white-fill-source-outline-plan.md)
@@ -812,7 +754,7 @@ export function resolveBubbleTextStyle(
     };
   }
 
-  return resolvedFromProfile(profile, globalStyle, autoOutlineEnabled, bubble);
+  return resolvedFromProfile(profile, globalStyle);
 }
 
 export function cloneTextStyleProfile(

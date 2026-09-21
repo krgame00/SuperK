@@ -104,34 +104,36 @@ export function PageFilmstrip({
         isFocusMode
           ? "translate-y-[150%] opacity-0 pointer-events-none"
           : isCollapsed
-            ? "translate-y-full"
+            ? "translate-y-[calc(100%_-_2.25rem)]"
             : "translate-y-0"
       }`}
     >
-      {/* Collapse/Expand Toggle Button */}
-      <button
-        type="button"
-        aria-expanded={!isCollapsed}
-        aria-controls="page-filmstrip"
-        aria-label={isCollapsed ? `แสดงหน้าตัวอย่าง ทั้งหมด ${pages.length} หน้า` : "ซ่อนแถบหน้าตัวอย่าง"}
-        onClick={onToggleCollapse}
-        className="-top-7 absolute left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-t-lg border border-b-0 border-border bg-background px-3.5 py-1 text-xs font-medium text-muted shadow-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-        title={isCollapsed ? "Show Thumbnails" : "Hide Thumbnails"}
-      >
-        {isCollapsed ? (
-          <>
-            <ChevronUp className="h-3.5 w-3.5 text-muted" />
-            <span>
-              Pages ({currentPage + 1}/{pages.length})
-            </span>
-          </>
-        ) : (
-          <>
-            <ChevronDown className="h-3.5 w-3.5 text-muted" />
-            <span>ซ่อนหน้าตัวอย่าง</span>
-          </>
-        )}
-      </button>
+      <div className="flex h-9 w-full shrink-0 items-center justify-between border-b border-border/50 px-3 sm:px-4">
+        <span className="text-[11px] font-medium text-muted">
+          หน้า {currentPage + 1} / {pages.length}
+        </span>
+        <button
+          type="button"
+          aria-expanded={!isCollapsed}
+          aria-controls="page-filmstrip"
+          aria-label={isCollapsed ? `แสดงหน้าตัวอย่าง ทั้งหมด ${pages.length} หน้า` : "ซ่อนแถบหน้าตัวอย่าง"}
+          onClick={onToggleCollapse}
+          className="flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-muted transition-colors hover:bg-surface-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          title={isCollapsed ? "Show Thumbnails" : "Hide Thumbnails"}
+        >
+          {isCollapsed ? (
+            <>
+              <ChevronUp className="h-3.5 w-3.5 text-muted" />
+              <span>แสดงหน้าตัวอย่าง</span>
+            </>
+          ) : (
+            <>
+              <ChevronDown className="h-3.5 w-3.5 text-muted" />
+              <span>ซ่อนหน้าตัวอย่าง</span>
+            </>
+          )}
+        </button>
+      </div>
 
       <div
         id="page-filmstrip"

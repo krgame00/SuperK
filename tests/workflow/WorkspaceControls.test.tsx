@@ -36,6 +36,7 @@ describe("WorkspaceControls", () => {
     const onExport = vi.fn();
     render(<WorkspaceExportMenu disabled={false} onExport={onExport} />);
     const trigger = screen.getByRole("button", { name: "ส่งออก" });
+    expect(trigger).toHaveClass("whitespace-nowrap");
     fireEvent.click(trigger);
     expect(trigger).toHaveAttribute("aria-expanded", "true");
     for (const name of ["รูปภาพหน้านี้", "PDF", "Strip", "ZIP", "CBZ"]) {
@@ -73,7 +74,7 @@ describe("WorkspaceControls", () => {
         onRetryFailedPages={vi.fn()}
       />,
     );
-    const trigger = screen.getByRole("button", { name: "เครื่องมือขั้นสูง" });
+    const trigger = screen.getByRole("button", { name: "เครื่องมือ" });
     fireEvent.click(trigger);
     const retranslateItem = screen.getByRole("menuitem", { name: "แปลหน้านี้ใหม่" });
     expect(retranslateItem).toBeVisible();
@@ -94,7 +95,7 @@ describe("WorkspaceControls", () => {
         onRetryFailedPages={vi.fn()}
       />,
     );
-    const trigger = screen.getByRole("button", { name: "เครื่องมือขั้นสูง" });
+    const trigger = screen.getByRole("button", { name: "เครื่องมือ" });
     fireEvent.click(trigger);
     fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();

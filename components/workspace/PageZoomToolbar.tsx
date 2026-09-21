@@ -17,6 +17,7 @@ export interface PageZoomToolbarProps {
   onToggleScrollZoomMode: () => void;
   isFocusMode?: boolean;
   onToggleFocusMode?: () => void;
+  avoidBottomChrome?: boolean;
 }
 
 const PRESET_OPTIONS = [
@@ -41,6 +42,7 @@ export function PageZoomToolbar({
   onToggleScrollZoomMode,
   isFocusMode = false,
   onToggleFocusMode,
+  avoidBottomChrome = false,
 }: PageZoomToolbarProps): ReactElement {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -74,7 +76,7 @@ export function PageZoomToolbar({
       <div
         role="toolbar"
         aria-label="เครื่องมือปรับขนาดการแสดงผลต่อเนื่อง"
-        className="absolute bottom-4 right-4 z-20 flex items-center bg-surface/90 backdrop-blur-md border border-border/80 rounded-xl p-1 shadow-lg select-none"
+        className={`absolute ${avoidBottomChrome ? "bottom-[8.5rem]" : "bottom-4"} right-4 z-20 flex items-center bg-surface/90 backdrop-blur-md border border-border/80 rounded-xl p-1 shadow-lg select-none transition-[bottom,opacity] duration-200 opacity-70 hover:opacity-100 focus-within:opacity-100`}
       >
         <button
           type="button"
@@ -140,7 +142,7 @@ export function PageZoomToolbar({
       ref={menuRef}
       role="toolbar"
       aria-label="เครื่องมือซูมและย่อขยายภาพ"
-      className="absolute bottom-4 right-4 z-20 flex items-center bg-surface/90 backdrop-blur-md border border-border/80 rounded-xl p-1 shadow-lg gap-0.5 select-none"
+      className={`absolute ${avoidBottomChrome ? "bottom-[8.5rem]" : "bottom-3"} right-3 z-20 flex items-center bg-surface/85 backdrop-blur-md border border-border/70 rounded-xl p-1 shadow-lg gap-0.5 select-none opacity-60 hover:opacity-100 focus-within:opacity-100 transition-[bottom,opacity] duration-200`}
     >
       {/* Zoom Out Button */}
       <button

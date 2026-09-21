@@ -85,6 +85,9 @@ describe("SettingsModal Accessibility", () => {
   it("associates labels with their corresponding input and select controls via htmlFor and id", () => {
     render(<SettingsModal {...defaultProps} />);
 
+    expect(screen.getByRole("heading", { name: "ตั้งค่า" })).toBeInTheDocument();
+    expect(screen.getByLabelText("ตัวอย่างรูปแบบข้อความ")).toBeInTheDocument();
+
     // Source language select
     const sourceLangSelect = screen.getByLabelText(/Source Language/i);
     expect(sourceLangSelect).toBeInTheDocument();
@@ -111,14 +114,31 @@ describe("SettingsModal Accessibility", () => {
     expect(fontSizeInput.id).toBe("settings-font-size");
 
     // Model preference
-    const modelSelect = screen.getByLabelText(/Model Preference/i);
-    expect(modelSelect).toBeInTheDocument();
-    expect(modelSelect.id).toBe("settings-model-preference");
+    const modelPicker = screen.getByRole("button", { name: /Model Preference/i });
+    expect(modelPicker).toBeInTheDocument();
+    expect(modelPicker.id).toBe("settings-model-preference");
 
     // API key
     const apiKeyInput = screen.getByLabelText(/Gemini API Key/i);
     expect(apiKeyInput).toBeInTheDocument();
     expect(apiKeyInput.id).toBe("settings-api-key");
+  });
+
+  it("previews color changes locally before committing them to the workspace", () => {
+    const onTextStyleChange = vi.fn();
+    render(<SettingsModal {...defaultProps} onTextStyleChange={onTextStyleChange} />);
+
+    const colorInput = screen.getByLabelText(/Text Color/i);
+    const preview = screen.getByLabelText("ตัวอย่างรูปแบบข้อความ");
+    const previewText = preview.querySelector("span:last-child") as HTMLElement;
+
+    fireEvent.change(colorInput, { target: { value: "#ff3366" } });
+
+    expect(previewText).toHaveStyle({ color: "#ff3366" });
+    expect(onTextStyleChange).not.toHaveBeenCalled();
+
+    fireEvent.blur(colorInput);
+    expect(onTextStyleChange).toHaveBeenCalledTimes(1);
   });
 
   it("restores focus to the trigger element when closed", () => {
@@ -225,5 +245,10 @@ describe("WorkspacePage Accessibility & P1 Controls", () => {
     render(<WorkspacePage />);
     const settingsBtn = screen.getByRole("button", { name: /เปิดหน้าต่างตั้งค่า/i });
     expect(settingsBtn).toBeInTheDocument();
+
+    const desktopHeader = document.querySelector<HTMLElement>("[data-workspace-header-desktop]");
+    const mobileHeader = document.querySelector<HTMLElement>("[data-workspace-header-mobile]");
+    expect(desktopHeader).toHaveClass("hidden", "lg:flex");
+    expect(mobileHeader).toHaveClass("flex", "lg:hidden");
   });
 });

@@ -31,6 +31,9 @@ describe("PageFilmstrip", () => {
       "min-w-0",
       "overflow-x-auto",
     );
+    const toggle = screen.getByRole("button", { name: "ซ่อนแถบหน้าตัวอย่าง" });
+    expect(toggle.className).not.toContain("absolute");
+    expect(toggle.className).not.toContain("-top-7");
   });
 
   test("uses a vertical mouse wheel to move the horizontal filmstrip", () => {

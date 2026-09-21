@@ -8,7 +8,7 @@ Evidence: two failing regressions reproduced before the fix; final full suite 13
 
 > **Purpose:** This file records approaches that were actually tried in this repository, what worked in the user's real workflow, what regressed, and what is intentionally paused. Future AI agents should read this before changing translation, Gemini routing, masking, or desktop packaging behavior.
 >
-> **Last updated:** 2026-09-20
+> **Last updated:** 2026-09-21
 
 ## Current product direction
 
@@ -200,12 +200,35 @@ ADR 0016 introduces a narrow exception to ADR 0015 specifically for confirmed mo
 
 - Page-level classifier (`analyzeMonochromePage` / `analyzeImageElementMonochrome`) evaluates the pre-clean original source image once per page using deterministic grid subsampling (up to ~20,000 samples).
 - When `isMonochromePage === true` and `monochromeConfidence >= 0.85`:
-  - White/light speech balloons (`backgroundLuminance >= 155`): render crisp black text (`#000000`) without an automatic shadow (`shadow = undefined`), defaulting to `hasOutline = false`.
-  - Black/dark speech bubbles (`backgroundLuminance <= 100`): render crisp white text (`#ffffff`) without an automatic shadow (`shadow = undefined`).
-  - Mixed/intermediate backgrounds: use contrasting outline for readability, but suppress automatic shadow.
+  - Dialogue/narration fill is always crisp black (`#000000`); automatic fill color detection cannot turn it white or colored.
+  - White/light speech balloons: no automatic shadow/glow/halo and no outline by default.
+  - Dark or strongly mixed grayscale backgrounds: keep black fill and add only a thin white outline (bounded to <= 0.08 of font size) for readability; never switch the fill to white.
+  - Manual styling remains the only override above the monochrome policy.
 - Manual user styling (`ownershipMode === 'manual'`) retains absolute authority; Manual Standard keeps standard shadow and Manual Off has no shadow.
 - Color pages, low-confidence pages, and unconfirmed pages retain ADR 0015 Uniform Shadow.
 - Full parity across Web Preview Canvas, Image Export, Extension Server Mode, Extension Direct Mode, and restored Chrome local-storage caches.
+- 2026-09-21 verification after the stricter black-fill policy: monochrome classifier/enrichment/shadow/Extension/overlay set **56/56 passed**; `npx tsc --noEmit`, scoped ESLint, and `git diff --check` passed.
+
+## Workspace UI / Settings — validated 2026-09-21
+
+### VERIFIED WORKING: UI V2 responsive controls and Settings model picker
+
+- Desktop header activates at `lg`; compact/mobile controls are used below that breakpoint, secondary branding/save text waits until `xl`, and primary/menu labels do not wrap.
+- Settings is widened and card-grouped with live typography preview and debounced color commits so dragging native color controls does not trigger heavy workspace-wide updates on every event.
+- Model Preference uses a bounded searchable listbox inside Settings instead of the oversized native select. It only offers catalog entries available on at least one current key and not marked image-incompatible; Auto remains available.
+- Expanded filmstrip no longer covers the zoom toolbar/page badge; those controls move above the filmstrip.
+
+Verification evidence:
+
+- UI/Settings focused regression sets passed during implementation (up to **44/44** and **43/43** depending on the focused set).
+- Real browser smoke: 931px header had no horizontal overflow; Settings model list stayed inside the 480px panel with internal scrolling; rapid color preview changes remained responsive.
+- TypeScript, scoped ESLint, and `git diff --check` passed after the UI work.
+
+### NOT VERIFIED / currently unreliable: `gemini-3.6-flash` for image translation
+
+A live probe through SuperK's actual `/api/translate` image path did not establish `gemini-3.6-flash` as reliable. Repeated attempts timed out or returned `Unable to process input image`. This is not evidence that the model is permanently unavailable; keep it out of any "verified usable" claim until a later health probe succeeds.
+
+A broader live probe of the discovered catalog confirmed that discovery alone is not proof of image-translation compatibility. Several models returned 200 successfully, while others failed because of deprecation, modality mismatch, quota, high demand, or timeout. Do not promote catalog discovery metadata to production-routing authority without real image probes.
 
 ## Quick status summary
 

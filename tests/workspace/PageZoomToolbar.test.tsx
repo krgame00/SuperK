@@ -24,6 +24,19 @@ describe("PageZoomToolbar", () => {
     expect(screen.getByRole("button", { name: "ซูมเข้า" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "พอดีหน้าจอ" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "ระดับการซูม 100 เปอร์เซ็นต์" })).toBeInTheDocument();
+    expect(screen.getByRole("toolbar", { name: "เครื่องมือซูมและย่อขยายภาพ" })).toHaveClass(
+      "opacity-60",
+      "hover:opacity-100",
+      "focus-within:opacity-100",
+    );
+  });
+
+  test("moves above bottom chrome when the filmstrip is visible", () => {
+    render(<PageZoomToolbar {...defaultSingleProps} avoidBottomChrome={true} />);
+
+    expect(screen.getByRole("toolbar", { name: "เครื่องมือซูมและย่อขยายภาพ" })).toHaveClass(
+      "bottom-[8.5rem]",
+    );
   });
 
   test("clicking zoom buttons triggers corresponding callbacks", () => {

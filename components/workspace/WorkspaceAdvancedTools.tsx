@@ -49,6 +49,13 @@ export function WorkspaceAdvancedTools({
         ]
       : []),
     {
+      id: "translate-book",
+      label: "แปลทั้งเล่ม",
+      icon: <Sparkles className="h-4 w-4 text-primary" />,
+      disabled: busy,
+      onSelect: onTranslateBook,
+    },
+    {
       id: "clean",
       label: "คลีนข้อความใหม่",
       icon: <Eraser className="h-4 w-4 text-primary" />,
@@ -61,13 +68,6 @@ export function WorkspaceAdvancedTools({
       icon: <Paintbrush className="h-4 w-4 text-primary" />,
       disabled: !canEditMask || busy,
       onSelect: onEditMask,
-    },
-    {
-      id: "translate-book",
-      label: "แปลทั้งเล่ม",
-      icon: <Sparkles className="h-4 w-4 text-primary" />,
-      disabled: busy,
-      onSelect: onTranslateBook,
     },
     ...(batchFailureCount > 0
       ? [
@@ -84,7 +84,7 @@ export function WorkspaceAdvancedTools({
 
   return (
     <WorkspaceMenu
-      label="เครื่องมือขั้นสูง"
+      label="เครื่องมือ"
       disabled={busy}
       triggerRef={triggerRef}
       icon={<Wrench className="h-3.5 w-3.5 text-muted" aria-hidden="true" />}

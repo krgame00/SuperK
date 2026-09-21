@@ -1589,21 +1589,21 @@ export default function WorkspacePage() {
             <span className="flex items-center gap-0.5">
               Super<span className="text-primary font-bold">K</span>
             </span>
-            <span className="text-muted text-xs font-normal hidden sm:inline-block pl-2.5 ml-2.5 border-l border-border/80 tracking-wide uppercase">
+            <span className="text-muted text-xs font-normal hidden xl:inline-block pl-2.5 ml-2.5 border-l border-border/80 tracking-wide uppercase whitespace-nowrap">
               Manga Translator
             </span>
           </h1>
 
           {/* Save Status Indicator */}
           {pages.length > 0 && saveStatus !== "idle" && (
-            <div className="flex items-center ml-1 sm:ml-2">
+            <div className="hidden sm:flex items-center ml-1 sm:ml-2">
               {saveStatus === "saving" && (
                 <span
                   className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] text-muted font-medium bg-surface/60 border border-border/60 rounded-full select-none"
                   title="กำลังบันทึกข้อมูลล่าสุดลง IndexedDB..."
                 >
                   <Loader2 className="w-3 h-3 animate-spin text-primary" />
-                  <span className="hidden sm:inline">กำลังบันทึก...</span>
+                  <span className="hidden xl:inline">กำลังบันทึก...</span>
                 </span>
               )}
               {saveStatus === "saved" && (
@@ -1612,7 +1612,7 @@ export default function WorkspacePage() {
                   title="บันทึกข้อมูลล่าสุดลงเครื่องเรียบร้อยแล้ว"
                 >
                   <Check className="w-3 h-3 text-emerald-500" />
-                  <span className="hidden sm:inline">บันทึกแล้ว</span>
+                  <span className="hidden xl:inline">บันทึกแล้ว</span>
                 </span>
               )}
               {saveStatus === "error" && (
@@ -1621,7 +1621,7 @@ export default function WorkspacePage() {
                   role="alert"
                 >
                   <AlertCircle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
-                  <span className="hidden sm:inline truncate max-w-[150px]">
+                  <span className="hidden xl:inline truncate max-w-[150px]">
                     {saveError || "บันทึกไม่สำเร็จ"}
                   </span>
                   <button
@@ -1640,7 +1640,7 @@ export default function WorkspacePage() {
         </div>
 
         {/* Desktop Menu */}
-        <div className="hidden md:flex items-center gap-2.5 flex-nowrap">
+        <div data-workspace-header-desktop className="hidden lg:flex min-w-0 items-center gap-1.5 xl:gap-2.5 flex-nowrap">
           {pages.length === 0 ? (
             /* ── Empty State Header Controls: Clean & Minimal ── */
             <div className="flex items-center gap-2">
@@ -1816,7 +1816,7 @@ export default function WorkspacePage() {
         </div>
 
         {/* Mobile Header Controls */}
-        <div className="flex md:hidden items-center gap-2">
+        <div data-workspace-header-mobile className="flex lg:hidden min-w-0 items-center gap-1.5 sm:gap-2">
           {pages[currentPage]?.originUrl && (
             <button
               type="button"
@@ -1855,10 +1855,10 @@ export default function WorkspacePage() {
         {isMobileMenuOpen && (
           <>
             <div
-              className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 md:hidden animate-in fade-in duration-200"
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 lg:hidden animate-in fade-in duration-200"
               onClick={() => setIsMobileMenuOpen(false)}
             />
-            <div className="absolute top-[60px] right-3 left-3 sm:right-6 sm:w-80 sm:left-auto bg-background border border-surface shadow-2xl rounded-xl p-3.5 z-50 md:hidden flex flex-col gap-3 max-h-[calc(100vh-80px)] overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-200">
+            <div className="absolute top-[60px] right-3 left-3 sm:right-6 sm:w-80 sm:left-auto bg-background border border-surface shadow-2xl rounded-xl p-3.5 z-50 lg:hidden flex flex-col gap-3 max-h-[calc(100vh-80px)] overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-200">
 
             {/* ── Section: 🔤 การแปล ── */}
             <div>
@@ -2298,6 +2298,7 @@ export default function WorkspacePage() {
                 translatedImagesMap={translatedImagesMap}
                 brokenPages={brokenPages}
                 isFocusMode={isFocusMode}
+                isFilmstripVisible={!isThumbnailsCollapsed && !isFocusMode}
                 onToggleFocusMode={() => setIsFocusMode((prev) => !prev)}
                 onPageChange={(updater) => {
                   setCurrentPage((prev) => {

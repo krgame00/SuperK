@@ -158,7 +158,7 @@ export const WorkspaceMenu = forwardRef<WorkspaceMenuHandle, WorkspaceMenuProps>
               return !prev;
             });
           }}
-          className={`inline-flex h-8.5 min-h-[44px] sm:min-h-[34px] items-center gap-1.5 rounded-lg px-3.5 text-xs font-semibold shadow-xs transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-40 shrink-0 ${
+          className={`inline-flex h-8.5 min-h-[44px] sm:min-h-[34px] items-center gap-1.5 rounded-lg px-2.5 xl:px-3.5 text-xs font-semibold shadow-xs transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-40 shrink-0 whitespace-nowrap ${
             variant === "primary"
               ? "bg-primary text-primary-content hover:bg-primary-hover active:scale-95 border border-transparent cursor-pointer"
               : "border border-border bg-surface text-foreground hover:bg-surface-hover cursor-pointer"
