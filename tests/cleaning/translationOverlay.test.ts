@@ -723,3 +723,47 @@ describe("translation overlay live editor and keyboard controls", () => {
     expect(shadowOffsetsX.at(-1) ?? 0).toBeGreaterThan(0);
   });
 });
+test("regression: keyboard focus leaving editor commits pending text", async () => {
+  const changed = vi.fn();
+  const { wrapper } = await renderOverlay("original", {}, { onBubblesMutated: changed });
+  wrapper.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+  const input = document.querySelector<HTMLTextAreaElement>("[data-translation-editor] textarea")!;
+  input.value = "edited";
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  const cancel = document.querySelector<HTMLButtonElement>('[aria-label="ยกเลิกการแก้ไข"]')!;
+  cancel.focus();
+  await Promise.resolve();
+  expect(changed).not.toHaveBeenCalled();
+  const outside = document.createElement("button");
+  document.body.appendChild(outside);
+  outside.focus();
+  await Promise.resolve();
+  expect(changed).toHaveBeenCalled();
+  expect(document.querySelector("[data-translation-editor]")).toBeNull();
+  expect(document.activeElement).toBe(outside);
+  expect(undoManager.undo()).toBe("แก้ไขข้อความ");
+  expect(undoManager.undo()).toBeNull();
+  expect(undoManager.redo()).toBe("แก้ไขข้อความ");
+});
+
+test("regression: saved empty text remains editable after reopening overlay", async () => {
+  const { wrapper, bubble, container } = await renderOverlay("original");
+  wrapper.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+  const input = document.querySelector<HTMLTextAreaElement>("[data-translation-editor] textarea")!;
+  input.value = "";
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  document.querySelector<HTMLButtonElement>('[aria-label="บันทึกข้อความ"]')!.click();
+  expect(bubble.deleted).not.toBe(true);
+  const restoredBubble = JSON.parse(JSON.stringify(bubble)) as TranslatedBubble;
+  await applyTranslationOverlay([restoredBubble], "single", 0, () => {}, undefined, undefined, container);
+  await vi.runAllTimersAsync();
+  const restoredWrapper = container.querySelector<HTMLElement>(".translation-bubble-wrapper")!;
+  expect(restoredWrapper).not.toBeNull();
+  restoredWrapper.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+  const restoredInput = document.querySelector<HTMLTextAreaElement>("[data-translation-editor] textarea")!;
+  expect(restoredInput.value).toBe("");
+  restoredInput.value = "restored text";
+  restoredInput.dispatchEvent(new Event("input", { bubbles: true }));
+  document.querySelector<HTMLButtonElement>('[aria-label="บันทึกข้อความ"]')!.click();
+  expect(restoredBubble.t).toBe("restored text");
+});

@@ -529,7 +529,10 @@ export const applyTranslationOverlay = async (
   if (!img) return;
   img.ondragstart = (e) => e.preventDefault();
 
-  const real = bubbles.filter(b => b && !b.deleted && (b.t || b.translated) && (b.t ?? b.translated ?? "").trim());
+  // Saved empty edits retain their geometry so users can select and refill them.
+  const real = bubbles.filter(b => b && !b.deleted && (
+    (b.t ?? b.translated ?? "").trim() || b.layoutAdjustment
+  ));
   if (real.length === 0) {
     return;
   }
@@ -952,7 +955,7 @@ export const applyTranslationOverlay = async (
 
         let isCommitted = false;
 
-        const commit = () => {
+        const commit = (restoreFocus = true) => {
           if (isCommitted) return;
           isCommitted = true;
           const finalVal = textarea.value.trim();
@@ -980,7 +983,7 @@ export const applyTranslationOverlay = async (
           }
           activeEditorPosition = null;
           editor.remove();
-          wrapper.focus();
+          if (restoreFocus) wrapper.focus();
         };
 
         const cancel = () => {
@@ -1040,9 +1043,9 @@ export const applyTranslationOverlay = async (
           }
         });
 
-        textarea.addEventListener("blur", () => {
+        editor.addEventListener("focusout", () => {
           queueMicrotask(() => {
-            if (!isCommitted && !editor.contains(document.activeElement)) commit();
+            if (!isCommitted && !editor.contains(document.activeElement)) commit(false);
           });
         });
 

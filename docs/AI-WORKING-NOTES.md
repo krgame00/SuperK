@@ -1,5 +1,11 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Text editing follow-up — 2026-09-21
+
+VERIFIED WORKING in automated tests: leaving the entire live editor via keyboard commits once without stealing focus; saved empty bubbles retain selectable geometry after overlay reconstruction. Internal focus changes do not commit. Explicit save/cancel and deleted-bubble filtering remain intact.
+
+Evidence: two failing regressions reproduced before the fix; final full suite 139 files / 839 tests passed; TypeScript and scoped whitespace check passed. Real-browser interaction has not been manually verified. See `docs/postmortems/2026-09-21-text-editor-focus-and-empty-text.md`.
+
 > **Purpose:** This file records approaches that were actually tried in this repository, what worked in the user's real workflow, what regressed, and what is intentionally paused. Future AI agents should read this before changing translation, Gemini routing, masking, or desktop packaging behavior.
 >
 > **Last updated:** 2026-09-20
