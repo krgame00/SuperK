@@ -117,6 +117,43 @@ test("image route Auto uses the legacy fixed routing path with current Gemini mo
   );
 });
 
+test("image route merges saved user keys with local server keys for quota fallback", async () => {
+  process.env.GEMINI_API_KEY = "server-key,shared-key";
+  requestGeminiMock.mockResolvedValue({
+    data: {
+      candidates: [{ content: { parts: [{ text: '{"bubbles":[]}' }] } }],
+    },
+    keyIndex: 0,
+    model: "gemini-3.5-flash-lite",
+    meta: {
+      provider: "gemini",
+      model: "gemini-3.5-flash-lite",
+      attemptCount: 1,
+      elapsedMs: 10,
+      fallbackCount: 0,
+    },
+  });
+
+  const response = await translateImage(new Request("http://localhost/api/translate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      imageBase64: "valid-base64",
+      mimeType: "image/png",
+      targetLang: "Thai",
+      modelPreference: "auto",
+      apiKey: "user-key;shared-key",
+    }),
+  }));
+
+  expect(response.status).toBe(200);
+  expect(requestGeminiMock).toHaveBeenCalledWith(
+    expect.objectContaining({
+      apiKeys: ["user-key", "shared-key", "server-key"],
+    }),
+  );
+});
+
 test("image route keeps the missing API key response", async () => {
   delete process.env.GEMINI_API_KEY;
   const request = new Request("http://localhost/api/translate", {

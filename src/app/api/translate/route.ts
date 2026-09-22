@@ -158,9 +158,26 @@ export async function POST(req: Request) {
       }
     }
 
-    // Fallback: direct Gemini API
-    const apiKeyRaw = userApiKey || process.env.GEMINI_API_KEY;
-    if (!apiKeyRaw) {
+    // Fallback: direct Gemini API. Merge user-provided keys with server/local
+    // keys so a saved browser key cannot shadow the .env.local fallback pool.
+    // User keys stay first; server keys are appended and de-duplicated.
+    const apiKeys = Array.from(
+      new Set(
+        [userApiKey, process.env.GEMINI_API_KEY]
+          .filter(
+            (raw): raw is string =>
+              typeof raw === "string" && raw.trim().length > 0,
+          )
+          .flatMap((raw) =>
+            raw
+              .split(/[,;\n]+/)
+              .map((key) => key.trim())
+              .filter(Boolean),
+          ),
+      ),
+    );
+
+    if (apiKeys.length === 0) {
       return NextResponse.json(
         {
           error:
@@ -170,12 +187,6 @@ export async function POST(req: Request) {
         { status: 500 },
       );
     }
-
-    // Support multiple API keys separated by commas
-    const apiKeys = apiKeyRaw
-      .split(",")
-      .map((k: string) => k.trim())
-      .filter((k: string) => k.length > 0);
 
     const promptText = buildTranslationPrompt({
       targetLang,
