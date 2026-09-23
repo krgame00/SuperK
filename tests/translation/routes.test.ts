@@ -29,6 +29,7 @@ import { POST as translateText } from "@/src/app/api/translate-text/route";
 import { POST as validateGeminiKey } from "@/src/app/api/translate/validate-key/route";
 
 const originalApiKey = process.env.GEMINI_API_KEY;
+const originalImageRouter = process.env.SUPERK_GEMINI_IMAGE_ROUTER;
 const requestGeminiMock = vi.mocked(requestGemini);
 const executeGeminiTranslationMock = vi.mocked(executeGeminiTranslation);
 
@@ -44,6 +45,8 @@ afterEach(() => {
   } else {
     process.env.GEMINI_API_KEY = originalApiKey;
   }
+  if (originalImageRouter === undefined) delete process.env.SUPERK_GEMINI_IMAGE_ROUTER;
+  else process.env.SUPERK_GEMINI_IMAGE_ROUTER = originalImageRouter;
 });
 
 function timeoutError(): GeminiRequestError {
@@ -137,6 +140,101 @@ test("image route Auto uses shared health-aware routing with a 60 second budget"
       fallbackCount: 0,
     }),
   });
+});
+
+test("streamed image route sends model-switch progress before the final result", async () => {
+  process.env.GEMINI_API_KEY = "server-key";
+  executeGeminiTranslationMock.mockImplementation(async (options) => {
+    options.onModelSwitch?.({ model: "gemini-next", fallbackCount: 1 });
+    return imageSuccess("gemini-next");
+  });
+
+  const response = await translateImage(new Request("http://localhost/api/translate", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/x-ndjson",
+    },
+    body: JSON.stringify({
+      imageBase64: "valid-base64",
+      mimeType: "image/png",
+      modelPreference: "auto",
+    }),
+  }));
+  const lines = (await response.text()).trim().split("\n").map((line) => JSON.parse(line));
+
+  expect(response.headers.get("content-type")).toContain("application/x-ndjson");
+  expect(lines).toEqual([
+    { type: "model-switch", model: "gemini-next", fallbackCount: 1 },
+    { type: "result", status: 200, data: { text: '{"bubbles":[]}', meta: expect.objectContaining({ model: "gemini-next" }) } },
+  ]);
+});
+
+test("fixed image-router switch immediately restores the prior request path", async () => {
+  process.env.SUPERK_GEMINI_IMAGE_ROUTER = "fixed";
+  process.env.GEMINI_API_KEY = "server-key";
+  requestGeminiMock.mockResolvedValue(imageSuccess("gemini-3.8-flash"));
+
+  const response = await translateImage(new Request("http://localhost/api/translate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      imageBase64: "valid-base64",
+      mimeType: "image/png",
+      modelPreference: "auto",
+      apiKey: "user-key",
+    }),
+  }));
+
+  expect(response.status).toBe(200);
+  expect(requestGeminiMock).toHaveBeenCalledWith(expect.objectContaining({
+    apiKeys: ["user-key", "server-key"],
+    models: expect.arrayContaining(["gemini-3.8-flash"]),
+  }));
+  expect(executeGeminiTranslationMock).not.toHaveBeenCalled();
+});
+
+test("fixed rollback splits and deduplicates comma-separated server credentials", async () => {
+  process.env.SUPERK_GEMINI_IMAGE_ROUTER = "fixed";
+  process.env.GEMINI_API_KEY = "server-one,server-two,server-one";
+  requestGeminiMock.mockResolvedValue(imageSuccess());
+  await translateImage(new Request("http://localhost/api/translate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      imageBase64: "valid-base64",
+      mimeType: "image/png",
+      modelPreference: "auto",
+      apiKey: "user-one,server-two",
+    }),
+  }));
+  expect(requestGeminiMock).toHaveBeenCalledWith(expect.objectContaining({
+    apiKeys: ["user-one", "server-two", "server-one"],
+  }));
+});
+
+test("fixed rollback redacts credentials echoed by an upstream error", async () => {
+  process.env.SUPERK_GEMINI_IMAGE_ROUTER = "fixed";
+  process.env.GEMINI_API_KEY = "server-secret";
+  requestGeminiMock.mockRejectedValue(new GeminiRequestError(
+    "Gemini rejected user-secret and server-secret",
+    "GEMINI_UPSTREAM",
+    502,
+    true,
+  ));
+  const response = await translateImage(new Request("http://localhost/api/translate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      imageBase64: "valid-base64",
+      mimeType: "image/png",
+      apiKey: "user-secret",
+    }),
+  }));
+  const body = await response.text();
+  expect(response.status).toBe(502);
+  expect(body).not.toContain("user-secret");
+  expect(body).not.toContain("server-secret");
 });
 
 test("image route keeps user and server credential ownership inputs separate", async () => {

@@ -1122,10 +1122,19 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       ) {
         setTranslationResult("กำลังแปลด้วย Auto · จะสลับโมเดลที่พร้อมใช้เมื่อจำเป็น…");
       }
+      const reportModelSwitch = (event: { model: string; fallbackCount: number }) => {
+        if (activePageRef.current === pageUrl) {
+          setTranslationResult(`กำลังแปลด้วย Auto · สลับไป ${event.model} (fallback ${event.fallbackCount} ครั้ง)…`);
+        }
+      };
+      const wantsProgress = !modelPreference || modelPreference === "auto";
       try {
         res = await fetch("/api/translate", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(wantsProgress ? { Accept: "application/x-ndjson" } : {}),
+          },
           body: JSON.stringify({
             imageBase64: base64,
             mimeType: actualMimeType,
@@ -1152,7 +1161,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       const data = await readTranslationResponse<{
         text: string;
         meta?: TranslationObservabilityMeta;
-      }>(res);
+      }>(res, wantsProgress ? reportModelSwitch : undefined);
       let responseMeta = data.meta;
       let parsed = (data.text ? parseLLMJSON(data.text) : data) as
         | ({ bubbles?: unknown[] } & Record<string, unknown>)
@@ -1199,7 +1208,10 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
 
         const retryRes = await fetch("/api/translate", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(wantsProgress ? { Accept: "application/x-ndjson" } : {}),
+          },
           body: JSON.stringify({
             imageBase64: enhancedBase64,
             mimeType: "image/jpeg",
@@ -1217,7 +1229,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           await readTranslationResponse<{
             text: string;
             meta?: TranslationObservabilityMeta;
-          }>(retryRes);
+          }>(retryRes, wantsProgress ? reportModelSwitch : undefined);
         responseMeta = retryData.meta;
         const retryParsed = (retryData.text
           ? parseLLMJSON(retryData.text)

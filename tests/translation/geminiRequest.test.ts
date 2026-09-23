@@ -295,6 +295,27 @@ describe("requestGemini", () => {
     });
   });
 
+  test("reports a real model switch only when the next model attempt begins", async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "high demand" } }, 503))
+      .mockResolvedValueOnce(jsonResponse(successBody));
+    const switches: Array<{ model: string; fallbackCount: number }> = [];
+
+    await requestGeminiRoutes({
+      routes: [
+        { model: "model-a", apiKey: "secret-a", keyId: "key-aaa", keyIndex: 0, keySlot: 1 },
+        { model: "model-a", apiKey: "secret-b", keyId: "key-bbb", keyIndex: 1, keySlot: 2 },
+        { model: "model-b", apiKey: "secret-a", keyId: "key-aaa", keyIndex: 0, keySlot: 1 },
+      ],
+      payload: { contents: [] },
+      fetchImpl,
+      onRouteFailure: (_route, error) => error.status === 503 ? "skip-model" : undefined,
+      onModelSwitch: (event) => switches.push(event),
+    });
+
+    expect(switches).toEqual([{ model: "model-b", fallbackCount: 1 }]);
+  });
+
   test("model-wide skip also excludes separated server routes for the overloaded model", async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(jsonResponse({ error: { message: "high demand" } }, 503))

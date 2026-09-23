@@ -28,6 +28,7 @@ export interface ExecuteGeminiTranslationOptions<T = unknown> {
   fetchImpl?: typeof fetch;
   sleep?: (milliseconds: number) => Promise<void>;
   validateSuccess?: (data: T) => boolean;
+  onModelSwitch?: (event: { model: string; fallbackCount: number }) => void;
 }
 
 function routeFailureKind(error: GeminiRequestError): GeminiRouteFailureKind {
@@ -156,6 +157,7 @@ export async function executeGeminiTranslation<T = unknown>(
       },
       onRouteFailure: (route, error) =>
         recordRouteFailure(catalog, options.workflow, route, error),
+      onModelSwitch: options.onModelSwitch,
     });
   } catch (error) {
     if (error instanceof GeminiRequestError) {

@@ -75,6 +75,7 @@ export interface GeminiRouteRequestOptions {
     route: GeminiRoute,
     error: GeminiRequestError,
   ) => GeminiRouteFailureDirective | void | Promise<GeminiRouteFailureDirective | void>;
+  onModelSwitch?: (event: { model: string; fallbackCount: number }) => void;
 }
 
 export interface OpenAICompatibleResult<T> {
@@ -325,6 +326,7 @@ export async function requestGeminiRoutes<T = unknown>(
     sleep = defaultSleep,
     beforeRoute,
     onRouteFailure,
+    onModelSwitch,
   } = options;
   const startedAt = options.startedAt ?? now();
   let lastError: GeminiRequestError | undefined;
@@ -333,6 +335,7 @@ export async function requestGeminiRoutes<T = unknown>(
   let skippedRouteCount = 0;
   let lastCooldownReason: "quota" | "overload" | undefined;
   const skippedModels = new Set<string>();
+  let lastAttemptedModel: string | undefined;
 
   for (let routeIndex = 0; routeIndex < routes.length; routeIndex++) {
     const route = routes[routeIndex];
@@ -374,6 +377,10 @@ export async function requestGeminiRoutes<T = unknown>(
         );
       }
 
+      if (lastAttemptedModel !== undefined && lastAttemptedModel !== route.model) {
+        onModelSwitch?.({ model: route.model, fallbackCount });
+      }
+      lastAttemptedModel = route.model;
       attemptCount++;
       const routeAttemptStartedAt = now();
       const controller = new AbortController();

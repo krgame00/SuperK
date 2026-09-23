@@ -1006,6 +1006,47 @@ test("reports cleaning then translating phases for one page", async () => {
   expect(result.current.workflowPhase).toBeNull();
 });
 
+test("shows the model actually selected during an Auto fallback before translation finishes", async () => {
+  const encoder = new TextEncoder();
+  let streamController!: ReadableStreamDefaultController<Uint8Array>;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) { streamController = controller; },
+  });
+  const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input) === "blob:original") return imageResponse();
+    if (String(input) === "/api/translate") {
+      return new Response(stream, {
+        headers: { "content-type": "application/x-ndjson" },
+      });
+    }
+    throw new Error(`unexpected fetch: ${String(input)}`);
+  });
+  const { result } = renderHook(() =>
+    useTranslation({
+      currentPage: 0,
+      pages: ["blob:original"],
+      viewMode: "single",
+      preparePageForTranslation: async () => ({
+        recognitionUrl: "blob:original",
+        backgroundUrl: "blob:clean",
+      }),
+    }),
+  );
+
+  let translation!: Promise<boolean>;
+  act(() => { translation = result.current.handleTranslate(); });
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  streamController.enqueue(encoder.encode('{"type":"model-switch","model":"gemini-next","fallbackCount":1}\n'));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(result.current.translationResult).toContain("สลับไป gemini-next");
+  expect(fetchSpy.mock.calls.find(([input]) => String(input) === "/api/translate")?.[1]?.headers)
+    .toMatchObject({ Accept: "application/x-ndjson" });
+  streamController.enqueue(encoder.encode('{"type":"result","status":200,"data":{"text":"{\\"bubbles\\":[{\\"box\\":[10,20,40,80],\\"t\\":\\"สวัสดี\\"}]}"}}\n'));
+  streamController.close();
+  await act(async () => { await translation; });
+  expect(result.current.translationResult).toContain("แปลสำเร็จ");
+});
+
 test("active and background pages cache from unique clean offscreen containers", async () => {
   vi.useFakeTimers();
   const pages = ["blob:one", "blob:two"];

@@ -76,6 +76,56 @@ test("structured route cooldown preserves retry timing and selected model", asyn
   });
 });
 
+test("streamed translation reports model switches before its final payload", async () => {
+  const encoder = new TextEncoder();
+  let releaseFinal!: () => void;
+  const finalGate = new Promise<void>((resolve) => { releaseFinal = resolve; });
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      controller.enqueue(encoder.encode('{"type":"model-switch","model":"gemini-next","fallbackCount":1}\n'));
+      await finalGate;
+      controller.enqueue(encoder.encode('{"type":"result","status":200,"data":{"text":"ok"}}\n'));
+      controller.close();
+    },
+  });
+  const events: string[] = [];
+  const result = readTranslationResponse<{ text: string }>(
+    new Response(stream, { headers: { "content-type": "application/x-ndjson" } }),
+    (event) => events.push(event.model),
+  );
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(events).toEqual(["gemini-next"]);
+  releaseFinal();
+  await expect(result).resolves.toEqual({ text: "ok" });
+});
+
+test("streamed final routing errors keep their actionable status and retry timing", async () => {
+  const response = new Response(
+    '{"type":"model-switch","model":"gemini-next","fallbackCount":1}\n' +
+      '{"type":"result","status":503,"data":{"error":"cooling down","code":"GEMINI_ROUTE_COOLDOWN","retryAfterMs":12000}}\n',
+    { headers: { "content-type": "application/x-ndjson" } },
+  );
+  await expect(readTranslationResponse(response)).rejects.toMatchObject({
+    message: "cooling down",
+    status: 503,
+    code: "GEMINI_ROUTE_COOLDOWN",
+    retryAfterMs: 12_000,
+  });
+});
+
+test("an interrupted translation stream is a retryable network error", async () => {
+  const response = new Response(
+    '{"type":"model-switch","model":"gemini-next","fallbackCount":1}\n',
+    { headers: { "content-type": "application/x-ndjson" } },
+  );
+  await expect(readTranslationResponse(response)).rejects.toMatchObject({
+    category: "network",
+    retryable: true,
+    status: 0,
+  });
+});
+
 test("automatic retry is limited to one extra network attempt", () => {
   const network = new TranslationRequestError(
     "network",

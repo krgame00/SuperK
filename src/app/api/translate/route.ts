@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import {
   GeminiRequestError,
+  requestGemini,
   requestOpenAICompatible,
 } from "@/lib/server/geminiRequest";
 import { GeminiRoutingError } from "@/lib/server/geminiCatalog";
@@ -21,6 +22,17 @@ import type { TranslationObservabilityMeta } from "@/lib/translation/requestErro
 
 export const MAX_TRANSLATION_BODY_BYTES = 30 * 1024 * 1024;
 export const MAX_TRANSLATION_IMAGE_BYTES = 20 * 1024 * 1024;
+
+const FIXED_IMAGE_MODELS = [
+  "gemini-3.5-flash-lite",
+  "gemini-3.8-flash",
+  "gemini-3.7-flash",
+  "gemini-3.6-flash",
+  "gemini-3-flash",
+  "gemini-3.5-flash",
+  "gemini-3.1-flash-lite",
+];
+let fixedImageKeyIndex = 0;
 
 interface GeminiResponseData {
   promptFeedback?: {
@@ -85,6 +97,59 @@ export function buildTranslationPrompt({
 }
 
 export async function POST(req: Request) {
+  if (req.headers.get("accept")?.includes("application/x-ndjson")) {
+    return streamTranslationResponse(req);
+  }
+  return handleTranslationRequest(req);
+}
+
+function streamTranslationResponse(req: Request): Response {
+  const encoder = new TextEncoder();
+  let closed = false;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const send = (event: unknown) => {
+        if (!closed) controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
+      };
+      void (async () => {
+        try {
+          const response = await handleTranslationRequest(req, (event) =>
+            send({ type: "model-switch", ...event }),
+          );
+          send({
+            type: "result",
+            status: response.status,
+            data: await response.json(),
+          });
+        } catch {
+          send({
+            type: "result",
+            status: 500,
+            data: { error: "Internal Server Error" },
+          });
+        } finally {
+          if (!closed) controller.close();
+          closed = true;
+        }
+      })();
+    },
+    cancel() {
+      closed = true;
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
+async function handleTranslationRequest(
+  req: Request,
+  onModelSwitch?: (event: { model: string; fallbackCount: number }) => void,
+) {
   try {
     const declaredLength = Number(req.headers.get("content-length") ?? "0");
     if (
@@ -212,9 +277,43 @@ export async function POST(req: Request) {
 
     let data: GeminiResponseData;
     let translationMeta: TranslationObservabilityMeta | undefined;
+    const useFixedRouter = process.env.SUPERK_GEMINI_IMAGE_ROUTER === "fixed";
+    const keyPool = Array.from(new Set(
+      [userApiKey, process.env.GEMINI_API_KEY]
+        .filter((raw): raw is string => typeof raw === "string")
+        .flatMap((raw) => raw.split(",").map((key) => key.trim()).filter(Boolean)),
+    ));
 
     try {
-      const result = await executeGeminiTranslation<GeminiResponseData>({
+      if (useFixedRouter && keyPool.length === 0) {
+        return NextResponse.json({
+          error: "Server missing API Key. Please add GEMINI_API_KEY to .env or enter your own in Settings",
+          code: "MISSING_KEY",
+        }, { status: 500 });
+      }
+      const models = modelPreference && modelPreference !== "auto"
+        ? [modelPreference]
+        : isRetry
+          ? [
+              "gemini-3.8-flash",
+              "gemini-3.7-flash",
+              "gemini-3.6-flash",
+              "gemini-3.5-flash-lite",
+              "gemini-3-flash",
+              "gemini-3.5-flash",
+              "gemini-3.1-flash-lite",
+            ]
+          : FIXED_IMAGE_MODELS;
+      const result = useFixedRouter
+        ? await requestGemini<GeminiResponseData>({
+            apiKeys: keyPool,
+            models,
+            payload,
+            initialKeyIndex: fixedImageKeyIndex,
+            attemptTimeoutMs: 60_000,
+            totalBudgetMs: 180_000,
+          })
+        : await executeGeminiTranslation<GeminiResponseData>({
         workflow: "image",
         userApiKeyRaw: userApiKey,
         serverApiKeyRaw: process.env.GEMINI_API_KEY,
@@ -223,6 +322,7 @@ export async function POST(req: Request) {
         payload,
         attemptTimeoutMs: 25_000,
         totalBudgetMs: 60_000,
+        onModelSwitch,
         validateSuccess: (response) => {
           if (response.promptFeedback?.blockReason) return false;
           const candidate = response.candidates?.[0];
@@ -240,13 +340,19 @@ export async function POST(req: Request) {
           }
         },
       });
+      if (useFixedRouter) fixedImageKeyIndex = result.keyIndex;
       data = result.data;
       translationMeta = result.meta;
     } catch (error) {
       if (error instanceof GeminiRequestError) {
+        const safeMessage = useFixedRouter
+          ? [...keyPool]
+              .sort((left, right) => right.length - left.length)
+              .reduce((message, key) => message.replaceAll(key, "[REDACTED]"), error.message)
+          : error.message;
         return NextResponse.json(
           {
-            error: error.message,
+            error: safeMessage,
             code: error.code,
             retryable: error.retryable,
             retryAfterMs: error.retryAfterMs,

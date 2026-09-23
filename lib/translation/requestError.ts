@@ -145,13 +145,78 @@ export class TranslationRequestError extends Error {
 
 export async function readTranslationResponse<T>(
   response: Response,
+  onModelSwitch?: (event: { model: string; fallbackCount: number }) => void,
 ): Promise<T> {
-  const data = await response.json();
-  if (!response.ok) {
+  let data: unknown;
+  let status = response.status;
+  if (response.headers.get("content-type")?.includes("application/x-ndjson")) {
+    if (!response.body) {
+      throw new TranslationRequestError(
+        "Network error: translation stream has no body", 0, "NETWORK", true,
+      );
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
+    let hasResult = false;
+    const consume = (line: string) => {
+      if (!line.trim()) return;
+      const event = JSON.parse(line) as {
+        type?: string;
+        model?: string;
+        fallbackCount?: number;
+        status?: number;
+        data?: unknown;
+      };
+      if (event.type === "model-switch" && typeof event.model === "string") {
+        onModelSwitch?.({
+          model: event.model,
+          fallbackCount: typeof event.fallbackCount === "number" ? event.fallbackCount : 0,
+        });
+      } else if (event.type === "result") {
+        status = typeof event.status === "number" ? event.status : 500;
+        data = event.data;
+        hasResult = true;
+      }
+    };
+    try {
+      while (true) {
+        let chunk: ReadableStreamReadResult<Uint8Array>;
+        try {
+          chunk = await reader.read();
+        } catch (error) {
+          if (isUserCancelledError(error)) throw error;
+          throw new TranslationRequestError(
+            "Network error: translation stream interrupted", 0, "NETWORK", true,
+          );
+        }
+        if (chunk.done) break;
+        pending += decoder.decode(chunk.value, { stream: true });
+        let newline = pending.indexOf("\n");
+        while (newline >= 0) {
+          consume(pending.slice(0, newline));
+          pending = pending.slice(newline + 1);
+          newline = pending.indexOf("\n");
+        }
+      }
+      pending += decoder.decode();
+      if (pending.trim()) consume(pending);
+    } finally {
+      reader.releaseLock();
+    }
+    if (!hasResult) {
+      throw new TranslationRequestError(
+        "Network error: translation stream ended without a result", 0, "NETWORK", true,
+      );
+    }
+  } else {
+    data = await response.json();
+  }
+  if (status < 200 || status >= 300) {
     const error = data as TranslationErrorBody;
     throw new TranslationRequestError(
-      error.error || `Translation request failed (${response.status})`,
-      response.status,
+      error?.error || `Translation request failed (${status})`,
+      status,
       error.code,
       error.retryable === true,
       typeof error.retryAfterMs === "number" ? error.retryAfterMs : undefined,
