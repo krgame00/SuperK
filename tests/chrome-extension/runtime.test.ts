@@ -8,6 +8,9 @@ function setup(options: {
   direct?: boolean;
   failImage?: boolean;
   failServer?: boolean;
+  serverTranslateFails?: boolean;
+  serverTranslateUnreachable?: boolean;
+  serverTranslateTimeout?: boolean;
   modelPreference?: string;
   directResponses?: Array<{ status?: number; data?: any }>;
 } = {}) {
@@ -29,11 +32,32 @@ function setup(options: {
       });
     }
     if (url === 'https://generativelanguage.googleapis.com/v1beta/models') {
-      return Response.json({ models: [{ name: 'models/gemini-dynamic-test', supportedGenerationMethods: ['generateContent'] }] });
+      return Response.json({
+        models: [
+          { name: 'models/gemini-dynamic-test', supportedGenerationMethods: ['generateContent'] },
+          { name: 'models/gemini-3-flash', supportedGenerationMethods: ['generateContent'] },
+        ],
+      });
     }
-    if (options.failServer) return Response.json({ error: 'Missing server key' }, { status: 500 });
-
-    if (options.direct) {
+    if (url === 'http://127.0.0.1:3000/api/translate') {
+      if (options.serverTranslateTimeout) {
+        const error = new Error('The operation timed out');
+        error.name = 'TimeoutError';
+        throw error;
+      }
+      if (options.serverTranslateUnreachable) {
+        throw new TypeError('Failed to fetch');
+      }
+      if (options.failServer) {
+        return Response.json({ error: 'Missing server key' }, { status: 500 });
+      }
+      if (options.serverTranslateFails) {
+        return Response.json({ error: 'Shared router unavailable' }, { status: 503 });
+      }
+      const text = JSON.stringify({ bubbles: [{ t: 'สวัสดี', box: [10, 20, 100, 200] }] });
+      return Response.json({ text });
+    }
+    if ((url as string).includes(':generateContent')) {
       if (options.directResponses && options.directResponses.length > directCallCount) {
         const item = options.directResponses[directCallCount++];
         return Response.json(item.data ?? {}, { status: item.status ?? 200 });
@@ -41,6 +65,7 @@ function setup(options: {
       const text = JSON.stringify({ bubbles: [{ t: 'สวัสดี', box: [10, 20, 100, 200] }] });
       return Response.json({ candidates: [{ content: { parts: [{ text }] } }] });
     }
+    if (options.failServer) return Response.json({ error: 'Missing server key' }, { status: 500 });
 
     const text = JSON.stringify({ bubbles: [{ t: 'สวัสดี', box: [10, 20, 100, 200] }] });
     return Response.json({ text });
@@ -86,58 +111,90 @@ describe('Chrome extension translation workflow', () => {
     expect(app.clearInterval).toHaveBeenCalledWith(1);
   });
 
-  it('uses fixed Server hierarchy starting with gemini-3.5-flash-lite without discovering models, and preserves real MIME type', async () => {
+  it('routes Direct-mode translation through the shared SuperK router when the server is available', async () => {
     const app = setup({ direct: true });
     await app.run();
-    // Direct translation must NOT query dynamic models list before translating
-    const listCall = app.fetch.mock.calls.find(c => c[0] === 'https://generativelanguage.googleapis.com/v1beta/models');
-    expect(listCall).toBeUndefined();
 
-    // First model attempted MUST be gemini-3.5-flash-lite matching server route
-    const generateCalls = app.fetch.mock.calls.filter(c => (c[0] as string).includes(':generateContent')) as unknown as [string, RequestInit][];
-    expect(generateCalls.length).toBeGreaterThanOrEqual(1);
-    expect(generateCalls[0][0]).toContain('/models/gemini-3.5-flash-lite:generateContent');
-    expect(JSON.parse(generateCalls[0][1].body as string).contents[0].parts[1].inline_data.mime_type).toBe('image/png');
-    expect((generateCalls[0][1].headers as Record<string, string>)['x-goog-api-key']).toBe('test-key');
+    const translateCall = app.fetch.mock.calls.find(c => c[0] === 'http://127.0.0.1:3000/api/translate') as unknown as [string, RequestInit];
+    expect(translateCall).toBeTruthy();
+    const body = JSON.parse(translateCall[1].body as string);
+    expect(body).toMatchObject({
+      apiKey: 'test-key',
+      modelPreference: 'auto',
+      mimeType: 'image/png',
+    });
+
+    const listCall = app.fetch.mock.calls.find(c => c[0] === 'https://generativelanguage.googleapis.com/v1beta/models');
+    const generateCalls = app.fetch.mock.calls.filter(c => (c[0] as string).includes(':generateContent'));
+    expect(listCall).toBeUndefined();
+    expect(generateCalls).toHaveLength(0);
   });
 
-  it('falls back from 429 to next model in hierarchy (gemini-3.8-flash)', async () => {
+  it('does not bypass shared-router cooldown or overload responses in Direct mode', async () => {
+    const app = setup({ direct: true, serverTranslateFails: true });
+    await app.run();
+
+    expect(app.fetch.mock.calls.filter(c => (c[0] as string).includes(':generateContent'))).toHaveLength(0);
+    expect(app.fetch.mock.calls.find(c => c[0] === 'https://generativelanguage.googleapis.com/v1beta/models')).toBeUndefined();
+    expect(app.sendMessage).toHaveBeenLastCalledWith(1, expect.objectContaining({
+      action: 'TRANSLATION_ERROR',
+      error: 'Shared router unavailable',
+    }), { frameId: 7 });
+  });
+
+  it('does not start offline Direct routing after the shared server request times out', async () => {
+    const app = setup({ direct: true, serverTranslateTimeout: true });
+    await app.run();
+
+    expect(app.fetch.mock.calls.filter(c => (c[0] as string).includes(':generateContent'))).toHaveLength(0);
+    expect(app.fetch.mock.calls.find(c => c[0] === 'https://generativelanguage.googleapis.com/v1beta/models')).toBeUndefined();
+    expect(app.sendMessage).toHaveBeenLastCalledWith(1, expect.objectContaining({
+      action: 'TRANSLATION_ERROR',
+      error: expect.stringContaining('เกินเวลา'),
+    }), { frameId: 7 });
+  });
+
+  it('uses dynamic discovery only as an offline Direct-mode fallback and has no fixed model hierarchy', async () => {
     const app = setup({
       direct: true,
+      serverTranslateUnreachable: true,
       directResponses: [
-        { status: 429, data: { error: { message: 'Quota exceeded' } } },
-        { status: 200, data: { candidates: [{ content: { parts: [{ text: JSON.stringify({ bubbles: [{ t: 'ผลลัพธ์โมเดลสอง', box: [0, 0, 100, 100] }] }) }] } }] } },
+        { status: 200, data: { candidates: [{ content: { parts: [{ text: JSON.stringify({ bubbles: [{ t: 'ผลลัพธ์ออฟไลน์', box: [0, 0, 100, 100] }] }) }] } }] } },
       ],
     });
     await app.run();
 
+    const listCall = app.fetch.mock.calls.find(c => c[0] === 'https://generativelanguage.googleapis.com/v1beta/models');
+    expect(listCall).toBeTruthy();
+
     const generateCalls = app.fetch.mock.calls.filter(c => (c[0] as string).includes(':generateContent')) as unknown as [string, RequestInit][];
-    expect(generateCalls.length).toBe(2);
-    expect(generateCalls[0][0]).toContain('/models/gemini-3.5-flash-lite:generateContent');
-    expect(generateCalls[1][0]).toContain('/models/gemini-3.8-flash:generateContent');
+    expect(generateCalls).toHaveLength(1);
+    expect(generateCalls[0][0]).toContain('/models/gemini-dynamic-test:generateContent');
+    expect(JSON.parse(generateCalls[0][1].body as string).contents[0].parts[1].inline_data.mime_type).toBe('image/png');
+    expect((generateCalls[0][1].headers as Record<string, string>)['x-goog-api-key']).toBe('test-key');
 
     expect(app.sendMessage).toHaveBeenLastCalledWith(1, expect.objectContaining({
       action: 'TRANSLATION_SUCCESS',
-      bubbles: [expect.objectContaining({ t: 'ผลลัพธ์โมเดลสอง', box: [0, 0, 100, 100] })],
-      pageStyle: expect.objectContaining({
-        isMonochromePage: expect.any(Boolean),
-        monochromeConfidence: expect.any(Number),
-      }),
+      bubbles: [expect.objectContaining({ t: 'ผลลัพธ์ออฟไลน์', box: [0, 0, 100, 100] })],
     }), { frameId: 7 });
   });
 
-  it('respects manual model preference in Direct mode', async () => {
+  it('preserves manual model preference through shared routing in Direct mode', async () => {
     const app = setup({ direct: true, modelPreference: 'gemini-3-flash' });
     await app.run();
 
-    const generateCalls = app.fetch.mock.calls.filter(c => (c[0] as string).includes(':generateContent')) as unknown as [string, RequestInit][];
-    expect(generateCalls.length).toBe(1);
-    expect(generateCalls[0][0]).toContain('/models/gemini-3-flash:generateContent');
+    const translateCall = app.fetch.mock.calls.find(c => c[0] === 'http://127.0.0.1:3000/api/translate') as unknown as [string, RequestInit];
+    expect(JSON.parse(translateCall[1].body as string)).toMatchObject({
+      apiKey: 'test-key',
+      modelPreference: 'gemini-3-flash',
+    });
+    expect(app.fetch.mock.calls.filter(c => (c[0] as string).includes(':generateContent'))).toHaveLength(0);
   });
 
   it('surfaces Google Safety Filter without hiding as quota error', async () => {
     const app = setup({
       direct: true,
+      serverTranslateUnreachable: true,
       directResponses: [
         { status: 200, data: { candidates: [{ finishReason: 'SAFETY' }] } },
       ],
@@ -177,4 +234,3 @@ describe('Chrome extension translation workflow', () => {
     expect(() => context.SuperKServer.parseResult('{"bubbles":[{"t":"x","box":[0,0,1001,2]}]}')).toThrow();
   });
 });
-

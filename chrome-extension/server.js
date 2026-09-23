@@ -28,39 +28,17 @@ globalThis.SuperKServer = {
   },
 
   splitGeminiKeys(raw) {
-    return [...new Set(String(raw || '').split(',').map(key => key.trim()).filter(Boolean))].slice(0, 5);
+    return [...new Set(
+      String(raw || '')
+        .split(/[\s,;]+/)
+        .map(key => key.trim())
+        .filter(Boolean)
+    )].slice(0, 10);
   },
 
   isPreviewModel(model) {
     const text = `${model?.id || ''} ${model?.displayName || ''} ${model?.description || ''}`.toLowerCase();
     return /(?:preview|experimental|\bexp\b)/.test(text);
-  },
-
-  FIXED_AUTO_MODELS: [
-    'gemini-3.5-flash-lite',
-    'gemini-3.8-flash',
-    'gemini-3.7-flash',
-    'gemini-3.6-flash',
-    'gemini-3-flash',
-    'gemini-3.5-flash',
-    'gemini-3.1-flash-lite',
-  ],
-
-  getDirectExecutionRoutes(rawApiKeys, options = {}) {
-    const keys = this.splitGeminiKeys(rawApiKeys);
-    if (!keys.length) throw new Error('กรุณาใส่ Gemini API Key ก่อนใช้งาน');
-    const modelPreference = options.modelPreference || 'auto';
-    const models = (modelPreference !== 'auto' && modelPreference)
-      ? [modelPreference]
-      : this.FIXED_AUTO_MODELS;
-
-    const routes = [];
-    for (const model of models) {
-      for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
-        routes.push({ model, apiKey: keys[keyIndex], keyIndex });
-      }
-    }
-    return routes;
   },
 
   async discoverGeminiRoutes(rawApiKeys, options = {}) {
@@ -128,13 +106,25 @@ globalThis.SuperKServer = {
           apiKey: settings.geminiApiKey || settings.apiKey || '',
           allowPreview: settings.allowPreviewModels === true,
         }),
-        signal: AbortSignal.timeout(240000),
+        signal: AbortSignal.timeout(70000),
       });
-    } catch {
-      throw new Error('เชื่อมต่อระบบแปลไม่ได้หรือหมดเวลา ตรวจสอบ URL และเปิดระบบ SuperK ไว้');
+    } catch (cause) {
+      const timedOut = cause?.name === 'TimeoutError' || cause?.name === 'AbortError';
+      const error = new Error(timedOut
+        ? 'ระบบ SuperK แปลภาพเกินเวลาที่กำหนด กรุณาลองใหม่'
+        : 'เชื่อมต่อระบบแปลไม่ได้ ตรวจสอบ URL และเปิดระบบ SuperK ไว้');
+      error.code = timedOut ? 'SUPERK_SERVER_TIMEOUT' : 'SUPERK_SERVER_UNREACHABLE';
+      throw error;
     }
     const data = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(data?.error || `ระบบแปลตอบกลับ HTTP ${response.status}`);
+    if (!response.ok) {
+      const error = new Error(data?.error || `ระบบแปลตอบกลับ HTTP ${response.status}`);
+      error.code = data?.code || 'SUPERK_TRANSLATION_ERROR';
+      error.status = response.status;
+      error.retryAfterMs = data?.retryAfterMs;
+      error.nextRetryAt = data?.nextRetryAt;
+      throw error;
+    }
     if (typeof data?.text !== 'string') throw new Error('URL นี้ไม่ได้ตอบกลับจาก API แปลของ SuperK');
     return this.parseResult(data.text);
   },

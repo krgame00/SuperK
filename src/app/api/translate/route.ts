@@ -2,9 +2,13 @@ import { NextResponse } from "next/server";
 
 import {
   GeminiRequestError,
-  requestGemini,
   requestOpenAICompatible,
 } from "@/lib/server/geminiRequest";
+import { GeminiRoutingError } from "@/lib/server/geminiCatalog";
+import {
+  executeGeminiTranslation,
+  geminiRoutingHttpStatus,
+} from "@/lib/server/geminiTranslationRouter";
 import {
   type TranslationPolicy,
   buildPolicyDirectives,
@@ -13,8 +17,7 @@ import {
   type GlossaryEntry,
   buildGlossaryDirectives,
 } from "@/lib/translation/glossary";
-
-let globalKeyIndex = 0;
+import type { TranslationObservabilityMeta } from "@/lib/translation/requestError";
 
 export const MAX_TRANSLATION_BODY_BYTES = 30 * 1024 * 1024;
 export const MAX_TRANSLATION_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -100,6 +103,7 @@ export async function POST(req: Request) {
       targetLang,
       sourceLang,
       modelPreference,
+      allowPreview,
       apiKey: userApiKey,
       isRetry,
       context,
@@ -158,35 +162,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // Fallback: direct Gemini API. Merge user-provided keys with server/local
-    // keys so a saved browser key cannot shadow the .env.local fallback pool.
-    // User keys stay first; server keys are appended and de-duplicated.
-    const apiKeys = Array.from(
-      new Set(
-        [userApiKey, process.env.GEMINI_API_KEY]
-          .filter(
-            (raw): raw is string =>
-              typeof raw === "string" && raw.trim().length > 0,
-          )
-          .flatMap((raw) =>
-            raw
-              .split(/[,;\n]+/)
-              .map((key) => key.trim())
-              .filter(Boolean),
-          ),
-      ),
-    );
-
-    if (apiKeys.length === 0) {
-      return NextResponse.json(
-        {
-          error:
-            "Server missing API Key. Please add GEMINI_API_KEY to .env or enter your own in Settings",
-          code: "MISSING_KEY",
-        },
-        { status: 500 },
-      );
-    }
+    // Fallback: direct Gemini API through the shared health-aware router.
 
     const promptText = buildTranslationPrompt({
       targetLang,
@@ -234,49 +210,38 @@ export async function POST(req: Request) {
       },
     };
 
-    let MODELS = [
-      "gemini-3.5-flash-lite", // Fresh quota: 500 RPD, 15 RPM
-      "gemini-3.8-flash", // High-precision / latest
-      "gemini-3.7-flash",
-      "gemini-3.6-flash", // Fresh quota: 20 RPD, 5 RPM
-      "gemini-3-flash", // Fresh quota: 20 RPD, 5 RPM
-      "gemini-3.5-flash",
-      "gemini-3.1-flash-lite",
-    ];
-
-    if (isRetry && (!modelPreference || modelPreference === "auto")) {
-      // On retry, try highest precision models first
-      MODELS = [
-        "gemini-3.8-flash",
-        "gemini-3.7-flash",
-        "gemini-3.6-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-3-flash",
-        "gemini-3.5-flash",
-        "gemini-3.1-flash-lite",
-      ];
-    } else if (modelPreference && modelPreference !== "auto") {
-      MODELS = [modelPreference];
-    }
-
     let data: GeminiResponseData;
-    const initialKey =
-      apiKeys.length > 1
-        ? (globalKeyIndex + Math.floor(Math.random() * apiKeys.length)) %
-          apiKeys.length
-        : 0;
+    let translationMeta: TranslationObservabilityMeta | undefined;
 
     try {
-      const result = await requestGemini<GeminiResponseData>({
-        apiKeys,
-        models: MODELS,
+      const result = await executeGeminiTranslation<GeminiResponseData>({
+        workflow: "image",
+        userApiKeyRaw: userApiKey,
+        serverApiKeyRaw: process.env.GEMINI_API_KEY,
+        modelPreference: modelPreference || "auto",
+        allowPreview: allowPreview === true,
         payload,
-        initialKeyIndex: initialKey,
-        attemptTimeoutMs: 60_000,
-        totalBudgetMs: 180_000,
+        attemptTimeoutMs: 25_000,
+        totalBudgetMs: 60_000,
+        validateSuccess: (response) => {
+          if (response.promptFeedback?.blockReason) return false;
+          const candidate = response.candidates?.[0];
+          if (
+            candidate?.finishReason === "SAFETY" ||
+            candidate?.finishReason === "PROHIBITED_CONTENT"
+          ) return false;
+          const text = candidate?.content?.parts?.[0]?.text;
+          if (!text) return false;
+          try {
+            const parsed = JSON.parse(text.replace(/```json/gi, "").replace(/```/g, "").trim());
+            return Array.isArray(parsed?.bubbles);
+          } catch {
+            return false;
+          }
+        },
       });
       data = result.data;
-      globalKeyIndex = result.keyIndex;
+      translationMeta = result.meta;
     } catch (error) {
       if (error instanceof GeminiRequestError) {
         return NextResponse.json(
@@ -285,8 +250,23 @@ export async function POST(req: Request) {
             code: error.code,
             retryable: error.retryable,
             retryAfterMs: error.retryAfterMs,
+            model: error.model,
+            meta: error.meta,
           },
           { status: error.status },
+        );
+      }
+      if (error instanceof GeminiRoutingError) {
+        return NextResponse.json(
+          {
+            error: error.message,
+            code: error.code,
+            retryable: Boolean(error.nextRetryAt),
+            retryAfterMs: error.retryAfterMs,
+            nextRetryAt: error.nextRetryAt,
+            model: error.model,
+          },
+          { status: geminiRoutingHttpStatus(error) },
         );
       }
       throw error;
@@ -330,7 +310,7 @@ export async function POST(req: Request) {
     }
 
     const cleanText = text.replace(/```json/gi, "").replace(/```/g, "").trim();
-    return NextResponse.json({ text: cleanText });
+    return NextResponse.json({ text: cleanText, meta: translationMeta });
   } catch (error) {
     console.error("Translation Error:", error);
     return NextResponse.json(

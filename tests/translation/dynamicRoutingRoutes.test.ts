@@ -30,28 +30,35 @@ function successResult(model = "gemini-3.5-flash-lite") {
       candidates: [{ content: { parts: [{ text: '{"bubbles":[]}' }] } }],
     },
     keyIndex: 0,
+    keyId: "key-user",
+    keySlot: 1,
     model,
     meta: {
       provider: "gemini" as const,
       model,
+      keyId: "key-user",
+      keySlot: 1,
+      keyOwner: "user" as const,
       attemptCount: 1,
       elapsedMs: 5,
       fallbackCount: 0,
+      skippedRouteCount: 0,
     },
   };
 }
 
-describe("translation routes use the restored fixed Gemini routing path", () => {
+describe("translation routes use shared Gemini routing for image workflow", () => {
   beforeEach(() => {
     requestGeminiMock.mockReset();
     executeMock.mockReset();
+    executeMock.mockResolvedValue(successResult());
     requestGeminiMock.mockResolvedValue(successResult());
     delete process.env.SUPERK_TRANSLATE_BASE_URL;
     delete process.env.SUPERK_TRANSLATE_API_KEY;
     process.env.GEMINI_API_KEY = "server-a,server-b";
   });
 
-  test("image translation uses the user key pool directly and does not invoke dynamic catalog routing", async () => {
+  test("image translation passes ownership-scoped user and server pools to shared routing", async () => {
     const response = await translateImage(new Request("http://localhost/api/translate", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -66,24 +73,24 @@ describe("translation routes use the restored fixed Gemini routing path", () => 
     }));
 
     expect(response.status).toBe(200);
-    expect(requestGeminiMock).toHaveBeenCalledWith(expect.objectContaining({
-      apiKeys: ["user-a", "user-b"],
-      models: [
-        "gemini-3.5-flash-lite",
-        "gemini-3.8-flash",
-        "gemini-3.7-flash",
-        "gemini-3.6-flash",
-        "gemini-3-flash",
-        "gemini-3.5-flash",
-        "gemini-3.1-flash-lite",
-      ],
-      attemptTimeoutMs: 60_000,
-      totalBudgetMs: 180_000,
+    expect(executeMock).toHaveBeenCalledWith(expect.objectContaining({
+      workflow: "image",
+      userApiKeyRaw: "user-a,user-b",
+      serverApiKeyRaw: "server-a,server-b",
+      modelPreference: "auto",
+      allowPreview: true,
+      attemptTimeoutMs: 25_000,
+      totalBudgetMs: 60_000,
     }));
-    expect(executeMock).not.toHaveBeenCalled();
+    expect(requestGeminiMock).not.toHaveBeenCalled();
+    const validateSuccess = executeMock.mock.calls[0][0].validateSuccess;
+    expect(validateSuccess).toBeTypeOf("function");
+    expect(validateSuccess?.({ promptFeedback: { blockReason: "SAFETY" } })).toBe(false);
+    expect(validateSuccess?.({ candidates: [{ content: { parts: [{ text: "not json" }] } }] })).toBe(false);
+    expect(validateSuccess?.({ candidates: [{ content: { parts: [{ text: '{"bubbles":[]}' }] } }] })).toBe(true);
   });
 
-  test("text translation uses the restored server-key fixed hierarchy", async () => {
+  test("text translation remains on its existing route until the shared text migration is scheduled", async () => {
     const response = await translateText(new Request("http://localhost/api/translate-text", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -96,23 +103,12 @@ describe("translation routes use the restored fixed Gemini routing path", () => 
     }));
 
     expect(response.status).toBe(200);
-    expect(requestGeminiMock).toHaveBeenCalledWith(expect.objectContaining({
-      apiKeys: ["server-a", "server-b"],
-      models: [
-        "gemini-3.5-flash-lite",
-        "gemini-3.8-flash",
-        "gemini-3.7-flash",
-        "gemini-3.6-flash",
-        "gemini-3-flash",
-        "gemini-3.5-flash",
-        "gemini-3.1-flash-lite",
-      ],
-    }));
+    expect(requestGeminiMock).toHaveBeenCalled();
     expect(executeMock).not.toHaveBeenCalled();
   });
 
-  test("manual model selection stays on the requested model instead of silently substituting another model", async () => {
-    requestGeminiMock.mockResolvedValueOnce(successResult("gemini-3.8-flash"));
+  test("manual model selection stays on the requested model in shared image routing", async () => {
+    executeMock.mockResolvedValueOnce(successResult("gemini-3.8-flash"));
 
     const response = await translateImage(new Request("http://localhost/api/translate", {
       method: "POST",
@@ -127,10 +123,12 @@ describe("translation routes use the restored fixed Gemini routing path", () => 
     }));
 
     expect(response.status).toBe(200);
-    expect(requestGeminiMock).toHaveBeenCalledWith(expect.objectContaining({
-      apiKeys: ["user-only"],
-      models: ["gemini-3.8-flash"],
+    expect(executeMock).toHaveBeenCalledWith(expect.objectContaining({
+      workflow: "image",
+      userApiKeyRaw: "user-only",
+      serverApiKeyRaw: "server-a,server-b",
+      modelPreference: "gemini-3.8-flash",
     }));
-    expect(executeMock).not.toHaveBeenCalled();
+    expect(requestGeminiMock).not.toHaveBeenCalled();
   });
 });

@@ -14,9 +14,13 @@ export interface TranslationObservabilityMeta {
   model: string;
   attemptCount: number;
   elapsedMs: number;
+  routeElapsedMs?: number;
   fallbackCount: number;
+  skippedRouteCount?: number;
   keySlot?: number;
   keyId?: string;
+  keyOwner?: "user" | "server";
+  cooldownReason?: "quota" | "overload";
   finalErrorCode?: TranslationErrorCode;
 }
 
@@ -77,6 +81,9 @@ interface TranslationErrorBody {
   code?: string;
   retryable?: boolean;
   retryAfterMs?: number;
+  nextRetryAt?: number;
+  model?: string;
+  meta?: TranslationObservabilityMeta;
 }
 
 export const DEFAULT_QUOTA_COOLDOWN_MS = 60_000;
@@ -109,6 +116,9 @@ export class TranslationRequestError extends Error {
   readonly retryable: boolean;
   readonly status: number;
   readonly retryAfterMs?: number;
+  readonly nextRetryAt?: number;
+  readonly model?: string;
+  readonly meta?: TranslationObservabilityMeta;
 
   constructor(
     message: string,
@@ -116,6 +126,9 @@ export class TranslationRequestError extends Error {
     code?: string,
     retryable = false,
     retryAfterMs?: number,
+    nextRetryAt?: number,
+    model?: string,
+    meta?: TranslationObservabilityMeta,
   ) {
     super(message);
     this.name = "TranslationRequestError";
@@ -124,6 +137,9 @@ export class TranslationRequestError extends Error {
     this.retryable = retryable;
     this.status = status;
     this.retryAfterMs = retryAfterMs;
+    this.nextRetryAt = nextRetryAt;
+    this.model = model;
+    this.meta = meta;
   }
 }
 
@@ -139,6 +155,9 @@ export async function readTranslationResponse<T>(
       error.code,
       error.retryable === true,
       typeof error.retryAfterMs === "number" ? error.retryAfterMs : undefined,
+      typeof error.nextRetryAt === "number" ? error.nextRetryAt : undefined,
+      typeof error.model === "string" ? error.model : undefined,
+      error.meta,
     );
   }
   return data as T;
@@ -164,6 +183,18 @@ export function isUserCancelledError(error: unknown): boolean {
     return true;
   }
   return false;
+}
+
+export function shouldAutoRetryTranslation(
+  error: unknown,
+  completedRetries: number = 0,
+): boolean {
+  return (
+    completedRetries < 1 &&
+    error instanceof TranslationRequestError &&
+    error.retryable &&
+    error.category === "network"
+  );
 }
 
 export function getTranslationRetryDelay(

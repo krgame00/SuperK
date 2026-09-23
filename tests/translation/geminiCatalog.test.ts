@@ -63,10 +63,14 @@ describe("Gemini model catalog discovery", () => {
       force: true,
     });
 
-    expect(result.pool.owner).toBe("user");
-    expect(result.pool.keys).toHaveLength(2);
-    expect(result.pool.keys.map((key) => key.apiKey)).toEqual(["AIza-user-a-secret", "AIza-user-b-secret"]);
-    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(result.pool.owner).toBe("mixed");
+    expect(result.pool.keys).toHaveLength(3);
+    expect(result.pool.keys.map((key) => [key.owner, key.apiKey])).toEqual([
+      ["user", "AIza-user-a-secret"],
+      ["user", "AIza-user-b-secret"],
+      ["server", "AIza-server-secret"],
+    ]);
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
 
     expect(result.snapshot.models.map((entry) => entry.id)).toEqual([
       "gemini-stable-a",
@@ -76,11 +80,15 @@ describe("Gemini model catalog discovery", () => {
     expect(result.snapshot.models.find((entry) => entry.id === "embedding-only")).toBeUndefined();
     expect(result.snapshot.models.find((entry) => entry.id === "gemma-4-26b-a4b-it")).toBeUndefined();
     expect(result.snapshot.models.find((entry) => entry.id === "nano-banana-pro-preview")).toBeUndefined();
-    expect(result.snapshot.keys.map((key) => key.modelCount)).toEqual([2, 2]);
+    expect(result.snapshot.keys.map((key) => key.modelCount)).toEqual([2, 2, 0]);
 
     const shared = result.snapshot.models.find((entry) => entry.id === "gemini-shared");
-    expect(shared).toMatchObject({ availabilityCount: 2, totalKeys: 2 });
-    expect(shared?.keyIds).toEqual(result.pool.keys.map((key) => key.id));
+    expect(shared).toMatchObject({ availabilityCount: 2, totalKeys: 3 });
+    expect(shared?.keyIds).toEqual(
+      result.pool.keys
+        .filter((key) => key.owner === "user")
+        .map((key) => key.id),
+    );
 
     const preview = result.snapshot.models.find((entry) => entry.id === "gemini-preview-x");
     expect(preview?.releaseChannel).toBe("preview");
@@ -114,7 +122,7 @@ describe("Gemini model catalog discovery", () => {
     expect(fetchImpl.mock.calls.every(([url]) => !String(url).includes(":generateContent"))).toBe(true);
   });
 
-  test("at most five unique keys are accepted and catalog identities are non-secret", async () => {
+  test("default key limit accepts up to ten unique credentials and catalog identities are non-secret", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(modelsResponse([model("gemini-a")])) ;
     const manager = new GeminiCatalogManager({ fetchImpl, persistPath: null });
 
@@ -124,8 +132,8 @@ describe("Gemini model catalog discovery", () => {
       force: true,
     });
 
-    expect(result.pool.keys).toHaveLength(5);
-    expect(new Set(result.pool.keys.map((key) => key.id)).size).toBe(5);
+    expect(result.pool.keys).toHaveLength(6);
+    expect(new Set(result.pool.keys.map((key) => key.id)).size).toBe(6);
     for (const key of result.pool.keys) {
       expect(key.id).not.toBe(key.apiKey);
       expect(key.id).toMatch(/^key-[a-f0-9]{12}$/);

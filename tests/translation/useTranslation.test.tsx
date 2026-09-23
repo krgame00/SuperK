@@ -412,7 +412,7 @@ test("batch translation continues when source-style sampling fails", async () =>
   expect(result.current.bubbleCacheRef.current.has("blob:two")).toBe(true);
 });
 
-test("translation retry reuses one prepared URL", async () => {
+test("one automatic network retry reuses one prepared URL", async () => {
   vi.useFakeTimers();
   const pages = ["blob:one"];
   const preparePageForTranslation = vi.fn().mockResolvedValue({
@@ -428,11 +428,11 @@ test("translation retry reuses one prepared URL", async () => {
       if (apiCalls === 1) {
         return Response.json(
           {
-            error: "Gemini timeout",
-            code: "GEMINI_TIMEOUT",
+            error: "Network transport failed",
+            code: "NETWORK_ERROR",
             retryable: true,
           },
-          { status: 504 },
+          { status: 502 },
         );
       }
       return successResponse();
@@ -460,6 +460,55 @@ test("translation retry reuses one prepared URL", async () => {
 
   expect(preparePageForTranslation).toHaveBeenCalledOnce();
   expect(apiCalls).toBe(2);
+});
+
+test("router timeout does not rerun the full translation request", async () => {
+  vi.useFakeTimers();
+  const pages = ["blob:one"];
+  const preparePageForTranslation = vi.fn().mockResolvedValue({
+    recognitionUrl: "blob:one",
+    backgroundUrl: "blob:clean",
+  });
+  let apiCalls = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url === "blob:one") return imageResponse();
+    if (url === "/api/translate") {
+      apiCalls += 1;
+      return Response.json(
+        {
+          error: "Gemini timeout",
+          code: "GEMINI_TIMEOUT",
+          retryable: true,
+        },
+        { status: 504 },
+      );
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  const { result } = renderHook(() =>
+    useTranslation({
+      currentPage: 0,
+      pages,
+      viewMode: "single",
+      preparePageForTranslation,
+    }),
+  );
+
+  let batch!: Promise<void>;
+  act(() => {
+    batch = result.current.handleTranslateAll();
+  });
+  await act(async () => {
+    await vi.runAllTimersAsync();
+    await batch;
+  });
+
+  expect(apiCalls).toBe(1);
+  expect(result.current.batchFailures).toEqual([
+    expect.objectContaining({ pageIndex: 0, stage: "translation" }),
+  ]);
 });
 
 test("cancellation during preparation prevents the next page", async () => {
@@ -906,6 +955,7 @@ test("reports cleaning then translating phases for one page", async () => {
     backgroundUrl: string;
   }) => void;
   let resolveImage!: (response: Response) => void;
+  let resolveTranslation!: (response: Response) => void;
   const preparePageForTranslation = vi.fn(
     () =>
       new Promise<{ recognitionUrl: string; backgroundUrl: string }>((resolve) => {
@@ -919,7 +969,9 @@ test("reports cleaning then translating phases for one page", async () => {
         resolveImage = resolve;
       });
     }
-    if (url === "/api/translate") return Promise.resolve(successResponse());
+    if (url === "/api/translate") {
+      return new Promise<Response>((resolve) => { resolveTranslation = resolve; });
+    }
     throw new Error(`unexpected fetch: ${url}`);
   });
   const { result } = renderHook(() =>
@@ -948,10 +1000,9 @@ test("reports cleaning then translating phases for one page", async () => {
   expect(result.current.workflowPhase).toBe("translating");
   expect(result.current.translationResult).toContain("กำลังแปลหน้า 1/1");
 
-  await act(async () => {
-    resolveImage(imageResponse());
-    await translation;
-  });
+  await act(async () => { resolveImage(imageResponse()); await Promise.resolve(); });
+  expect(result.current.translationResult).toContain("สลับโมเดลที่พร้อมใช้เมื่อจำเป็น");
+  await act(async () => { resolveTranslation(successResponse()); await translation; });
   expect(result.current.workflowPhase).toBeNull();
 });
 

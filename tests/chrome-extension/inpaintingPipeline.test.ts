@@ -250,20 +250,9 @@ describe('SuperK Extension Inpainting Pipeline (Ticket 02)', () => {
           headers: { 'Content-Type': 'image/png' },
         });
       }
-      if (url === 'https://generativelanguage.googleapis.com/v1beta/models') {
-        return Response.json({
-          models: [{
-            name: 'models/gemini-direct-dynamic',
-            displayName: 'Gemini Direct Dynamic',
-            supportedGenerationMethods: ['generateContent'],
-          }],
-        });
-      }
-      if (url.includes(':generateContent')) {
+      if (url === 'http://127.0.0.1:3000/api/translate') {
         const text = JSON.stringify({ bubbles: [{ t: 'ตรงไปตรงมา', box: [10, 10, 50, 50] }] });
-        return Response.json({
-          candidates: [{ content: { parts: [{ text }] } }],
-        });
+        return Response.json({ text });
       }
       return Response.json({ error: 'Unexpected route' }, { status: 500 });
     });
@@ -284,6 +273,7 @@ describe('SuperK Extension Inpainting Pipeline (Ticket 02)', () => {
         sync: {
           get: vi.fn(async () => ({
             translationMode: 'direct',
+            serverUrl: 'http://127.0.0.1:3000',
             apiKey: 'test-direct-key',
             cleanMode: 'inpainting',
           })),
@@ -316,7 +306,8 @@ describe('SuperK Extension Inpainting Pipeline (Ticket 02)', () => {
     // Verify inpaint cleaner endpoint was NEVER called
     expect(fetchMock.mock.calls.some(call => (call[0] as string).includes('/api/clean'))).toBe(false);
 
-    // Verify translation succeeded via direct Gemini
+    // Direct mode bypasses cleaning while using shared server routing when available.
+    expect(fetchMock.mock.calls.some(call => (call[0] as string).includes(':generateContent'))).toBe(false);
     expect(sendMessageMock).toHaveBeenCalledWith(25, expect.objectContaining({
       action: 'TRANSLATION_SUCCESS',
       cleanMode: 'inpainting',

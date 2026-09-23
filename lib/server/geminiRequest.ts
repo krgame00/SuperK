@@ -1,5 +1,6 @@
 import {
   type TranslationObservabilityMeta,
+  normalizeTranslationErrorCode,
   parseRetryAfter,
 } from "@/lib/translation/requestError";
 import type { GeminiRoute } from "@/lib/server/geminiCatalog";
@@ -15,9 +16,12 @@ export class GeminiRequestError extends Error {
   readonly status: number;
   readonly retryable: boolean;
   readonly retryAfterMs?: number;
+  readonly nextRetryAt?: number;
   readonly model?: string;
   readonly keyId?: string;
   readonly keySlot?: number;
+  readonly keyOwner?: "user" | "server";
+  readonly meta?: TranslationObservabilityMeta;
 
   constructor(
     message: string,
@@ -25,7 +29,9 @@ export class GeminiRequestError extends Error {
     status: number,
     retryable: boolean,
     retryAfterMs?: number,
-    route?: Pick<GeminiRoute, "model" | "keyId" | "keySlot">,
+    route?: Pick<GeminiRoute, "model" | "keyId" | "keySlot" | "keyOwner">,
+    meta?: TranslationObservabilityMeta,
+    nextRetryAt?: number,
   ) {
     super(message);
     this.name = "GeminiRequestError";
@@ -33,9 +39,12 @@ export class GeminiRequestError extends Error {
     this.status = status;
     this.retryable = retryable;
     this.retryAfterMs = retryAfterMs;
+    this.nextRetryAt = nextRetryAt;
     this.model = route?.model;
     this.keyId = route?.keyId;
     this.keySlot = route?.keySlot;
+    this.keyOwner = route?.keyOwner;
+    this.meta = meta;
   }
 }
 
@@ -59,6 +68,9 @@ export interface GeminiRouteRequestOptions {
   fetchImpl?: typeof fetch;
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
+  beforeRoute?: (
+    route: GeminiRoute,
+  ) => GeminiRouteFailureDirective | void | Promise<GeminiRouteFailureDirective | void>;
   onRouteFailure?: (
     route: GeminiRoute,
     error: GeminiRequestError,
@@ -97,9 +109,27 @@ function defaultSleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+function errorName(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null &&
+    "name" in error && typeof error.name === "string"
+    ? error.name
+    : undefined;
+}
+
+function errorMessage(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null &&
+    "message" in error && typeof error.message === "string"
+    ? error.message
+    : undefined;
+}
+
 function upstreamMessage(data: unknown, status: number): string {
   const body = data as GeminiErrorBody;
   return body?.error?.message || `Gemini request failed (${status})`;
+}
+
+function redactRouteKey(message: string, apiKey: string): string {
+  return apiKey ? message.split(apiKey).join("[redacted]") : message;
 }
 
 function upstreamError(
@@ -116,10 +146,24 @@ function upstreamError(
   );
 }
 
-function retryAfterMsFromHeaders(headers: Headers): number | undefined {
+function retryAfterMsFromHeaders(
+  headers: Headers,
+  nowMs = Date.now(),
+): number | undefined {
   const value = headers.get("retry-after");
   if (!value) return undefined;
-  return parseRetryAfter(value);
+  return parseRetryAfter(value, nowMs);
+}
+
+function isHighDemandError(status: number, message: string): boolean {
+  if (status !== 503) return false;
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("high demand") ||
+    normalized.includes("overloaded") ||
+    normalized.includes("overload") ||
+    normalized.includes("temporarily unavailable")
+  );
 }
 
 export async function requestGemini<T = unknown>(
@@ -225,7 +269,7 @@ export async function requestGemini<T = unknown>(
         const error = upstreamError(
           upstreamMessage(data, response.status),
           response.status,
-          retryAfterMsFromHeaders(response.headers),
+          retryAfterMsFromHeaders(response.headers, now()),
         );
         firstHttpError ??= error;
 
@@ -279,63 +323,109 @@ export async function requestGeminiRoutes<T = unknown>(
     fetchImpl = globalThis.fetch,
     now = Date.now,
     sleep = defaultSleep,
+    beforeRoute,
     onRouteFailure,
   } = options;
   const startedAt = options.startedAt ?? now();
-  let firstHttpError: GeminiRequestError | undefined;
-  let sawTransportFailure = false;
+  let lastError: GeminiRequestError | undefined;
   let attemptCount = 0;
   let fallbackCount = 0;
+  let skippedRouteCount = 0;
+  let lastCooldownReason: "quota" | "overload" | undefined;
+  const skippedModels = new Set<string>();
 
   for (let routeIndex = 0; routeIndex < routes.length; routeIndex++) {
     const route = routes[routeIndex];
+    if (skippedModels.has(route.model)) {
+      skippedRouteCount++;
+      continue;
+    }
+    if (totalBudgetMs - (now() - startedAt) <= 0) {
+      throw new GeminiRequestError(TIMEOUT_MESSAGE, "GEMINI_TIMEOUT", 504, true, undefined, route);
+    }
+    const startDirective = await beforeRoute?.(route);
+    if (totalBudgetMs - (now() - startedAt) <= 0) {
+      const timeout = new GeminiRequestError(
+        TIMEOUT_MESSAGE, "GEMINI_TIMEOUT", 504, true, undefined, route,
+      );
+      if (route.recoveryTrial && startDirective !== "skip-model") {
+        await onRouteFailure?.(route, timeout);
+      }
+      throw timeout;
+    }
+    if (startDirective === "skip-model") {
+      skippedRouteCount++;
+      skippedModels.add(route.model);
+      fallbackCount++;
+      continue;
+    }
+
     let serverRetry = 0;
     while (serverRetry <= 1) {
       const remaining = totalBudgetMs - (now() - startedAt);
       if (remaining <= 0) {
-        throw new GeminiRequestError(TIMEOUT_MESSAGE, "GEMINI_TIMEOUT", 504, true, undefined, route);
+        throw new GeminiRequestError(
+          TIMEOUT_MESSAGE,
+          "GEMINI_TIMEOUT",
+          504,
+          true,
+          undefined,
+          route,
+        );
       }
 
       attemptCount++;
+      const routeAttemptStartedAt = now();
       const controller = new AbortController();
       let timeoutFired = false;
-      const timer = setTimeout(() => {
-        timeoutFired = true;
-        controller.abort();
-      }, Math.min(attemptTimeoutMs, remaining));
+      let timer: ReturnType<typeof setTimeout>;
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          timeoutFired = true;
+          controller.abort();
+          reject(new DOMException("Gemini route deadline exceeded", "TimeoutError"));
+        }, Math.min(attemptTimeoutMs, remaining));
+      });
 
       let response: Response;
       let data: unknown;
       try {
-        response = await fetchImpl(
-          `https://generativelanguage.googleapis.com/v1beta/models/${route.model}:generateContent`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-goog-api-key": route.apiKey,
-            },
-            body: JSON.stringify(payload),
-            signal: controller.signal,
-            cache: "no-store",
-          },
-        );
-
-        try {
-          data = await response.json();
-        } catch (jsonErr: any) {
-          if (timeoutFired || controller.signal.aborted) {
-            throw jsonErr;
-          }
-          data = { error: { message: `Gemini returned invalid JSON (${response.status})` } };
-        }
-      } catch (fetchOrBodyErr: any) {
-        sawTransportFailure = true;
+        ({ response, data } = await Promise.race([
+          (async () => {
+            const upstream = await fetchImpl(
+              `https://generativelanguage.googleapis.com/v1beta/models/${route.model}:generateContent`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-goog-api-key": route.apiKey,
+                },
+                body: JSON.stringify(payload),
+                signal: controller.signal,
+                cache: "no-store",
+              },
+            );
+            let body: unknown;
+            try {
+              body = await upstream.json();
+            } catch (jsonErr: unknown) {
+              if (timeoutFired || controller.signal.aborted) throw jsonErr;
+              body = {
+                error: {
+                  message: `Gemini returned invalid JSON (${upstream.status})`,
+                },
+              };
+            }
+            return { response: upstream, data: body };
+          })(),
+          deadline,
+        ]));
+      } catch (fetchOrBodyErr: unknown) {
         const isTimeout =
           timeoutFired ||
           controller.signal.aborted ||
-          fetchOrBodyErr?.name === "AbortError" ||
-          fetchOrBodyErr?.name === "TimeoutError";
+          errorName(fetchOrBodyErr) === "AbortError" ||
+          errorName(fetchOrBodyErr) === "TimeoutError";
         const error = isTimeout
           ? new GeminiRequestError(
               TIMEOUT_MESSAGE,
@@ -346,19 +436,26 @@ export async function requestGeminiRoutes<T = unknown>(
               route,
             )
           : new GeminiRequestError(
-              fetchOrBodyErr?.message || "Gemini network transport error",
+              redactRouteKey(
+                errorMessage(fetchOrBodyErr) || "Gemini network transport error",
+                route.apiKey,
+              ),
               "GEMINI_UPSTREAM",
               502,
               true,
               undefined,
               route,
             );
-        firstHttpError ??= error;
-        await onRouteFailure?.(route, error);
+        lastError = error;
+        lastCooldownReason = undefined;
+        const directive = await onRouteFailure?.(route, error);
         fallbackCount++;
+        if (directive === "skip-model") {
+          skippedModels.add(route.model);
+        }
         break;
       } finally {
-        clearTimeout(timer);
+        clearTimeout(timer!);
       }
 
       if (response.ok) {
@@ -373,47 +470,94 @@ export async function requestGeminiRoutes<T = unknown>(
             model: route.model,
             keyId: route.keyId,
             keySlot: route.keySlot,
+            keyOwner: route.keyOwner,
             attemptCount,
             elapsedMs: now() - startedAt,
+            routeElapsedMs: now() - routeAttemptStartedAt,
             fallbackCount,
+            skippedRouteCount,
           },
         };
       }
 
-      const retryAfterMs = retryAfterMsFromHeaders(response.headers);
-      const error = new GeminiRequestError(
+      const message = redactRouteKey(
         upstreamMessage(data, response.status),
+        route.apiKey,
+      );
+      const retryAfterMs = retryAfterMsFromHeaders(response.headers, now());
+      const error = new GeminiRequestError(
+        message,
         response.status === 429 ? "GEMINI_QUOTA" : "GEMINI_UPSTREAM",
         response.status,
         response.status === 429 || response.status >= 500,
         retryAfterMs,
         route,
       );
-      firstHttpError ??= error;
+      lastError = error;
+      const highDemand = isHighDemandError(response.status, message);
+      lastCooldownReason =
+        response.status === 429 ? "quota" : highDemand ? "overload" : undefined;
 
-      if ((response.status === 500 || response.status === 503) && serverRetry === 0) {
+      if (
+        (response.status === 500 || response.status === 502 || response.status === 503) &&
+        !highDemand &&
+        serverRetry === 0
+      ) {
         serverRetry += 1;
-        await sleep(1_000);
+        const retryRemaining = totalBudgetMs - (now() - startedAt);
+        if (retryRemaining <= 0) {
+          throw new GeminiRequestError(
+            TIMEOUT_MESSAGE,
+            "GEMINI_TIMEOUT",
+            504,
+            true,
+            undefined,
+            route,
+          );
+        }
+        await sleep(Math.min(1_000, retryRemaining));
         continue;
       }
 
       const directive = await onRouteFailure?.(route, error);
       fallbackCount++;
       if (directive === "skip-model") {
-        while (
-          routeIndex + 1 < routes.length &&
-          routes[routeIndex + 1].model === route.model
-        ) {
-          routeIndex++;
-        }
+        skippedModels.add(route.model);
       }
       break;
     }
   }
 
-  if (firstHttpError) throw firstHttpError;
-  if (sawTransportFailure) {
-    throw new GeminiRequestError(TIMEOUT_MESSAGE, "GEMINI_TIMEOUT", 504, true);
+  if (lastError) {
+    const route = lastError.model && lastError.keyId && lastError.keySlot !== undefined
+      ? {
+          model: lastError.model,
+          keyId: lastError.keyId,
+          keySlot: lastError.keySlot,
+          keyOwner: lastError.keyOwner,
+        }
+      : undefined;
+    throw new GeminiRequestError(
+      lastError.message,
+      lastError.code,
+      lastError.status,
+      lastError.retryable,
+      lastError.retryAfterMs,
+      route,
+      {
+        provider: "gemini",
+        model: lastError.model ?? "unknown",
+        keyId: lastError.keyId,
+        keySlot: lastError.keySlot,
+        keyOwner: lastError.keyOwner,
+        attemptCount,
+        elapsedMs: now() - startedAt,
+        fallbackCount,
+        skippedRouteCount,
+        cooldownReason: lastCooldownReason,
+        finalErrorCode: normalizeTranslationErrorCode(lastError.code),
+      },
+    );
   }
   throw upstreamError("Gemini request could not be completed", 502);
 }
@@ -496,7 +640,7 @@ export async function requestOpenAICompatible<T = unknown>(
 
       try {
         data = await response.json();
-      } catch (jsonErr: any) {
+      } catch (jsonErr: unknown) {
         if (timeoutFired || controller.signal.aborted) {
           throw jsonErr;
         }
@@ -506,13 +650,13 @@ export async function requestOpenAICompatible<T = unknown>(
           },
         };
       }
-    } catch (fetchOrBodyErr: any) {
+    } catch (fetchOrBodyErr: unknown) {
       sawTransportFailure = true;
       const isTimeout =
         timeoutFired ||
         controller.signal.aborted ||
-        fetchOrBodyErr?.name === "AbortError" ||
-        fetchOrBodyErr?.name === "TimeoutError";
+        errorName(fetchOrBodyErr) === "AbortError" ||
+        errorName(fetchOrBodyErr) === "TimeoutError";
       if (isTimeout) {
         firstHttpError ??= new GeminiRequestError(
           TIMEOUT_MESSAGE,
@@ -522,7 +666,7 @@ export async function requestOpenAICompatible<T = unknown>(
         );
       } else {
         firstHttpError ??= new GeminiRequestError(
-          fetchOrBodyErr?.message || "OpenAI-compatible network transport error",
+          errorMessage(fetchOrBodyErr) || "OpenAI-compatible network transport error",
           "GEMINI_UPSTREAM",
           502,
           true,
@@ -550,7 +694,7 @@ export async function requestOpenAICompatible<T = unknown>(
     const error = upstreamError(
       upstreamMessage(data, response.status),
       response.status,
-      retryAfterMsFromHeaders(response.headers),
+      retryAfterMsFromHeaders(response.headers, now()),
     );
     firstHttpError ??= error;
 

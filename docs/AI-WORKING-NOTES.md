@@ -243,12 +243,24 @@ Verification evidence:
 - Focused translation/workspace regressions cover live elapsed updates and confirm ETA wording is absent.
 - Verification: full `tests/translation` plus workspace timing coverage — **31 files / 157 tests passed**; `npx tsc --noEmit` passed; scoped lint of changed surfaces passed with 0 errors after excluding known pre-existing React Compiler debt rules; `git diff --check` passed.
 
+## Health-aware Gemini routing implementation — 2026-09-23
+
+### EXPERIMENTAL: shared image routing and fallback
+
+- The implementation-ready specification is `.scratch/health-aware-gemini-routing/spec.md`, with seven ordered tickets in its `issues/` directory. The working tree already contained shared-router, health, Settings, browser retry, and Extension changes when this implementation pass began; those edits were preserved.
+- A new failing route-order test showed that fresh Last-known-good ranking could put a server-owned route before all user-owned routes. Auto now keeps user-owned routes ahead of server fallback routes. A second failing test showed that model-wide skip missed server routes when ownership ordering separated keys for the same model; the runner now skips every remaining route for that model.
+- New deadline tests showed that provider fetch and catalog discovery could hang past their abort signal if the underlying promise ignored cancellation. Both now race provider work against explicit deadlines. A budget expiry releases any claimed half-open trial; only clear high demand renews the model cooldown. A generic `502` now receives one same-route retry. Provider and transport error messages redact the active raw key.
+- The first full Vitest run reported **3 failures / 868 tests** in older Extension tests that still expected the removed fixed Direct-mode hierarchy. The tests were updated to assert shared-server routing when available and dynamic discovery only for offline Direct mode; the affected files then passed **12/12**. This is test-contract migration, not evidence of a production image translation probe.
+- Independent spec and standards reviews found retry timing, recovery ownership, HTTP-success validation, Extension timeout fallback, and Manual recovery gaps; each was addressed with a focused failing test and passing rerun. Auto status now gives a truthful fallback-policy message during the pending request; exact route-switch events are not streamed to the browser.
+- Final verification: **140/140 Vitest files and 874/874 tests passed**, `tsc --noEmit` passed, focused ESLint on routing modules/image API/routing tests passed, and `git diff --check` passed. Broad ESLint still reports existing React hook and legacy-test `any` violations.
+- **Real manga workload validation remains outstanding.** These deterministic tests prove route policy and local API behavior, but do not establish that the newly discovered models succeed on the user's image workload. Keep the immediate rollback path available until that check succeeds.
+
 ## Quick status summary
 
 - **Web App:** ACTIVE / primary direction.
-- **Fixed Gemini `requestGemini` routing:** VERIFIED WORKING / current baseline.
-- **Dynamic Gemini catalog/router on live translation path:** KNOWN REGRESSION in the user's real workflow; keep experimental until revalidated.
-- **Dynamic catalog/discovery infrastructure itself:** EXPERIMENTAL but technically useful; not the production routing authority.
+- **Fixed Gemini `requestGemini` routing:** VERIFIED WORKING / prior image-translation baseline; retained for rollback and legacy text routing.
+- **Shared Gemini catalog/router on live image translation path:** EXPERIMENTAL / structurally tested; requires real manga workload validation before a verified-working claim.
+- **Dynamic catalog/discovery infrastructure:** EXPERIMENTAL; now the image routing authority under ADR-0017.
 - **NSFW 3×2 slicing:** ACTIVE; do not blame/remove without repro evidence.
 - **Mask deletion authorization fix:** VERIFIED WORKING.
 - **Windows Desktop/Installer:** PAUSED by user decision.

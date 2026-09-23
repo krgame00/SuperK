@@ -153,8 +153,8 @@ The loopback and desktop communication boundary enabling the desktop shell, inte
 _Avoid_: Remote gateway, cloud webhook
 
 **Translation failure diagnostic**:
-The categorized, root-cause assessment of why a manga page could not be prepared or translated, distinguishing credentials, quota exhaustion, safety policy blocks, local service unavailability, local cleaner failure, and cloud/network failures.
-_Avoid_: Generic error, retry message, vague failure
+The categorized, root-cause assessment of why a manga page could not be prepared or translated, distinguishing credentials, quota exhaustion, model overload, safety policy blocks, local service unavailability, local cleaner failure, and cloud/network failures. Gemini diagnostics may include model, credential ownership, non-secret key identity, attempts, fallbacks, elapsed time, skipped routes, and cooldown reason, but never raw API keys.
+_Avoid_: Generic error, retry message, vague failure, raw credential log
 
 **Actionable resolution prompt**:
 A contextual user guidance and interface action offered directly upon translation failure that performs the stated recovery operation or gives truthful manual guidance when automatic recovery is unavailable.
@@ -181,8 +181,28 @@ The absolute wait-until time attached to one quota failure group during which th
 _Avoid_: Global retry lock, auto-retry timer
 
 **Gemini key pool**:
-The active set of Gemini credentials eligible to serve a translation request. A user-provided pool and the server-provided pool are separate ownership domains rather than one implicitly mixed source of quota.
-_Avoid_: Comma-separated key string, global API key
+An ownership-scoped set of Gemini credentials, either user-provided or server-provided. Ownership remains explicit even when more than one pool contributes fallback routes to the same translation request.
+_Avoid_: Comma-separated key string, global API key, implicitly merged credential pool
+
+**Effective Gemini route pool**:
+The ordered Gemini model routes eligible for one translation request after combining ownership-scoped pools without erasing their origin. User-owned routes are preferred before server-owned fallback routes when both are available.
+_Avoid_: Merged API key string, ownership-free key pool, fixed fallback list
+
+**Gemini route health**:
+The server-shared temporary eligibility state of a Gemini model route based on recent quota, overload, timeout, transport, and successful translation outcomes. Health is reused across page requests, affects routing priority or cooldown, and does not redefine Translation model compatibility.
+_Avoid_: Per-page retry state, compatibility flag, permanent blacklist, API key validity
+
+**Gemini model overload cooldown**:
+A short model-wide pause used after a clear upstream high-demand response so SuperK does not burn every key against the same temporarily overloaded model. It is distinct from quota cooldown, which applies to a model+key route.
+_Avoid_: Key cooldown, incompatibility, permanent model disable
+
+**Gemini model recovery trial**:
+The single real translation request allowed to test an overloaded model after its cooldown expires before normal traffic can use that model again. Success reopens the model; another overload response returns it to cooldown.
+_Avoid_: Background health probe, unrestricted retry burst, scheduled probe
+
+**Gemini credential validity**:
+Evidence that a Gemini credential is accepted and can discover usable API models. It does not mean every model still has quota or is currently healthy.
+_Avoid_: Model availability, remaining quota, all-model health
 
 **Gemini model catalog**:
 The current set of Gemini models available to the active Gemini key pool, including which credentials can reach each model and whether SuperK has verified that model for a translation workflow.
@@ -197,7 +217,7 @@ An eligible pairing of one Gemini model with one credential from the active key 
 _Avoid_: Global key rotation, model-only fallback
 
 **Last-known-good translation model**:
-The most recently successful compatible Gemini model remembered separately for each translation workflow and preferred by Auto when it remains eligible.
+The most recently successful compatible Gemini model remembered separately for each translation workflow and temporarily preferred by Auto while it remains fresh and healthy. Its preference expires rather than pinning Auto permanently.
 _Avoid_: Global default model, permanent pinned model
 
 **Owned desktop child process**:

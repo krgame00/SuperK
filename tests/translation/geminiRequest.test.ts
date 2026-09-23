@@ -194,6 +194,53 @@ describe("requestGemini", () => {
     expect(onRouteFailure).toHaveBeenNthCalledWith(2, expect.objectContaining({ model: "model-a", keyId: "key-bbb" }), expect.objectContaining({ status: 400 }));
   });
 
+  test("a route attempt ends at its deadline even when provider fetch ignores abort", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn<typeof fetch>().mockImplementation(
+        () => new Promise<Response>(() => undefined),
+      );
+      const request = requestGeminiRoutes({
+        routes: [{ model: "model-a", apiKey: "secret-a", keyId: "key-aaa", keyIndex: 0, keySlot: 1 }],
+        payload: { contents: [] },
+        fetchImpl,
+        attemptTimeoutMs: 25_000,
+        totalBudgetMs: 60_000,
+      });
+      const outcome = expect(request).rejects.toMatchObject({
+        code: "GEMINI_TIMEOUT",
+        status: 504,
+      });
+
+      await vi.advanceTimersByTimeAsync(25_000);
+      await outcome;
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("an expired budget releases a claimed recovery trial before provider work", async () => {
+    let now = 0;
+    const onRouteFailure = vi.fn();
+    const fetchImpl = vi.fn<typeof fetch>();
+    await expect(requestGeminiRoutes({
+      routes: [{ model: "model-a", apiKey: "secret-a", keyId: "key-aaa", keyIndex: 0, keySlot: 1, recoveryTrial: true }],
+      payload: { contents: [] },
+      fetchImpl,
+      now: () => now,
+      totalBudgetMs: 60,
+      beforeRoute: () => { now = 60; },
+      onRouteFailure,
+    })).rejects.toMatchObject({ code: "GEMINI_TIMEOUT" });
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(onRouteFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ recoveryTrial: true }),
+      expect.objectContaining({ code: "GEMINI_TIMEOUT" }),
+    );
+  });
+
   test("a model-wide capability failure skips the remaining keys for that model", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
@@ -215,6 +262,104 @@ describe("requestGemini", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(String(fetchImpl.mock.calls[0][0])).toContain("/models/model-a:generateContent");
     expect(String(fetchImpl.mock.calls[1][0])).toContain("/models/model-b:generateContent");
+  });
+
+  test("a clear high-demand failure skips every remaining key for that model without retrying it", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({ error: { message: "The model is currently experiencing high demand" } }, 503),
+      )
+      .mockResolvedValueOnce(jsonResponse(successBody));
+
+    const result = await requestGeminiRoutes({
+      routes: [
+        { model: "model-a", apiKey: "secret-a", keyId: "key-aaa", keyIndex: 0, keySlot: 1 },
+        { model: "model-a", apiKey: "secret-b", keyId: "key-bbb", keyIndex: 1, keySlot: 2 },
+        { model: "model-b", apiKey: "secret-a", keyId: "key-aaa", keyIndex: 0, keySlot: 1 },
+      ],
+      payload: { contents: [] },
+      fetchImpl,
+      sleep: async () => undefined,
+      onRouteFailure: async (_route, error) =>
+        error.status === 503 ? "skip-model" : undefined,
+    });
+
+    expect(result.model).toBe("model-b");
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(String(fetchImpl.mock.calls[0][0])).toContain("/models/model-a:generateContent");
+    expect(String(fetchImpl.mock.calls[1][0])).toContain("/models/model-b:generateContent");
+    expect(result.meta).toMatchObject({
+      fallbackCount: 1,
+      skippedRouteCount: 1,
+    });
+  });
+
+  test("model-wide skip also excludes separated server routes for the overloaded model", async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "high demand" } }, 503))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "quota" } }, 429))
+      .mockResolvedValueOnce(jsonResponse(successBody));
+
+    const result = await requestGeminiRoutes({
+      routes: [
+        { model: "model-a", apiKey: "user-a", keyId: "key-aaa", keyIndex: 0, keySlot: 1, keyOwner: "user" },
+        { model: "model-b", apiKey: "user-b", keyId: "key-bbb", keyIndex: 1, keySlot: 2, keyOwner: "user" },
+        { model: "model-a", apiKey: "server-a", keyId: "key-ccc", keyIndex: 2, keySlot: 3, keyOwner: "server" },
+        { model: "model-c", apiKey: "server-c", keyId: "key-ddd", keyIndex: 3, keySlot: 4, keyOwner: "server" },
+      ],
+      payload: { contents: [] },
+      fetchImpl,
+      onRouteFailure: (_route, error) => error.status === 503 ? "skip-model" : undefined,
+    });
+
+    expect(result.model).toBe("model-c");
+    expect(result.meta.skippedRouteCount).toBe(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  test("a generic 502 retries the same route once before falling back", async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "bad gateway" } }, 502))
+      .mockResolvedValueOnce(jsonResponse(successBody));
+    const result = await requestGeminiRoutes({
+      routes: [
+        { model: "model-a", apiKey: "secret-a", keyId: "key-aaa", keyIndex: 0, keySlot: 1 },
+        { model: "model-b", apiKey: "secret-b", keyId: "key-bbb", keyIndex: 1, keySlot: 2 },
+      ],
+      payload: { contents: [] },
+      fetchImpl,
+      sleep: async () => undefined,
+    });
+    expect(result.model).toBe("model-a");
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  test("provider and transport errors never echo the route's raw key", async () => {
+    const route = { model: "model-a", apiKey: "secret-credential-value", keyId: "key-aaa", keyIndex: 0, keySlot: 1 };
+    const providerFetch = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({ error: { message: "key secret-credential-value exhausted" } }, 429),
+    );
+    let providerError: unknown;
+    try {
+      await requestGeminiRoutes({ routes: [route], payload: { contents: [] }, fetchImpl: providerFetch });
+    } catch (error) {
+      providerError = error;
+    }
+    expect(JSON.stringify(providerError)).not.toContain(route.apiKey);
+    expect(String(providerError)).not.toContain(route.apiKey);
+
+    const transportFetch = vi.fn<typeof fetch>().mockRejectedValue(
+      new Error(`transport failed for ${route.apiKey}`),
+    );
+    let transportError: unknown;
+    try {
+      await requestGeminiRoutes({ routes: [route], payload: { contents: [] }, fetchImpl: transportFetch });
+    } catch (error) {
+      transportError = error;
+    }
+    expect(JSON.stringify(transportError)).not.toContain(route.apiKey);
+    expect(String(transportError)).not.toContain(route.apiKey);
   });
 
   test("explicit catalog routes preserve model-key order and return safe route diagnostics", async () => {
@@ -241,6 +386,63 @@ describe("requestGemini", () => {
     ]);
     expect(JSON.stringify(result)).not.toContain("secret-a");
     expect(JSON.stringify(result)).not.toContain("secret-b");
+  });
+
+  test("successful-route latency excludes time spent on earlier failed routes", async () => {
+    let now = 0;
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => {
+      if (fetchImpl.mock.calls.length === 1) {
+        now = 100;
+        return jsonResponse({ error: { message: "quota" } }, 429);
+      }
+      now = 105;
+      return jsonResponse(successBody);
+    });
+
+    const result = await requestGeminiRoutes({
+      routes: [
+        { model: "model-a", apiKey: "secret-a", keyId: "key-aaa", keyIndex: 0, keySlot: 1 },
+        { model: "model-b", apiKey: "secret-b", keyId: "key-bbb", keyIndex: 1, keySlot: 2 },
+      ],
+      payload: { contents: [] },
+      fetchImpl,
+      now: () => now,
+    });
+
+    expect(result.meta).toMatchObject({ elapsedMs: 105, routeElapsedMs: 5, fallbackCount: 1 });
+  });
+
+  test("terminal quota failure carries safe diagnostics without raw credentials", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({ error: { message: "quota" } }, 429),
+    );
+
+    let thrown: unknown;
+    try {
+      await requestGeminiRoutes({
+        routes: [
+          { model: "model-a", apiKey: "secret-a", keyId: "key-aaa", keyIndex: 0, keySlot: 1, keyOwner: "user" },
+        ],
+        payload: { contents: [] },
+        fetchImpl,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toMatchObject({
+      code: "GEMINI_QUOTA",
+      meta: expect.objectContaining({
+        model: "model-a",
+        keyId: "key-aaa",
+        keyOwner: "user",
+        attemptCount: 1,
+        fallbackCount: 1,
+        cooldownReason: "quota",
+        finalErrorCode: "quota",
+      }),
+    });
+    expect(JSON.stringify(thrown)).not.toContain("secret-a");
   });
 });
 

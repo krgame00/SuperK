@@ -5,6 +5,7 @@ import {
   isUserCancelledError,
   normalizeTranslationErrorCode,
   readTranslationResponse,
+  shouldAutoRetryTranslation,
   TranslationRequestError,
 } from "@/lib/translation/requestError";
 
@@ -52,6 +53,46 @@ test("successful responses retain their typed payload", async () => {
   ).resolves.toEqual({
     text: '{"bubbles":[]}',
   });
+});
+
+test("structured route cooldown preserves retry timing and selected model", async () => {
+  const response = Response.json(
+    {
+      error: "cooling down",
+      code: "GEMINI_ROUTE_COOLDOWN",
+      retryable: true,
+      retryAfterMs: 12_000,
+      nextRetryAt: 42_000,
+      model: "gemini-a",
+    },
+    { status: 503 },
+  );
+
+  await expect(readTranslationResponse(response)).rejects.toMatchObject({
+    code: "GEMINI_ROUTE_COOLDOWN",
+    retryAfterMs: 12_000,
+    nextRetryAt: 42_000,
+    model: "gemini-a",
+  });
+});
+
+test("automatic retry is limited to one extra network attempt", () => {
+  const network = new TranslationRequestError(
+    "network",
+    502,
+    "NETWORK_ERROR",
+    true,
+  );
+  const timeout = new TranslationRequestError(
+    "timeout",
+    504,
+    "GEMINI_TIMEOUT",
+    true,
+  );
+
+  expect(shouldAutoRetryTranslation(network, 0)).toBe(true);
+  expect(shouldAutoRetryTranslation(network, 1)).toBe(false);
+  expect(shouldAutoRetryTranslation(timeout, 0)).toBe(false);
 });
 
 test("quota errors use the long retry delay", () => {

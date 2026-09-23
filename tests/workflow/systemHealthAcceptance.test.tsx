@@ -8,8 +8,7 @@ import { blobToDataUrl } from "@/lib/imageDataUrl";
 import "@/chrome-extension/server.js";
 
 declare const SuperKServer: {
-  getDirectExecutionRoutes: (rawApiKeys: string, options?: { modelPreference?: string }) => Array<{ model: string; apiKey: string }>;
-  FIXED_AUTO_MODELS: string[];
+  discoverGeminiRoutes: (rawApiKeys: string, options?: { modelPreference?: string }) => Promise<Array<{ model: string; apiKey: string }>>;
 };
 
 describe("End-to-End System Health Remediation Acceptance (P0-P4)", () => {
@@ -110,30 +109,30 @@ describe("End-to-End System Health Remediation Acceptance (P0-P4)", () => {
   });
 
   describe("P2: Chrome Extension Direct Routing Parity with Server", () => {
-    it("Direct Auto mode routes identically to Server fixed hierarchy starting with gemini-3.5-flash-lite", () => {
-      const routes = SuperKServer.getDirectExecutionRoutes("key1,key2", { modelPreference: "auto" });
+    it("offline Direct Auto discovers eligible models instead of using a fixed hierarchy", async () => {
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({
+        models: [
+          { name: "models/gemini-discovered", supportedGenerationMethods: ["generateContent"] },
+          { name: "models/gemini-preview", supportedGenerationMethods: ["generateContent"] },
+        ],
+      }));
+      const routes = await SuperKServer.discoverGeminiRoutes("key1,key2", { modelPreference: "auto" });
 
-      expect(routes.length).toBeGreaterThan(0);
-      expect(routes[0].model).toBe("gemini-3.5-flash-lite");
-      expect(routes[0].apiKey).toBe("key1");
-      expect(routes[1].apiKey).toBe("key2");
-
-      // Verify hierarchy matches Server Mode
-      const uniqueModels = [...new Set(routes.map(r => r.model))];
-      expect(uniqueModels).toEqual([
-        "gemini-3.5-flash-lite",
-        "gemini-3.8-flash",
-        "gemini-3.7-flash",
-        "gemini-3.6-flash",
-        "gemini-3-flash",
-        "gemini-3.5-flash",
-        "gemini-3.1-flash-lite",
+      expect(routes.map(route => [route.model, route.apiKey])).toEqual([
+        ["gemini-discovered", "key1"],
+        ["gemini-discovered", "key2"],
       ]);
     });
 
-    it("Direct Manual model preference respects user selection without changing model", () => {
-      const routes = SuperKServer.getDirectExecutionRoutes("key1,key2", { modelPreference: "gemini-3-flash" });
-      expect(routes.every(r => r.model === "gemini-3-flash")).toBe(true);
+    it("offline Direct Manual model preference respects user selection without changing model", async () => {
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({
+        models: [
+          { name: "models/gemini-selected", supportedGenerationMethods: ["generateContent"] },
+          { name: "models/gemini-other", supportedGenerationMethods: ["generateContent"] },
+        ],
+      }));
+      const routes = await SuperKServer.discoverGeminiRoutes("key1,key2", { modelPreference: "gemini-selected" });
+      expect(routes.every(r => r.model === "gemini-selected")).toBe(true);
       expect(routes.map(r => r.apiKey)).toEqual(["key1", "key2"]);
     });
   });

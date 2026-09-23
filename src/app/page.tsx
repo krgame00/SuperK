@@ -544,7 +544,11 @@ export default function WorkspacePage() {
   // Auto-dismiss transient translation / export completion messages after 4 seconds
   useEffect(() => {
     if (!translationResult) return;
-    if (translationResult.startsWith("⏳") || translationResult.startsWith("กำลัง")) return;
+    if (
+      translationResult.startsWith("⏳") ||
+      translationResult.startsWith("กำลัง") ||
+      translationResult.startsWith("แปลไม่สำเร็จ")
+    ) return;
 
     const timer = setTimeout(() => {
       setTranslationResult(null);
@@ -2102,6 +2106,19 @@ export default function WorkspacePage() {
           >
             <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse shrink-0" />
             <span className="truncate">{workflowMessage}</span>
+            {modelPreference !== "auto" && translationResult?.startsWith("แปลไม่สำเร็จ") && (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setModelPreference("auto");
+                  setTranslationResult("เปลี่ยนเป็น Auto แล้ว กดลองแปลอีกครั้ง");
+                }}
+                className="shrink-0 rounded border border-primary/40 px-2 py-0.5 text-primary hover:bg-primary/10"
+              >
+                เปลี่ยนเป็น Auto
+              </button>
+            )}
             {translationResult && (
               <span className="ml-1 text-muted hover:text-foreground text-xs leading-none">&times;</span>
             )}

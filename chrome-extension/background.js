@@ -60,9 +60,25 @@ async function runTranslationFlow(tabId, frameId, imageUrl) {
       }
     }
 
-    const result = settings.translationMode === "direct"
-      ? await translateImageWithGemini(image.base64, settings, image.mimeType)
-      : await SuperKServer.translate(image, settings);
+    let result;
+    if (settings.translationMode === "direct") {
+      try {
+        // Even Direct mode uses the local SuperK endpoint first so model health,
+        // key cooldowns, and Auto ordering share the same server-side policy.
+        result = await SuperKServer.translate(image, settings);
+      } catch (sharedRouterError) {
+        if (sharedRouterError?.code !== "SUPERK_SERVER_UNREACHABLE") {
+          throw sharedRouterError;
+        }
+        console.warn(
+          "[SuperK] Shared translation router unreachable; using offline Direct fallback:",
+          sharedRouterError,
+        );
+        result = await translateImageWithGemini(image.base64, settings, image.mimeType);
+      }
+    } else {
+      result = await SuperKServer.translate(image, settings);
+    }
 
     let visual = {
       pageStyle: { isMonochromePage: false, monochromeConfidence: 0 },
@@ -179,11 +195,12 @@ Notes:
 - Transcribe original_text first to ensure precise bounding box position.
 - Do NOT wrap in markdown, commentary, or explanation. JSON only.`;
 
-  const routes = SuperKServer.getDirectExecutionRoutes(apiKeyRaw, {
+  const routes = await SuperKServer.discoverGeminiRoutes(apiKeyRaw, {
     modelPreference: settings.modelPreference || "auto",
+    allowPreview: settings.allowPreviewModels === true,
   });
 
-  const totalBudgetMs = 180000;
+  const totalBudgetMs = 60000;
   const startTime = Date.now();
   let lastError = "";
 
@@ -194,7 +211,7 @@ Notes:
       lastError = "หมดเวลางบประมาณการแปล (Total Timeout Exhausted)";
       break;
     }
-    const attemptTimeout = Math.min(60000, remaining);
+    const attemptTimeout = Math.min(25000, remaining);
     const model = route.model;
 
     try {

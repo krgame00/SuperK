@@ -28,6 +28,10 @@ interface GeminiCatalogModelView {
   availabilityCount: number;
   totalKeys: number;
   cooldownKeys: number;
+  status: "ready" | "partial_quota" | "quota_cooldown" | "high_demand" | "recovery";
+  overloadUntil?: number;
+  nextRetryAt?: number;
+  recoveryInFlight: boolean;
   compatibility: {
     text: "unverified" | "compatible" | "incompatible";
     image: "unverified" | "compatible" | "incompatible";
@@ -35,24 +39,38 @@ interface GeminiCatalogModelView {
 }
 
 interface GeminiCatalogView {
-  owner: "user" | "server";
+  owner: "user" | "server" | "mixed";
   source: "live" | "cache" | "bootstrap";
   stale: boolean;
   totalKeys: number;
+  maxKeys: number;
+  validKeys: number;
+  keys: Array<{
+    slot: number;
+    owner: "user" | "server";
+    valid: boolean;
+    modelCount: number;
+    errorCode?: string;
+  }>;
   models: GeminiCatalogModelView[];
 }
 
-function splitApiKeySlots(raw: string): string[] {
+function splitApiKeySlots(raw: string, limit = 10): string[] {
+  const safeLimit = Math.max(1, Math.floor(limit));
   const values = raw
     .split(/[,;\n]+/)
     .map((value) => value.trim())
     .filter(Boolean)
-    .slice(0, 5);
-  return Array.from({ length: 5 }, (_, index) => values[index] ?? "");
+    .slice(0, safeLimit);
+  return Array.from({ length: safeLimit }, (_, index) => values[index] ?? "");
 }
 
-function joinApiKeySlots(values: string[]): string {
-  return values.map((value) => value.trim()).filter(Boolean).slice(0, 5).join(",");
+function joinApiKeySlots(values: string[], limit = 10): string {
+  return values
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, Math.max(1, Math.floor(limit)))
+    .join(",");
 }
 
 const UNSTABLE_IMAGE_MODEL_IDS = new Set(["gemini-3.6-flash"]);
@@ -63,12 +81,19 @@ function isUnstableImageModel(modelId: string): boolean {
 
 function catalogModelMeta(model: GeminiCatalogModelView): string {
   const tags = [`${model.availabilityCount}/${model.totalKeys} Keys`];
+  const healthLabel: Record<GeminiCatalogModelView["status"], string> = {
+    ready: "Ready",
+    partial_quota: "Quota limited",
+    quota_cooldown: "Quota cooldown",
+    high_demand: "High demand",
+    recovery: "Recovery",
+  };
+  tags.push(healthLabel[model.status]);
   if (model.releaseChannel !== "stable") tags.push(model.releaseChannel === "preview" ? "Preview" : "Experimental");
   if (isUnstableImageModel(model.id)) tags.push("Experimental / Unstable");
   if (model.compatibility.image === "compatible") tags.push("Compatible");
   else if (model.compatibility.image === "incompatible") tags.push("Incompatible");
   else tags.push("Unverified");
-  if (model.cooldownKeys > 0) tags.push(`Cooldown ${model.cooldownKeys}`);
   return tags.join(" · ");
 }
 
@@ -125,7 +150,8 @@ export function SettingsModal({
   }>({ status: "idle" });
   const [geminiCatalog, setGeminiCatalog] = useState<GeminiCatalogView | null>(null);
   const [catalogStatus, setCatalogStatus] = useState<"idle" | "loading" | "error">("idle");
-  const apiKeySlots = splitApiKeySlots(userApiKey);
+  const apiKeyLimit = geminiCatalog?.maxKeys ?? 10;
+  const apiKeySlots = splitApiKeySlots(userApiKey, apiKeyLimit);
   const [newSource, setNewSource] = useState("");
   const [newTarget, setNewTarget] = useState("");
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
@@ -333,8 +359,21 @@ export function SettingsModal({
     (model) => model.availabilityCount > 0 && model.compatibility.image !== "incompatible",
   );
   const selectedCatalogModel = usableModels.find((model) => model.id === modelPreference);
-  const selectedModelUnavailable =
-    modelPreference !== "auto" && !selectedCatalogModel;
+  const selectedModelNeedsAutoRecovery =
+    modelPreference !== "auto" &&
+    (
+      !selectedCatalogModel ||
+      selectedCatalogModel.status === "high_demand" ||
+      selectedCatalogModel.status === "quota_cooldown" ||
+      selectedCatalogModel.status === "recovery"
+    );
+  const selectedModelRecoveryMessage = !selectedCatalogModel
+    ? "โมเดลที่บันทึกไว้ใช้งานไม่ได้ในตอนนี้"
+    : selectedCatalogModel.status === "high_demand"
+      ? "โมเดลที่เลือกกำลังมีโหลดสูง"
+      : selectedCatalogModel.status === "quota_cooldown"
+        ? "คีย์ของโมเดลที่เลือกกำลังอยู่ในช่วงคูลดาวน์"
+        : "โมเดลที่เลือกกำลังทดสอบการกู้คืน";
   const normalizedModelSearch = modelSearch.trim().toLowerCase();
   const visibleUsableModels = usableModels.filter((model) => {
     if (!normalizedModelSearch) return true;
@@ -769,10 +808,19 @@ export function SettingsModal({
               )}
             </div>
 
-            {selectedModelUnavailable && (
-              <p className="mt-1.5 text-[10px] leading-relaxed text-amber-400">
-                โมเดลที่บันทึกไว้ใช้งานไม่ได้ในตอนนี้ กรุณาเลือก Auto หรือโมเดลที่พร้อมใช้งานจากรายการ
-              </p>
+            {selectedModelNeedsAutoRecovery && (
+              <div className="mt-1.5 flex items-center justify-between gap-2 rounded-md border border-amber-400/30 bg-amber-400/5 px-2 py-1.5">
+                <p className="text-[10px] leading-relaxed text-amber-400">
+                  {selectedModelRecoveryMessage}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => onModelPreferenceChange("auto")}
+                  className="shrink-0 rounded border border-amber-400/40 px-2 py-1 text-[10px] font-medium text-amber-300 hover:bg-amber-400/10"
+                >
+                  เปลี่ยนเป็น Auto
+                </button>
+              </div>
             )}
 
             <div className="mt-1.5 flex items-start justify-between gap-3 text-[10px] leading-relaxed text-muted">
@@ -782,10 +830,33 @@ export function SettingsModal({
                   : catalogStatus === "error"
                     ? "โหลดรายการโมเดลไม่ได้ ระบบจะใช้ข้อมูลแคชหรือโหมดกู้คืนเมื่อแปล"
                     : geminiCatalog
-                      ? `${usableModels.length} ใช้ได้ จาก ${geminiCatalog.models.length} โมเดล · ${geminiCatalog.totalKeys} Keys${geminiCatalog.stale ? " · ข้อมูลแคช" : ""}`
+                      ? `Credentials ${geminiCatalog.validKeys}/${geminiCatalog.totalKeys} valid · ${usableModels.length} ใช้ได้ จาก ${geminiCatalog.models.length} โมเดล${geminiCatalog.stale ? " · ข้อมูลแคช" : ""}`
                       : "รายการโมเดลจะถูกค้นหาจาก Gemini API Key ที่ใช้งานจริง"}
               </span>
             </div>
+            {geminiCatalog && (
+              <details className="mt-2 rounded-md border border-border/60 bg-background/40 px-2 py-1.5 text-[10px] text-muted">
+                <summary className="cursor-pointer font-medium text-foreground">
+                  รายละเอียดสถานะ Gemini
+                </summary>
+                <div className="mt-2 space-y-1.5">
+                  {geminiCatalog.models.map((model) => (
+                    <div key={model.id} className="flex items-start justify-between gap-2">
+                      <span className="truncate text-foreground">{model.displayName}</span>
+                      <span className="shrink-0 text-right">{catalogModelMeta(model)}</span>
+                    </div>
+                  ))}
+                  <div className="border-t border-border/60 pt-1.5">
+                    {geminiCatalog.keys.map((key) => (
+                      <div key={key.slot} className="flex justify-between gap-2">
+                        <span>Key {key.slot} · {key.owner}</span>
+                        <span>{key.valid ? `Valid · ${key.modelCount} models` : key.errorCode ?? "Invalid"}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </details>
+            )}
             <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-muted">
               <input
                 type="checkbox"
@@ -804,7 +875,7 @@ export function SettingsModal({
                 Gemini API Keys
               </span>
               <span className="rounded-full border border-border/70 bg-surface px-2 py-0.5 text-[10px] font-medium text-muted">
-                เชื่อมต่อ {apiKeySlots.filter(Boolean).length}/5 Keys
+                เชื่อมต่อ {apiKeySlots.filter(Boolean).length}/{apiKeyLimit} Keys
               </span>
             </div>
             <div className="space-y-1.5">
@@ -824,7 +895,7 @@ export function SettingsModal({
                     onChange={(event) => {
                       const next = [...apiKeySlots];
                       next[index] = event.target.value;
-                      onUserApiKeyChange(joinApiKeySlots(next));
+                      onUserApiKeyChange(joinApiKeySlots(next, apiKeyLimit));
                       if (apiKeyValidation.status !== "idle") {
                         setApiKeyValidation({ status: "idle" });
                       }
@@ -836,7 +907,7 @@ export function SettingsModal({
               })}
             </div>
             <p className="mt-1 text-[10px] leading-relaxed text-muted">
-              ใส่ได้สูงสุด 5 Keys ระบบจะค้นหาโมเดลที่แต่ละ Key ใช้งานได้และสลับ Key ภายในโมเดลก่อนเปลี่ยนโมเดล หากไม่ใส่จะใช้ Key จาก{" "}
+              ใส่ได้สูงสุด {apiKeyLimit} Keys ระบบจะตรวจแยก Credential validity ออกจากสถานะโมเดล และใช้ Key ผู้ใช้ก่อน Server fallback โดยไม่เปิดเผยค่า Key หากไม่ใส่จะใช้ Key จาก{" "}
               <code className="text-foreground">.env.local</code>. สร้าง Key ได้ที่{" "}
               <a
                 href="https://aistudio.google.com/app/apikey"

@@ -12,10 +12,10 @@ import {
   requestGeminiRoutes,
 } from "@/lib/server/geminiRequest";
 
-const DEFAULT_TRANSLATION_ATTEMPT_TIMEOUT_MS = 15_000;
+const DEFAULT_TRANSLATION_ATTEMPT_TIMEOUT_MS = 25_000;
 const DEFAULT_TRANSLATION_TOTAL_BUDGET_MS = 60_000;
 
-export interface ExecuteGeminiTranslationOptions {
+export interface ExecuteGeminiTranslationOptions<T = unknown> {
   workflow: GeminiWorkflow;
   userApiKeyRaw?: string | null;
   serverApiKeyRaw?: string | null;
@@ -27,11 +27,23 @@ export interface ExecuteGeminiTranslationOptions {
   now?: () => number;
   fetchImpl?: typeof fetch;
   sleep?: (milliseconds: number) => Promise<void>;
+  validateSuccess?: (data: T) => boolean;
 }
 
 function routeFailureKind(error: GeminiRequestError): GeminiRouteFailureKind {
   if (error.status === 429) return "quota";
   const message = error.message.toLowerCase();
+  if (
+    error.status === 503 &&
+    (
+      message.includes("high demand") ||
+      message.includes("overloaded") ||
+      message.includes("overload") ||
+      message.includes("temporarily unavailable")
+    )
+  ) {
+    return "overload";
+  }
   if (
     error.status === 404 ||
     message.includes("not found") ||
@@ -65,26 +77,37 @@ async function recordRouteFailure(
     }
     return "skip-model";
   }
+  if (kind === "overload") return "skip-model";
 }
 
 export async function executeGeminiTranslation<T = unknown>(
-  options: ExecuteGeminiTranslationOptions,
+  options: ExecuteGeminiTranslationOptions<T>,
 ): Promise<GeminiRequestResult<T>> {
   const now = options.now ?? Date.now;
   const startedAt = now();
   const totalBudgetMs = options.totalBudgetMs ?? DEFAULT_TRANSLATION_TOTAL_BUDGET_MS;
-  const catalogSignal = AbortSignal.timeout(Math.min(10000, totalBudgetMs));
+  const catalogController = new AbortController();
+  let catalogTimer: ReturnType<typeof setTimeout>;
+  const catalogDeadline = new Promise<never>((_, reject) => {
+    catalogTimer = setTimeout(() => {
+      catalogController.abort();
+      reject(new DOMException("Gemini discovery deadline exceeded", "TimeoutError"));
+    }, Math.min(10_000, totalBudgetMs));
+  });
 
   let catalog: GeminiCatalogResult;
   try {
-    catalog = await geminiCatalogManager.getCatalog({
-      userApiKeyRaw: options.userApiKeyRaw,
-      serverApiKeyRaw: options.serverApiKeyRaw,
-      signal: catalogSignal,
-    });
-  } catch (err: any) {
+    catalog = await Promise.race([
+      geminiCatalogManager.getCatalog({
+        userApiKeyRaw: options.userApiKeyRaw,
+        serverApiKeyRaw: options.serverApiKeyRaw,
+        signal: catalogController.signal,
+      }),
+      catalogDeadline,
+    ]);
+  } catch (err: unknown) {
     const elapsed = now() - startedAt;
-    if (elapsed >= totalBudgetMs || err?.name === "TimeoutError" || err?.name === "AbortError") {
+    if (elapsed >= totalBudgetMs || (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError"))) {
       throw new GeminiRequestError(
         "การค้นหาโมเดล Gemini เกินเวลาที่กำหนด (Timeout)",
         "GEMINI_TIMEOUT",
@@ -93,6 +116,8 @@ export async function executeGeminiTranslation<T = unknown>(
       );
     }
     throw err;
+  } finally {
+    clearTimeout(catalogTimer!);
   }
 
   const discoveryElapsed = now() - startedAt;
@@ -112,18 +137,48 @@ export async function executeGeminiTranslation<T = unknown>(
     allowPreview: options.allowPreview ?? false,
   });
 
-  const result = await requestGeminiRoutes<T>({
-    routes,
-    payload: options.payload,
-    attemptTimeoutMs: options.attemptTimeoutMs ?? DEFAULT_TRANSLATION_ATTEMPT_TIMEOUT_MS,
-    totalBudgetMs: remainingBudgetMs,
-    startedAt,
-    now,
-    fetchImpl: options.fetchImpl,
-    sleep: options.sleep,
-    onRouteFailure: (route, error) =>
-      recordRouteFailure(catalog, options.workflow, route, error),
-  });
+  let result: GeminiRequestResult<T>;
+  try {
+    result = await requestGeminiRoutes<T>({
+      routes,
+      payload: options.payload,
+      attemptTimeoutMs: options.attemptTimeoutMs ?? DEFAULT_TRANSLATION_ATTEMPT_TIMEOUT_MS,
+      totalBudgetMs,
+      startedAt,
+      now,
+      fetchImpl: options.fetchImpl,
+      sleep: options.sleep,
+      beforeRoute: (route) => {
+        if (!route.recoveryTrial) return;
+        return geminiCatalogManager.claimRecoveryTrial(catalog.pool.id, route.model)
+          ? undefined
+          : "skip-model";
+      },
+      onRouteFailure: (route, error) =>
+        recordRouteFailure(catalog, options.workflow, route, error),
+    });
+  } catch (error) {
+    if (error instanceof GeminiRequestError) {
+      try {
+        // Fail with the post-attempt health state when every meaningful route
+        // is now cooling down, so callers receive actionable retry timing.
+        geminiCatalogManager.planRoutes(catalog, {
+          workflow: options.workflow,
+          modelPreference: options.modelPreference || "auto",
+          allowPreview: options.allowPreview ?? false,
+        });
+      } catch (routingError) {
+        if (
+          routingError instanceof GeminiRoutingError &&
+          (routingError.retryAfterMs !== undefined ||
+            routingError.code === "GEMINI_MODEL_INCOMPATIBLE")
+        ) {
+          throw routingError;
+        }
+      }
+    }
+    throw error;
+  }
 
   if (!result.keyId) {
     throw new GeminiRoutingError(
@@ -133,11 +188,14 @@ export async function executeGeminiTranslation<T = unknown>(
     );
   }
 
-  await geminiCatalogManager.recordSuccess(catalog, {
-    workflow: options.workflow,
-    model: result.model,
-    keyId: result.keyId,
-  });
+  if (options.validateSuccess?.(result.data) !== false) {
+    await geminiCatalogManager.recordSuccess(catalog, {
+      workflow: options.workflow,
+      model: result.model,
+      keyId: result.keyId,
+      elapsedMs: result.meta.routeElapsedMs ?? result.meta.elapsedMs,
+    });
+  }
 
   return result;
 }

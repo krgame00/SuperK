@@ -4,7 +4,9 @@ import {
   getTranslationRetryDelay,
   isUserCancelledError,
   readTranslationResponse,
+  shouldAutoRetryTranslation,
   TranslationRequestError,
+  type TranslationObservabilityMeta,
   DEFAULT_QUOTA_COOLDOWN_MS,
 } from "@/lib/translation/requestError";
 import { applyTranslationOverlay } from "@/lib/translationOverlay";
@@ -1114,6 +1116,12 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       }
 
       let res: Response;
+      if (
+        activePageRef.current === pageUrl &&
+        (!modelPreference || modelPreference === "auto")
+      ) {
+        setTranslationResult("กำลังแปลด้วย Auto · จะสลับโมเดลที่พร้อมใช้เมื่อจำเป็น…");
+      }
       try {
         res = await fetch("/api/translate", {
           method: "POST",
@@ -1141,7 +1149,11 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         );
       }
 
-      const data = await readTranslationResponse<{ text: string }>(res);
+      const data = await readTranslationResponse<{
+        text: string;
+        meta?: TranslationObservabilityMeta;
+      }>(res);
+      let responseMeta = data.meta;
       let parsed = (data.text ? parseLLMJSON(data.text) : data) as
         | ({ bubbles?: unknown[] } & Record<string, unknown>)
         | null;
@@ -1202,7 +1214,11 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           signal,
         });
         const retryData =
-          await readTranslationResponse<{ text: string }>(retryRes);
+          await readTranslationResponse<{
+            text: string;
+            meta?: TranslationObservabilityMeta;
+          }>(retryRes);
+        responseMeta = retryData.meta;
         const retryParsed = (retryData.text
           ? parseLLMJSON(retryData.text)
           : retryData) as { bubbles?: unknown[] } | null;
@@ -1247,7 +1263,17 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       markPageDirty(pageUrl, false);
 
       if (activePageRef.current === pageUrl) {
-        setTranslationResult("✅ แปลสำเร็จ! ข้อความถูกวาดทับลงบนภาพแล้ว");
+        if (responseMeta) {
+          const elapsedSeconds = Math.max(0, responseMeta.elapsedMs / 1000).toFixed(1);
+          const fallbackText = responseMeta.fallbackCount > 0
+            ? ` · fallback ${responseMeta.fallbackCount} ครั้ง`
+            : "";
+          setTranslationResult(
+            `✅ ${responseMeta.model} · ${elapsedSeconds} วิ${fallbackText}`,
+          );
+        } else {
+          setTranslationResult("✅ แปลสำเร็จ! ข้อความถูกวาดทับลงบนภาพแล้ว");
+        }
         setShowTranslate(false);
       }
 
@@ -1571,7 +1597,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         const forceNsfw = forceNsfwForBatch;
         let lastTranslationError: unknown;
 
-        while (!success && retries < 3 && !cancelTranslateAllRef.current) {
+        while (!success && retries < 2 && !cancelTranslateAllRef.current) {
           try {
             setTranslateAllProgress({
               current: batchProgressFrontier(),
@@ -1587,11 +1613,11 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             });
             if (nsfwBypassMode || forceNsfw) {
               setTranslationResult(
-                `กำลังหั่นภาพเป็น 6 ส่วน (หน้า ${i + 1}) - รอบ ${retries + 1}/3`,
+                `กำลังหั่นภาพเป็น 6 ส่วน (หน้า ${i + 1}) - รอบ ${retries + 1}/2`,
               );
             } else {
               setTranslationResult(
-                `กำลังประมวลผลด้วย AI (หน้า ${i + 1}) - รอบ ${retries + 1}/3`,
+                `กำลังประมวลผลด้วย AI (หน้า ${i + 1}) - รอบ ${retries + 1}/2`,
               );
             }
 
@@ -1623,18 +1649,27 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
               setTranslationResult("โควต้าเต็มชั่วคราว กรุณารอคูลดาวน์แล้วกดลองใหม่");
               break;
             }
-            // null = non-retryable (auth/safety/bad request) — fall through to
-            // the guard below and stop instead of burning 3 attempts per page.
-            const retryDelay = getTranslationRetryDelay(err, retries);
+            const canAutoRetry = shouldAutoRetryTranslation(err, retries);
             console.warn(
-              `Error on page ${i + 1}, retry ${retries + 1}/3:`,
+              `Error on page ${i + 1}, retry ${retries + 1}/2:`,
               errMsg,
             );
 
-            if (retryDelay === null) {
-              setTranslationResult(`แปลไม่สำเร็จ: ${errMsg}`);
+            if (!canAutoRetry) {
+              const retryHint =
+                err instanceof TranslationRequestError &&
+                typeof err.retryAfterMs === "number"
+                  ? ` · ลองใหม่ได้ในประมาณ ${Math.ceil(err.retryAfterMs / 1000)} วิ`
+                  : "";
+              const autoHint =
+                modelPreference && modelPreference !== "auto"
+                  ? " · สามารถเปลี่ยนโมเดลเป็น Auto ได้"
+                  : "";
+              setTranslationResult(`แปลไม่สำเร็จ: ${errMsg}${retryHint}${autoHint}`);
               break;
             }
+
+            const retryDelay = getTranslationRetryDelay(err, retries) ?? 2_000;
             const waitSec = Math.round(retryDelay / 1000);
             const waitStartedAt = Date.now();
             translationStopwatchRef.current.pagePausedAt = waitStartedAt;
@@ -1654,11 +1689,11 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
               && err.code === "GEMINI_QUOTA"
             ) {
               setTranslationResult(
-                `API Rate Limit! รอ ${waitSec} วิ... (รอบ ${retries + 1}/3)`,
+                `API Rate Limit! รอ ${waitSec} วิ... (รอบ ${retries + 1}/2)`,
               );
             } else {
               setTranslationResult(
-                `แปลไม่ผ่าน รอ ${waitSec} วิเพื่อลองใหม่... (รอบ ${retries + 1}/3)`,
+                `เครือข่ายขัดข้อง รอ ${waitSec} วิเพื่อลองใหม่... (รอบ ${retries + 1}/2)`,
               );
             }
             await interruptibleDelay(retryDelay);

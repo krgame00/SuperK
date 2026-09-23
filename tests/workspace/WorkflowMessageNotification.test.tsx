@@ -12,6 +12,8 @@ vi.mock("react-hot-toast", () => ({
 }));
 
 let mockTranslationResult: string | null = null;
+let mockModelPreference = "auto";
+const setModelPreferenceMock = vi.fn();
 const setTranslationResultMock = vi.fn((val: any) => {
   mockTranslationResult = typeof val === "function" ? val(mockTranslationResult) : val;
 });
@@ -34,8 +36,8 @@ vi.mock("@/hooks/useTranslation", () => ({
     setTargetLang: vi.fn(),
     sourceLang: "auto",
     setSourceLang: vi.fn(),
-    modelPreference: "auto",
-    setModelPreference: vi.fn(),
+    modelPreference: mockModelPreference,
+    setModelPreference: setModelPreferenceMock,
     textStyle: {
       fontFamily: "Itim, sans-serif",
       textColor: "#000000",
@@ -76,6 +78,7 @@ describe("WorkflowMessage Notification", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTranslationResult = null;
+    mockModelPreference = "auto";
     (document as any).fonts = {
       load: vi.fn().mockResolvedValue([]),
     };
@@ -101,6 +104,15 @@ describe("WorkflowMessage Notification", () => {
     const toast = screen.getByRole("status");
     // Should NOT be top-16 which directly overlaps top toolbar
     expect(toast.className).toMatch(/top-24|top-20/);
+  });
+
+  it("offers an explicit Auto switch on a Manual translation failure", () => {
+    mockModelPreference = "gemini-manual";
+    mockTranslationResult = "แปลไม่สำเร็จ: โมเดลที่เลือกไม่พร้อมใช้งาน";
+    render(<WorkspacePage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "เปลี่ยนเป็น Auto" }));
+    expect(setModelPreferenceMock).toHaveBeenCalledWith("auto");
   });
 
   it("does not emit stuck translation overlay messages during applyTranslationOverlay", async () => {

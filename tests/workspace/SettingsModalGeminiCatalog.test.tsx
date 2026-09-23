@@ -30,9 +30,10 @@ const catalog = {
   discoveredAt: 1,
   expiresAt: 2,
   totalKeys: 2,
+  validKeys: 2,
   keys: [
-    { slot: 1, valid: true, modelCount: 2 },
-    { slot: 2, valid: true, modelCount: 1 },
+    { slot: 1, owner: "user", valid: true, modelCount: 2 },
+    { slot: 2, owner: "server", valid: true, modelCount: 1 },
   ],
   models: [
     {
@@ -43,6 +44,8 @@ const catalog = {
       availabilityCount: 2,
       totalKeys: 2,
       cooldownKeys: 0,
+      status: "ready",
+      recoveryInFlight: false,
       compatibility: { text: "compatible", image: "compatible" },
     },
     {
@@ -52,6 +55,9 @@ const catalog = {
       availabilityCount: 1,
       totalKeys: 2,
       cooldownKeys: 1,
+      status: "partial_quota",
+      nextRetryAt: 12_000,
+      recoveryInFlight: false,
       compatibility: { text: "unverified", image: "unverified" },
     },
     {
@@ -61,6 +67,8 @@ const catalog = {
       availabilityCount: 0,
       totalKeys: 2,
       cooldownKeys: 0,
+      status: "ready",
+      recoveryInFlight: false,
       compatibility: { text: "compatible", image: "compatible" },
     },
     {
@@ -70,6 +78,8 @@ const catalog = {
       availabilityCount: 2,
       totalKeys: 2,
       cooldownKeys: 0,
+      status: "ready",
+      recoveryInFlight: false,
       compatibility: { text: "compatible", image: "incompatible" },
     },
     {
@@ -79,6 +89,9 @@ const catalog = {
       availabilityCount: 2,
       totalKeys: 2,
       cooldownKeys: 0,
+      status: "high_demand",
+      overloadUntil: 30_000,
+      recoveryInFlight: false,
       compatibility: { text: "compatible", image: "unverified" },
     },
   ],
@@ -134,8 +147,15 @@ describe("SettingsModal dynamic Gemini catalog", () => {
     );
   });
 
-  it("keeps a saved Manual model visible as Unavailable when fresh discovery no longer lists it", async () => {
-    render(<SettingsModal {...defaultProps} modelPreference="retired-model" />);
+  it("keeps a saved Manual model visible as Unavailable and offers an explicit switch to Auto", async () => {
+    const onModelPreferenceChange = vi.fn();
+    render(
+      <SettingsModal
+        {...defaultProps}
+        modelPreference="retired-model"
+        onModelPreferenceChange={onModelPreferenceChange}
+      />,
+    );
 
     const trigger = screen.getByRole("button", { name: /Model Preference/i });
     expect(trigger).toHaveTextContent("retired-model");
@@ -143,15 +163,18 @@ describe("SettingsModal dynamic Gemini catalog", () => {
 
     await waitFor(() => expect(trigger).toHaveTextContent(/retired-model.*Unavailable/i));
     expect(screen.queryByRole("option", { name: /retired-model/i })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "เปลี่ยนเป็น Auto" }));
+    expect(onModelPreferenceChange).toHaveBeenCalledWith("auto");
   });
 
-  it("renders five masked key slots and stores the active pool through the existing key string boundary", () => {
+  it("renders ten masked key slots and stores the active pool through the existing key string boundary", () => {
     const onChange = vi.fn();
     render(<SettingsModal {...defaultProps} userApiKey="key-a,key-b" onUserApiKeyChange={onChange} />);
 
     expect(screen.getByLabelText("Gemini API Key")).toHaveAttribute("type", "password");
     expect(screen.getByLabelText("API Key 2")).toHaveValue("key-b");
-    expect(screen.getByLabelText("API Key 5")).toBeInTheDocument();
+    expect(screen.getByLabelText("API Key 10")).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("API Key 3"), { target: { value: "key-c" } });
     expect(onChange).toHaveBeenCalledWith("key-a,key-b,key-c");
@@ -161,7 +184,10 @@ describe("SettingsModal dynamic Gemini catalog", () => {
     const onPreview = vi.fn();
     render(<SettingsModal {...defaultProps} userApiKey="key-a" onAllowPreviewModelsChange={onPreview} />);
 
-    await waitFor(() => expect(screen.getByText(/3 ใช้ได้ จาก 5 โมเดล · 2 Keys/i)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText(/Credentials 2\/2 valid · 3 ใช้ได้ จาก 5 โมเดล/i))
+        .toBeInTheDocument(),
+    );
     fireEvent.click(screen.getByRole("button", { name: /รีเฟรชรายการโมเดล/i }));
 
     await waitFor(() => {

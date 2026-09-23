@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import {
   GeminiRoutingError,
   geminiCatalogManager,
+  getGeminiKeyLimit,
 } from "@/lib/server/geminiCatalog";
 import { geminiRoutingHttpStatus } from "@/lib/server/geminiTranslationRouter";
 
@@ -38,9 +39,7 @@ export async function POST(req: Request) {
       availabilityCount: model.availabilityCount,
       totalKeys: model.totalKeys,
       compatibility: model.compatibility,
-      cooldownKeys: model.keyIds.filter((keyId) =>
-        geminiCatalogManager.getRouteCooldownUntil(catalog.pool.id, model.id, keyId),
-      ).length,
+      ...geminiCatalogManager.getModelHealth(catalog, model.id),
     }));
 
     return NextResponse.json({
@@ -50,8 +49,11 @@ export async function POST(req: Request) {
       discoveredAt: snapshot.discoveredAt,
       expiresAt: snapshot.expiresAt,
       totalKeys: catalog.pool.keys.length,
+      maxKeys: getGeminiKeyLimit(),
+      validKeys: snapshot.keys.filter((key) => key.valid).length,
       keys: snapshot.keys.map((key) => ({
         slot: key.slot,
+        owner: key.owner,
         valid: key.valid,
         modelCount: key.modelCount,
         errorCode: key.errorCode,

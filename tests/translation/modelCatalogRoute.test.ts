@@ -8,6 +8,7 @@ vi.mock("@/lib/server/geminiCatalog", async (importOriginal) => {
     geminiCatalogManager: {
       getCatalog: vi.fn(),
       getRouteCooldownUntil: vi.fn(),
+      getModelHealth: vi.fn(),
     },
   };
 });
@@ -18,20 +19,36 @@ import { POST } from "@/src/app/api/translate/models/route";
 const manager = geminiCatalogManager as unknown as {
   getCatalog: ReturnType<typeof vi.fn>;
   getRouteCooldownUntil: ReturnType<typeof vi.fn>;
+  getModelHealth: ReturnType<typeof vi.fn>;
 };
 
 describe("POST /api/translate/models", () => {
   beforeEach(() => {
     manager.getCatalog.mockReset();
     manager.getRouteCooldownUntil.mockReset();
+    manager.getModelHealth.mockReset();
+    manager.getModelHealth.mockImplementation((_catalog: unknown, model: string) =>
+      model === "gemini-stable"
+        ? {
+            status: "partial_quota",
+            cooldownKeys: 1,
+            nextRetryAt: 999,
+            recoveryInFlight: false,
+          }
+        : {
+            status: "ready",
+            cooldownKeys: 0,
+            recoveryInFlight: false,
+          },
+    );
     process.env.GEMINI_API_KEY = "server-secret";
     manager.getCatalog.mockResolvedValue({
       pool: {
         id: "user-pool-safe",
         owner: "user",
         keys: [
-          { id: "key-safe-a", slot: 1, apiKey: "user-secret-a" },
-          { id: "key-safe-b", slot: 2, apiKey: "user-secret-b" },
+          { id: "key-safe-a", slot: 1, owner: "user", apiKey: "user-secret-a" },
+          { id: "key-safe-b", slot: 2, owner: "server", apiKey: "user-secret-b" },
         ],
       },
       snapshot: {
@@ -42,8 +59,8 @@ describe("POST /api/translate/models", () => {
         discoveredAt: 100,
         expiresAt: 200,
         keys: [
-          { id: "key-safe-a", slot: 1, valid: true, modelCount: 2 },
-          { id: "key-safe-b", slot: 2, valid: true, modelCount: 1 },
+          { id: "key-safe-a", slot: 1, owner: "user", valid: true, modelCount: 2 },
+          { id: "key-safe-b", slot: 2, owner: "server", valid: true, modelCount: 1 },
         ],
         models: [
           {
@@ -94,6 +111,12 @@ describe("POST /api/translate/models", () => {
       source: "live",
       stale: false,
       totalKeys: 2,
+      maxKeys: 10,
+      validKeys: 2,
+      keys: [
+        expect.objectContaining({ slot: 1, owner: "user", valid: true }),
+        expect.objectContaining({ slot: 2, owner: "server", valid: true }),
+      ],
       models: [
         expect.objectContaining({
           id: "gemini-stable",
@@ -101,6 +124,8 @@ describe("POST /api/translate/models", () => {
           availabilityCount: 2,
           totalKeys: 2,
           cooldownKeys: 1,
+          status: "partial_quota",
+          nextRetryAt: 999,
           compatibility: { text: "compatible", image: "unverified" },
         }),
         expect.objectContaining({
