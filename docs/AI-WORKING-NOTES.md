@@ -18,7 +18,7 @@ Fixes applied:
   - Detects Chromium installations (Chrome, Edge, Brave) and launches with `--app=http://127.0.0.1:3000` (or system default browser fallback).
   - Configures drive `F:\` cache directories automatically if present.
 - `scripts/create-desktop-shortcut.mjs`:
-  - Automates creation of `C:\Users\PC\Desktop\SuperK Manga Translator.lnk` targeting `SuperK-Launcher.vbs` via `wscript.exe` with `public/app-icon.ico`.
+  - Automates creation of `C:\Users\PC\Desktop\SuperK Manga Translator.lnk` targeting `start-web.bat` with `public/app-icon.ico`.
   - Cleans up legacy/stale `start - Shortcut.lnk`.
 - `start.bat`:
   - Updated to delegate cleanly to `SuperK-Launcher.vbs`.
