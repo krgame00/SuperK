@@ -1,5 +1,38 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Smart Desktop Launcher & One-Click App Bootstrapper — 2026-09-24
+
+VERIFIED WORKING in automated test suites and real Windows Desktop runtime: Users can now double-click "SuperK Manga Translator" directly from their Windows Desktop to immediately open a clean, frameless App window (`--app=http://127.0.0.1:3000`). If local services (Python OCR `:8765` and Next.js `:3000`) are offline, the launcher bootstraps them silently in the background, waits for HTTP health verification, and opens the app without crashing or closing. Stale shortcuts (`start - Shortcut.lnk`) have been cleaned up.
+
+Root cause of "ทำไมกดที่ดาวโหลดไว้เดสทอปแล้วมันปิดเอง" (Desktop shortcut closes itself when clicked):
+1. **PWA Dependency on Offline Local Server**:
+   - The desktop shortcut was a Chrome PWA shortcut (`chrome_proxy.exe --app-id=hbblfifohofgngfbjbiimbbcimepbdcb`).
+   - When the user clicked it while the Next.js server (`:3000`) was stopped, Chrome failed to connect (`ERR_CONNECTION_REFUSED`) and immediately closed the app window.
+2. **Batch Script Flashing & Premature Exit**:
+   - `start - Shortcut.lnk` executed `start.bat`, which handed off execution to VBScript and ended with `exit /b 0`, causing a black CMD window to flash for 0.1 seconds and disappear, giving the illusion of a crashed program.
+
+Fixes applied:
+- `SuperK-Launcher.vbs`:
+  - Self-healing port readiness check (`CheckUrl("http://127.0.0.1:3000")` and `CheckUrl("http://127.0.0.1:8765/health")`).
+  - Silently spawns `uvicorn` and `npm run dev` if offline, with polling wait (up to 30s) until ready.
+  - Detects Chromium installations (Chrome, Edge, Brave) and launches with `--app=http://127.0.0.1:3000` (or system default browser fallback).
+  - Configures drive `F:\` cache directories automatically if present.
+- `scripts/create-desktop-shortcut.mjs`:
+  - Automates creation of `C:\Users\PC\Desktop\SuperK Manga Translator.lnk` targeting `SuperK-Launcher.vbs` via `wscript.exe` with `public/app-icon.ico`.
+  - Cleans up legacy/stale `start - Shortcut.lnk`.
+- `start.bat`:
+  - Updated to delegate cleanly to `SuperK-Launcher.vbs`.
+- `tests/scripts/desktopLauncher.test.ts`:
+  - Automated tests validating launcher existence, port check targets, and shortcut configurations.
+
+Verification evidence:
+- TypeScript check: `npx tsc --noEmit` — **0 errors**.
+- Launcher test suite: `npx vitest run tests/scripts` — **1 file / 3 tests passed**.
+- Translation test suite: `npx vitest run tests/translation` — **30 files / 177 tests passed**.
+- Workspace test suite: `npx vitest run tests/workspace` — **11 files / 48 tests passed**.
+- Unit test suite: `npx vitest run tests/unit` — **11 files / 76 tests passed**.
+- Desktop Shortcut: Verified TargetPath `C:\Windows\System32\wscript.exe`, Arguments `"C:\Users\PC\Downloads\manga-translator\SuperK-Launcher.vbs"`, Icon `public/app-icon.ico`.
+
 ## Live Queue Concurrent Review Retry & Auto-Proceed on Review — 2026-09-24
 
 VERIFIED WORKING in automated tests and system integration: Users can now confirm and translate pages flagged as "Awaiting Review" immediately via "🔄 ยืนยันและดำเนินการแปลต่อ" without being locked out while a batch translation is currently running in the background. In addition, an "Auto-proceed on Review" toggle allows batch translation to proceed automatically without halting for review.
