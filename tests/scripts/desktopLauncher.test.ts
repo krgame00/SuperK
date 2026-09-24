@@ -18,10 +18,10 @@ describe("SuperK Smart Desktop Launcher", () => {
     expect(content).toContain("msedge.exe");
   });
 
-  it("ensures create-desktop-shortcut.mjs exists and targets SuperK-Launcher.vbs", () => {
+  it("ensures create-desktop-shortcut.mjs exists and targets launcher", () => {
     expect(fs.existsSync(setupScriptPath)).toBe(true);
     const content = fs.readFileSync(setupScriptPath, "utf-8");
-    expect(content).toContain("SuperK-Launcher.vbs");
+    expect(content).toContain("start-web.bat");
     expect(content).toContain("SuperK Manga Translator.lnk");
   });
 

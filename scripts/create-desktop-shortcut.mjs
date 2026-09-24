@@ -3,7 +3,7 @@ import path from "path";
 import { execSync } from "child_process";
 
 const rootDir = process.cwd();
-const launcherVbs = path.join(rootDir, "SuperK-Launcher.vbs");
+const targetBat = path.join(rootDir, "start-web.bat");
 const userProfile = process.env.USERPROFILE || "C:\\Users\\PC";
 const desktopDir = path.join(userProfile, "Desktop");
 const shortcutPath = path.join(desktopDir, "SuperK Manga Translator.lnk");
@@ -32,13 +32,12 @@ const tempPs1 = path.join(rootDir, ".scratch", "make-shortcut.ps1");
 fs.mkdirSync(path.dirname(tempPs1), { recursive: true });
 
 const psScript = `
-$wscriptExe = (Get-Command wscript.exe).Source
 $sh = New-Object -ComObject WScript.Shell
 $sc = $sh.CreateShortcut('${shortcutPath}')
-$sc.TargetPath = $wscriptExe
-$sc.Arguments = '"${launcherVbs}"'
+$sc.TargetPath = '${targetBat}'
+$sc.Arguments = ''
 $sc.WorkingDirectory = '${rootDir}'
-$sc.Description = 'SuperK Manga Translator - One-Click Smart Launcher'
+$sc.Description = 'SuperK Manga Translator - Web App Launcher'
 if (Test-Path '${iconPath}') {
     $sc.IconLocation = '${iconPath},0'
 }
@@ -57,4 +56,4 @@ try {
   }
 }
 
-console.log("Successfully created/updated Desktop Shortcut!");
+console.log("Successfully created/updated Desktop Shortcut pointing to start-web.bat!");
