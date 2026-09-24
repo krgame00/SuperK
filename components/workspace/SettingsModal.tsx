@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { type GlossaryEntry } from "@/lib/translation/glossary";
-import { Plus, Trash2, BookText, Flame, X, ChevronDown, Download, Folder, Search, Check } from "lucide-react";
+import { Plus, Trash2, BookText, Flame, X, ChevronDown, Download, Folder, Search, Check, Sparkles } from "lucide-react";
 import {
   getAskExportDirectory,
   setAskExportDirectory,
@@ -117,6 +117,8 @@ export interface SettingsModalProps {
   onGlossaryChange?: (glossary: GlossaryEntry[]) => void;
   nsfwBypassMode?: boolean;
   onNsfwBypassModeChange?: (enabled: boolean) => void;
+  autoProceedOnReview?: boolean;
+  onAutoProceedOnReviewChange?: (enabled: boolean) => void;
 }
 
 export function SettingsModal({
@@ -139,6 +141,8 @@ export function SettingsModal({
   onGlossaryChange,
   nsfwBypassMode = false,
   onNsfwBypassModeChange,
+  autoProceedOnReview = true,
+  onAutoProceedOnReviewChange,
 }: SettingsModalProps): ReactElement | null {
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -970,6 +974,36 @@ export function SettingsModal({
             >
               🗃️ ล้างแคชเบราว์เซอร์ (ภาพที่ไม่ถูกใช้)
             </button>
+          </div>
+
+          <div className="rounded-xl border border-border/70 bg-background/45 p-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+                  <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+                  <span>แปลต่อเนื่องอัตโนมัติ (Auto-proceed on Review)</span>
+                </label>
+                <p className="mt-0.5 text-[10px] text-muted">
+                  แปลต่อเนื่องทุกหน้าทันทีแม้ระบบคลีนจะแนะนำให้ตรวจสอบ SFX หรือฉากหลังซับซ้อน
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={autoProceedOnReview}
+                aria-label="เปิด/ปิดการแปลต่อเนื่องอัตโนมัติ"
+                onClick={() => onAutoProceedOnReviewChange?.(!autoProceedOnReview)}
+                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                  autoProceedOnReview ? "bg-amber-500" : "bg-surface-hover"
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                    autoProceedOnReview ? "translate-x-4" : "translate-x-0"
+                  }`}
+                />
+              </button>
+            </div>
           </div>
 
           <div className="rounded-xl border border-border/70 bg-background/45 p-3">

@@ -13,7 +13,7 @@ import {
   applyTranslationOverlay,
   type TranslatedBubble,
 } from "@/lib/translationOverlay";
-import { Upload, Download, Flame, Eye, EyeOff, Undo2, Redo2, GalleryVertical, RectangleHorizontal, Menu, X, Settings, FileArchive, BookOpen, FileText, Sparkles, Loader2, Check, AlertCircle, RefreshCw, ArrowDown, ArrowUp, ChevronDown, ChevronUp, Eraser } from "lucide-react";
+import { Upload, Download, Flame, Eye, EyeOff, Undo2, Redo2, GalleryVertical, RectangleHorizontal, Menu, X, Settings, FileArchive, BookOpen, FileText, Sparkles, Loader2, Check, AlertCircle, RefreshCw, ArrowDown, ArrowUp, ChevronDown, ChevronUp, Eraser, Paintbrush, RotateCcw } from "lucide-react";
 import { undoManager } from "@/lib/undoManager";
 import JSZip from "jszip";
 import { useCleaning } from "@/hooks/useCleaning";
@@ -374,6 +374,9 @@ export default function WorkspacePage() {
     failureGroups: diagnosticFailureGroups,
     retryFailedPages,
     retryFailureGroup,
+    autoProceedOnReview,
+    setAutoProceedOnReview,
+    reviewFlaggedPages,
     invalidatePageTranslation,
     replaceBubbleText,
     markPageDirty,
@@ -634,7 +637,7 @@ export default function WorkspacePage() {
       return;
     }
     if (primaryAction.kind === "export") {
-      if (typeof window !== "undefined" && window.innerWidth < 768) {
+      if (typeof window !== "undefined" && window.innerWidth < 1024) {
         setIsMobileMenuOpen(true);
       } else {
         exportTriggerRef.current?.click();
@@ -1844,6 +1847,19 @@ export default function WorkspacePage() {
             </button>
           )}
           {pages.length > 0 && (
+            <WorkspaceAdvancedTools
+              canClean={Boolean(currentPageUrl)}
+              canEditMask={Boolean(currentCleaningResult)}
+              busy={operationBusy}
+              batchFailureCount={batchFailures.length}
+              onClean={() => void handleCleanCurrentPage()}
+              onEditMask={() => setIsMaskEditorOpen(true)}
+              onTranslateBook={() => void handleTranslateBook()}
+              onTranslateCurrent={() => void handleTranslateCurrent()}
+              onRetryFailedPages={() => void retryFailedPages()}
+            />
+          )}
+          {pages.length > 0 && (
             <WorkspacePrimaryAction
               state={primaryAction}
               onAction={() => void handlePrimaryAction()}
@@ -1911,15 +1927,58 @@ export default function WorkspacePage() {
                   </button>
                 </div>
               ) : (
-                <button
-                  onClick={() => { void handleTranslateBook(); setIsMobileMenuOpen(false); }}
-                  disabled={operationBusy || pages.length === 0}
-                  className="w-full bg-gradient-to-r from-primary/20 to-primary/10 text-primary hover:from-primary/30 hover:to-primary/20 disabled:opacity-50 px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-all duration-150 border border-primary/20"
-                >
-                  <Sparkles className="w-5 h-5" />
-                  <span>✨ แปลทั้งเล่ม</span>
-                </button>
+                <div className="flex flex-col gap-1.5">
+                  <button
+                    onClick={() => { void handleTranslateCurrent(); setIsMobileMenuOpen(false); }}
+                    disabled={operationBusy || !currentPageUrl}
+                    className="w-full bg-gradient-to-r from-primary/20 to-primary/10 text-primary hover:from-primary/30 hover:to-primary/20 disabled:opacity-50 px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-all duration-150 border border-primary/20"
+                  >
+                    <Sparkles className="w-5 h-5" />
+                    <span>แปลหน้านี้ใหม่</span>
+                  </button>
+                  <button
+                    onClick={() => { void handleTranslateBook(); setIsMobileMenuOpen(false); }}
+                    disabled={operationBusy || pages.length === 0}
+                    className="w-full bg-surface text-foreground hover:bg-surface-hover disabled:opacity-50 px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-all duration-150 border border-transparent"
+                  >
+                    <Sparkles className="w-5 h-5 text-primary" />
+                    <span>✨ แปลทั้งเล่ม</span>
+                  </button>
+                </div>
               )}
+            </div>
+
+            {/* ── Section: 🛠️ เครื่องมือ ── */}
+            <div>
+              <div className="text-[10px] font-bold text-muted uppercase tracking-wider px-1 mb-1.5 flex items-center gap-1.5">🛠️ เครื่องมือ</div>
+              <div className="flex flex-col gap-1.5">
+                <button
+                  onClick={() => { void handleCleanCurrentPage(); setIsMobileMenuOpen(false); }}
+                  disabled={operationBusy || !currentPageUrl}
+                  className="w-full bg-surface text-foreground hover:bg-surface-hover disabled:opacity-40 p-2.5 rounded-lg text-sm font-medium flex items-center gap-3 border border-transparent transition-colors"
+                >
+                  <Eraser className="w-5 h-5 text-primary" />
+                  <span>คลีนข้อความใหม่</span>
+                </button>
+                <button
+                  onClick={() => { setIsMaskEditorOpen(true); setIsMobileMenuOpen(false); }}
+                  disabled={operationBusy || !currentCleaningResult}
+                  className="w-full bg-surface text-foreground hover:bg-surface-hover disabled:opacity-40 p-2.5 rounded-lg text-sm font-medium flex items-center gap-3 border border-transparent transition-colors"
+                >
+                  <Paintbrush className="w-5 h-5 text-primary" />
+                  <span>แก้ Mask</span>
+                </button>
+                {batchFailures.length > 0 && (
+                  <button
+                    onClick={() => { void retryFailedPages(); setIsMobileMenuOpen(false); }}
+                    disabled={operationBusy}
+                    className="w-full bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 disabled:opacity-40 p-2.5 rounded-lg text-sm font-medium flex items-center gap-3 border border-amber-500/20 transition-colors"
+                  >
+                    <RotateCcw className="w-5 h-5 text-amber-400" />
+                    <span>ลองใหม่ {batchFailures.length} หน้าที่พลาด</span>
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* ── Section: 👁️ การแสดงผล ── */}
@@ -2388,6 +2447,13 @@ export default function WorkspacePage() {
                         setPages(restored.pages);
                         setCurrentPage(restored.currentPage || 0);
                         setSavedSessionData(null);
+                        const hasTranslations = Boolean(
+                          (restored.bubbleCache && restored.bubbleCache.size > 0) ||
+                          (restored.translatedImageCache && restored.translatedImageCache.size > 0),
+                        );
+                        if (hasTranslations) {
+                          setWorkspaceLayer("translated");
+                        }
                       }
                       if (savedSessionData.hasUnrecoverableSources) {
                         import('react-hot-toast').then(m => m.default("ดึงข้อมูลคำแปลกลับมาแล้ว กรุณานำเข้ารูปภาพต้นฉบับใหม่", { duration: 4000, icon: '⚠️' }));
@@ -2518,6 +2584,8 @@ export default function WorkspacePage() {
         onGlossaryChange={setGlossary}
         nsfwBypassMode={nsfwBypassMode}
         onNsfwBypassModeChange={setNsfwBypassMode}
+        autoProceedOnReview={autoProceedOnReview}
+        onAutoProceedOnReviewChange={setAutoProceedOnReview}
       />
 
       <FindReplaceDialog
