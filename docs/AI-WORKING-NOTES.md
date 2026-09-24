@@ -1,5 +1,194 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Live Queue Concurrent Review Retry & Auto-Proceed on Review — 2026-09-24
+
+VERIFIED WORKING in automated tests and system integration: Users can now confirm and translate pages flagged as "Awaiting Review" immediately via "🔄 ยืนยันและดำเนินการแปลต่อ" without being locked out while a batch translation is currently running in the background. In addition, an "Auto-proceed on Review" toggle allows batch translation to proceed automatically without halting for review.
+
+Root cause of "เราทำให้กดแปลตรงนี้พร้อมกับที่กำลังแปลพร้อมกันเลยได้ไหม" (Unable to click translate in failure modal while batch is translating):
+1. **Hard Lock Guard in `handleTranslateAll`**:
+   - `retryFailureGroup()` called `handleTranslateAll(pageIndices)` upon user clicking "🔄 ยืนยันและดำเนินการแปลต่อ".
+   - `handleTranslateAll` checked `if (translationOperationLockRef.current || isTranslating || isTranslatingAll) return;`.
+   - Because the batch was actively translating the subsequent pages, `isTranslatingAll` was `true`, causing the retry attempt to silently return without doing anything.
+2. **Review Halting in Batch Pipeline**:
+   - Encountering `preparedPage.awaitingReview && !isTargetedRetry` threw a `CleaningClientError(422)`, prematurely halting translation of that page into `batchFailures` under `CLEANING_REVIEW_REQUIRED`.
+
+Fixes applied:
+- `hooks/useTranslation.ts`:
+  - Added `executeConcurrentRetry` to `retryFailureGroup` and `retryFailedPages`: when `isTranslatingAll` is active, immediately clears retried pages from `batchFailures`, marks them in `userApprovedReviewPagesRef`, and runs concurrent background translation without locking conflicts.
+  - Added `autoProceedOnReview` preference and setter (persisted in `localStorage` under `superk:auto-proceed-review`) and exported `reviewFlaggedPages`. When enabled, pages with `awaitingReview` are not halted with 422 error, but proceed straight to translation.
+- `components/workspace/SettingsModal.tsx`:
+  - Added `autoProceedOnReview` toggle switch with accessible role and label "เปิด/ปิดการแปลต่อเนื่องอัตโนมัติ" under Translation options.
+- `src/app/page.tsx`:
+  - Connected `autoProceedOnReview` and `setAutoProceedOnReview` from `useTranslation` into `SettingsModal`.
+- Tests:
+  - `tests/translation/useTranslation.test.tsx`: Added tests verifying `autoProceedOnReview: true` auto-translates without error and `retryFailureGroup` executes concurrently while `isTranslatingAll: true`.
+  - `tests/workspace/SettingsModalAutoProceed.test.tsx`: Added integration test for settings toggle.
+
+Verification evidence:
+- TypeScript check: `npx tsc --noEmit` — **0 errors**.
+- Translation test suite: `npx vitest run tests/translation` — **30 files / 177 tests passed**.
+- Workspace test suite: `npx vitest run tests/workspace` — **11 files / 48 tests passed**.
+- Unit test suite: `npx vitest run tests/unit` — **11 files / 76 tests passed**.
+- Integration test suite: `tests/workflow/WorkspacePage.test.tsx` — **12/12 passed**.
+
+## Clothing & Artwork Text Protection (Preventing Inpaint Erasure on Apparel/Illustrations) — 2026-09-24
+
+VERIFIED WORKING in real user manga workload and automated test suites: Text printed on clothing (e.g. Japanese kanji on shirts/sweaters like "元天才"), signs, and embedded artwork illustrations is now strictly PRESERVED by default under `SFX_POLICY` / `LOW_CONFIDENCE` review, preventing the inpainting cleaner from wiping out non-dialogue artwork elements into flat fabric. Genuine speech balloons and boxed narration cards continue to be cleaned and translated as expected.
+
+Root cause of "มันยังลบตัวหนังสือบนเสื้อผ้าหรือที่อื่นที่ไม่ข้อความอยู่" (Erasing text on clothing / illustrations):
+1. **Bounding Box Crop-Rectangle Artifact in `_backing_shape_scores`**:
+   - `_backing_shape_scores()` in `ocr-service/app/text_eligibility.py` thresholds `gray < 180` to find dark balloons/enclosures.
+   - For characters wearing dark clothing (sweaters, hoodies, t-shirts), the dark fabric fills the entire cropped search window (`shape_padding = 35%` on all sides).
+   - The contour of the dark fabric touched all four window borders: `x=0, y=0, width=156, height=120` (filling 96.6% of the crop).
+   - Because `cv2.approxPolyDP` was run on this boundary, it approximated the 4 corners of the cropped search window as a 4-vertex polygon (`vertices <= 4`).
+   - `_backing_shape_scores` erroneously set `rectangular_backing = 0.92`, mistaking the rectangular cropped frame itself for a bounded manga narration caption card!
+2. **Narration Classifier Priority & Overly Broad Uniformity**:
+   - In `classify_eligibility()`, the narration check evaluated before SFX/artwork text.
+   - Any region with `backing_uniformity >= 0.55` (typical of smooth solid-colored fabric) was automatically tagged `TextRole.NARRATION` with `action = AutomaticAction.CLEAN`, completely bypassing SFX checks even when surrounded by artwork edges (`artwork_edge_density >= 0.35`).
+3. **SFX Uniformity Gate Block**:
+   - In `_sfx_decision()`, the constraint `and features.backing_uniformity < 0.55` disqualified text printed on solid/smooth fabric from being recognized as SFX, despite being illustrated artwork text.
+
+Fixes applied:
+- `ocr-service/app/text_eligibility.py`:
+  - `_backing_shape_scores()`: Added bounded crop check. If a contour spans all 4 borders of the crop window or covers `>= 85%` of the crop area, it is identified as continuous background/clothing rather than an isolated balloon/caption box and is discarded.
+  - `classify_eligibility()`:
+    - Bounded rectangular caption boxes (`features.rectangular_backing >= STORY_BACKING_THRESHOLD`) remain cleanable narration.
+    - If text lacks a rectangular box and has artwork edges (`has_sfx_features and features.margin_fraction < 0.50`), it is routed to `_sfx_decision()` (default `AutomaticAction.PRESERVE`) instead of being misclassified as narration.
+    - Borderless narration now requires clean uniform space (e.g. margin or absence of artwork edges).
+  - `_sfx_decision()`: Removed `features.backing_uniformity < 0.55` restriction so illustrated text on smooth fabrics is preserved with `SFX_POLICY`.
+- `ocr-service/tests/test_text_eligibility.py`:
+  - Added `test_clothing_text_with_artwork_edges_is_preserved()` verifying that uniform-backed text with artwork edges is preserved.
+  - Added `test_dark_clothing_spanning_crop_is_not_treated_as_enclosure()` verifying that crop-spanning dark regions do not yield false rectangular/enclosure scores.
+- Service restart: Reloaded `ocr-service` on port 8765.
+
+Verification evidence:
+- Python OCR test suite: `ocr-service\venv\Scripts\pytest.exe ocr-service\tests` — **182 passed, 3 skipped** (100% pass rate).
+- Targeted eligibility test suite: `test_text_eligibility.py` — **24/24 passed**.
+- Real user workload verification:
+  - Submitted user's real scan (`media_1790181445179.png`) to live OCR backend job (`d753cd0516ef4d34938395c94e5a6030`).
+  - Region on chest (`rect=(120, 219, 92x56)`): shifted from `(narration, clean, confidence 0.92)` -> `(review, preserve, confidence 0.38)`.
+  - Visual output verification (`debug_clean_result_verified.png`): "元天才" text on sweater was 100% preserved and untouched, while yellow speech balloons at the top were cleanly wiped and ready for translation.
+- Frontend test suite: `npx vitest run tests/cleaning` — **11 files / 91 passed**.
+- TypeScript typecheck: `npx tsc --noEmit` — **0 errors**.
+
+## Mobile & Small-Screen Tools Menu Accessibility (`WorkspaceAdvancedTools`) — 2026-09-23
+
+VERIFIED WORKING in automated tests and system integration: The "เครื่องมือ" (Advanced Tools) dropdown and full toolset are now accessible on small screens, laptops with display scaling, tablets, and mobile viewports.
+
+Root cause of "ตอนนี้จอเล็กไม่มีเครื่องมือให้เลือก" (On small screen there are no tools to choose from):
+1. **Desktop-Only Header Guard**: The desktop controls container (`data-workspace-header-desktop`) was conditioned on `hidden lg:flex`. Any viewport width `< 1024px` completely hid desktop controls, including the `<WorkspaceAdvancedTools>` component (`[ 🔧 เครื่องมือ ▾ ]`).
+2. **Missing Tools in Mobile Header & Drawer**:
+   - `data-workspace-header-mobile` only rendered `WorkspacePrimaryAction` and the hamburger button `[ ☰ ]`. The "เครื่องมือ" button was entirely omitted.
+   - Inside the mobile hamburger drawer, `WorkspaceAdvancedTools` actions (`แปลหน้านี้ใหม่`, `คลีนข้อความใหม่`, `แก้ Mask`, `ลองใหม่ N หน้าที่พลาด`) were also missing.
+3. **Export Trigger Breakpoint Mismatch**: In `handlePrimaryAction()`, when `primaryAction.kind === "export"`, the condition `window.innerWidth < 768` triggered mobile menu, but between 768px and 1024px it attempted to trigger `exportTriggerRef.current?.click()` on the hidden desktop export button.
+
+Fixes applied:
+- `src/app/page.tsx`:
+  - Rendered `<WorkspaceAdvancedTools>` directly inside `data-workspace-header-mobile` when `pages.length > 0`, ensuring the `[ 🔧 เครื่องมือ ▾ ]` button is always visible on small screens.
+  - Added a dedicated `🛠️ เครื่องมือ` section and `แปลหน้านี้ใหม่` button in the mobile drawer (`isMobileMenuOpen`) for touch-friendly full access.
+  - Updated `handlePrimaryAction()` export trigger check to `window.innerWidth < 1024` matching the responsive breakpoint.
+- `tests/workflow/WorkspacePage.test.tsx`:
+  - Added integration test `renders tools menu on mobile header and inside mobile drawer when pages are present` verifying both top bar tools and drawer tools.
+
+Verification evidence:
+- TypeScript check: `npx tsc --noEmit` — 0 errors.
+- Vitest workspace/workflow/unit suites: **26 test files / 157 tests passed**.
+- Vitest WorkspacePage suite: `tests/workflow/WorkspacePage.test.tsx` — **12/12 passed**.
+
+## Session Restore Cleaned Image Persistence (IndexedDB Blob Store) — 2026-09-23
+
+VERIFIED WORKING in automated tests and system integration: Restoring saved sessions ("📂 คืนค่างานเดิม") now fully restores cleaned manga artwork alongside translated speech bubbles.
+
+Root causes of "มีแต่คำแปล การคลีนไม่กลับมา" (Translated bubbles present, but cleaned background missing):
+1. **Volatile Backend Job Lifecycle**: Previously, `saveCleaningResultMetadata()` only stored Python `jobId` in IndexedDB. Upon server restart or temporary folder eviction in the Python cleaner service (`http://127.0.0.1:8765`), fetching `/api/clean/jobs/{jobId}/result` failed with HTTP 404, causing cleaning restore to fail silently.
+2. **PageViewer Fallback Fall-Through**: In single-page mode (`components/workspace/PageViewer.tsx`), when `currentCleaningResult` was missing from active hook state, the viewer fell back to `currentPageItem.url` (raw original scan) while `applyTranslationOverlay` rendered translated Thai text on top of the original text.
+3. **Workspace Layer Default**: On session restore, `workspaceLayer` remained set to `"original"`, keeping the cleaned layer hidden unless manually toggled.
+
+Fixes applied:
+- `lib/projectStore.ts`:
+  - Extended `StoredCleaningResult` with binary asset IDs: `cleanAssetId`, `maskAssetId`, `reviewMaskAssetId`, `protectedMaskAssetId`, plus dimensions and timings.
+  - Added `saveCleaningAssets()` to persist binary Blobs (`cleanBlob`, `maskBlob`, etc.) directly into IndexedDB (`assets` object store) keyed deterministically by page URL (`clean_${encodeURIComponent(pageUrl)}`).
+  - Added `loadCleaningResultAssets()` to retrieve persisted Blobs.
+  - Hardened `loadAsset()` to prevent jsdom/Node prototype mismatches from re-wrapping valid Blobs into `[object Object]`.
+- `hooks/useCleaning.ts`:
+  - Extended `PageCleaningResult` with binary Blobs (`cleanBlob`, `maskBlob`, `reviewMaskBlob`, `protectedMaskBlob`).
+  - Updated `finishJob()` to persist Blobs to IndexedDB and record asset IDs in metadata.
+  - Implemented an IndexedDB **Fast Path** in the restore `useEffect`: checks `loadCleaningResultAssets(metadata)` first; if Blobs exist locally, creates object URLs and restores the clean result immediately without network calls to the Python backend.
+- `components/workspace/PageViewer.tsx`:
+  - Added fallback check to `cleaningResultsByPage.get(currentPageItem.url)?.cleanUrl` in single-page mode so the cleaned background renders reliably even during state hydration.
+- `src/app/page.tsx`:
+  - Updated "📂 คืนค่างานเดิม" handler to automatically set `setWorkspaceLayer("translated")` when restoring a session containing translations.
+
+Verification evidence:
+- TypeScript check: `npx tsc --noEmit` — 0 errors.
+- Cleaning test suite: `vitest run tests/cleaning` — **11 files / 91 tests passed** (including new `saves and loads cleaning image assets and metadata from IndexedDB` and `restores cleaning result directly from IndexedDB assets without contacting cleaning service`).
+- Workspace test suite: `vitest run tests/workspace` — **10 files / 46 tests passed**.
+- Translation test suite: `vitest run tests/translation` — **30 files / 175 tests passed**.
+
+## Gemini fixed routing ("แบบเดิม") with full 8-key pool & latency fix — 2026-09-23
+
+VERIFIED WORKING in real manga workload: Restored classic fixed `requestGemini` baseline with all 8 user keys, fixed key-rotation bug on HTTP 503, prioritized fast keys, and reduced translation latency from 164s down to 36.9s.
+
+Root cause of high translation latency (164s):
+1. **Global Peak Hours at Google**: At ~22:50 TH (15:50 UTC), Google AI Studio servers experienced peak traffic:
+   - `gemini-3.8-flash`: HTTP 503 (High Demand)
+   - `gemini-3.7-flash`: HTTP 503 (High Demand)
+   - `gemini-3.6-flash`: HTTP 503 after hanging for 27.5s
+2. **Per-Key Latency Disparity**: Real probe showed Key 1 (`AIzaSyDS...`) took 101.9s due to project congestion, whereas Key 2 (`AIzaSyBL...`) completed in 21.4s!
+3. **Key-Loop Bug on 503**: In `requestGemini()`, receiving HTTP 503 executed `break keyLoop` instead of advancing to `keyOffset += 1`. This prematurely abandoned `gemini-3.5-flash-lite` on all remaining 7 keys, cascading down into models experiencing 503 and timeouts (accumulating 164s total wait).
+
+Fixes applied:
+- `lib/server/geminiRequest.ts`: Added `response.status === 500 || response.status === 503` to `keyLoop` key-advancing logic so other keys in the pool are attempted before abandoning the model.
+- `.env.local`: Reordered `GEMINI_API_KEY` to place the fastest key (`AIzaSyBL...`, 21s) first.
+- Server restarted and verified.
+
+Verification evidence:
+- Latency benchmark on real manga page (`compare_page_34.jpg`): Dropped from **164.0s** to **36.9s** (**4.4x faster**), returning **HTTP 200** with **10 translated bubbles**.
+- TypeScript `tsc --noEmit` & Vitest `tests/translation`: **30 files / 175 tests passed**.
+
+
+## Extended image format support (415 fix) — 2026-09-22
+
+VERIFIED WORKING in automated tests: OCR cleaning backend now accepts GIF, AVIF, BMP, TIFF, MPO, JFIF, and legacy MIME aliases (`image/jpg`, `image/pjpeg`, `image/x-png`, `image/x-ms-bmp`) in addition to the original PNG/JPEG/WEBP. Frontend cleaning client (`lib/cleaning/client.ts`) MIME fallback mapping extended to match.
+
+Root cause: user's manga scans included non-standard image formats (e.g. AVIF, BMP, TIFF) that PIL can decode to RGB without issue, but the OCR API's `SUPPORTED_MEDIA_TYPES` whitelist and the frontend's MIME fallback logic rejected them with HTTP 415 before they ever reached the image decoder. This caused 26-page batch failures where the cleaning pipeline refused to start.
+
+Files changed:
+- `ocr-service/app/api.py` — expanded `SUPPORTED_MEDIA_TYPES` and `SUPPORTED_FORMATS`
+- `lib/cleaning/client.ts` — expanded extension→MIME fallback mapping
+- `ocr-service/tests/test_api.py` — added `test_upload_accepts_gif` and parametrized `test_upload_accepts_extended_formats`
+
+Verification evidence:
+- Python backend: `pytest tests/test_api.py` — **22/22 passed** (including new format tests)
+- Frontend: `vitest run tests/cleaning/client.test.ts` — **4/4 passed**
+- TypeScript: `npx tsc --noEmit` — **passed**
+- OCR backend restarted with updated code, health check OK
+- Real-workload verification: pending user retest
+
+
+## SFX default policy → PRESERVE — 2026-09-22
+
+VERIFIED WORKING in automated tests: SFX-classified text regions (artwork text, clothing text, sound effects drawn on artwork) are now PRESERVE by default with `SFX_POLICY` protection reason. They are detected and labeled as `TextRole.SFX` but **not** automatically cleaned or translated. Users can still override with `force-clean` per-region if desired.
+
+This prevents the system from removing text drawn on clothing, signs, or artwork backgrounds that should remain as part of the original illustration — like Japanese characters on T-shirts.
+
+Files changed:
+- `ocr-service/app/text_eligibility.py` — `_sfx_decision()` now returns `PRESERVE` + `SFX_POLICY` instead of `CLEAN`
+- `ocr-service/tests/test_text_eligibility.py` — updated 3 tests to expect new SFX behavior
+
+Verification evidence:
+- Text eligibility + pipeline tests: **30/30 passed**
+- Full OCR backend suite: **180 passed, 3 skipped**
+- Real-workload verification: pending user retest
+
+
+## Monochrome pure-black policy — 2026-09-22
+
+Current user decision supersedes earlier monochrome exceptions below: every automatic text category (dialogue, narration, SFX, overlay subtitle), including Readable and Source-faithful modes, uses black fill with no outline, shadow, glow, gradient or background plate on confirmed monochrome pages (confidence >= 0.85). Manual styles remain authoritative; color and unconfirmed pages keep their existing behavior. Web preview/export share the resolver; Extension direct/server/restored overlays use the same policy. Black text may be difficult to read on dark artwork; there is no automatic contrast outline under this explicit policy.
+
+Verification: previous behavior failed 9 updated regression cases. Focused color/Extension/overlay/export suite passed 45 files / 334 tests before expanding Extension category coverage; TypeScript passed. No manual browser verification performed.
+
+
 ## Text editing follow-up — 2026-09-21
 
 VERIFIED WORKING in automated tests: leaving the entire live editor via keyboard commits once without stealing focus; saved empty bubbles retain selectable geometry after overlay reconstruction. Internal focus changes do not commit. Explicit save/cancel and deleted-bubble filtering remain intact.
