@@ -1290,3 +1290,79 @@ test("autoProceedOnReview: true translates awaitingReview pages automatically wi
   expect(result.current.reviewFlaggedPages.has("blob:one")).toBe(true);
 });
 
+test("allows retrying a review failure group concurrently while batch translation is running", async () => {
+  vi.useFakeTimers();
+  const pages = ["blob:first-needs-review", "blob:second-long-running"];
+  const preparePageForTranslation = vi.fn(async (url: string) => ({
+    recognitionUrl: url,
+    backgroundUrl: `${url}-clean`,
+    awaitingReview: url === "blob:first-needs-review",
+  }));
+
+  let resolveSecondPageTranslate: (() => void) | null = null;
+  let apiCalls = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (pages.includes(url)) return imageResponse();
+    if (url === "/api/translate") {
+      apiCalls += 1;
+      if (apiCalls === 1) {
+        // First api call is for blob:second-long-running
+        return new Promise((resolve) => {
+          resolveSecondPageTranslate = () => resolve(successResponse());
+        });
+      }
+      return successResponse();
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  const { result } = renderHook(() =>
+    useTranslation({
+      currentPage: 0,
+      pages,
+      viewMode: "single",
+      preparePageForTranslation,
+    }),
+  );
+
+  act(() => {
+    result.current.setAutoProceedOnReview(false);
+  });
+
+  // Start batch
+  let batchPromise!: Promise<void>;
+  act(() => {
+    batchPromise = result.current.handleTranslateAll();
+  });
+
+  // Advance timer so page 0 fails with awaitingReview and page 1 begins translating
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(50);
+  });
+
+  expect(result.current.isTranslatingAll).toBe(true);
+  expect(result.current.failureGroups).toHaveLength(1);
+  const failureGroupId = result.current.failureGroups[0].id;
+
+  // Retry the review failure group while isTranslatingAll is STILL true
+  let retryPromise!: Promise<void>;
+  await act(async () => {
+    retryPromise = result.current.retryFailureGroup(failureGroupId);
+  });
+
+  // Failure group should immediately be cleared from batchFailures
+  expect(result.current.batchFailures).toHaveLength(0);
+
+  // Complete the retry and second page
+  await act(async () => {
+    if (resolveSecondPageTranslate) resolveSecondPageTranslate();
+    await vi.runAllTimersAsync();
+    await retryPromise;
+    await batchPromise;
+  });
+
+  expect(apiCalls).toBe(2);
+  expect(result.current.batchFailures).toHaveLength(0);
+});
+

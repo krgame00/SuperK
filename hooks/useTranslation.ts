@@ -1845,6 +1845,80 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     handleTranslateAllRef.current = handleTranslateAll;
   });
 
+  const prepareSafely = useCallback(async (
+    pageIndex: number,
+  ): Promise<
+    | { ok: true; value: PreparedTranslationPage }
+    | { ok: false; error: unknown }
+  > => {
+    try {
+      return {
+        ok: true,
+        value: await preparePageForTranslation(pages[pageIndex], pageIndex),
+      };
+    } catch (error) {
+      return { ok: false, error };
+    }
+  }, [pages, preparePageForTranslation]);
+
+  const executeConcurrentRetry = useCallback(async (
+    pageIndices: number[],
+    failureGroupIdPrefix: string,
+    options?: { forceNsfw?: boolean },
+  ) => {
+    for (const idx of pageIndices) {
+      const pUrl = pages[idx];
+      if (pUrl) userApprovedReviewPagesRef.current.add(pUrl);
+      inFlightConcurrentPagesRef.current.add(idx);
+    }
+    setBatchFailures((prev) => prev.filter((f) => !pageIndices.includes(f.pageIndex)));
+
+    const forceNsfw = options?.forceNsfw === true || nsfwBypassMode;
+    for (const idx of pageIndices) {
+      const pUrl = pages[idx];
+      if (!pUrl) continue;
+      try {
+        const preparation = await prepareSafely(idx);
+        if (!preparation.ok) throw preparation.error;
+        await performTranslation(
+          preparation.value,
+          pUrl,
+          idx,
+          forceNsfw,
+          false,
+          translationAbortRef.current?.signal,
+        );
+      } catch (err: unknown) {
+        if (!isUserCancelledError(err)) {
+          const explicitCleaningCode = err instanceof CleaningClientError
+            ? (err.status === 0 || err.status === 502 || err.status === 503 ||
+              /timeout|sidecar|8765|เซิร์ฟเวอร์/i.test(err.message))
+                ? "LOCAL_SIDECAR_OFFLINE"
+                : err.status >= 500
+                  ? "LOCAL_CLEANER_FAILED"
+                  : undefined
+            : undefined;
+          const diag = classifyTranslationError(
+            err,
+            err instanceof CleaningClientError ? err.status : undefined,
+            explicitCleaningCode,
+          );
+          const failureItem: BatchPageFailure = {
+            failureGroupId: `${failureGroupIdPrefix}:${diag.code}`,
+            pageIndex: idx,
+            pageUrl: pUrl,
+            stage: "translation",
+            message: err instanceof Error ? err.message : "แปลไม่สำเร็จ",
+            diagnostic: diag,
+          };
+          setBatchFailures((prev) => [...prev.filter((f) => f.pageIndex !== idx), failureItem]);
+        }
+      } finally {
+        inFlightConcurrentPagesRef.current.delete(idx);
+      }
+    }
+  }, [pages, nsfwBypassMode, prepareSafely, performTranslation]);
+
   const retryFailedPages = useCallback(async (
     pageNumbers?: number[],
     options?: { forceNsfw?: boolean },
@@ -1874,8 +1948,12 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       return;
     }
 
+    if (isTranslatingAll) {
+      await executeConcurrentRetry(failedIndices, "retry", options);
+      return;
+    }
     await handleTranslateAllRef.current(failedIndices, options);
-  }, [batchFailures, pages, quotaCooldownByGroup]);
+  }, [batchFailures, pages, quotaCooldownByGroup, isTranslatingAll, executeConcurrentRetry]);
 
   const retryFailureGroup = useCallback(async (
     failureGroupId: string,
@@ -1905,8 +1983,12 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       delete next[failureGroupId];
       return next;
     });
+    if (isTranslatingAll) {
+      await executeConcurrentRetry(pageIndices, failureGroupId.split(":")[0] || "retry", options);
+      return;
+    }
     await handleTranslateAllRef.current(pageIndices, options);
-  }, [batchFailures, pages, quotaCooldownByGroup]);
+  }, [batchFailures, pages, quotaCooldownByGroup, isTranslatingAll, executeConcurrentRetry]);
   const cancelTranslateAll = () => {
     cancelTranslateAllRef.current = true;
     translationAbortRef.current?.abort();
