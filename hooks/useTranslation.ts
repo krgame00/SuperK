@@ -290,6 +290,23 @@ export function useTranslation({
   const [quotaClockMs, setQuotaClockMs] = useState(() => Date.now());
   const [workflowPhase, setWorkflowPhase] =
     useState<TranslationWorkflowPhase | null>(null);
+  const [autoProceedOnReview, setAutoProceedOnReviewState] = useState<boolean>(() => {
+    if (typeof localStorage !== "undefined") {
+      const saved = localStorage.getItem("superk:auto-proceed-review");
+      if (saved !== null) return saved === "true";
+    }
+    return false;
+  });
+  const [reviewFlaggedPages, setReviewFlaggedPages] = useState<Set<string>>(new Set());
+  const userApprovedReviewPagesRef = useRef<Set<string>>(new Set());
+  const inFlightConcurrentPagesRef = useRef<Set<number>>(new Set());
+
+  const setAutoProceedOnReview = useCallback((value: boolean) => {
+    setAutoProceedOnReviewState(value);
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem("superk:auto-proceed-review", String(value));
+    }
+  }, []);
 
   useEffect(() => {
     const hasActiveCooldown = Object.values(quotaCooldownByGroup).some(
@@ -1541,12 +1558,16 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           if (prefetched?.pageIndex === i) prefetched = null;
           if (!preparation.ok) throw preparation.error;
           preparedPage = preparation.value;
-          if (preparedPage.awaitingReview && !isTargetedRetry) {
+          const isApprovedByUser = userApprovedReviewPagesRef.current.has(pageUrl);
+          if (preparedPage.awaitingReview && !isTargetedRetry && !isApprovedByUser && !autoProceedOnReview) {
             throw new CleaningClientError(
               422,
               "Page awaiting review after local cleaning verification.",
               "Review or explicitly retry this page before translation.",
             );
+          }
+          if (preparedPage.awaitingReview) {
+            setReviewFlaggedPages((prev) => new Set(prev).add(pageUrl));
           }
         } catch (error) {
           const explicitCleaningCode = error instanceof CleaningClientError
@@ -2028,6 +2049,9 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     retryFailedPages,
     retryFailureGroup,
     quotaCooldownByGroup,
+    autoProceedOnReview,
+    setAutoProceedOnReview,
+    reviewFlaggedPages,
     invalidatePageTranslation,
     replaceBubbleText,
     markPageDirty,

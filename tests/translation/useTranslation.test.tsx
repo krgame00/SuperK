@@ -1243,3 +1243,50 @@ test("sendDesktopNotification uses Web Notification when permission is granted",
   globalThis.Notification = originalNotification;
 });
 
+test("autoProceedOnReview: true translates awaitingReview pages automatically without error", async () => {
+  vi.useFakeTimers();
+  const pages = ["blob:one"];
+  const preparePageForTranslation = vi.fn(async (url: string) => ({
+    recognitionUrl: url,
+    backgroundUrl: `${url}-clean`,
+    awaitingReview: true,
+  }));
+
+  let apiCalls = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (pages.includes(url)) return imageResponse();
+    if (url === "/api/translate") {
+      apiCalls += 1;
+      return successResponse();
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  const { result } = renderHook(() =>
+    useTranslation({
+      currentPage: 0,
+      pages,
+      viewMode: "single",
+      preparePageForTranslation,
+    }),
+  );
+
+  act(() => {
+    result.current.setAutoProceedOnReview(true);
+  });
+
+  let batch!: Promise<void>;
+  act(() => {
+    batch = result.current.handleTranslateAll();
+  });
+  await act(async () => {
+    await vi.runAllTimersAsync();
+    await batch;
+  });
+
+  expect(apiCalls).toBe(1);
+  expect(result.current.batchFailures).toHaveLength(0);
+  expect(result.current.reviewFlaggedPages.has("blob:one")).toBe(true);
+});
+
