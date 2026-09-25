@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pytest
 from PIL import Image
 
 from app.jobs import JobState, JobStore

@@ -1,12 +1,12 @@
 import cv2
 import numpy as np
 import pytest
+from test_pipeline import NoTextDetector, SolidCleaner, _comic_page, _empty_protection
 
 from app.mask_refiner import MaskRegion, RefinedMask
 from app.pipeline import CleaningPipeline
 from app.schemas import AutomaticAction, PixelRect
 from app.text_eligibility import classify_eligibility
-from test_pipeline import NoTextDetector, SolidCleaner, _comic_page, _empty_protection
 
 
 def _caption(ellipse=False, supported=True):

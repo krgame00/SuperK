@@ -693,3 +693,35 @@ test("restores cleaning result directly from IndexedDB assets without contacting
   expect(getCleaningResult).not.toHaveBeenCalled();
 });
 
+test("clears progress when polling job fails", async () => {
+  vi.mocked(createCleaningJob).mockResolvedValue(queuedJob);
+  vi.mocked(getCleaningJob)
+    .mockResolvedValueOnce(runningJob)
+    .mockResolvedValueOnce({
+      jobId: "job-1",
+      status: "failed",
+      stage: "cleaning",
+      progress: {
+        stage: "cleaning",
+        completedRegions: 0,
+        totalRegions: 0,
+        elapsedMs: 0,
+      },
+      error: "cleaning failed",
+    });
+  const { result } = renderHook(() =>
+    useCleaning({ pages: ["blob:one"], currentPage: 0 }),
+  );
+  let cleaning!: Promise<PageCleaningResult | undefined>;
+  act(() => {
+    cleaning = result.current.cleanCurrentPage(
+      new Blob(["png"], { type: "image/png" }),
+    );
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1000);
+    await cleaning;
+  });
+  expect(result.current.progress).toBeUndefined();
+  expect(result.current.error?.recovery).toBe("retry");
+});

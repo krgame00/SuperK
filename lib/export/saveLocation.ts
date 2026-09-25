@@ -157,14 +157,14 @@ export const getRememberedDirectory = async (): Promise<DirectoryHandleLike | nu
   const stored = await getStoredDirectoryHandle();
   if (stored) {
     try {
-      if (typeof (stored as any).queryPermission === "function") {
-        const perm = await (stored as any).queryPermission({ mode: "readwrite" });
+      if (typeof stored.queryPermission === "function") {
+        const perm = await stored.queryPermission({ mode: "readwrite" });
         if (perm === "granted") {
           inMemoryDirectoryHandle = stored;
           return stored;
         }
-        if (perm === "prompt" && typeof (stored as any).requestPermission === "function") {
-          const req = await (stored as any).requestPermission({ mode: "readwrite" });
+        if (perm === "prompt" && typeof stored.requestPermission === "function") {
+          const req = await stored.requestPermission({ mode: "readwrite" });
           if (req === "granted") {
             inMemoryDirectoryHandle = stored;
             return stored;
@@ -259,6 +259,8 @@ export interface DirectoryHandleLike {
   name?: string;
   path?: string;
   isDesktop?: boolean;
+  queryPermission?: (options?: { mode?: "read" | "readwrite" }) => Promise<PermissionState>;
+  requestPermission?: (options?: { mode?: "read" | "readwrite" }) => Promise<PermissionState>;
   getFileHandle(name: string, options?: { create?: boolean }): Promise<FileHandleLike>;
 }
 
@@ -275,7 +277,9 @@ declare global {
 export const isBraveBrowser = async (): Promise<boolean> => {
   try {
     if (typeof window === "undefined") return false;
-    const nav = window.navigator as any;
+    const nav = window.navigator as Navigator & {
+      brave?: { isBrave?: () => Promise<boolean> };
+    };
     if (nav?.brave && typeof nav.brave.isBrave === "function") {
       return Boolean(await nav.brave.isBrave());
     }

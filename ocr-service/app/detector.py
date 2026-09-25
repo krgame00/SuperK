@@ -555,7 +555,6 @@ class HybridTextDetector:
             by2 = min(h, b.rect.y + b.rect.height + pad)
             local_prob = ctd_res.mask_probability[by1:by2, bx1:bx2]
             local_seed = _binary_text_seed(local_prob, threshold=0.25)
-            seed_ratio = np.count_nonzero(local_seed) / max(local_seed.size, 1)
             if not np.any(local_seed):
                 continue
             filtered_blocks.append(b)

@@ -22,7 +22,6 @@ from app.mask_refiner import BinaryMask, MaskRegion
 from app.model_store import ModelStore
 from app.ort_utils import create_cpu_inference_session, create_inference_session
 
-
 LOGGER = logging.getLogger(__name__)
 DEFAULT_ONNX_FILENAME = "anime-manga-big-lama.onnx"
 

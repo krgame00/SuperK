@@ -321,13 +321,20 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       pageUrl: string,
       sourceFingerprint?: string,
     ): Promise<PageCleaningResult> => {
-      const terminal = await waitForJob(initial, token, pageUrl);
-      return finishJob(terminal, token, pageUrl, sourceFingerprint);
+      try {
+        const terminal = await waitForJob(initial, token, pageUrl);
+        return await finishJob(terminal, token, pageUrl, sourceFingerprint);
+      } finally {
+        setProgressState((previous) => (previous?.pageUrl === pageUrl ? undefined : previous));
+      }
     },
     [finishJob, waitForJob],
   );
 
-  const handleFailure = useCallback((caught: unknown) => {
+  const handleFailure = useCallback((caught: unknown, pageUrl?: string) => {
+    if (pageUrl) {
+      setProgressState((previous) => (previous?.pageUrl === pageUrl ? undefined : previous));
+    }
     if (caught instanceof PollingCancelled) return;
     if (caught instanceof CleaningClientError && caught.status === 503) {
       setError({ message: caught.message, recovery: "start-local-service" });
@@ -378,9 +385,10 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
         const job = await jobPromise;
         return await runJob(job, token, pageUrl, sourceFingerprint);
       } catch (caught) {
-        handleFailure(caught);
+        handleFailure(caught, pageUrl);
         throw caught;
       } finally {
+        setProgressState((previous) => (previous?.pageUrl === pageUrl ? undefined : previous));
         if (activeRequestRef.current?.token === token && activeRequestRef.current?.pageUrl === pageUrl) {
           activeRequestRef.current = undefined;
         }
@@ -436,8 +444,9 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
         );
         return await runJob(job, token, pageUrl, current.sourceFingerprint);
       } catch (caught) {
-        handleFailure(caught);
+        handleFailure(caught, pageUrl);
       } finally {
+        setProgressState((previous) => (previous?.pageUrl === pageUrl ? undefined : previous));
         cancelOnPageChangeRef.current = false;
         if (activeRequestRef.current?.token === token && activeRequestRef.current?.pageUrl === pageUrl) {
           activeRequestRef.current = undefined;

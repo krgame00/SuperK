@@ -404,12 +404,29 @@ export function MaskEditor({
       const context = output.getContext("2d");
       if (!context) return;
       const grayscale = context.createImageData(output.width, output.height);
+      const r = selectedRegion?.rect;
+
+      let hasActivePixels = false;
+      if (r) {
+        for (let y = r.y; y < r.y + r.height; y++) {
+          for (let x = r.x; x < r.x + r.width; x++) {
+            if (x >= 0 && x < imageData.width && y >= 0 && y < imageData.height) {
+              const offset = (y * imageData.width + x) * 4;
+              if (imageData.data[offset + 3] > 0) {
+                hasActivePixels = true;
+                break;
+              }
+            }
+          }
+          if (hasActivePixels) break;
+        }
+      }
+
       for (let index = 0; index < imageData.data.length; index += 4) {
         const x = (index / 4) % output.width;
         const y = Math.floor(index / 4 / output.width);
-        const r = selectedRegion?.rect;
         const inside = r && x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
-        const value = inside && imageData.data[index + 3] > 0 ? 255 : 0;
+        const value = inside && (hasActivePixels ? imageData.data[index + 3] > 0 : true) ? 255 : 0;
         grayscale.data[index] = value;
         grayscale.data[index + 1] = value;
         grayscale.data[index + 2] = value;
@@ -417,7 +434,20 @@ export function MaskEditor({
       }
       context.putImageData(grayscale, 0, 0);
       const blob = await canvasToBlob(output);
-      await onRetry(regionId, blob, cleaner, action);
+
+      if (action === "force-clean" && selectedRegion && selectedRegion.textConfirmed !== true) {
+        const confirmed = await onRetry(regionId, blob, cleaner, "confirm-text");
+        if (!confirmed) {
+          setStatusMessage("ยืนยันข้อความไม่สำเร็จ กรุณาลองใหม่");
+          return;
+        }
+      }
+
+      const result = await onRetry(regionId, blob, cleaner, action);
+      if (!result) {
+        setStatusMessage("บันทึก Mask ไม่สำเร็จ กรุณาลองใหม่");
+        return;
+      }
       if (action === "confirm-text") {
         setStatusMessage("ยืนยันข้อความแล้ว ตรวจพื้นที่สีแดงที่จะลบเฉพาะบริเวณที่เลือก");
       } else {
@@ -443,12 +473,31 @@ export function MaskEditor({
       const context = output.getContext("2d");
       if (!context) return;
       const grayscale = context.createImageData(output.width, output.height);
+      const r = selectedRegion?.rect;
+
+      // Check if there are active mask pixels in this region
+      let hasActivePixels = false;
+      if (r) {
+        for (let y = r.y; y < r.y + r.height; y++) {
+          for (let x = r.x; x < r.x + r.width; x++) {
+            if (x >= 0 && x < imageData.width && y >= 0 && y < imageData.height) {
+              const offset = (y * imageData.width + x) * 4;
+              if (imageData.data[offset + 3] > 0) {
+                hasActivePixels = true;
+                break;
+              }
+            }
+          }
+          if (hasActivePixels) break;
+        }
+      }
+
       for (let index = 0; index < imageData.data.length; index += 4) {
         const x = (index / 4) % output.width;
         const y = Math.floor(index / 4 / output.width);
-        const r = selectedRegion?.rect;
         const inside = r && x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
-        const value = inside && imageData.data[index + 3] > 0 ? 255 : 0;
+        // If user hasn't painted any mask in this region, automatically treat the whole balloon box as the mask
+        const value = inside && (hasActivePixels ? imageData.data[index + 3] > 0 : true) ? 255 : 0;
         grayscale.data[index] = value;
         grayscale.data[index + 1] = value;
         grayscale.data[index + 2] = value;
@@ -457,11 +506,21 @@ export function MaskEditor({
       context.putImageData(grayscale, 0, 0);
       const blob = await canvasToBlob(output);
 
-      // Auto confirm text if needed by backend authorization gate
+      // Auto confirm text if needed by backend authorization gate.
+      // retryRegion returns undefined when the cleaning job fails, so do not
+      // continue to force-clean or close the editor unless each step succeeds.
       if (selectedRegion && selectedRegion.textConfirmed !== true) {
-        await onRetry(regionId, blob, cleaner, "confirm-text");
+        const confirmed = await onRetry(regionId, blob, cleaner, "confirm-text");
+        if (!confirmed) {
+          setStatusMessage("ยืนยันข้อความไม่สำเร็จ กรุณาลองใหม่");
+          return;
+        }
       }
-      await onRetry(regionId, blob, cleaner, "force-clean");
+      const cleaned = await onRetry(regionId, blob, cleaner, "force-clean");
+      if (!cleaned) {
+        setStatusMessage("คลีนตาม Mask ไม่สำเร็จ กรุณาลองใหม่");
+        return;
+      }
       closeAndRestoreFocus();
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "บันทึกไม่สำเร็จ");

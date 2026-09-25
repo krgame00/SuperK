@@ -1,5 +1,44 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Mask Cleaning Hang & Unpainted Region Inpainting Fix — 2026-09-25
+
+Status: **VERIFIED WORKING (Fixed UI freeze on cleaning failure / retry; auto-fills empty mask with balloon bbox on 1-click clean; 917/917 executed Vitest tests pass; 182/182 CI-scope Pytest tests pass; 0 TypeScript errors)**.
+
+- **User Context & Symptom**:
+  - User reported: "ไปแก้ระบบmask หน่อย เลือกจุดที่จะคลีนแล้ว แต่มัรค้างอยู่งี้ ไม่คลีนให้" (Fix the mask system: after selecting a spot to clean, it hangs/freezes in this state without cleaning).
+  - Screenshot showed the `[ คลีนข้อความ ]` button disabled with an infinite spinning spinner, progress badge frozen at `• ซ่อมพื้นภาพ · 0/0 · 0.0s`, and an orange warning banner (`หน้านี้มีจุดคลีนหรือคำแปลที่ต้องการการตรวจทาน`) on page 15/73.
+
+- **Root Cause Analysis (Debug Mantra)**:
+  1. **UI Progress State Leak in `hooks/useCleaning.ts`**:
+     - When polling a cleaning job via `waitForJob`, `progressState` is initialized to `{ stage: "cleaning", completedRegions: 0, totalRegions: 0, elapsedMs: 0 }`.
+     - When a job failed or rejected with an error (e.g. backend `status: "failed"`, network error, or invalid request payload), `waitForJob` threw a `CleaningClientError`.
+     - The call to `finishJob` was bypassed, leaving `setProgressState(undefined)` uncalled.
+     - In `cleanPage` and `retryRegion`, the `catch (caught)` block called `handleFailure(caught)` but did not clear `progressState`.
+     - In `components/cleaning/CleaningToolbar.tsx`, `isRunning` is computed as `Boolean(progress)`. Because `progress` was never cleared, `isRunning` stayed `true` indefinitely. This permanently disabled the cleaning button and rendered a stuck spinner and "ซ่อมพื้นภาพ · 0/0 · 0.0s".
+  2. **Empty Mask Bypass in `components/cleaning/MaskEditor.tsx`**:
+     - When a user selected an existing balloon rectangle and clicked "🪄 คลีนจุดนี้ทันที (Clean Now)", if that bubble did not already have proposed mask pixels painted on it, the canvas `grayscale` data was all zeros (`0`).
+     - In Python `pipeline.py`, when `FORCE_CLEAN` receives an empty mask, it categorizes the region as `PRESERVED` (leave text alone) because there are 0 mask pixels inside the box. As a result, nothing got cleaned.
+  3. **Silent Error Suppression in `components/cleaning/CleaningToolbar.tsx`**:
+     - The toolbar previously only rendered error messages if `error?.recovery === "start-local-service"`. Any non-503 error (e.g. `recovery: "retry"`) was completely hidden from the user, leaving them with no feedback when an operation failed.
+
+- **Fixes Applied**:
+  1. `hooks/useCleaning.ts`:
+     - Wrapped `runJob` in a `try ... finally` block to guarantee `setProgressState((prev) => prev?.pageUrl === pageUrl ? undefined : prev)` runs on any exit path (success, failure, or cancellation).
+     - Updated `handleFailure(caught, pageUrl)` and the `finally` blocks of `cleanPage` and `retryRegion` to reset `progressState` for the active page.
+  2. `components/cleaning/MaskEditor.tsx`:
+     - In `handleOneClickClean`, added a check: if no active mask pixels exist within the selected bubble's bounding box, automatically treat the entire bubble rectangle as the mask (`value = 255`). This ensures that clicking "คลีนจุดนี้ทันที" cleans the entire bubble box even if the user hasn't hand-drawn mask strokes.
+  3. `components/cleaning/CleaningToolbar.tsx`:
+     - Added an alert banner for `error && error.recovery !== "start-local-service"`, ensuring any cleaning errors are clearly displayed in the UI instead of failing silently.
+  4. `tests/cleaning/useCleaning.test.tsx`:
+     - Added unit test `"clears progress when polling job fails"` verifying that when a job reports `failed`, `progress` is cleanly reset to `undefined` and the error recovery state is set.
+
+- **Verification Evidence**:
+  - Vitest test suite: `npm test` — **144 files passed (917 tests passed, 1 skipped)**.
+  - Python OCR CI-scope suite: `pytest tests -q -m "not model"` — **182 passed, 3 deselected**.
+  - TypeScript validation: `npx tsc --noEmit` — **0 errors**.
+
+
+
 ## Launcher Switched to Standard Browser Tab Mode (Zero Standalone Overhead) — 2026-09-25
 
 Status: **VERIFIED WORKING (Switched from `--app=` standalone window to default browser tab launch; zero black popup; desktop shortcut regenerated; 3/3 launcher tests pass; 0 TypeScript errors)**.

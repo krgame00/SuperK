@@ -1221,10 +1221,11 @@ export function SettingsModal({
                             const toast = (await import("react-hot-toast")).default;
                             toast.success(`จำตำแหน่งโฟลเดอร์ "${handle.name || "ที่เลือก"}" แล้ว`);
                           }
-                        } catch (err: any) {
-                          if (err?.name !== "AbortError") {
+                        } catch (err: unknown) {
+                          const error = err instanceof Error ? err : undefined;
+                          if (error?.name !== "AbortError") {
                             const toast = (await import("react-hot-toast")).default;
-                            toast.error(`ไม่สามารถเปิดโฟลเดอร์ได้: ${err?.message || "เกิดข้อผิดพลาด"}`);
+                            toast.error(`ไม่สามารถเปิดโฟลเดอร์ได้: ${error?.message || "เกิดข้อผิดพลาด"}`);
                           }
                         }
                       }}

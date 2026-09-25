@@ -40,7 +40,6 @@ def _rewrite_irfft_for_ort(model: object) -> int:
     already slices the real component immediately after the DFT, so downstream
     graph semantics remain unchanged.
     """
-    import onnx
     from onnx import TensorProto, helper
 
     rewritten = 0
@@ -357,8 +356,8 @@ def export_model(source: Path, output: Path, *, force: bool = False) -> None:
     try:
         import onnx
         import onnxruntime as ort
-        import torch
         import onnxscript  # noqa: F401 - required by the dynamo ONNX exporter
+        import torch
     except ImportError as exc:
         raise SystemExit(
             "LamaLarge ONNX export needs the build-only dependencies. "

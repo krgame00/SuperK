@@ -3,8 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 export interface PublishBackPayload {
   pageUrl: string;
   originUrl?: string;
-  bubbles: any[];
-  textStyle?: any;
+  bubbles: unknown[];
+  textStyle?: Record<string, unknown>;
   cleanUrl?: string;
 }
 

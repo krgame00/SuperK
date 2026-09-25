@@ -23,7 +23,7 @@ export interface RenderedImageCacheEntry {
 }
 
 export class WorkspaceResourceManager {
-  private budgetManager: ResourceBudgetManager<any>;
+  private budgetManager: ResourceBudgetManager<unknown>;
   private pageIds: string[] = [];
   private currentPage = 0;
   private onEvictCallback?: (key: string, category: ResourceItem["category"]) => void;
@@ -99,7 +99,7 @@ export class WorkspaceResourceManager {
   registerResource(
     pageId: string,
     category: ResourceItem["category"],
-    data: any,
+    data: unknown,
     sizeBytes: number,
   ): string[] {
     const key = `${pageId}:${category}`;
@@ -116,8 +116,8 @@ export class WorkspaceResourceManager {
   /**
    * Retrieves a cached resource if resident in memory.
    */
-  getResource<T = any>(pageId: string, category: ResourceItem["category"]): T | undefined {
-    return this.budgetManager.get(`${pageId}:${category}`);
+  getResource<T = unknown>(pageId: string, category: ResourceItem["category"]): T | undefined {
+    return this.budgetManager.get(`${pageId}:${category}`) as T | undefined;
   }
 
   hasResource(pageId: string, category: ResourceItem["category"]): boolean {
@@ -130,7 +130,7 @@ export class WorkspaceResourceManager {
   rehydrateSourceUrl(pageId: string): string | null {
     const sourceKey = `${pageId}:source`;
     const cached = this.budgetManager.get(sourceKey);
-    if (cached) return cached;
+    if (typeof cached === "string") return cached;
 
     if (pageBlobStore.has(pageId)) {
       const url = pageBlobStore.getOrCreateObjectUrl(pageId);
@@ -193,7 +193,7 @@ export class WorkspaceResourceManager {
   /**
    * Handles actions required when an item is evicted from memory.
    */
-  private handleEvictedItem = (item: ResourceItem<any>): void => {
+  private handleEvictedItem = (item: ResourceItem<unknown>): void => {
     const [pageId, category] = item.key.split(":") as [string, ResourceItem["category"]];
 
     if (category === "source") {

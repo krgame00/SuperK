@@ -532,9 +532,9 @@ class JobStore:
                 len(output.regions),
             )
             self._complete(job, output, image_rgb.shape[:2])
-        except Exception:
+        except Exception as exc:
             LOGGER.exception("cleaning job %s failed", job.id)
-            self._fail(job)
+            self._fail(job, exc)
         finally:
             if watchdog is not None:
                 watchdog.cancel()
@@ -577,9 +577,9 @@ class JobStore:
                 raise RuntimeError("pipeline does not support region retry")
             output = retry(parent_output, region_id, mask, cleaner, action)
             self._complete(job, output, mask.shape)
-        except Exception:
+        except Exception as exc:
             LOGGER.exception("retry job %s failed", job.id)
-            self._fail(job)
+            self._fail(job, exc)
         finally:
             if watchdog is not None:
                 watchdog.cancel()
@@ -662,12 +662,19 @@ class JobStore:
 
 
     @staticmethod
-    def _fail(job: JobState) -> None:
+    def _fail(job: JobState, exc: Exception | str | None = None) -> None:
         with job.lock:
             job.output = None  # Evict full numpy array to free RAM
             job.source_bytes = b""  # Evict raw input bytes to free RAM
             job.status = JobStatus.FAILED
-            job.error = "Image cleaning failed. Check the input and local models."
+            if exc:
+                raw_msg = str(exc).strip()
+                import re
+                cleaned = re.sub(r'[A-Za-z]:\\[^\s"\'<>|]+', '[path]', raw_msg)
+                cleaned = re.sub(r'/[^\s"\'<>|]+/[^\s"\'<>|]*', '[path]', cleaned)
+                job.error = f"Image cleaning failed: {cleaned}" if cleaned else "Image cleaning failed."
+            else:
+                job.error = "Image cleaning failed. Check the input and local models."
             job.elapsed_ms = job._current_elapsed_ms()
             job.started_at = None
 

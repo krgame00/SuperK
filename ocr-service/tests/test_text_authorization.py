@@ -2,11 +2,18 @@ from dataclasses import replace
 
 import numpy as np
 import pytest
+from test_pipeline import (
+    NoTextDetector,
+    SolidCleaner,
+    _clean_decision,
+    _comic_page,
+    _empty_protection,
+    _single_region_output,
+)
 
 from app.mask_refiner import MaskRegion, RefinedMask
 from app.pipeline import CleaningPipeline
 from app.schemas import AutomaticAction, ManualRegionAction, PixelRect, TextRole
-from test_pipeline import NoTextDetector, SolidCleaner, _clean_decision, _comic_page, _empty_protection, _single_region_output
 
 
 @pytest.mark.parametrize("batched", [False, True])
@@ -21,9 +28,14 @@ def test_review_label_never_authorizes_removal_and_confident_region_continues(ba
         if args[2].id == "0":
             decision = decision.model_copy(update={"text_role": TextRole.REVIEW, "action": AutomaticAction.CLEAN})
         return decision
-    pipeline = CleaningPipeline(detector=NoTextDetector(), cleaners={k: SolidCleaner(99) for k in ["flat", "gradient", "artwork"]},
-        refiner=lambda *_: RefinedMask(mask, regions, np.zeros_like(mask)), page_classifier=_comic_page,
-        protection_detector=_empty_protection, eligibility_classifier=classify)
+    pipeline = CleaningPipeline(
+        detector=NoTextDetector(),
+        cleaners={k: SolidCleaner(99) for k in ["flat", "gradient", "artwork"]},
+        refiner=lambda *_: RefinedMask(mask, regions, np.zeros_like(mask)),
+        page_classifier=_comic_page,
+        protection_detector=_empty_protection,
+        eligibility_classifier=classify,
+    )
     if batched:
         class Probe:
             def score_many(self, _image, pairs):
@@ -138,7 +150,11 @@ def test_real_hybrid_path_preserves_isolated_stroke_for_review(confidence):
         def detect(self, image):
             prob = np.zeros(image.shape[:2], np.float32)
             prob[30:70, 49:51] = 0.30
-            return DetectionResult(prob, [DetectedBlock(PixelRect(x=20, y=20, width=60, height=60), confidence)], LetterboxTransform(100, 100, 100, 1, 0, 0))
+            return DetectionResult(
+                prob,
+                [DetectedBlock(PixelRect(x=20, y=20, width=60, height=60), confidence)],
+                LetterboxTransform(100, 100, 100, 1, 0, 0),
+            )
     image = np.full((100, 100, 3), 255, np.uint8)
     image[30:70, 49:51] = 0
     pipeline = CleaningPipeline(detector=HybridTextDetector(CTD(), paddle_engine=None),
@@ -153,14 +169,19 @@ def test_real_hybrid_path_preserves_isolated_stroke_for_review(confidence):
 
 
 def test_job_restart_retains_confirmation_and_exact_mask_approval(tmp_path):
-    from app.jobs import JobStore
-    from test_jobs import _wait_for_job, _make_png
     import io
+
     from PIL import Image
+    from test_jobs import _make_png, _wait_for_job
+
+    from app.jobs import JobStore
+
     class Pipeline(CleaningPipeline):
         def run(self, image, progress_callback=None):
             return replace(_single_region_output(), source_image=image, clean_image=image.copy())
-    factory = lambda: Pipeline(detector=NoTextDetector(), cleaners={"flat": SolidCleaner(0)})
+
+    def factory():
+        return Pipeline(detector=NoTextDetector(), cleaners={"flat": SolidCleaner(0)})
     store = JobStore(pipeline_factory=factory, cache_dir=tmp_path)
     try:
         initial = store.submit(_make_png(32, 32), "test.png")

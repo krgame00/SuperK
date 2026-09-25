@@ -17,7 +17,7 @@ export interface SuperKDesktopBridge {
   onCleanerRecoveryStatus?: (
     listener: (payload: { status: CleanerRecoveryPhase; message?: string }) => void,
   ) => () => void;
-  notify?: (payload: any) => void;
+  notify?: (payload: unknown) => void;
   pickExportDirectory?: () => Promise<string | null>;
   saveExportFile?: (payload: {
     dirPath: string;

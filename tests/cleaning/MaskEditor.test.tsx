@@ -215,7 +215,7 @@ describe("MaskEditor", () => {
       callback(new Blob(["mock-mask"], { type: "image/png" }));
     }) as unknown as typeof HTMLCanvasElement.prototype.toBlob;
 
-    const onRetry = vi.fn().mockResolvedValue(undefined);
+    const onRetry = vi.fn().mockResolvedValue({ ok: true });
     const onClose = vi.fn();
     renderMaskEditor({ onRetry, onClose });
 
@@ -234,6 +234,90 @@ describe("MaskEditor", () => {
       // Closes dialog after completion
       expect(onClose).toHaveBeenCalled();
     });
+  });
+
+  test("One-Click Clean stays open and stops when text confirmation fails", async () => {
+    HTMLCanvasElement.prototype.toBlob = vi.fn((callback) => {
+      callback(new Blob(["mock-mask"], { type: "image/png" }));
+    }) as unknown as typeof HTMLCanvasElement.prototype.toBlob;
+
+    const onRetry = vi.fn().mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    renderMaskEditor({ onRetry, onClose });
+
+    await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+    fireEvent.click(screen.getByRole("button", { name: /คลีนจุดนี้ทันที/ }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "ยืนยันข้อความไม่สำเร็จ กรุณาลองใหม่",
+      );
+    });
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onRetry).not.toHaveBeenCalledWith(
+      "region-1",
+      expect.any(Blob),
+      "auto",
+      "force-clean",
+    );
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  test("One-Click Clean stays open when force-clean returns no result", async () => {
+    HTMLCanvasElement.prototype.toBlob = vi.fn((callback) => {
+      callback(new Blob(["mock-mask"], { type: "image/png" }));
+    }) as unknown as typeof HTMLCanvasElement.prototype.toBlob;
+
+    const onRetry = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce(undefined);
+    const onClose = vi.fn();
+    renderMaskEditor({ onRetry, onClose });
+
+    await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+    fireEvent.click(screen.getByRole("button", { name: /คลีนจุดนี้ทันที/ }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "คลีนตาม Mask ไม่สำเร็จ กรุณาลองใหม่",
+      );
+    });
+    expect(onRetry).toHaveBeenNthCalledWith(
+      1,
+      "region-1",
+      expect.any(Blob),
+      "auto",
+      "confirm-text",
+    );
+    expect(onRetry).toHaveBeenNthCalledWith(
+      2,
+      "region-1",
+      expect.any(Blob),
+      "auto",
+      "force-clean",
+    );
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  test("granular mask actions stay open when retry returns no result", async () => {
+    HTMLCanvasElement.prototype.toBlob = vi.fn((callback) => {
+      callback(new Blob(["mock-mask"], { type: "image/png" }));
+    }) as unknown as typeof HTMLCanvasElement.prototype.toBlob;
+
+    const onRetry = vi.fn().mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    renderMaskEditor({ onRetry, onClose });
+
+    await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+    fireEvent.click(screen.getByRole("button", { name: "Protect" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "บันทึก Mask ไม่สำเร็จ กรุณาลองใหม่",
+      );
+    });
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   test("Region stepper and overlay badges switch between speech bubbles", async () => {

@@ -4,7 +4,7 @@ export interface WorkspaceHandoffPayload {
   pageUrl: string;
   name?: string;
   cleanUrl?: string;
-  bubbles?: any[];
+  bubbles?: unknown[];
   originUrl?: string;
 }
 

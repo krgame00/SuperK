@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import os
 import hashlib
+import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from time import perf_counter
@@ -988,7 +988,11 @@ def _region_mask(mask: BinaryMask, region: MaskRegion) -> BinaryMask:
 
 
 def _has_awaiting_review(records: list[RegionRecord]) -> bool:
-    return any(record.status is RegionStatus.NEEDS_REVIEW and record.automatic_action is AutomaticAction.CLEAN for record in records)
+    return any(
+        record.status is RegionStatus.NEEDS_REVIEW
+        and record.automatic_action is AutomaticAction.CLEAN
+        for record in records
+    )
 
 
 def _peak_rss_mb() -> float | str:

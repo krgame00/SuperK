@@ -83,6 +83,11 @@ export function CleaningToolbar({
             เปิด <code>ocr-service\run.ps1</code> แล้วลองอีกครั้ง
           </p>
         )}
+        {error && error.recovery !== "start-local-service" && (
+          <p className="max-w-[46ch] text-xs font-medium text-red-400 bg-red-500/10 border border-red-500/20 px-2.5 py-1 rounded-md" role="alert">
+            {error.message || "การคลีนภาพล้มเหลว กรุณาลองใหม่อีกครั้ง"}
+          </p>
+        )}
       </div>
 
       <div className="flex items-center gap-2">
