@@ -56,7 +56,7 @@ describe("Cache Routing (Ticket 06)", () => {
     const mockMkdirSync = vi.fn();
 
     const appRoot = "C:\\SuperK";
-    const expectedRoot = path.join(appRoot, "cache");
+    const expectedRoot = path.win32.join(appRoot, "cache");
 
     const env = resolveCacheEnvironment({
       existsSync: mockExistsSync,
@@ -66,13 +66,13 @@ describe("Cache Routing (Ticket 06)", () => {
     });
 
     expect(env.SUPERK_CACHE_ROOT).toBe(expectedRoot);
-    expect(env.TORCH_HOME).toBe(path.join(expectedRoot, "torch"));
-    expect(env.PADDLE_HOME).toBe(path.join(expectedRoot, "paddle"));
-    expect(env.HF_HOME).toBe(path.join(expectedRoot, "huggingface"));
-    expect(env.TEMP).toBe(path.join(expectedRoot, "temp"));
+    expect(env.TORCH_HOME).toBe(path.win32.join(expectedRoot, "torch"));
+    expect(env.PADDLE_HOME).toBe(path.win32.join(expectedRoot, "paddle"));
+    expect(env.HF_HOME).toBe(path.win32.join(expectedRoot, "huggingface"));
+    expect(env.TEMP).toBe(path.win32.join(expectedRoot, "temp"));
 
     expect(mockMkdirSync).toHaveBeenCalledWith(
-      path.join(expectedRoot, "torch"),
+      path.win32.join(expectedRoot, "torch"),
       expect.objectContaining({ recursive: true })
     );
   });

@@ -90,9 +90,14 @@ beforeEach(() => {
     "createImageBitmap",
     vi.fn().mockResolvedValue({ width: 8, height: 8, close: vi.fn() }),
   );
-  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-    new Response(new Blob(["asset"], { type: "image/png" }), { status: 200 }),
-  );
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+    const asset = new Blob(["asset"], { type: "image/png" });
+    return {
+      ok: true,
+      status: 200,
+      blob: async () => asset,
+    } as Response;
+  });
   Object.defineProperty(URL, "createObjectURL", {
     configurable: true,
     value: vi
@@ -603,8 +608,8 @@ test("stale saved job asks for reclean without crashing", async () => {
         {
           pageUrl: "blob:one",
           sourceHash: "a".repeat(64),
-          sourceFingerprint: "13:text/plain;charset=utf-8",
-          maskFingerprint: "13:text/plain;charset=utf-8",
+          sourceFingerprint: "5:image/png",
+          maskFingerprint: "5:image/png",
           pipelineVersion: "2.3.1-enclosed-backing",
           jobId: "missing-job",
           regions: [],
@@ -620,7 +625,7 @@ test("stale saved job asks for reclean without crashing", async () => {
     useCleaning({ pages: ["blob:one"], currentPage: 0 }),
   );
   await act(async () => {
-    await vi.runAllTimersAsync();
+    for (let index = 0; index < 12; index += 1) await Promise.resolve();
   });
   expect(result.current.error?.recovery).toBe("reclean");
 });
@@ -655,8 +660,8 @@ test("restores cleaning result directly from IndexedDB assets without contacting
         {
           pageUrl,
           sourceHash: "a".repeat(64),
-          sourceFingerprint: "13:text/plain;charset=utf-8",
-          maskFingerprint: "13:text/plain;charset=utf-8",
+          sourceFingerprint: "5:image/png",
+          maskFingerprint: "5:image/png",
           pipelineVersion: "2.3.1-enclosed-backing",
           jobId: "job-offline-1",
           regions: [],
@@ -684,10 +689,9 @@ test("restores cleaning result directly from IndexedDB assets without contacting
   );
 
   await act(async () => {
-    await vi.runAllTimersAsync();
+    for (let index = 0; index < 12; index += 1) await Promise.resolve();
   });
 
-  expect(result.current.currentResult).toBeDefined();
   expect(result.current.currentResult?.jobId).toBe("job-offline-1");
   expect(result.current.error).toBeUndefined();
   expect(getCleaningResult).not.toHaveBeenCalled();

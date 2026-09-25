@@ -25,16 +25,18 @@ function resolveCacheEnvironment(options = {}) {
   const appRoot = options.appRoot || path.resolve(__dirname, "..");
 
   let cacheRoot = "";
+  const pathApi = platform === "win32" ? path.win32 : path;
 
   if (platform === "win32" && (existsSync("F:\\") || existsSync("F:/"))) {
     cacheRoot = "F:\\manga-cache";
   } else {
-    cacheRoot = path.join(appRoot, "cache");
+    cacheRoot = pathApi.join(appRoot, "cache");
   }
 
-  // Create subdirectories
+  // Create subdirectories using the target platform semantics, not the host
+  // running the tests/build (for example Linux GitHub runners).
   for (const sub of SUBDIRECTORIES) {
-    const dirPath = path.join(cacheRoot, sub);
+    const dirPath = pathApi.join(cacheRoot, sub);
     try {
       mkdirSync(dirPath, { recursive: true });
     } catch {
@@ -44,11 +46,11 @@ function resolveCacheEnvironment(options = {}) {
 
   const env = {
     SUPERK_CACHE_ROOT: cacheRoot,
-    TORCH_HOME: path.join(cacheRoot, "torch"),
-    PADDLE_HOME: path.join(cacheRoot, "paddle"),
-    HF_HOME: path.join(cacheRoot, "huggingface"),
-    TEMP: path.join(cacheRoot, "temp"),
-    TMP: path.join(cacheRoot, "temp"),
+    TORCH_HOME: pathApi.join(cacheRoot, "torch"),
+    PADDLE_HOME: pathApi.join(cacheRoot, "paddle"),
+    HF_HOME: pathApi.join(cacheRoot, "huggingface"),
+    TEMP: pathApi.join(cacheRoot, "temp"),
+    TMP: pathApi.join(cacheRoot, "temp"),
   };
 
   return env;

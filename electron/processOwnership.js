@@ -16,7 +16,19 @@ const DEFAULT_CREATION_TOLERANCE_MS = 120000;
 
 function normalizePath(value) {
   if (!value) return "";
-  return path.normalize(String(value)).replace(/[\\/]+$/g, "").toLowerCase();
+  const text = String(value);
+  const normalized = path.win32.isAbsolute(text)
+    ? path.win32.normalize(text)
+    : path.normalize(text);
+  return normalized.replace(/[\\/]+$/g, "").toLowerCase();
+}
+
+function resolveStoredPath(value) {
+  const text = String(value || "");
+  if (!text) return "";
+  return path.win32.isAbsolute(text)
+    ? path.win32.normalize(text)
+    : path.resolve(text);
 }
 
 function safeParseJson(value) {
@@ -80,9 +92,9 @@ class ProcessOwnershipStore {
     const state = this._read();
     state.services[service] = {
       pid: identity.pid,
-      executablePath: path.resolve(identity.executablePath),
+      executablePath: resolveStoredPath(identity.executablePath),
       args: Array.isArray(identity.args) ? identity.args.map(String) : [],
-      cwd: identity.cwd ? path.resolve(identity.cwd) : null,
+      cwd: identity.cwd ? resolveStoredPath(identity.cwd) : null,
       startedAt: Number(identity.startedAt || Date.now()),
     };
     this._write(state);

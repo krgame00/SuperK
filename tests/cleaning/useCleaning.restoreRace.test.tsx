@@ -48,9 +48,14 @@ beforeEach(() => {
     "createImageBitmap",
     vi.fn().mockResolvedValue({ width: 8, height: 8, close: vi.fn() }),
   );
-  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-    new Response(new Blob(["asset"], { type: "image/png" }), { status: 200 }),
-  );
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+    const asset = new Blob(["asset"], { type: "image/png" });
+    return {
+      ok: true,
+      status: 200,
+      blob: async () => asset,
+    } as Response;
+  });
   Object.defineProperty(URL, "createObjectURL", {
     configurable: true,
     value: vi
@@ -97,8 +102,8 @@ test("metadata restore restarts after the page count changes", async () => {
           {
             pageUrl: "blob:one",
             sourceHash: "a".repeat(64),
-            sourceFingerprint: "13:text/plain;charset=utf-8",
-            maskFingerprint: "13:text/plain;charset=utf-8",
+            sourceFingerprint: "5:image/png",
+            maskFingerprint: "5:image/png",
             pipelineVersion: "2.3.1-enclosed-backing",
             jobId: "job-1",
             regions: [],
@@ -116,7 +121,7 @@ test("metadata restore restarts after the page count changes", async () => {
   rerender({ pages: ["blob:one", "blob:two"] });
   await act(async () => {
     resolveFirst(new Map());
-    await vi.runAllTimersAsync();
+    for (let index = 0; index < 20; index += 1) await Promise.resolve();
   });
 
   expect(loadCleaningResultsMetadata).toHaveBeenCalledTimes(2);
