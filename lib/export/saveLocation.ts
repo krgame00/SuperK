@@ -272,6 +272,19 @@ declare global {
   }
 }
 
+export const isBraveBrowser = async (): Promise<boolean> => {
+  try {
+    if (typeof window === "undefined") return false;
+    const nav = window.navigator as any;
+    if (nav?.brave && typeof nav.brave.isBrave === "function") {
+      return Boolean(await nav.brave.isBrave());
+    }
+  } catch {
+    // Ignore error
+  }
+  return false;
+};
+
 export const isDirectoryPickerSupported = (): boolean =>
   isDesktopMode() || (typeof window !== "undefined" && typeof window.showDirectoryPicker === "function");
 

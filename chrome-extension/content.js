@@ -370,63 +370,13 @@ function fitTextInBubble(text, width, height, fontFamily, fontSizeMultiplier = 1
     const isMonochromeAuto =
       isMonoPage === true &&
       monoConfidence >= 0.85 &&
-      !isManual &&
-      (category === 'dialogue' || category === 'narration');
+      !isManual;
 
-    const bgLum = bubbleProfile.backgroundLuminance;
-    const bgLumSamples = Array.isArray(bubbleProfile.backgroundLuminanceSamples)
-      ? bubbleProfile.backgroundLuminanceSamples.filter(value => typeof value === 'number' && Number.isFinite(value))
-      : [];
-    const mixedBackground = bgLumSamples.length > 0 &&
-      Math.max(...bgLumSamples) - Math.min(...bgLumSamples) >= 90;
-    const hasTrustedSourceOutline =
-      bubbleProfile.hasOutline === true &&
-      Boolean(bubbleProfile.outline) &&
-      bubbleProfile.evidenceState === 'admitted' &&
-      (bubbleProfile.outlineConfidence ?? 0) >= 0.80;
-
-    let monochromeTextColor = null;
-    let monochromeHasOutline = false;
-    let monochromeOutlineColor = '#ffffff';
-
-    if (isMonochromeAuto) {
-      if (typeof bgLum === 'number' && bgLum >= 155 && !mixedBackground) {
-        monochromeTextColor = '#000000';
-        if (hasTrustedSourceOutline) {
-          monochromeHasOutline = true;
-          monochromeOutlineColor = bubbleProfile.outline;
-        }
-      } else if (typeof bgLum === 'number' && bgLum <= 100 && !mixedBackground) {
-        monochromeTextColor = '#ffffff';
-        monochromeOutlineColor = '#000000';
-        if (hasTrustedSourceOutline) {
-          monochromeHasOutline = true;
-          monochromeOutlineColor = bubbleProfile.outline;
-        }
-      } else {
-        // Mixed, intermediate, or missing region luminance: match the Web resolver's
-        // safe contrasting-outline fallback while remaining shadowless.
-        const effectiveLum = typeof bgLum === 'number' ? bgLum : 180;
-        monochromeTextColor = effectiveLum < 128 ? '#ffffff' : '#000000';
-        monochromeOutlineColor = effectiveLum < 128 ? '#000000' : '#ffffff';
-        monochromeHasOutline = true;
-      }
-    }
-
-    const bubbleTextColor = (isMonochromeAuto && monochromeTextColor) ? monochromeTextColor : (bubbleProfile.fill || textColor);
-    const hasOutline = isMonochromeAuto
-      ? monochromeHasOutline
-      : (bubbleProfile.hasOutline !== false);
-    const bubbleTextOutline = (isMonochromeAuto && monochromeTextColor)
-      ? monochromeOutlineColor
-      : (bubbleProfile.outline || textOutline);
-    const requiresReadableMonoOutline =
-      isMonochromeAuto && monochromeHasOutline &&
-      (mixedBackground || typeof bgLum !== 'number' || (bgLum > 100 && bgLum < 155));
-    const outlineRatio = Math.max(
-      requiresReadableMonoOutline ? 0.12 : 0.04,
-      Math.min(0.30, bubbleProfile.outlineWidthRatio || 0.09),
-    );
+    // Keep cached, direct and server overlays aligned with the Web policy.
+    const bubbleTextColor = isMonochromeAuto ? '#000000' : (bubbleProfile.fill || textColor);
+    const hasOutline = !isMonochromeAuto && bubbleProfile.hasOutline !== false;
+    const bubbleTextOutline = bubbleProfile.outline || textOutline;
+    const outlineRatio = Math.max(0.04, Math.min(0.30, bubbleProfile.outlineWidthRatio || 0.09));
 
     const outlineShadows = hasOutline ? [
       `-${outlineRatio}em -${outlineRatio}em 0 ${bubbleTextOutline}`,

@@ -8,20 +8,19 @@ describe("SuperK Smart Desktop Launcher", () => {
   const setupScriptPath = path.join(rootDir, "scripts", "create-desktop-shortcut.mjs");
   const startBatPath = path.join(rootDir, "start.bat");
 
-  it("ensures SuperK-Launcher.vbs exists and contains core health check and app mode flags", () => {
+  it("ensures SuperK-Launcher.vbs exists, checks health, and launches in standard browser tab mode", () => {
     expect(fs.existsSync(launcherPath)).toBe(true);
     const content = fs.readFileSync(launcherPath, "utf-8");
     expect(content).toContain("127.0.0.1:3000");
     expect(content).toContain("127.0.0.1:8765");
-    expect(content).toContain("--app=");
-    expect(content).toContain("chrome.exe");
-    expect(content).toContain("msedge.exe");
+    expect(content).toContain("CheckUrl");
+    expect(content).toContain("cmd.exe /c start ");
   });
 
-  it("ensures create-desktop-shortcut.mjs exists and targets launcher", () => {
+  it("ensures create-desktop-shortcut.mjs exists and targets silent launcher", () => {
     expect(fs.existsSync(setupScriptPath)).toBe(true);
     const content = fs.readFileSync(setupScriptPath, "utf-8");
-    expect(content).toContain("start-web.bat");
+    expect(content).toContain("SuperK-Launcher.vbs");
     expect(content).toContain("SuperK Manga Translator.lnk");
   });
 

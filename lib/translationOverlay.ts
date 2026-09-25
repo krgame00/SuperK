@@ -257,6 +257,8 @@ export const downloadTranslatedImage = (
   });
 
   const dataUrl = exportCanvas.toDataURL("image/jpeg", 0.9);
+  exportCanvas.width = 0;
+  exportCanvas.height = 0;
   if (returnDataUrl) return dataUrl;
 
   const link = document.createElement("a");
@@ -835,7 +837,8 @@ export const applyTranslationOverlay = async (
 
       b.render = renderBubble;
 
-      wrapper.addEventListener('mouseenter', () => { if (selectedBubbleWrapper !== wrapper) wrapper.style.outline = "1.5px dashed rgba(99,102,241,0.5)"; });
+      if (viewMode !== "offscreen") {
+        wrapper.addEventListener('mouseenter', () => { if (selectedBubbleWrapper !== wrapper) wrapper.style.outline = "1.5px dashed rgba(99,102,241,0.5)"; });
       wrapper.addEventListener('mouseleave', () => { if (selectedBubbleWrapper !== wrapper) wrapper.style.outline = "none"; });
 
       let isDragging = false;
@@ -1674,11 +1677,13 @@ export const applyTranslationOverlay = async (
         position: positionChromeControls,
         setVisible: setChromeVisible,
       });
+      }
 
       tlContainer.appendChild(wrapper);
       renderBubble();
     });
 
+    if (viewMode !== "offscreen") {
     const syncSelectedChrome = () => {
       if (!selectedBubbleWrapper) return;
       chromeControlsByWrapper.get(selectedBubbleWrapper)?.position();
@@ -1735,12 +1740,19 @@ export const applyTranslationOverlay = async (
     window.addEventListener('scroll', handleViewportChange, true);
     (tlContainer as unknown as { _cleanupListeners: () => void })._cleanupListeners = detachDocumentListeners;
     overlayCleanups.set(container, detachDocumentListeners);
+    }
 
     container.appendChild(tlContainer);
 
     if (onComplete) {
       setTimeout(() => {
         const url = downloadTranslatedImage(viewMode, currentPage, "", true, container);
+        if (viewMode === "offscreen") {
+          tlContainer.querySelectorAll("canvas").forEach((cvs) => {
+            cvs.width = 0;
+            cvs.height = 0;
+          });
+        }
         if (url) onComplete(url);
       }, 100);
     }

@@ -7,6 +7,7 @@
 - **Debug Mantra**: Recite and follow the `debug-mantra` (กฎเหล็กไล่ล่าบั๊ก) verbatim at the start of any debugging session before proposing any fix.
 - **Code Review & Scrutinize**: When claiming work is complete or reviewing a plan, use `requesting-code-review`, `loop-verifier`, and `scrutinize` (รีวิวโค้ดแบบเจาะลึก จับผิดอย่างสร้างสรรค์) to ensure the code meets requirements and has no edge-case regressions.
 - **Post-mortem**: Use the `post-mortem` skill (เขียนสรุปวิเคราะห์สาเหตุบั๊ก) to write the canonical engineering record of a fixed bug after a debug session lands a fix.
+- **Always Update Plan & Working Notes (บันทึกผลงานลงแผนเสมอ)**: ทุกครั้งที่ลงมือทำ ทดสอบ หรือแก้ปัญหา ไม่ว่าจะผ่าน (VERIFIED WORKING) หรือไม่ผ่าน/พัง (KNOWN REGRESSION / FAILED) **ต้องอัปเดตลงในแผนงานและ `docs/AI-WORKING-NOTES.md` เสมอ** พร้อมระบุหลักฐานการทดสอบ (Verification Evidence)
 - **Management Talk**: Use the `management-talk` skill (แปลงโค้ดให้เป็นภาษาสำหรับคุยกับผู้บริหาร สไตล์นายอาร์ม) when summarizing complex technical work or status updates.
 - **Impeccable UI/UX**: Use the `impeccable` skill when requested to design, redesign, polish, or otherwise improve a frontend interface. This ensures visual excellence, responsive behavior, and premium design aesthetics.
 - **Web Scraping**: Use the `scrapling-official` skill when requested to scrape, crawl, or extract data from websites, especially those with anti-bot protections.
@@ -21,6 +22,7 @@
 
 ## Project Working-State Notes
 - **Must read before changing translation/Gemini/masking/desktop behavior**: `docs/AI-WORKING-NOTES.md` records approaches that were actually tried, what the user confirmed works, regressions, paused directions, and verification evidence. Update it when a new approach is validated or rejected.
+- **Mandatory Outcome & Plan Updates (บันทึกผลงานลงแผนเสมอ)**: ทุกแนวทางที่ทดสอบต้องบันทึกสถานะ (`VERIFIED WORKING`, `KNOWN REGRESSION`, `EXPERIMENTAL`, `PAUSED`) พร้อมหลักฐานลงใน `docs/AI-WORKING-NOTES.md` และแผนงานเสมอ
 
 ## Gemini API Key & Model Routing Rules
 - **Current production baseline**: Image and text translation use the fixed `requestGemini()` routing path. The user confirmed this path works after rollback from the dynamic router. Do not silently replace it with `executeGeminiTranslation()` or make the Dynamic Gemini Model Catalog authoritative on the live translation path.

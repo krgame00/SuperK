@@ -235,8 +235,9 @@ export async function requestGemini<T = unknown>(
           );
         } catch {
           sawTransportFailure = true;
+          keyOffset += 1;
           fallbackCount++;
-          break keyLoop;
+          continue keyLoop;
         } finally {
           clearTimeout(timer);
         }
@@ -276,7 +277,8 @@ export async function requestGemini<T = unknown>(
 
         if (
           (response.status === 500 || response.status === 503) &&
-          serverRetry === 0
+          serverRetry === 0 &&
+          apiKeys.length === 1
         ) {
           serverRetry += 1;
           await sleep(1_000);
@@ -286,7 +288,9 @@ export async function requestGemini<T = unknown>(
         if (
           response.status === 400 ||
           response.status === 403 ||
-          response.status === 429
+          response.status === 429 ||
+          response.status === 500 ||
+          response.status === 503
         ) {
           keyOffset += 1;
           fallbackCount++;

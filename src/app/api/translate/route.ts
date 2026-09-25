@@ -19,19 +19,11 @@ import {
   buildGlossaryDirectives,
 } from "@/lib/translation/glossary";
 import type { TranslationObservabilityMeta } from "@/lib/translation/requestError";
+import { FIXED_IMAGE_MODELS } from "@/lib/translation/imageModelChoices";
 
 export const MAX_TRANSLATION_BODY_BYTES = 30 * 1024 * 1024;
 export const MAX_TRANSLATION_IMAGE_BYTES = 20 * 1024 * 1024;
 
-const FIXED_IMAGE_MODELS = [
-  "gemini-3.5-flash-lite",
-  "gemini-3.8-flash",
-  "gemini-3.7-flash",
-  "gemini-3.6-flash",
-  "gemini-3-flash",
-  "gemini-3.5-flash",
-  "gemini-3.1-flash-lite",
-];
 let fixedImageKeyIndex = 0;
 
 interface GeminiResponseData {
@@ -293,25 +285,15 @@ async function handleTranslationRequest(
       }
       const models = modelPreference && modelPreference !== "auto"
         ? [modelPreference]
-        : isRetry
-          ? [
-              "gemini-3.8-flash",
-              "gemini-3.7-flash",
-              "gemini-3.6-flash",
-              "gemini-3.5-flash-lite",
-              "gemini-3-flash",
-              "gemini-3.5-flash",
-              "gemini-3.1-flash-lite",
-            ]
-          : FIXED_IMAGE_MODELS;
+        : [...FIXED_IMAGE_MODELS];
       const result = useFixedRouter
         ? await requestGemini<GeminiResponseData>({
             apiKeys: keyPool,
             models,
             payload,
             initialKeyIndex: fixedImageKeyIndex,
-            attemptTimeoutMs: 60_000,
-            totalBudgetMs: 180_000,
+            attemptTimeoutMs: 25_000,
+            totalBudgetMs: 90_000,
           })
         : await executeGeminiTranslation<GeminiResponseData>({
         workflow: "image",

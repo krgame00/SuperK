@@ -13,6 +13,7 @@ import {
   retryCleaningRegion,
 } from "@/lib/cleaning/client";
 import {
+  loadCleaningResultAssets,
   loadCleaningResultsMetadata,
   saveCleaningResultMetadata,
 } from "@/lib/projectStore";
@@ -30,7 +31,14 @@ vi.mock("@/lib/cleaning/client", async (importOriginal) => {
 });
 vi.mock("@/lib/projectStore", () => ({
   deleteAsset: vi.fn().mockResolvedValue(undefined),
+  loadCleaningResultAssets: vi.fn().mockResolvedValue({
+    cleanBlob: null,
+    maskBlob: null,
+    reviewMaskBlob: null,
+    protectedMaskBlob: null,
+  }),
   loadCleaningResultsMetadata: vi.fn(),
+  saveCleaningAssets: vi.fn().mockResolvedValue({}),
   saveCleaningResultMetadata: vi.fn(),
 }));
 
@@ -634,3 +642,54 @@ test("unmount revokes generated asset URLs", async () => {
   expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:review");
   expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:protected");
 });
+
+test("restores cleaning result directly from IndexedDB assets without contacting cleaning service", async () => {
+  const pageUrl = "blob:one";
+  const cleanBlob = new Blob(["clean-image-data"], { type: "image/png" });
+  const maskBlob = new Blob(["mask-image-data"], { type: "image/png" });
+
+  vi.mocked(loadCleaningResultsMetadata).mockResolvedValue(
+    new Map([
+      [
+        pageUrl,
+        {
+          pageUrl,
+          sourceHash: "a".repeat(64),
+          sourceFingerprint: "13:text/plain;charset=utf-8",
+          maskFingerprint: "13:text/plain;charset=utf-8",
+          pipelineVersion: "2.3.1-enclosed-backing",
+          jobId: "job-offline-1",
+          regions: [],
+          updatedAt: Date.now(),
+          cleanAssetId: "clean_blob%3Aone",
+          maskAssetId: "mask_blob%3Aone",
+        },
+      ],
+    ]),
+  );
+
+  vi.mocked(loadCleaningResultAssets).mockResolvedValue({
+    cleanBlob,
+    maskBlob,
+    reviewMaskBlob: null,
+    protectedMaskBlob: null,
+  });
+
+  vi.mocked(getCleaningResult).mockRejectedValue(
+    new CleaningClientError(503, "Python cleaner backend is offline", "retry"),
+  );
+
+  const { result } = renderHook(() =>
+    useCleaning({ pages: [pageUrl], currentPage: 0 }),
+  );
+
+  await act(async () => {
+    await vi.runAllTimersAsync();
+  });
+
+  expect(result.current.currentResult).toBeDefined();
+  expect(result.current.currentResult?.jobId).toBe("job-offline-1");
+  expect(result.current.error).toBeUndefined();
+  expect(getCleaningResult).not.toHaveBeenCalled();
+});
+

@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <title>เปรียบเทียบผลการตรวจจับข้อความ Before vs After</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f172a;
+      color: #f8fafc;
+      margin: 0;
+      padding: 24px;
+    }
+    h1 {
+      text-align: center;
+      color: #38bdf8;
+      margin-bottom: 8px;
+    }
+    p.subtitle {
+      text-align: center;
+      color: #94a3b8;
+      margin-bottom: 32px;
+    }
+    .card {
+      background: #1e293b;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 32px;
+      border: 1px solid #334155;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+    }
+    .card h2 {
+      margin-top: 0;
+      color: #e2e8f0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .badge {
+      background: #0ea5e9;
+      color: #fff;
+      font-size: 13px;
+      padding: 3px 8px;
+      border-radius: 6px;
+    }
+    .img-container {
+      text-align: center;
+      margin-top: 16px;
+      background: #090d16;
+      border-radius: 8px;
+      padding: 12px;
+    }
+    img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 6px;
+      border: 1px solid #475569;
+    }
+    .desc {
+      line-height: 1.6;
+      color: #cbd5e1;
+    }
+    .desc strong {
+      color: #f1f5f9;
+    }
+  </style>
+</head>
+<body>
+  <h1>ภาพตัวอย่างเปรียบเทียบการตรวจจับข้อความ (Before vs After)</h1>
+  <p class="subtitle">มังงะ: Dosukebe Saimin (491189) | ตรรกะใหม่ใน HybridTextDetector</p>
+
+  <div class="card">
+    <h2><span>1. หน้า 38 (Page 38)</span> <span class="badge">จุดสำคัญที่เคยหลุด</span></h2>
+    <div class="desc">
+      <p>🔴 <strong>ซ้าย (Before):</strong> ข้อความบรรยายแนวตั้งสำคัญ <code>「それから10分間」</code> (หลังจากนั้น 10 นาที) รวมถึง <code>「プクプクッ」</code> และเสียงบีบ <code>「クリクリ」</code> บนนิ้วมือ <strong>ไม่มีกรอบเลยแม้แต่อันเดียว (หลุดหาย 100%)</strong></p>
+      <p>🟢 <strong>ขวา (After):</strong> ตรวจจับเข้ากรอบสีเขียวครบถ้วนทุกตำแหน่งอย่างแม่นยำ</p>
+    </div>
+    <div class="img-container">
+      <img src="compare_page_38.jpg" alt="เปรียบเทียบหน้า 38">
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span>2. ผลลัพธ์การคลีนลบข้อความจริงบนหน้า 38</span> <span class="badge">Inpainting Cleaned</span></h2>
+    <div class="desc">
+      <p>ผลลัพธ์การคลีนผ่าน Inpainting Pipeline ด้วยโมเดล Anime-LaMa: ข้อความบรรยายแนวตั้งและเสียงประกอบถูกลบออกเรียบเนียน โดยที่พื้นหลัง Screentone และลายเส้นตัวละครยังคงอยู่ครบถ้วนสมบูรณ์</p>
+    </div>
+    <div class="img-container">
+      <img src="clean_page_38.jpg" alt="ผลลัพธ์คลีนหน้า 38">
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span>3. หน้า 34 (Page 34)</span> <span class="badge">+10 บล็อกที่กู้คืนได้</span></h2>
+    <div class="desc">
+      <p>🔴 <strong>ซ้าย (Before):</strong> ตรวจจับได้ 24 บล็อก เสียงคราง <code>「じくじく」</code> และหัวใจรอบตัวละครหลุดไปหลายจุด</p>
+      <p>🟢 <strong>ขวา (After):</strong> ตรวจจับได้เพิ่มเป็น <strong>34 บล็อก (+10 บล็อก)</strong> เก็บเสียงครางและประกายอารมณ์รอบตัวละครได้ครบทั้งหมด</p>
+    </div>
+    <div class="img-container">
+      <img src="compare_page_34.jpg" alt="เปรียบเทียบหน้า 34">
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span>4. หน้า 2 (Page 2)</span> <span class="badge">ข้อความบนหน้าจอมือถือ</span></h2>
+    <div class="desc">
+      <p>🔴 <strong>ซ้าย (Before):</strong> ตัวเลขนับถอยหลัง <code>「0!」</code> บนหน้าจอมือถือหลุดหาย</p>
+      <p>🟢 <strong>ขวา (After):</strong> กล่องสีเขียวตรวจจับ <code>「0!」</code> บนหน้าจอมือถือได้เต็มกรอบ</p>
+    </div>
+    <div class="img-container">
+      <img src="compare_page_2.jpg" alt="เปรียบเทียบหน้า 2">
+    </div>
+  </div>
+</body>
+</html>

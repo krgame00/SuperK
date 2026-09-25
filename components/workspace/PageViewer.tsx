@@ -390,7 +390,9 @@ export function PageViewer({
                   src={
                     workspaceLayer === "original"
                       ? currentPageItem.url
-                      : currentCleaningResult?.cleanUrl ?? currentPageItem.url
+                      : currentCleaningResult?.cleanUrl ??
+                        cleaningResultsByPage.get(currentPageItem.url)?.cleanUrl ??
+                        currentPageItem.url
                   }
                   alt={`หน้า ${currentPage + 1}: ${currentPageItem.name}`}
                   title={currentPageItem.name}

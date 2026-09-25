@@ -379,4 +379,25 @@ describe("workspace clean-then-translate integration", () => {
     fireEvent.click(screen.getByTitle(/ต้นฉบับ|คำแปล/));
     expect(toolbar().getAttribute("data-layer")).toBe("translated");
   });
+
+  test("renders tools menu on mobile header and inside mobile drawer when pages are present", async () => {
+    await renderRestoredWorkspace();
+
+    const mobileHeader = document.querySelector<HTMLElement>("[data-workspace-header-mobile]");
+    expect(mobileHeader).toBeInTheDocument();
+    if (!mobileHeader) throw new Error("mobileHeader not found");
+
+    // "เครื่องมือ" dropdown must exist in mobile header
+    const toolsBtn = within(mobileHeader).getByRole("button", { name: "เครื่องมือ" });
+    expect(toolsBtn).toBeInTheDocument();
+
+    // Open mobile menu
+    const menuBtn = within(mobileHeader).getByRole("button", { name: /เปิดเมนู/i });
+    fireEvent.click(menuBtn);
+
+    // Tools section must exist in mobile drawer
+    expect(screen.getByRole("button", { name: /แปลหน้านี้ใหม่/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /คลีนข้อความใหม่/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /แก้ Mask/i })).toBeInTheDocument();
+  });
 });

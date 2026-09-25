@@ -36,4 +36,38 @@ describe("getWorkspacePrimaryAction", () => {
       cancellable: true,
     }).cancellable).toBe(true);
   });
+
+  // These tests verify the batch-mode inputs that page.tsx now computes
+  // from translateAllProgress.status:
+  test("batch cleaning phase shows กำลังคลีน", () => {
+    const result = getWorkspacePrimaryAction({
+      ...ready,
+      isCleaning: true,       // batchIsCleaning = true
+      isTranslating: false,   // single-page is false during batch
+      workflowPhase: "cleaning",
+      cancellable: true,
+    });
+    expect(result).toMatchObject({
+      kind: "busy",
+      label: "กำลังคลีน…",
+      disabled: true,
+      cancellable: true,
+    });
+  });
+
+  test("batch translating phase shows กำลังแปล", () => {
+    const result = getWorkspacePrimaryAction({
+      ...ready,
+      isCleaning: false,       // cleaningProgress cleared, batch not in cleaning
+      isTranslating: true,     // batchIsTranslating = true
+      workflowPhase: "translating",
+      cancellable: true,
+    });
+    expect(result).toMatchObject({
+      kind: "busy",
+      label: "กำลังแปล…",
+      disabled: true,
+      cancellable: true,
+    });
+  });
 });

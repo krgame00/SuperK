@@ -16,6 +16,13 @@ vi.mock("@/lib/cleaning/client", async (importOriginal) => {
 
 vi.mock("@/lib/projectStore", () => ({
   deleteAsset: vi.fn().mockResolvedValue(undefined),
+  loadCleaningResultAssets: vi.fn().mockResolvedValue({
+    cleanBlob: null,
+    maskBlob: null,
+    reviewMaskBlob: null,
+    protectedMaskBlob: null,
+  }),
+  saveCleaningAssets: vi.fn().mockResolvedValue({}),
   loadCleaningResultsMetadata: vi.fn(),
   saveCleaningResultMetadata: vi.fn(),
 }));

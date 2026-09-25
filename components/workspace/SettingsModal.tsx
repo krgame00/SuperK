@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { type GlossaryEntry } from "@/lib/translation/glossary";
-import { Plus, Trash2, BookText, Flame, X, ChevronDown, Download, Folder, Search, Check, Sparkles } from "lucide-react";
+import { MANUAL_IMAGE_MODEL_IDS } from "@/lib/translation/imageModelChoices";
+import { Plus, Trash2, BookText, Flame, X, ChevronDown, Download, Folder, Search, Check, Sparkles, Power, AlertTriangle, Loader2 } from "lucide-react";
 import {
   getAskExportDirectory,
   setAskExportDirectory,
@@ -11,6 +12,8 @@ import {
   clearRememberedDirectory,
   openRememberedDesktopDirectory,
   isDesktopMode,
+  isDirectoryPickerSupported,
+  isBraveBrowser,
 } from "@/lib/export/saveLocation";
 
 export interface WorkspaceTextStyle {
@@ -174,6 +177,10 @@ export function SettingsModal({
   const [rememberedDirName, setRememberedDirName] = useState(
     () => getRememberedDirectoryName(),
   );
+  const [isDirSupported, setIsDirSupported] = useState(
+    () => isDirectoryPickerSupported(),
+  );
+  const [isBrave, setIsBrave] = useState(false);
 
   const loadGeminiCatalog = useCallback(async (force: boolean) => {
     setCatalogStatus("loading");
@@ -185,7 +192,9 @@ export function SettingsModal({
       });
       if (!response.ok) throw new Error(`Catalog HTTP ${response.status}`);
       const nextCatalog = (await response.json()) as GeminiCatalogView;
-      setGeminiCatalog(nextCatalog);
+      if (nextCatalog && Array.isArray(nextCatalog.models)) {
+        setGeminiCatalog(nextCatalog);
+      }
       setCatalogStatus("idle");
     } catch {
       setCatalogStatus("error");
@@ -201,8 +210,12 @@ export function SettingsModal({
     const refreshFrame = window.requestAnimationFrame(() => {
       setRememberedDirName(getRememberedDirectoryName());
       setAskExportDirectoryState(getAskExportDirectory());
+      setIsDirSupported(isDirectoryPickerSupported());
       setDraftTextColor(textStyle.textColor || "#000000");
       setDraftTextOutline(textStyle.textOutline || "#ffffff");
+    });
+    void isBraveBrowser().then((brave) => {
+      if (brave) setIsBrave(true);
     });
     void fetch("/api/extension/pair")
       .then((res) => res.json())
@@ -265,6 +278,21 @@ export function SettingsModal({
       toast.error("ล้างแคชเซิร์ฟเวอร์ไม่สำเร็จ (เซิร์ฟเวอร์คลีนอาจไม่ได้เปิด)");
     } finally {
       setIsPurging(false);
+    }
+  };
+
+  const [isConfirmingShutdown, setIsConfirmingShutdown] = useState(false);
+  const [isShuttingDown, setIsShuttingDown] = useState(false);
+  const [isShutdownComplete, setIsShutdownComplete] = useState(false);
+
+  const handleShutdownSystem = async () => {
+    setIsShuttingDown(true);
+    try {
+      await fetch("/api/system/shutdown", { method: "POST" });
+      setIsShutdownComplete(true);
+    } catch {
+      // In case server dropped connection immediately on exit, treat as success
+      setIsShutdownComplete(true);
     }
   };
 
@@ -359,9 +387,18 @@ export function SettingsModal({
     onGlossaryChange?.(updated);
   };
 
-  const usableModels = (geminiCatalog?.models ?? []).filter(
-    (model) => model.availabilityCount > 0 && model.compatibility.image !== "incompatible",
-  );
+  const usableModels =
+    geminiCatalog &&
+    !geminiCatalog.stale &&
+    geminiCatalog.source !== "bootstrap" &&
+    Array.isArray(geminiCatalog.models)
+      ? geminiCatalog.models.filter((model) =>
+          MANUAL_IMAGE_MODEL_IDS.has(model.id) &&
+          model.availabilityCount > 0 &&
+          model.compatibility.image !== "incompatible" &&
+          (model.status === "ready" || model.status === "partial_quota"),
+        )
+      : [];
   const selectedCatalogModel = usableModels.find((model) => model.id === modelPreference);
   const selectedModelNeedsAutoRecovery =
     modelPreference !== "auto" &&
@@ -834,7 +871,7 @@ export function SettingsModal({
                   : catalogStatus === "error"
                     ? "โหลดรายการโมเดลไม่ได้ ระบบจะใช้ข้อมูลแคชหรือโหมดกู้คืนเมื่อแปล"
                     : geminiCatalog
-                      ? `Credentials ${geminiCatalog.validKeys}/${geminiCatalog.totalKeys} valid · ${usableModels.length} ใช้ได้ จาก ${geminiCatalog.models.length} โมเดล${geminiCatalog.stale ? " · ข้อมูลแคช" : ""}`
+                      ? `Credentials ${geminiCatalog.validKeys}/${geminiCatalog.totalKeys} valid · ${usableModels.length} เลือกได้ จาก ${geminiCatalog.models.length} โมเดล${geminiCatalog.stale ? " · ข้อมูลแคช" : ""}`
                       : "รายการโมเดลจะถูกค้นหาจาก Gemini API Key ที่ใช้งานจริง"}
               </span>
             </div>
@@ -1056,6 +1093,16 @@ export function SettingsModal({
                 aria-label="เปิด/ปิดการบันทึกลงโฟลเดอร์ที่กำหนด"
                 onClick={() => {
                   const next = !askExportDirectory;
+                  if (next && !isDirSupported) {
+                    import("react-hot-toast").then((m) =>
+                      m.default(
+                        isBrave
+                          ? "เบราว์เซอร์ Brave ปิดการเลือกโฟลเดอร์ไว้เป็นค่าเริ่มต้น (เปิดได้ที่ brave://flags/#file-system-access-api) หากไม่เปิด SuperK จะบันทึกลง Downloads ปกติ"
+                          : "เบราว์เซอร์นี้ยังไม่รองรับการจำโฟลเดอร์ตรง ระบบจะดาวน์โหลดลงโฟลเดอร์ Downloads ให้ตามปกติ",
+                        { duration: 5000, icon: "ℹ️" },
+                      ),
+                    );
+                  }
                   setAskExportDirectory(next);
                   setAskExportDirectoryState(next);
                 }}
@@ -1072,59 +1119,136 @@ export function SettingsModal({
             </div>
 
             {askExportDirectory && (
-              <div className="mt-2.5 flex items-center justify-between rounded-lg bg-surface border border-surface-hover px-3 py-2 text-xs">
-                <div className="flex items-center gap-2 min-w-0 pr-2">
-                  <Folder className="h-4 w-4 shrink-0 text-primary" />
-                  <div className="min-w-0 truncate">
-                    <span className="text-[10px] text-muted block">โฟลเดอร์ที่จำไว้:</span>
-                    <span
-                      className="font-medium text-foreground truncate block font-mono text-[11px]"
-                      title={rememberedDirName}
-                    >
-                      {rememberedDirName || "ยังไม่ได้เลือก (จะถามครั้งแรกตอน Export หรือกดเลือกตอนนี้ได้เลย)"}
-                    </span>
+              <>
+                {!isDirSupported && (
+                  <div className="mt-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-200">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
+                      <div className="space-y-1">
+                        <p className="font-semibold text-amber-300">
+                          {isBrave
+                            ? "เบราว์เซอร์ Brave ปิดการเข้าถึงโฟลเดอร์ไว้เป็นค่าเริ่มต้น"
+                            : "เบราว์เซอร์นี้ไม่รองรับการเลือกโฟลเดอร์ตรง (File System Access API)"}
+                        </p>
+                        <p className="text-[11px] leading-relaxed text-amber-200/90">
+                          {isBrave ? (
+                            <>
+                              Brave ปิดฟังก์ชันนี้เพื่อความปลอดภัย หากต้องการให้ SuperK จำโฟลเดอร์ ให้พิมพ์{" "}
+                              <code className="rounded bg-black/40 px-1 py-0.5 font-mono text-[10px] text-amber-300 select-all">
+                                brave://flags/#file-system-access-api
+                              </code>{" "}
+                              ในช่อง URL แล้วเปลี่ยนเป็น <strong>Enabled</strong> จากนั้นกด Relaunch เบราว์เซอร์
+                            </>
+                          ) : (
+                            "ฟังก์ชันจำโฟลเดอร์รองรับเฉพาะ Chrome และ Edge (หรือ Brave ที่เปิด flag) หากไม่ได้เปิด ระบบจะดาวน์โหลดไฟล์ลงโฟลเดอร์ Downloads อัตโนมัติ"
+                          )}
+                        </p>
+                        <div className="pt-1 flex flex-wrap items-center gap-2">
+                          {isBrave && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  await navigator.clipboard.writeText("brave://flags/#file-system-access-api");
+                                  const toast = (await import("react-hot-toast")).default;
+                                  toast.success("คัดลอกลิงก์แล้ว! นำไปวางในช่อง URL ของ Brave ได้เลย");
+                                } catch {
+                                  // ignore
+                                }
+                              }}
+                              className="inline-flex items-center gap-1 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 px-2 py-0.5 text-[10px] font-medium text-amber-200 transition-colors cursor-pointer"
+                            >
+                              📋 คัดลอกลิงก์ตั้งค่า Brave
+                            </button>
+                          )}
+                          <span className="text-[10px] text-amber-300/70">
+                            (ยังสามารถกดปุ่ม Export เพื่อดาวน์โหลดไฟล์ได้ตามปกติ)
+                          </span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  {isDesktopMode() && rememberedDirName && (
+                )}
+
+                <div className="mt-2.5 flex items-center justify-between rounded-lg bg-surface border border-surface-hover px-3 py-2 text-xs">
+                  <div className="flex items-center gap-2 min-w-0 pr-2">
+                    <Folder className="h-4 w-4 shrink-0 text-primary" />
+                    <div className="min-w-0 truncate">
+                      <span className="text-[10px] text-muted block">โฟลเดอร์ที่จำไว้:</span>
+                      <span
+                        className="font-medium text-foreground truncate block font-mono text-[11px]"
+                        title={rememberedDirName}
+                      >
+                        {rememberedDirName ||
+                          (!isDirSupported
+                            ? isBrave
+                              ? "ยังไม่ได้เลือก (Brave ต้องเปิด flag ก่อน หรือดาวน์โหลดลง Downloads ปกติ)"
+                              : "ยังไม่ได้เลือก (เบราว์เซอร์นี้ไม่รองรับ จะดาวน์โหลดลง Downloads ปกติ)"
+                            : "ยังไม่ได้เลือก (จะถามครั้งแรกตอน Export หรือกดเลือกตอนนี้ได้เลย)")}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {isDesktopMode() && rememberedDirName && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await openRememberedDesktopDirectory();
+                        }}
+                        className="rounded bg-surface-hover hover:bg-surface-active px-2.5 py-1 text-[11px] font-medium text-foreground hover:text-primary transition-colors cursor-pointer"
+                        title="เปิดโฟลเดอร์นี้ใน File Explorer"
+                      >
+                        เปิดโฟลเดอร์
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={async () => {
-                        await openRememberedDesktopDirectory();
+                        if (!isDirectoryPickerSupported()) {
+                          const toast = (await import("react-hot-toast")).default;
+                          toast.error(
+                            isBrave
+                              ? "เบราว์เซอร์ Brave ปิดการเลือกโฟลเดอร์ไว้เป็นค่าเริ่มต้น เปิดได้ที่ brave://flags/#file-system-access-api หรือใช้ Chrome/Edge"
+                              : "เบราว์เซอร์นี้ไม่รองรับการจำโฟลเดอร์ปลายทาง (รองรับ Chrome/Edge)",
+                            { duration: 5000 },
+                          );
+                          return;
+                        }
+                        try {
+                          const handle = await pickAndRememberExportDirectory();
+                          if (handle) {
+                            setRememberedDirName(handle.name || "โฟลเดอร์ที่เลือก");
+                            const toast = (await import("react-hot-toast")).default;
+                            toast.success(`จำตำแหน่งโฟลเดอร์ "${handle.name || "ที่เลือก"}" แล้ว`);
+                          }
+                        } catch (err: any) {
+                          if (err?.name !== "AbortError") {
+                            const toast = (await import("react-hot-toast")).default;
+                            toast.error(`ไม่สามารถเปิดโฟลเดอร์ได้: ${err?.message || "เกิดข้อผิดพลาด"}`);
+                          }
+                        }
                       }}
                       className="rounded bg-surface-hover hover:bg-surface-active px-2.5 py-1 text-[11px] font-medium text-foreground hover:text-primary transition-colors cursor-pointer"
-                      title="เปิดโฟลเดอร์นี้ใน File Explorer"
+                      title={!isDirSupported ? (isBrave ? "Brave ต้องเปิด flag ก่อน" : "เบราว์เซอร์นี้ไม่รองรับ") : undefined}
                     >
-                      เปิดโฟลเดอร์
+                      {rememberedDirName ? "เปลี่ยนโฟลเดอร์" : "เลือกโฟลเดอร์"}
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const handle = await pickAndRememberExportDirectory();
-                      if (handle) {
-                        setRememberedDirName(handle.name || "โฟลเดอร์ที่เลือก");
-                      }
-                    }}
-                    className="rounded bg-surface-hover hover:bg-surface-active px-2.5 py-1 text-[11px] font-medium text-foreground hover:text-primary transition-colors cursor-pointer"
-                  >
-                    {rememberedDirName ? "เปลี่ยนโฟลเดอร์" : "เลือกโฟลเดอร์"}
-                  </button>
-                  {rememberedDirName && (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        await clearRememberedDirectory();
-                        setRememberedDirName("");
-                      }}
-                      className="rounded hover:bg-surface-hover px-2 py-1 text-[11px] text-muted hover:text-red-400 transition-colors cursor-pointer"
-                      title="ล้างตำแหน่งโฟลเดอร์ที่จำไว้"
-                    >
-                      ล้างค่า
-                    </button>
-                  )}
+                    {rememberedDirName && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await clearRememberedDirectory();
+                          setRememberedDirName("");
+                        }}
+                        className="rounded hover:bg-surface-hover px-2 py-1 text-[11px] text-muted hover:text-red-400 transition-colors cursor-pointer"
+                        title="ล้างตำแหน่งโฟลเดอร์ที่จำไว้"
+                      >
+                        ล้างค่า
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
+              </>
             )}
           </div>
 
@@ -1160,8 +1284,94 @@ export function SettingsModal({
               </div>
             </div>
           </div>
+          <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Power className="w-4 h-4 text-red-400" />
+                <span className="text-xs font-semibold text-red-400">
+                  จัดการระบบและการปิดโปรแกรม (System Shutdown)
+                </span>
+              </div>
+              <span className="text-[10px] bg-red-500/20 text-red-300 px-2 py-0.5 rounded-full font-medium">
+                คืน RAM & CPU
+              </span>
+            </div>
+
+            <p className="text-[11px] text-muted leading-relaxed">
+              เมื่อใช้งานเสร็จแล้ว สามารถสั่งปิดการทำงานของ Background Service (Python OCR และ Next.js) ทั้งหมดได้ทันทีเพื่อประหยัดทรัพยากรเครื่อง
+            </p>
+
+            {isConfirmingShutdown ? (
+              <div className="rounded-lg bg-surface border border-red-500/40 p-3 space-y-2.5 animate-in fade-in duration-150">
+                <div className="flex items-start gap-2 text-xs text-foreground">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <span>ยืนยันที่จะปิดการทำงานของระบบ SuperK ทั้งหมดใช่หรือไม่?</span>
+                </div>
+                <div className="flex items-center gap-2 justify-end">
+                  <button
+                    type="button"
+                    disabled={isShuttingDown}
+                    onClick={() => setIsConfirmingShutdown(false)}
+                    className="rounded px-3 py-1.5 text-xs text-muted hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
+                  >
+                    ยกเลิก
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isShuttingDown}
+                    onClick={handleShutdownSystem}
+                    className="rounded bg-red-500 hover:bg-red-600 text-white font-semibold px-3 py-1.5 text-xs transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  >
+                    {isShuttingDown ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>กำลังปิดระบบ...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Power className="w-3.5 h-3.5" />
+                        <span>ยืนยันปิดระบบ</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsConfirmingShutdown(true)}
+                className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/30 text-xs font-semibold transition-all cursor-pointer"
+              >
+                <Power className="w-4 h-4" />
+                <span>ปิดระบบ SuperK ทั้งหมด (Shutdown)</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
+
+      {isShutdownComplete && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-in fade-in duration-200">
+          <div className="max-w-md w-full rounded-2xl bg-surface border border-surface-hover p-6 text-center space-y-4 shadow-2xl">
+            <div className="w-14 h-14 mx-auto rounded-full bg-red-500/15 text-red-400 flex items-center justify-center">
+              <Power className="w-7 h-7" />
+            </div>
+            <h3 className="text-lg font-bold text-foreground">ปิดระบบ SuperK เรียบร้อยแล้ว</h3>
+            <p className="text-sm text-muted leading-relaxed">
+              ระบบได้สั่งหยุดการทำงานของทั้ง Backend และ Frontend ในพื้นหลังเพื่อคืน RAM และ CPU ให้เครื่องเรียบร้อยแล้วครับ
+            </p>
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => window.close()}
+                className="w-full py-2.5 px-4 rounded-xl bg-surface-hover hover:bg-surface-active text-foreground font-semibold text-sm transition-colors cursor-pointer border border-border"
+              >
+                ปิดแท็บนี้ (Close Tab)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

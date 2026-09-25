@@ -3,7 +3,7 @@ import path from "path";
 import { execSync } from "child_process";
 
 const rootDir = process.cwd();
-const targetBat = path.join(rootDir, "start-web.bat");
+const launcherVbs = path.join(rootDir, "SuperK-Launcher.vbs");
 const userProfile = process.env.USERPROFILE || "C:\\Users\\PC";
 const desktopDir = path.join(userProfile, "Desktop");
 const shortcutPath = path.join(desktopDir, "SuperK Manga Translator.lnk");
@@ -27,17 +27,18 @@ if (fs.existsSync(staleShortcut)) {
   }
 }
 
-// Temporary PowerShell script to guarantee 100% reliable execution
+// Temporary PowerShell script to create Desktop shortcut targeting wscript.exe
 const tempPs1 = path.join(rootDir, ".scratch", "make-shortcut.ps1");
 fs.mkdirSync(path.dirname(tempPs1), { recursive: true });
 
 const psScript = `
+$wscriptExe = (Get-Command wscript.exe).Source
 $sh = New-Object -ComObject WScript.Shell
 $sc = $sh.CreateShortcut('${shortcutPath}')
-$sc.TargetPath = '${targetBat}'
-$sc.Arguments = ''
+$sc.TargetPath = $wscriptExe
+$sc.Arguments = '"${launcherVbs}"'
 $sc.WorkingDirectory = '${rootDir}'
-$sc.Description = 'SuperK Manga Translator - Web App Launcher'
+$sc.Description = 'SuperK Manga Translator - Silent Background Launcher'
 if (Test-Path '${iconPath}') {
     $sc.IconLocation = '${iconPath},0'
 }
@@ -52,8 +53,10 @@ try {
   });
 } finally {
   if (fs.existsSync(tempPs1)) {
-    fs.unlinkSync(tempPs1);
+    try {
+      fs.unlinkSync(tempPs1);
+    } catch {}
   }
 }
 
-console.log("Successfully created/updated Desktop Shortcut pointing to start-web.bat!");
+console.log("Successfully created/updated Desktop Shortcut targeting silent launcher!");

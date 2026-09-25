@@ -32,11 +32,19 @@ export async function createCleaningJob(file: Blob): Promise<CleaningJob> {
 
   const ext = filename.split(".").pop()?.toLowerCase();
   const fallbackMime =
-    ext === "jpg" || ext === "jpeg"
+    ext === "jpg" || ext === "jpeg" || ext === "jfif"
       ? "image/jpeg"
       : ext === "webp"
         ? "image/webp"
-        : "image/png";
+        : ext === "avif"
+          ? "image/avif"
+          : ext === "bmp"
+            ? "image/bmp"
+            : ext === "tiff" || ext === "tif"
+              ? "image/tiff"
+              : ext === "gif"
+                ? "image/gif"
+                : "image/png";
 
   const resolvedMime =
     file.type && file.type !== "application/octet-stream"

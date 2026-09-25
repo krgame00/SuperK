@@ -68,7 +68,8 @@ describe("SettingsModal Export Directory Settings", () => {
     });
   });
 
-  it("allows changing folder via pickAndRememberExportDirectory", async () => {
+  it("allows changing folder via pickAndRememberExportDirectory when supported", async () => {
+    vi.spyOn(saveLocation, "isDirectoryPickerSupported").mockReturnValue(true);
     vi.spyOn(saveLocation, "getAskExportDirectory").mockReturnValue(true);
     vi.spyOn(saveLocation, "getRememberedDirectoryName").mockReturnValue("");
     const pickSpy = vi.spyOn(saveLocation, "pickAndRememberExportDirectory").mockResolvedValue({
@@ -85,6 +86,22 @@ describe("SettingsModal Export Directory Settings", () => {
     await waitFor(() => {
       expect(screen.getByText("NewFolder2026")).toBeInTheDocument();
     });
+  });
+
+  it("shows warning banner and prevents picker when directory picker is unsupported", async () => {
+    vi.spyOn(saveLocation, "isDirectoryPickerSupported").mockReturnValue(false);
+    vi.spyOn(saveLocation, "getAskExportDirectory").mockReturnValue(true);
+    vi.spyOn(saveLocation, "getRememberedDirectoryName").mockReturnValue("");
+    const pickSpy = vi.spyOn(saveLocation, "pickAndRememberExportDirectory");
+
+    render(<SettingsModal {...defaultProps} />);
+
+    expect(screen.getByText(/ไม่รองรับการเลือกโฟลเดอร์ตรง/i)).toBeInTheDocument();
+
+    const pickBtn = screen.getByRole("button", { name: /เลือกโฟลเดอร์/i });
+    fireEvent.click(pickBtn);
+
+    expect(pickSpy).not.toHaveBeenCalled();
   });
 
   it("clears remembered directory when clicking reset button", async () => {

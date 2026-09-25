@@ -77,12 +77,11 @@ function cloneStandardShadow(): TextShadowStyle {
 
 export function shouldUseMonochromeMangaStyle(
   profile: TextStyleProfile,
-  category: TextStyleCategory,
+  _category: TextStyleCategory,
 ): boolean {
   return (
     profile.isMonochromePage === true &&
-    (profile.monochromeConfidence ?? 0) >= 0.85 &&
-    (category === "dialogue" || category === "narration")
+    (profile.monochromeConfidence ?? 0) >= 0.85
   );
 }
 
@@ -547,25 +546,14 @@ export function resolveBubbleTextStyle(
     return resolvedFromProfile(profile, globalStyle);
   }
 
-  // Monochrome Manga Text Style Policy:
-  // Confirmed B&W dialogue/narration always uses black fill with no shadow/glow.
-  // A thin white outline is added only when the local grayscale background is
-  // dark or strongly mixed, preserving readability without turning the fill white.
+  // Confirmed monochrome pages use pure black text for every automatic category.
   if (shouldUseMonochromeMangaStyle(profile, category)) {
-    const bgLum = profile.backgroundLuminance;
-    const samples = profile.backgroundLuminanceSamples ?? [];
-    const mixed = samples.length > 0 && Math.max(...samples) - Math.min(...samples) >= 90;
-    const needsOutline = mixed || (bgLum !== undefined && bgLum < 155);
-    const outlineWidthRatio = needsOutline
-      ? Math.min(0.08, Math.max(0.04, resolveOutlineRatio(profile, true)))
-      : 0;
-
     return {
       textColor: "#000000",
       textOutline: "#ffffff",
-      outlineWidth: needsOutline ? Math.min(0.75, profile.outlineWidth ?? 0.75) : 0,
-      hasOutline: needsOutline,
-      outlineWidthRatio,
+      outlineWidth: 0,
+      hasOutline: false,
+      outlineWidthRatio: 0,
       opacity: profile.opacity ?? 1.0,
       source: profile.source ?? "auto",
       fillConfidence: fillConf,
@@ -577,7 +565,7 @@ export function resolveBubbleTextStyle(
       backgroundLuminance: profile.backgroundLuminance,
       backgroundLuminanceSamples: profile.backgroundLuminanceSamples,
       backgroundColor: profile.backgroundColor,
-      isAdaptiveReadable: needsOutline || undefined,
+      isAdaptiveReadable: false,
       reviewRequired: profile.reviewRequired ? true : undefined,
     };
   }

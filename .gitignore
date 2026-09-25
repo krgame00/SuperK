@@ -67,6 +67,13 @@ next-env.d.ts
 patch-probe.tmp
 original_content.js.txt
 /scratch/
+/.scratch/
+
+# Local render and test artifacts
+/EP1_AutoRender/
+/public/test_results/
+/public/translated_finish_firefly/
+/tools/
 
 # Hermes plans
 /.hermes/

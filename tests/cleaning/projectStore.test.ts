@@ -8,16 +8,96 @@ import {
   dataUrlToBlob,
   deleteAsset,
   loadAsset,
+  loadCleaningResultAssets,
   loadCleaningResultsMetadata,
   loadProjectSession,
   purgeOrphanAssets,
   saveAsset,
+  saveCleaningAssets,
   saveCleaningResultMetadata,
   saveProjectSession,
 } from "@/lib/projectStore";
 
 beforeEach(async () => {
   await clearProjectSession();
+});
+
+test("CBZ session stores short page references while restoring source images and bubbles", async () => {
+  const pages = Array.from({ length: 5 }, (_, index) => ({
+    id: `cbz-page-${index}`,
+    name: `page-${index}.jpg`,
+    url: `data:image/jpeg;base64,${btoa(`source image ${index}`)}`,
+  }));
+  const bubbleCache = new Map([[pages[2].url, [{ box: [1, 2, 3, 4], t: "saved text" }]]]);
+
+  await saveProjectSession({
+    pages,
+    currentPage: 2,
+    bubbleCache,
+    translatedImageCache: new Map(),
+  });
+
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open("SuperKMangaTranslatorDB", 3);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  const tx = db.transaction(["project_session", "assets"], "readonly");
+  const session = await new Promise<{ pages: { url: string }[]; bubbleCache: [string, unknown[]][] }>((resolve, reject) => {
+    const request = tx.objectStore("project_session").get("latest_session");
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  const assetKeys = await new Promise<IDBValidKey[]>((resolve, reject) => {
+    const request = tx.objectStore("assets").getAllKeys();
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  db.close();
+
+  expect(session.pages.every((page) => page.url.length < 100)).toBe(true);
+  expect(session.bubbleCache[0][0]).toBe("cbz-page-2");
+  expect(assetKeys).toEqual(expect.arrayContaining(pages.map((page) => `source_${page.id}`)));
+
+  const restored = await loadProjectSession();
+  expect(restored?.pages.map((page) => page.url)).toEqual(pages.map((page) => page.url));
+  expect(restored?.bubbleCache.get(pages[2].url)?.[0].t).toBe("saved text");
+});
+
+test("keeps an evicted translated render linked after compact source migration", async () => {
+  const source = "data:image/png;base64,c291cmNl";
+  const rendered = "data:image/png;base64,cmVuZGVyZWQ=";
+  const pages = [{ id: "page-stable-1", url: source, name: "page.png" }];
+  const bubbles = new Map([[source, [{ t: "translation" }]]]);
+
+  await saveProjectSession({
+    pages,
+    currentPage: 0,
+    bubbleCache: bubbles,
+    translatedImageCache: new Map([[source, rendered]]),
+  });
+  await saveProjectSession({
+    pages,
+    currentPage: 0,
+    bubbleCache: bubbles,
+    translatedImageCache: new Map(),
+  }, { dirtyPageUrls: new Set() });
+
+  const restored = await loadProjectSession();
+  expect(restored?.translatedImageCache.get(source)).toBe(rendered);
+  expect(restored?.bubbleCache.get(source)?.[0].t).toBe("translation");
+});
+
+test("keeps a malformed legacy source URL rather than making an unreadable asset reference", async () => {
+  const malformed = "data:image/png;base64,%%%";
+  await saveProjectSession({
+    pages: [{ id: "invalid-page", url: malformed, name: "invalid.png" }],
+    currentPage: 0,
+    bubbleCache: new Map(),
+    translatedImageCache: new Map(),
+  });
+
+  expect((await loadProjectSession())?.pages[0].url).toBe(malformed);
 });
 
 test("persists cleaning metadata without object URLs", async () => {
@@ -369,3 +449,52 @@ test("flags legacy sessions containing blob URLs as unrecoverable sources", asyn
   expect(restored?.bubbleCache.has(deadBlobUrl)).toBe(true);
 });
 
+test("saves and loads cleaning image assets and metadata from IndexedDB", async () => {
+  const pageUrl = "http://example.com/manga-page-1.png";
+  const cleanBlob = new Blob(["clean-image-binary-data"], { type: "image/png" });
+  const maskBlob = new Blob(["mask-binary-data"], { type: "image/png" });
+
+  const assetIds = await saveCleaningAssets(pageUrl, {
+    cleanBlob,
+    maskBlob,
+  });
+
+  expect(assetIds.cleanAssetId).toBe(`clean_${encodeURIComponent(pageUrl)}`);
+  expect(assetIds.maskAssetId).toBe(`mask_${encodeURIComponent(pageUrl)}`);
+
+  await saveCleaningResultMetadata({
+    pageUrl,
+    sourceHash: "hash-1234",
+    jobId: "job-cleanup-1",
+    regions: [],
+    updatedAt: Date.now(),
+    width: 800,
+    height: 1200,
+    ...assetIds,
+  });
+
+  const metadataMap = await loadCleaningResultsMetadata();
+  const metadata = metadataMap.get(pageUrl);
+  expect(metadata).toBeDefined();
+  expect(metadata?.cleanAssetId).toBe(assetIds.cleanAssetId);
+
+  const loadedAssets = await loadCleaningResultAssets(metadata!);
+  expect(loadedAssets.cleanBlob).not.toBeNull();
+  expect(loadedAssets.cleanBlob).toBeInstanceOf(Blob);
+  expect(loadedAssets.cleanBlob?.type).toBe("image/png");
+  expect(loadedAssets.maskBlob).not.toBeNull();
+  expect(loadedAssets.maskBlob).toBeInstanceOf(Blob);
+  expect(loadedAssets.maskBlob?.type).toBe("image/png");
+});
+
+test("uses a short stable asset key for cleaned CBZ pages", async () => {
+  const pageUrl = `data:image/jpeg;base64,${"a".repeat(4096)}`;
+  const ids = await saveCleaningAssets(
+    pageUrl,
+    { cleanBlob: new Blob(["clean"], { type: "image/png" }) },
+    "cbz-page-42",
+  );
+
+  expect(ids.cleanAssetId).toBe("clean_cbz-page-42");
+  expect(await loadAsset(ids.cleanAssetId!)).not.toBeNull();
+});

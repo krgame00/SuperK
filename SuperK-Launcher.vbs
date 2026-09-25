@@ -1,10 +1,10 @@
 Option Explicit
 Dim WshShell, FSO, scriptDir, uvicornExe, fCache
-Dim isFrontendRunning, isBackendRunning, attempts, maxAttempts, url, browserPath
+Dim isFrontendRunning, isBackendRunning, attempts, maxAttempts, url, browserExe
 
 Set WshShell = CreateObject("WScript.Shell")
 Set FSO = CreateObject("Scripting.FileSystemObject")
-scriptDir = FSO.GetParentFolderName(WScript.ScriptFullName)
+scriptDir = FSO.GetParentFolderName(FSO.GetAbsolutePathName(WScript.ScriptFullName))
 
 ' 1. Cache setup if drive F:\ exists
 If FSO.FolderExists("F:\") Then
@@ -28,41 +28,59 @@ If Not FSO.FileExists(uvicornExe) Then
     uvicornExe = scriptDir & "\ocr-service\.venv\Scripts\uvicorn.exe"
 End If
 
-' 3. Helper to check URL health
+' 3. Robust helper to check URL health
 Function CheckUrl(testUrl)
+    CheckUrl = False
     On Error Resume Next
-    Dim xmlHttp
+    Dim xmlHttp, errNum, status
     Set xmlHttp = CreateObject("MSXML2.ServerXMLHTTP.6.0")
     xmlHttp.setTimeouts 800, 800, 800, 800
     xmlHttp.Open "GET", testUrl, False
     xmlHttp.Send
-    If Err.Number = 0 And xmlHttp.Status < 400 Then
-        CheckUrl = True
-    Else
-        CheckUrl = False
+    errNum = Err.Number
+    If errNum = 0 Then
+        status = xmlHttp.Status
+        If status < 400 Then
+            CheckUrl = True
+        End If
     End If
     Set xmlHttp = Nothing
     On Error GoTo 0
 End Function
 
+' 4. Subroutine to spawn detached background process with zero window popup (SW_HIDE = 0)
+Sub StartHiddenProcess(cmdLine, workDir)
+    On Error Resume Next
+    Dim objWMIService, objStartup, objConfig, objProcess, intPID
+    Set objWMIService = GetObject("winmgmts:\\.\root\cimv2")
+    Set objStartup = objWMIService.Get("Win32_ProcessStartup")
+    Set objConfig = objStartup.SpawnInstance_
+    objConfig.ShowWindow = 0
+    Set objProcess = objWMIService.Get("Win32_Process")
+    objProcess.Create cmdLine, workDir, objConfig, intPID
+    Set objProcess = Nothing
+    Set objConfig = Nothing
+    Set objStartup = Nothing
+    Set objWMIService = Nothing
+    On Error GoTo 0
+End Sub
+
 isFrontendRunning = CheckUrl("http://127.0.0.1:3000")
 isBackendRunning = CheckUrl("http://127.0.0.1:8765/health")
 
-' 4. Start missing services silently
+' 5. Start missing services silently in background via WMI
 If Not isBackendRunning Then
-    WshShell.CurrentDirectory = scriptDir & "\ocr-service"
-    WshShell.Run """" & uvicornExe & """ app.api:app --host 127.0.0.1 --port 8765", 0, False
+    StartHiddenProcess "cmd.exe /c cd /d """ & scriptDir & "\ocr-service"" && """ & uvicornExe & """ app.api:app --host 127.0.0.1 --port 8765", scriptDir & "\ocr-service"
 End If
 
 If Not isFrontendRunning Then
-    WshShell.CurrentDirectory = scriptDir
-    WshShell.Run "cmd.exe /c npm run dev", 0, False
+    StartHiddenProcess "cmd.exe /c cd /d """ & scriptDir & """ && npm run dev", scriptDir
 End If
 
-' 5. Wait for frontend to be ready if it was started
+' 6. Wait for frontend to be ready if it was started
 If Not isFrontendRunning Then
     attempts = 0
-    maxAttempts = 30
+    maxAttempts = 35
     Do While attempts < maxAttempts
         WScript.Sleep 1000
         If CheckUrl("http://127.0.0.1:3000") Then
@@ -72,30 +90,6 @@ If Not isFrontendRunning Then
     Loop
 End If
 
-' 6. Detect Chromium browser for app mode
+' 7. Open in Default Browser Tab (Standard mode - fast, lightweight, and uses existing browser instance)
 url = "http://127.0.0.1:3000"
-browserPath = ""
-
-Dim candidates, cPath
-candidates = Array( _
-    WshShell.ExpandEnvironmentStrings("%ProgramFiles%") & "\Google\Chrome\Application\chrome.exe", _
-    WshShell.ExpandEnvironmentStrings("%ProgramFiles(x86)%") & "\Google\Chrome\Application\chrome.exe", _
-    WshShell.ExpandEnvironmentStrings("%LocalAppData%") & "\Google\Chrome\Application\chrome.exe", _
-    WshShell.ExpandEnvironmentStrings("%ProgramFiles(x86)%") & "\Microsoft\Edge\Application\msedge.exe", _
-    WshShell.ExpandEnvironmentStrings("%ProgramFiles%") & "\Microsoft\Edge\Application\msedge.exe", _
-    WshShell.ExpandEnvironmentStrings("%ProgramFiles%") & "\BraveSoftware\Brave-Browser\Application\brave.exe", _
-    WshShell.ExpandEnvironmentStrings("%LocalAppData%") & "\BraveSoftware\Brave-Browser\Application\brave.exe" _
-)
-
-For Each cPath In candidates
-    If FSO.FileExists(cPath) Then
-        browserPath = cPath
-        Exit For
-    End If
-Next
-
-If browserPath <> "" Then
-    WshShell.Run """" & browserPath & """ --app=" & url, 1, False
-Else
-    WshShell.Run "cmd.exe /c start " & url, 0, False
-End If
+WshShell.Run "cmd.exe /c start " & url, 0, False

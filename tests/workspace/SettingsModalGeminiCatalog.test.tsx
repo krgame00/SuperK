@@ -37,8 +37,8 @@ const catalog = {
   ],
   models: [
     {
-      id: "gemini-dynamic-stable",
-      displayName: "Gemini Dynamic Stable",
+      id: "gemini-3.5-flash-lite",
+      displayName: "Gemini 3.5 Flash Lite",
       description: "stable",
       releaseChannel: "stable",
       availabilityCount: 2,
@@ -49,9 +49,9 @@ const catalog = {
       compatibility: { text: "compatible", image: "compatible" },
     },
     {
-      id: "gemini-dynamic-preview",
-      displayName: "Gemini Dynamic Preview",
-      releaseChannel: "preview",
+      id: "gemini-3.1-flash-lite",
+      displayName: "Gemini 3.1 Flash Lite",
+      releaseChannel: "stable",
       availabilityCount: 1,
       totalKeys: 2,
       cooldownKeys: 1,
@@ -89,7 +89,7 @@ const catalog = {
       availabilityCount: 2,
       totalKeys: 2,
       cooldownKeys: 0,
-      status: "high_demand",
+      status: "ready",
       overloadUntil: 30_000,
       recoveryInFlight: false,
       compatibility: { text: "compatible", image: "unverified" },
@@ -112,6 +112,44 @@ describe("SettingsModal dynamic Gemini catalog", () => {
     );
   });
 
+  it("offers only currently eligible image translation models for Manual selection", async () => {
+    const models = [
+      { ...catalog.models[0], id: "gemini-3.5-flash-lite", displayName: "Gemini 3.5 Flash Lite" },
+      { ...catalog.models[0], id: "gemini-3.8-flash", displayName: "Gemini 3.8 Flash", status: "high_demand" },
+      { ...catalog.models[0], id: "gemini-3.8-flash-tts", displayName: "Gemini 3.8 Flash TTS" },
+      { ...catalog.models[0], id: "gemini-2.5-flash-image", displayName: "Gemini 2.5 Flash Image" },
+      { ...catalog.models[0], id: "gemini-2.5-pro", displayName: "Gemini 2.5 Pro" },
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() =>
+      Promise.resolve(Response.json({ ...catalog, models })),
+    ));
+
+    render(<SettingsModal {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: /Model Preference/i }));
+
+    expect(await screen.findByRole("option", { name: /Gemini 3\.5 Flash Lite/i })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /^Gemini 3\.8 Flash [0-9]/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Flash TTS/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Flash Image/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Gemini 2\.5 Pro/i })).not.toBeInTheDocument();
+  });
+
+  it("does not offer models from a bootstrap catalog that could not validate any key", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(Response.json({
+      ...catalog,
+      source: "bootstrap",
+      stale: true,
+      models: [{ ...catalog.models[0], id: "gemini-3.5-flash-lite", displayName: "Gemini 3.5 Flash Lite" }],
+    }))));
+
+    render(<SettingsModal {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: /Model Preference/i }));
+
+    await waitFor(() => expect(screen.getByText(/ข้อมูลแคช/)).toBeInTheDocument());
+    expect(screen.getByRole("option", { name: /Auto.*เลือกโมเดล/i })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Gemini 3\.5 Flash Lite/i })).not.toBeInTheDocument();
+  });
+
   it("loads model options in a constrained searchable picker instead of a native select", async () => {
     render(<SettingsModal {...defaultProps} userApiKey="key-a,key-b" />);
 
@@ -121,21 +159,18 @@ describe("SettingsModal dynamic Gemini catalog", () => {
     const listbox = await screen.findByRole("listbox", { name: /รายการโมเดล Gemini/i });
     expect(listbox).toHaveClass("max-h-64", "overflow-y-auto");
     expect(screen.getByRole("searchbox", { name: /ค้นหาโมเดล/i })).toBeInTheDocument();
-    expect(await screen.findByRole("option", { name: /Gemini Dynamic Stable/i })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /Gemini Dynamic Preview/i })).toBeInTheDocument();
-    expect(
-      screen.getByRole("option", { name: /Gemini 3\.6 Flash.*Experimental \/ Unstable/i }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("ยังไม่ยืนยันเสถียรกับงานแปลภาพ")).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: /Gemini 3\.5 Flash Lite/i })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Gemini 3\.1 Flash Lite/i })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Gemini 3\.6 Flash/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Gemini Unavailable/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Gemini Incompatible/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Gemini 2\.5 Flash/i })).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByRole("searchbox", { name: /ค้นหาโมเดล/i }), {
-      target: { value: "preview" },
+      target: { value: "3.1" },
     });
-    expect(screen.queryByRole("option", { name: /Gemini Dynamic Stable/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /Gemini Dynamic Preview/i })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Gemini 3\.5 Flash Lite/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Gemini 3\.1 Flash Lite/i })).toBeInTheDocument();
 
     const fetchMock = vi.mocked(fetch);
     expect(fetchMock).toHaveBeenCalledWith(
@@ -185,7 +220,7 @@ describe("SettingsModal dynamic Gemini catalog", () => {
     render(<SettingsModal {...defaultProps} userApiKey="key-a" onAllowPreviewModelsChange={onPreview} />);
 
     await waitFor(() =>
-      expect(screen.getByText(/Credentials 2\/2 valid · 3 ใช้ได้ จาก 5 โมเดล/i))
+      expect(screen.getByText(/Credentials 2\/2 valid · 2 เลือกได้ จาก 5 โมเดล/i))
         .toBeInTheDocument(),
     );
     fireEvent.click(screen.getByRole("button", { name: /รีเฟรชรายการโมเดล/i }));

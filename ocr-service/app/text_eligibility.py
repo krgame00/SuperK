@@ -106,16 +106,24 @@ def classify_eligibility(
             features=features,
         )
 
+    sfx_score = (
+        0.40 * features.artwork_edge_density
+        + 0.60 * features.stroke_irregularity
+    )
+    has_sfx_features = (
+        features.artwork_edge_density >= SFX_FEATURE_THRESHOLD
+        or features.stroke_irregularity >= SFX_FEATURE_THRESHOLD
+    )
+
     narration_score = max(
         features.backing_uniformity,
         features.rectangular_backing,
         0.55 * features.backing_uniformity
         + 0.45 * features.rectangular_backing,
     )
-    if (
-        features.backing_uniformity >= STORY_BACKING_THRESHOLD
-        or features.rectangular_backing >= STORY_BACKING_THRESHOLD
-    ):
+
+    # 1. Bounded rectangular caption card
+    if features.rectangular_backing >= STORY_BACKING_THRESHOLD:
         return _threshold_decision(
             TextRole.NARRATION,
             narration_score,
@@ -123,14 +131,20 @@ def classify_eligibility(
             features,
         )
 
-    sfx_score = (
-        0.40 * features.artwork_edge_density
-        + 0.60 * features.stroke_irregularity
-    )
-    if (
-        features.artwork_edge_density >= SFX_FEATURE_THRESHOLD
-        or features.stroke_irregularity >= SFX_FEATURE_THRESHOLD
-    ):
+    # 2. Text embedded in artwork / clothing / sound effects without rectangular caption backing
+    if has_sfx_features and features.margin_fraction < 0.50:
+        return _sfx_decision(sfx_score, features)
+
+    # 3. Borderless caption on margin or clean uniform space
+    if features.backing_uniformity >= STORY_BACKING_THRESHOLD:
+        return _threshold_decision(
+            TextRole.NARRATION,
+            narration_score,
+            NARRATION_THRESHOLD,
+            features,
+        )
+
+    if has_sfx_features:
         return _sfx_decision(sfx_score, features)
 
     if _looks_like_ui_label(region, image_rgb.shape, features):
@@ -275,13 +289,12 @@ def _sfx_decision(
     if (
         confidence >= SFX_THRESHOLD
         and features.enclosure_score < 0.50
-        and features.backing_uniformity < 0.55
     ):
         return EligibilityDecision(
             text_role=TextRole.SFX,
             confidence=confidence,
-            action=AutomaticAction.CLEAN,
-            protection_reasons=[],
+            action=AutomaticAction.PRESERVE,
+            protection_reasons=[ProtectionReason.SFX_POLICY],
             features=features,
         )
     return EligibilityDecision(
@@ -337,10 +350,18 @@ def _backing_shape_scores(
     )
     enclosure = 0.0
     rectangle = 0.0
+    crop_area = gray.shape[0] * gray.shape[1]
     for contour in contours:
-        if cv2.contourArea(contour) < minimum_area:
+        area = cv2.contourArea(contour)
+        if area < minimum_area:
             continue
         if cv2.pointPolygonTest(contour, rect_center, False) < 0:
+            continue
+        x, y, width, height = cv2.boundingRect(contour)
+        if (
+            (x <= 1 and x + width >= gray.shape[1] - 1 and y <= 1 and y + height >= gray.shape[0] - 1)
+            or (crop_area > 0 and area / crop_area >= 0.85)
+        ):
             continue
         perimeter = cv2.arcLength(contour, True)
         vertices = len(cv2.approxPolyDP(contour, 0.03 * perimeter, True))

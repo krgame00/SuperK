@@ -156,24 +156,26 @@ def test_uniform_caption_can_be_narration_without_visible_border() -> None:
     assert decision.action is AutomaticAction.CLEAN
 
 
-def test_high_confidence_artwork_text_is_sfx() -> None:
+def test_high_confidence_artwork_text_is_sfx_preserved() -> None:
     decision = _classify(
         _features(artwork_edges=0.95, irregularity=0.95),
     )
 
     assert decision.text_role is TextRole.SFX
     assert decision.confidence >= 0.90
-    assert decision.action is AutomaticAction.CLEAN
+    assert decision.action is AutomaticAction.PRESERVE
+    assert ProtectionReason.SFX_POLICY in decision.protection_reasons
 
 
-def test_irregular_free_text_can_be_sfx_without_dense_artwork() -> None:
+def test_irregular_free_text_can_be_sfx_preserved() -> None:
     decision = _classify(
         _features(artwork_edges=0.78, irregularity=0.99),
     )
 
     assert decision.text_role is TextRole.SFX
     assert decision.confidence >= 0.90
-    assert decision.action is AutomaticAction.CLEAN
+    assert decision.action is AutomaticAction.PRESERVE
+    assert ProtectionReason.SFX_POLICY in decision.protection_reasons
 
 
 def test_margin_review_text_is_attempted_on_comic_page() -> None:
@@ -307,8 +309,8 @@ def test_narration_threshold_only_changes_semantic_role(
         (
             0.900,
             TextRole.SFX,
-            AutomaticAction.CLEAN,
-            [],
+            AutomaticAction.PRESERVE,
+            [ProtectionReason.SFX_POLICY],
         ),
     ],
 )
@@ -325,3 +327,37 @@ def test_sfx_threshold_controls_preservation(
     assert decision.text_role is expected_role
     assert decision.action is expected_action
     assert decision.protection_reasons == expected_reasons
+
+
+def test_clothing_text_with_artwork_edges_is_preserved() -> None:
+    # Text printed on smooth clothing (uniform backing) but surrounded by artwork lines
+    # (high artwork_edge_density, not on margin) must be preserved, not cleaned as narration.
+    decision = _classify(
+        _features(
+            uniformity=0.85,
+            rectangular=0.0,
+            enclosure=0.0,
+            artwork_edges=0.60,
+            irregularity=0.20,
+        ),
+    )
+
+    assert decision.action is AutomaticAction.PRESERVE
+    assert decision.text_role in (TextRole.SFX, TextRole.REVIEW)
+
+
+def test_dark_clothing_spanning_crop_is_not_treated_as_enclosure() -> None:
+    # A dark sweater or background filling the crop window touching all borders
+    # must not be treated as a rectangular caption or dialogue enclosure.
+    from app.text_eligibility import _backing_shape_scores
+
+    dark_crop = np.full((120, 156), 50, np.uint8)  # uniform dark sweater
+    enclosure, rectangle = _backing_shape_scores(
+        dark_crop,
+        rect_center=(78.0, 60.0),
+        minimum_area=2000.0,
+    )
+
+    assert enclosure == 0.0
+    assert rectangle == 0.0
+

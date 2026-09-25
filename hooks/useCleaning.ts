@@ -16,7 +16,9 @@ import type {
   ManualRegionAction,
 } from "@/lib/cleaning/types";
 import {
+  loadCleaningResultAssets,
   loadCleaningResultsMetadata,
+  saveCleaningAssets,
   saveCleaningResultMetadata,
 } from "@/lib/projectStore";
 import { assertMatchingImageDimensions } from "@/lib/translationPipeline";
@@ -62,6 +64,10 @@ export interface PageCleaningResult extends CleaningResult {
   /** Missing on legacy/restored results; such entries are never reused. */
   maskFingerprint?: string;
   preparedIdentity?: string;
+  cleanBlob?: Blob;
+  maskBlob?: Blob;
+  reviewMaskBlob?: Blob;
+  protectedMaskBlob?: Blob;
 }
 export interface CleaningHookError {
   message: string;
@@ -69,11 +75,12 @@ export interface CleaningHookError {
 }
 interface UseCleaningInput {
   pages: string[];
+  pageIds?: (string | undefined)[];
   currentPage: number;
 }
 class PollingCancelled extends Error {}
 
-export function useCleaning({ pages, currentPage }: UseCleaningInput) {
+export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
   const [resultsByPage, setResultsByPage] = useState<
     Map<string, PageCleaningResult>
   >(new Map());
@@ -88,6 +95,8 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
   const currentPageUrl = pages[currentPage];
   const pageUrlRef = useRef(currentPageUrl);
   const pagesRef = useRef(pages);
+  const pageIdsRef = useRef(pageIds);
+  pageIdsRef.current = pageIds;
   const resultsRef = useRef(resultsByPage);
   const restoreStartedRef = useRef(false);
   const cancelOnPageChangeRef = useRef(false);
@@ -196,6 +205,10 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
         maskUrl: URL.createObjectURL(maskBlob),
         reviewMaskUrl: URL.createObjectURL(reviewBlob),
         protectedMaskUrl: URL.createObjectURL(protectedBlob),
+        cleanBlob,
+        maskBlob,
+        reviewMaskBlob: reviewBlob,
+        protectedMaskBlob: protectedBlob,
         maskFingerprint,
       };
     },
@@ -262,6 +275,20 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
       };
       replaceResult(pageUrl, identified);
       try {
+        let assetIds: {
+          cleanAssetId?: string;
+          maskAssetId?: string;
+          reviewMaskAssetId?: string;
+          protectedMaskAssetId?: string;
+        } = {};
+        if (identified.cleanBlob) {
+          assetIds = await saveCleaningAssets(pageUrl, {
+            cleanBlob: identified.cleanBlob,
+            maskBlob: identified.maskBlob,
+            reviewMaskBlob: identified.reviewMaskBlob,
+            protectedMaskBlob: identified.protectedMaskBlob,
+          }, pageIdsRef.current?.[pagesRef.current.indexOf(pageUrl)]);
+        }
         await saveCleaningResultMetadata({
           pageUrl,
           sourceHash: result.sourceHash,
@@ -272,6 +299,10 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
           jobId: result.jobId,
           regions: result.regions,
           updatedAt: Date.now(),
+          width: result.width,
+          height: result.height,
+          timingsMs: result.timingsMs,
+          ...assetIds,
         });
       } catch (saveErr) {
         console.warn("Failed to persist cleaning result metadata:", saveErr);
@@ -451,6 +482,59 @@ export function useCleaning({ pages, currentPage }: UseCleaningInput) {
             ? sourceFingerprintValue
             : await sourceFingerprintValue;
           if (sourceFingerprint !== metadata.sourceFingerprint) continue;
+
+          // Fast Path: Check if cleaning image blobs were persisted locally in IndexedDB!
+          const localAssets = await loadCleaningResultAssets(metadata);
+          if (localAssets.cleanBlob) {
+            const cleanUrl = URL.createObjectURL(localAssets.cleanBlob);
+            const maskUrl = localAssets.maskBlob ? URL.createObjectURL(localAssets.maskBlob) : cleanUrl;
+            const reviewMaskUrl = localAssets.reviewMaskBlob ? URL.createObjectURL(localAssets.reviewMaskBlob) : maskUrl;
+            const protectedMaskUrl = localAssets.protectedMaskBlob ? URL.createObjectURL(localAssets.protectedMaskBlob) : maskUrl;
+
+            const restored: PageCleaningResult = {
+              jobId: metadata.jobId,
+              sourceHash: metadata.sourceHash,
+              width: metadata.width ?? 0,
+              height: metadata.height ?? 0,
+              cleanAsset: cleanUrl,
+              maskAsset: maskUrl,
+              reviewMaskAsset: reviewMaskUrl,
+              protectedMaskAsset: protectedMaskUrl,
+              regions: metadata.regions,
+              timingsMs: metadata.timingsMs ?? {},
+              pipelineVersion: metadata.pipelineVersion,
+              cleanUrl,
+              maskUrl,
+              reviewMaskUrl,
+              protectedMaskUrl,
+              cleanBlob: localAssets.cleanBlob,
+              maskBlob: localAssets.maskBlob ?? undefined,
+              reviewMaskBlob: localAssets.reviewMaskBlob ?? undefined,
+              protectedMaskBlob: localAssets.protectedMaskBlob ?? undefined,
+              sourceFingerprint: metadata.sourceFingerprint,
+              maskFingerprint: metadata.maskFingerprint,
+              preparedIdentity: metadata.sourceFingerprint
+                ? buildPreparedIdentity(
+                    metadata.sourceFingerprint,
+                    metadata.maskFingerprint ?? "unknown-mask",
+                    metadata.pipelineVersion,
+                    metadata.regions,
+                  )
+                : undefined,
+            };
+
+            if (
+              !active ||
+              !pagesRef.current.includes(pageUrl) ||
+              resultsRef.current.has(pageUrl)
+            ) {
+              revokeResult(restored);
+              if (!active) return;
+              continue;
+            }
+            replaceResult(pageUrl, restored);
+            continue;
+          }
 
           const result = await getCleaningResult(metadata.jobId);
           if (result.sourceHash !== metadata.sourceHash) continue;

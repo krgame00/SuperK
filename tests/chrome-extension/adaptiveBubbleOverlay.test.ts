@@ -245,8 +245,8 @@ describe('Adaptive Speech Bubble Overlay & Local Persistence (Ticket 03)', () =>
     expect(rendered[0].style.color).toBe('rgb(0, 0, 0)');
     expect(rendered[0].style.textShadow).toBe('none');
 
-    // Dark bubble -> white text, no shadow
-    expect(rendered[1].style.color).toBe('rgb(255, 255, 255)');
+    // Dark bubble -> black text, no shadow
+    expect(rendered[1].style.color).toBe('rgb(0, 0, 0)');
     expect(rendered[1].style.textShadow).toBe('none');
   });
 
@@ -309,7 +309,7 @@ describe('Adaptive Speech Bubble Overlay & Local Persistence (Ticket 03)', () =>
     expect(bubble.style.textShadow).not.toContain('rgba(30, 30, 30, 0.80)');
   });
 
-  it('treats mixed monochrome regions like Web: contrasting outline, no standard shadow', () => {
+  it.each(['dialogue', 'narration', 'sfx', 'overlay_subtitle'])('renders monochrome %s as black without effects', category => {
     const app = setup();
     app.send({
       action: 'TRANSLATION_SUCCESS',
@@ -325,7 +325,7 @@ describe('Adaptive Speech Bubble Overlay & Local Persistence (Ticket 03)', () =>
             backgroundLuminanceSamples: [35, 225, 50, 235],
             isMonochromePage: true,
             monochromeConfidence: 0.96,
-            category: 'dialogue',
+            category,
           },
         },
       ],
@@ -333,7 +333,7 @@ describe('Adaptive Speech Bubble Overlay & Local Persistence (Ticket 03)', () =>
 
     const bubble = document.querySelector<HTMLElement>('.superk-text-bubble')!;
     expect(bubble.style.color).toBe('rgb(0, 0, 0)');
-    expect(bubble.style.textShadow).toContain('#ffffff');
+    expect(bubble.style.textShadow).toBe('none');
     expect(bubble.style.textShadow).not.toContain('rgba(30, 30, 30, 0.80)');
   });
 

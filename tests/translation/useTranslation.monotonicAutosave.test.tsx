@@ -56,6 +56,31 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+test("does not concatenate every source image while rendering translation progress", async () => {
+  const pages = Array.from(
+    { length: 73 },
+    (_, index) => `data:image/jpeg;base64,${index}-${"a".repeat(1024)}`,
+  );
+  const join = vi.spyOn(pages, "join").mockImplementation(() => {
+    throw new Error("full-book source images were concatenated during render");
+  });
+
+  const { rerender } = renderHook(() =>
+    useTranslation({
+      currentPage: 0,
+      pages,
+      viewMode: "single",
+      preparePageForTranslation: vi.fn(),
+    }),
+  );
+
+  rerender();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  expect(join).not.toHaveBeenCalled();
+});
+
 test("monotonic autosave preserves edits made while a save is in-flight", async () => {
   let resolveFirstSave!: () => void;
   const firstSavePromise = new Promise<void>((resolve) => {

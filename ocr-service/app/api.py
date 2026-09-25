@@ -34,12 +34,19 @@ SUPPORTED_MEDIA_TYPES = {
     "image/png",
     "image/jpeg",
     "image/webp",
+    "image/gif",
+    "image/avif",
+    "image/bmp",
+    "image/x-ms-bmp",
+    "image/tiff",
+    "image/jfif",
     "image/jpg",
     "image/pjpeg",
     "image/x-png",
     "application/octet-stream",
 }
-SUPPORTED_FORMATS = {"PNG", "JPEG", "WEBP"}
+# Common manga scan and web formats; decoded to RGB in jobs.
+SUPPORTED_FORMATS = {"PNG", "JPEG", "WEBP", "GIF", "AVIF", "BMP", "TIFF", "MPO"}
 RETRY_CLEANERS = {"auto", "flat", "opencv", "aot", "anime-lama", "lama-large"}
 
 

@@ -75,6 +75,8 @@ export interface PreparedTranslationPage {
 interface UseTranslationProps {
   currentPage: number;
   pages: string[];
+  /** Stable identities matching `pages` order, used for compact persistence. */
+  pageIds?: (string | undefined)[];
   /** Display names matching `pages` order, persisted with saved sessions. */
   pageNames?: string[];
   /** Origin URLs matching `pages` order, persisted with saved sessions. */
@@ -87,7 +89,7 @@ interface UseTranslationProps {
   onPageDirtied?: (pageUrl: string) => void;
 }
 
-const TRANSLATED_IMAGE_CACHE_LIMIT = 15;
+const TRANSLATED_IMAGE_CACHE_LIMIT = 8;
 
 export const deduplicateBubbleSFX = (
   bubbles: TranslatedBubble[],
@@ -247,6 +249,7 @@ export const enrichBubblesWithColorProfiles = async (
 export function useTranslation({
   currentPage,
   pages,
+  pageIds,
   pageNames,
   pageOriginUrls,
   viewMode,
@@ -528,6 +531,15 @@ export function useTranslation({
 
   const pagesRef = useRef(pages);
   pagesRef.current = pages;
+  const stablePagesRef = useRef(pages);
+  if (
+    stablePagesRef.current.length !== pages.length ||
+    pages.some((page, index) => page !== stablePagesRef.current[index])
+  ) {
+    stablePagesRef.current = pages;
+  }
+  const pageIdsRef = useRef(pageIds);
+  pageIdsRef.current = pageIds;
   const pageNamesRef = useRef(pageNames);
   useEffect(() => {
     pageNamesRef.current = pageNames;
@@ -589,6 +601,7 @@ export function useTranslation({
         {
           pages: currentPages.map(
             (p, i) => ({
+              id: pageIdsRef.current?.[i],
               url: p,
               name: pageNamesRef.current?.[i] || `Page ${i + 1}`,
               originUrl: pageOriginUrlsRef.current?.[i],
@@ -648,8 +661,6 @@ export function useTranslation({
     performSaveRef.current = performSave;
   }, [performSave]);
 
-  const pageUrlsKey = pages.join("|");
-
   // Auto-save session to IndexedDB (debounced)
   useEffect(() => {
     if (pages.length === 0) {
@@ -667,7 +678,7 @@ export function useTranslation({
     }, 1000);
 
     return () => clearTimeout(timer);
-  }, [pageUrlsKey, currentPage, activeBubbles, cacheRevision, performSave]);
+  }, [stablePagesRef.current, currentPage, activeBubbles, cacheRevision, performSave]);
 
   // Restore saved session helper
   const restoreSavedSession = useCallback(async () => {
@@ -848,6 +859,7 @@ export function useTranslation({
       } finally {
         image.onload = null;
         image.onerror = null;
+
         offscreenContainer.remove();
       }
 

@@ -51,6 +51,43 @@ def test_upload_rejects_unsupported_media_type(client: TestClient) -> None:
     assert response.status_code == 415
 
 
+def test_upload_accepts_gif_from_supported_frontend_import(client: TestClient) -> None:
+    output = io.BytesIO()
+    Image.new("RGB", (8, 8), "white").save(output, format="GIF")
+    response = client.post(
+        "/v1/jobs",
+        files={"image": ("page.gif", output.getvalue(), "image/gif")},
+    )
+    assert response.status_code == 202
+    job = _wait_for_terminal(client, response.json()["job_id"])
+    assert job["status"] == "succeeded"
+
+
+@pytest.mark.parametrize(
+    ("fmt", "filename", "media_type"),
+    [
+        ("BMP", "page.bmp", "image/bmp"),
+        ("TIFF", "page.tiff", "image/tiff"),
+        ("AVIF", "page.avif", "image/avif"),
+    ],
+)
+def test_upload_accepts_extended_formats(
+    client: TestClient,
+    fmt: str,
+    filename: str,
+    media_type: str,
+) -> None:
+    output = io.BytesIO()
+    Image.new("RGB", (8, 8), "white").save(output, format=fmt)
+    response = client.post(
+        "/v1/jobs",
+        files={"image": (filename, output.getvalue(), media_type)},
+    )
+    assert response.status_code == 202
+    job = _wait_for_terminal(client, response.json()["job_id"])
+    assert job["status"] == "succeeded"
+
+
 def test_upload_accepts_octet_stream_with_valid_image(
     client: TestClient,
     png_bytes: bytes,

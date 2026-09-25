@@ -1,4 +1,4 @@
-﻿import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import {
   GeminiRequestError,
@@ -105,6 +105,76 @@ describe("requestGemini", () => {
     );
     expect(String(fetchImpl.mock.calls[2][0])).toContain(
       "/models/model-b:generateContent",
+    );
+  });
+
+  test("503 rotates to next API key immediately without sleeping when multiple keys exist", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({ error: { message: "busy" } }, 503),
+      )
+      .mockResolvedValueOnce(jsonResponse(successBody));
+
+    const sleepMock = vi.fn().mockResolvedValue(undefined);
+
+    const result = await requestGemini({
+      apiKeys: ["key-a", "key-b"],
+      models: ["model-a"],
+      payload: { contents: [] },
+      fetchImpl,
+      sleep: sleepMock,
+    });
+
+    expect(result.keyIndex).toBe(1);
+    expect(sleepMock).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  test("transport timeout tries the next key before abandoning Flash Lite", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(abortError())
+      .mockResolvedValueOnce(jsonResponse(successBody));
+
+    const result = await requestGemini({
+      apiKeys: ["key-a", "key-b"],
+      models: ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"],
+      payload: { contents: [] },
+      fetchImpl,
+    });
+
+    expect(result.model).toBe("gemini-3.5-flash-lite");
+    expect(result.keyIndex).toBe(1);
+    expect(result.meta.attemptCount).toBe(2);
+    expect(String(fetchImpl.mock.calls[1][0])).toContain(
+      "/models/gemini-3.5-flash-lite:generateContent",
+    );
+  });
+
+  test("429 on two keys does not skip another project's usable key", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({ error: { message: "quota" } }, 429),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ error: { message: "quota" } }, 429),
+      )
+      .mockResolvedValueOnce(jsonResponse(successBody));
+
+    const result = await requestGemini({
+      apiKeys: ["project-a-key", "project-b-key", "project-c-key"],
+      models: ["model-exhausted", "model-next"],
+      payload: { contents: [] },
+      fetchImpl,
+    });
+
+    expect(result.model).toBe("model-exhausted");
+    expect(result.keyIndex).toBe(2);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(String(fetchImpl.mock.calls[2][0])).toContain(
+      "/models/model-exhausted:generateContent",
     );
   });
 

@@ -218,6 +218,7 @@ export default function WorkspacePage() {
   }, [pages, currentPage]);
 
   const pageUrls = useMemo(() => pages.map(p => p.url), [pages]);
+  const pageIds = useMemo(() => pages.map(p => p.id), [pages]);
   const pageNames = useMemo(() => pages.map(p => p.name), [pages]);
   const {
     cleanPage,
@@ -227,7 +228,7 @@ export default function WorkspacePage() {
     progress: cleaningProgress,
     error: cleaningError,
     resultsByPage: cleaningResultsByPage,
-  } = useCleaning({ pages: pageUrls, currentPage });
+  } = useCleaning({ pages: pageUrls, pageIds, currentPage });
 
   useEffect(() => {
     if (!cleaningResultsByPage) return;
@@ -385,6 +386,7 @@ export default function WorkspacePage() {
   } = useTranslation({
     currentPage,
     pages: pageUrls,
+    pageIds,
     pageNames,
     pageOriginUrls: pages.map((p) => p.originUrl),
     viewMode: "single",
@@ -604,14 +606,25 @@ export default function WorkspacePage() {
     currentPageUrl && reviewedPageUrls.has(currentPageUrl),
   );
 
+  // During batch mode, derive cleaning/translating phase from translateAllProgress
+  // instead of the per-page cleaningProgress hook (which clears after OCR finishes).
+  const batchIsCleaning = isTranslatingAll && translateAllProgress?.status === "cleaning";
+  const batchIsTranslating = isTranslatingAll && translateAllProgress != null && translateAllProgress.status !== "cleaning";
+  const effectiveIsCleaning = Boolean(cleaningProgress) || workflowPhase === "cleaning" || batchIsCleaning;
+  const effectiveIsTranslating = isTranslating || batchIsTranslating;
+  const effectiveWorkflowPhase: "cleaning" | "translating" | null =
+    batchIsCleaning ? "cleaning"
+    : batchIsTranslating ? "translating"
+    : workflowPhase;
+
   const primaryAction = getWorkspacePrimaryAction({
     hasPage: Boolean(currentPageUrl),
     hasCleanResult: Boolean(currentCleaningResult),
     hasTranslation: hasCurrentTranslation,
     hasEnteredReview,
-    isCleaning: Boolean(cleaningProgress) || workflowPhase === "cleaning",
-    isTranslating,
-    workflowPhase,
+    isCleaning: effectiveIsCleaning,
+    isTranslating: effectiveIsTranslating,
+    workflowPhase: effectiveWorkflowPhase,
     cancellable: isTranslatingAll,
   });
 
