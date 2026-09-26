@@ -432,13 +432,22 @@ describe("translation overlay live editor and keyboard controls", () => {
       height: 80,
       toJSON: () => ({}),
     } as DOMRect));
-    Object.defineProperty(toolbar, "offsetWidth", { configurable: true, value: 286 });
-    Object.defineProperty(toolbar, "offsetHeight", { configurable: true, value: 46 });
+    // Chrome includes an element's own zoom in offsetWidth/offsetHeight.
+    Object.defineProperty(toolbar, "offsetWidth", {
+      configurable: true,
+      get: () => 286 * (Number(toolbar.style.zoom) || 1),
+    });
+    Object.defineProperty(toolbar, "offsetHeight", {
+      configurable: true,
+      get: () => 46 * (Number(toolbar.style.zoom) || 1),
+    });
 
     wrapper.focus();
 
-    expect(toolbar.style.left).toBe("260px");
-    expect(toolbar.style.top).toBe("140px");
+    // The 120×80 bubble floors chromeScale at 0.6; written offsets are
+    // pre-divided so the zoomed chrome lands on the bubble's screen rect.
+    expect(toolbar.style.left).toBe(`${260 / 0.6}px`);
+    expect(toolbar.style.top).toBe(`${140 / 0.6}px`);
     expect(toolbar.style.transform).toBe("translate(-50%, -100%)");
 
     const rotate = chromeRoot.querySelector<HTMLElement>(".action-handle--rotate")!;
@@ -446,10 +455,10 @@ describe("translation overlay live editor and keyboard controls", () => {
     const width = chromeRoot.querySelector<HTMLElement>(".action-handle--width")!;
     const move = chromeRoot.querySelector<HTMLElement>(".action-handle--move")!;
 
-    expect([rotate.style.left, rotate.style.top]).toEqual(["200px", "150px"]);
-    expect([scale.style.left, scale.style.top]).toEqual(["320px", "150px"]);
-    expect([width.style.left, width.style.top]).toEqual(["320px", "190px"]);
-    expect([move.style.left, move.style.top]).toEqual(["200px", "230px"]);
+    expect([rotate.style.left, rotate.style.top]).toEqual([`${200 / 0.6}px`, `${150 / 0.6}px`]);
+    expect([scale.style.left, scale.style.top]).toEqual([`${320 / 0.6}px`, `${150 / 0.6}px`]);
+    expect([width.style.left, width.style.top]).toEqual([`${320 / 0.6}px`, `${190 / 0.6}px`]);
+    expect([move.style.left, move.style.top]).toEqual([`${200 / 0.6}px`, `${230 / 0.6}px`]);
   });
 
   test("opens a larger multiline editor with explicit save and cancel controls", async () => {
@@ -624,6 +633,64 @@ describe("translation overlay live editor and keyboard controls", () => {
   await vi.runAllTimersAsync();
   expect(toolbar.style.zoom).toBe("1");
   expect(handle.style.zoom).toBe("1");
+});
+
+test("zoomed-down chrome stays anchored on the bubble", async () => {
+  // vitest fake timers don't fake rAF; run chrome-sync frames synchronously.
+  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+    cb(16);
+    return 1;
+  });
+  const { chromeRoot, wrapper, toolbar } = await renderOverlay("จุดยึดเครื่องมือ");
+
+  // Chrome multiplies a zoomed element's own left/top lengths by its zoom, so
+  // emulate that layout: the toolbar's measured box shrinks with its zoom.
+  Object.defineProperty(toolbar, "offsetWidth", {
+    configurable: true,
+    get: () => 286 * (Number(toolbar.style.zoom) || 1),
+  });
+  Object.defineProperty(toolbar, "offsetHeight", {
+    configurable: true,
+    get: () => 46 * (Number(toolbar.style.zoom) || 1),
+  });
+
+  // 160×60 bubble at (0, 100) → chromeScale floors at 0.6.
+  vi.spyOn(wrapper, "getBoundingClientRect").mockReturnValue({
+    left: 0, top: 100, right: 160, bottom: 160, width: 160, height: 60,
+  } as DOMRect);
+  vi.spyOn(chromeRoot, "getBoundingClientRect").mockReturnValue({
+    left: 0, top: 0, right: 1000, bottom: 800, width: 1000, height: 800,
+  } as DOMRect);
+
+  wrapper.dispatchEvent(new FocusEvent("focus"));
+  await vi.runAllTimersAsync();
+
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="nw"]')!;
+  expect(handle.style.zoom).toBe("0.6");
+  // Written offsets must be pre-divided by the zoom so the rendered chrome
+  // lands on the bubble instead of drifting toward the layer origin.
+  expect(handle.style.left).toBe(`${0 / 0.6}px`);
+  expect(handle.style.top).toBe(`${100 / 0.6}px`);
+  const expectedCenter = Math.min(Math.max(80, (286 * 0.6) / 2 + 8), 1000 - (286 * 0.6) / 2 - 8);
+  expect(Number.parseFloat(toolbar.style.left) * 0.6).toBeCloseTo(expectedCenter, 6);
+
+  // Re-syncs must not shrink the measurement: offsetWidth already includes
+  // the previous zoom, so the base width is stable at 286 across syncs.
+  const firstLeft = toolbar.style.left;
+  wrapper.dispatchEvent(new FocusEvent("focus"));
+  await vi.runAllTimersAsync();
+  expect(Number.parseFloat(toolbar.style.left) * 0.6).toBeCloseTo(expectedCenter, 6);
+  expect(toolbar.style.left).toBe(firstLeft);
+
+  // A large bubble (zoom 1) keeps raw un-divided offsets.
+  vi.spyOn(wrapper, "getBoundingClientRect").mockReturnValue({
+    left: 40, top: 40, right: 540, bottom: 340, width: 500, height: 300,
+  } as DOMRect);
+  wrapper.dispatchEvent(new FocusEvent("focus"));
+  await vi.runAllTimersAsync();
+  expect(handle.style.left).toBe("40px");
+  expect(handle.style.top).toBe("40px");
+  expect(toolbar.style.zoom).toBe("1");
 });
 
 test("excludes deleted bubbles from export compositing until undo", async () => {

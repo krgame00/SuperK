@@ -1668,6 +1668,37 @@ export const applyTranslationOverlay = async (
         const centerX = left + bubbleRect.width / 2;
         const centerY = top + bubbleRect.height / 2;
 
+        // Chrome (toolbar + handles) must not dwarf small bubbles: shrink it
+        // as the bubble shrinks, floored so buttons stay grabbable. `zoom`
+        // keeps the translate(-50%, …) anchors intact while scaling the whole
+        // rendered chrome — but it also multiplies the element's own left/top
+        // lengths, so every offset written below is pre-divided by the scale
+        // to stay anchored on the bubble.
+        const chromeScale = Math.max(
+          0.6,
+          Math.min(1, bubbleRect.width / 220, bubbleRect.height / 100),
+        );
+        // offsetWidth/offsetHeight already include the previous sync's zoom.
+        const prevChromeZoom = Number(toolbar.style.zoom) || 1;
+        const baseToolbarWidth = toolbar.offsetWidth > 0 ? toolbar.offsetWidth / prevChromeZoom : 286;
+        const baseToolbarHeight = toolbar.offsetHeight > 0 ? toolbar.offsetHeight / prevChromeZoom : 46;
+        toolbar.style.zoom = String(chromeScale);
+        chromeHandles.forEach((handle) => {
+          handle.style.zoom = String(chromeScale);
+        });
+        const scaledWidth = baseToolbarWidth * chromeScale;
+        const scaledHeight = baseToolbarHeight * chromeScale;
+        const rootWidth = rootRect.width || Math.max(right + 16, baseToolbarWidth + 16);
+        const placeBelow = top < scaledHeight + 14;
+        const minCenter = scaledWidth / 2 + 8;
+        const maxCenter = Math.max(minCenter, rootWidth - scaledWidth / 2 - 8);
+        const toolbarX = Math.max(minCenter, Math.min(maxCenter, centerX));
+        const toolbarY = placeBelow ? bottom + 10 : top - 10;
+        toolbar.style.left = `${toolbarX / chromeScale}px`;
+        toolbar.style.top = `${toolbarY / chromeScale}px`;
+        toolbar.style.transformOrigin = placeBelow ? "center top" : "center bottom";
+        toolbar.style.transform = placeBelow ? "translate(-50%, 0)" : "translate(-50%, -100%)";
+
         chromeHandles.forEach((handle) => {
           const pos = handle.dataset.handlePosition;
           let x = left;
@@ -1675,36 +1706,9 @@ export const applyTranslationOverlay = async (
           if (pos === "ne") x = right;
           else if (pos === "e") { x = right; y = centerY; }
           else if (pos === "sw") y = bottom;
-          handle.style.left = `${x}px`;
-          handle.style.top = `${y}px`;
+          handle.style.left = `${x / chromeScale}px`;
+          handle.style.top = `${y / chromeScale}px`;
         });
-
-        const toolbarWidth = toolbar.offsetWidth || 286;
-        const toolbarHeight = toolbar.offsetHeight || 46;
-        const rootWidth = rootRect.width || Math.max(right + 16, toolbarWidth + 16);
-        // Chrome (toolbar + handles) must not dwarf small bubbles: shrink it
-        // as the bubble shrinks, floored so buttons stay grabbable. `zoom`
-        // keeps the translate(-50%, ±100%) anchors intact while scaling the
-        // whole rendered chrome.
-        const chromeScale = Math.max(
-          0.6,
-          Math.min(1, bubbleRect.width / 220, bubbleRect.height / 100),
-        );
-        toolbar.style.zoom = String(chromeScale);
-        chromeHandles.forEach((handle) => {
-          handle.style.zoom = String(chromeScale);
-        });
-        const scaledWidth = toolbarWidth * chromeScale;
-        const scaledHeight = toolbarHeight * chromeScale;
-        const placeBelow = top < scaledHeight + 14;
-        const minCenter = scaledWidth / 2 + 8;
-        const maxCenter = Math.max(minCenter, rootWidth - scaledWidth / 2 - 8);
-        const toolbarX = Math.max(minCenter, Math.min(maxCenter, centerX));
-        const toolbarY = placeBelow ? bottom + 10 : top - 10;
-        toolbar.style.left = `${toolbarX}px`;
-        toolbar.style.top = `${toolbarY}px`;
-        toolbar.style.transformOrigin = placeBelow ? "center top" : "center bottom";
-        toolbar.style.transform = placeBelow ? "translate(-50%, 0)" : "translate(-50%, -100%)";
         activeEditorPosition?.();
       };
 
