@@ -122,7 +122,7 @@ def test_force_clean_normalizes_two_pixel_boundary_drift_before_approval():
     assert cleaned.regions[0].approval_revision == expected_revision
 
 
-def test_force_clean_rejects_mask_more_than_two_pixels_outside_selected_region():
+def test_force_clean_clips_mask_pixels_outside_selected_region():
     pipeline = CleaningPipeline(detector=NoTextDetector(), cleaners={"flat": SolidCleaner(0)})
     original = _single_region_output()
     confirmed = replace(
@@ -132,14 +132,22 @@ def test_force_clean_rejects_mask_more_than_two_pixels_outside_selected_region()
     submitted = np.zeros_like(original.mask)
     submitted[9:12, 5:12] = 255  # three pixels left of the selected region
 
-    with pytest.raises(ValueError, match="mask must stay within the selected region"):
-        pipeline.retry_region(
-            confirmed,
-            "region-1",
-            submitted,
-            "flat",
-            ManualRegionAction.FORCE_CLEAN,
-        )
+    cleaned = pipeline.retry_region(
+        confirmed,
+        "region-1",
+        submitted,
+        "flat",
+        ManualRegionAction.FORCE_CLEAN,
+    )
+    normalized = np.zeros_like(original.mask)
+    normalized[9:12, 8:12] = 255  # only the in-region part survives the clip
+    assert (cleaned.clean_image[9:12, 8:12] == 0).all()
+    assert np.array_equal(cleaned.clean_image[9:12, 5:8], original.clean_image[9:12, 5:8])
+    assert np.array_equal(cleaned.mask, np.maximum(original.mask, normalized))
+    expected_revision = hashlib.sha256(
+        original.source_image.tobytes() + normalized.tobytes()
+    ).hexdigest()
+    assert cleaned.regions[0].approval_revision == expected_revision
 
 
 def test_force_clean_rejects_empty_authorized_mask_after_boundary_normalization():

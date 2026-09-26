@@ -515,10 +515,9 @@ export function MaskEditor({
     setIsSubmitting(true);
     try {
       const r = selectedRegion?.rect;
-      if (r && action !== "confirm-text" && maskOverflow(imageData, r) > 2) {
-        setStatusMessage("Mask เกินพื้นที่ที่เลือกมากเกินไป กรุณาปรับ Mask แล้วลองใหม่");
-        return;
-      }
+      // Brush pixels outside the region are clipped by encodeAuthorizedMask
+      // (and again by the backend's authorization gate), so overflow never
+      // blocks a submit — it only marks the result as adjusted below.
       if (r && action === "force-clean" && !maskHasPixels(imageData, r)) {
         setStatusMessage("ไม่มี Mask ที่ใช้คลีนได้ กรุณาวาด Mask หรือกดเติมเต็มกรอบเอง");
         return;
@@ -589,11 +588,9 @@ export function MaskEditor({
     try {
       let effectiveRegion = selectedRegion;
       let effectiveMask = imageData;
+      // Overflow is clipped at encode time (and by the backend gate); it only
+      // flags the adjusted notice below.
       const initialOverflow = maskOverflow(imageData, selectedRegion.rect);
-      if (initialOverflow > 2) {
-        setStatusMessage("Mask เกินพื้นที่ที่เลือกมากเกินไป กรุณาปรับ Mask แล้วลองใหม่");
-        return;
-      }
       let adjusted = initialOverflow > 0;
       if (onResolveRegion) {
         const resolved = await onResolveRegion(selectedRegion);

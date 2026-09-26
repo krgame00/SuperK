@@ -757,26 +757,22 @@ class CleaningPipeline:
         points = cv2.findNonZero(binary_mask)
         if points is None:
             raise ValueError("authorized mask is empty")
-        x, y, width, height = cv2.boundingRect(points)
         bounds = record.rect
-        overflow = max(
-            max(0, bounds.x - x),
-            max(0, bounds.y - y),
-            max(0, x + width - (bounds.x + bounds.width)),
-            max(0, y + height - (bounds.y + bounds.height)),
-        )
-        if overflow > 2:
-            raise ValueError("mask must stay within the selected region")
-        if overflow > 0:
-            normalized = np.zeros_like(binary_mask)
-            ys = slice(bounds.y, bounds.y + bounds.height)
-            xs = slice(bounds.x, bounds.x + bounds.width)
-            normalized[ys, xs] = binary_mask[ys, xs]
-            binary_mask = normalized
-            points = cv2.findNonZero(binary_mask)
-            if points is None:
-                raise ValueError("authorized mask is empty")
-            x, y, width, height = cv2.boundingRect(points)
+        # The submitted mask is always clipped to the selected region: pixels
+        # outside it were never authorized for removal. The editor's view of
+        # the region can legitimately lag the stored one (stale result after
+        # a re-clean, remap, or a raced retry), so a hard rejection here
+        # bricks manual cleaning; clipping preserves the authorization
+        # boundary while letting the in-region work proceed.
+        normalized = np.zeros_like(binary_mask)
+        ys = slice(bounds.y, bounds.y + bounds.height)
+        xs = slice(bounds.x, bounds.x + bounds.width)
+        normalized[ys, xs] = binary_mask[ys, xs]
+        binary_mask = normalized
+        points = cv2.findNonZero(binary_mask)
+        if points is None:
+            raise ValueError("authorized mask is empty")
+        x, y, width, height = cv2.boundingRect(points)
 
         revision = hashlib.sha256(output.source_image.tobytes() + binary_mask.tobytes()).hexdigest()
         if action is ManualRegionAction.FORCE_CLEAN and not record.text_confirmed:

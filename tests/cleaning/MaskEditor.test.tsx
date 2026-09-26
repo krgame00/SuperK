@@ -455,8 +455,9 @@ describe("MaskEditor", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  test("material brush overflow stops without closing or confirming", async () => {
-    const onRetry = vi.fn();
+  test("material brush overflow is clipped and still cleans inside the region", async () => {
+    HTMLCanvasElement.prototype.toBlob = vi.fn((callback) => callback(new Blob(["mask"], { type: "image/png" }))) as typeof HTMLCanvasElement.prototype.toBlob;
+    const onRetry = vi.fn().mockResolvedValue({ ok: true });
     const onClose = vi.fn();
     renderMaskEditor({ onRetry, onClose });
     const canvas = await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
@@ -464,8 +465,8 @@ describe("MaskEditor", () => {
     fireEvent.pointerDown(canvas, { clientX: 5, clientY: 11, pointerId: 1, button: 0 });
     fireEvent.pointerUp(canvas, { pointerId: 1 });
     fireEvent.click(screen.getByRole("button", { name: /คลีนจุดนี้ทันที/ }));
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Mask เกินพื้นที่"));
-    expect(onRetry).not.toHaveBeenCalled();
+    await waitFor(() => expect(onRetry).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("status")).toHaveTextContent("ปรับ Mask");
     expect(onClose).not.toHaveBeenCalled();
   });
 
