@@ -109,6 +109,7 @@ let cleanCurrentPage: ReturnType<typeof vi.fn>;
 let retryRegion: ReturnType<typeof vi.fn>;
 let invalidatePageTranslation: ReturnType<typeof vi.fn>;
 let handleTranslate: ReturnType<typeof vi.fn>;
+let translationMockState: Record<string, unknown>;
 
 function toolbar(): HTMLElement {
   return screen.getByRole("region", { name: "Cleaning toolbar" });
@@ -155,7 +156,7 @@ beforeEach(() => {
     error: undefined,
     resultsByPage: new Map([[ORIGINAL_URL, cleaningResult]]),
   } as never);
-  vi.mocked(useTranslation).mockReturnValue({
+  translationMockState = {
     targetLang: "Thai",
     setTargetLang: vi.fn(),
     sourceLang: "auto",
@@ -212,7 +213,8 @@ beforeEach(() => {
     invalidatePageTranslation,
     getPageSignature: vi.fn(() => "rev-0"),
     getPageRevision: vi.fn(() => 0),
-  } as never);
+  };
+  vi.mocked(useTranslation).mockReturnValue(translationMockState as never);
   vi.stubGlobal(
     "fetch",
     vi.fn().mockResolvedValue({
@@ -399,5 +401,79 @@ describe("workspace clean-then-translate integration", () => {
     expect(screen.getByRole("button", { name: /แปลหน้านี้ใหม่/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /คลีนข้อความใหม่/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /แก้ Mask/i })).toBeInTheDocument();
+  });
+});
+
+describe("global keyboard shortcut guards", () => {
+  async function renderTwoPageWorkspace() {
+    translationMockState = {
+      ...translationMockState,
+      restoreSavedSession: vi.fn().mockResolvedValue({
+        pages: [
+          { url: ORIGINAL_URL, name: PAGE_NAME },
+          { url: CLEAN_URL, name: "page-two.png" },
+        ],
+        currentPage: 0,
+      }),
+    };
+    vi.mocked(useTranslation).mockReturnValue(translationMockState as never);
+    render(<WorkspacePage />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /คืนค่างานเดิม/ }),
+    );
+    await waitFor(() => expect(mainImage()).toBeTruthy());
+  }
+
+  function mainImageTitle(): string | null {
+    return (
+      document
+        .querySelector<HTMLImageElement>("#pageContainer img")
+        ?.getAttribute("title") ?? null
+    );
+  }
+
+  test("arrow-key navigation is suppressed while a dialog is open and resumes after close", async () => {
+    await renderTwoPageWorkspace();
+
+    fireEvent.keyDown(window, { key: "?" });
+    const dialog = screen.getByRole("dialog", {
+      name: "คีย์ลัดสำหรับแก้ไขมังงะ",
+    });
+    expect(dialog).toBeInTheDocument();
+
+    // Focus lives inside the dialog, so shortcuts must not reach the page below it.
+    fireEvent.keyDown(dialog, { key: "ArrowRight" });
+    expect(mainImageTitle()).toBe(PAGE_NAME);
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(mainImageTitle()).toBe("page-two.png");
+  });
+
+  test("space activates the focused button instead of toggling layers", async () => {
+    await renderRestoredWorkspace();
+    const button = screen.getByRole("button", { name: "Clean current page" });
+    let defaultPrevented: boolean | undefined;
+    const probe = (event: KeyboardEvent) => {
+      if (event.key === " ") defaultPrevented = event.defaultPrevented;
+    };
+    window.addEventListener("keydown", probe);
+    try {
+      fireEvent.keyDown(button, { key: " " });
+    } finally {
+      window.removeEventListener("keydown", probe);
+    }
+    expect(defaultPrevented).toBe(false);
+    expect(toolbar().getAttribute("data-layer")).toBe("original");
+  });
+
+  test("arrow keys do not change pages while the Mask Editor dialog is open", async () => {
+    await renderTwoPageWorkspace();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit mask" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mask editor" });
+
+    fireEvent.keyDown(dialog, { key: "ArrowRight" });
+    expect(mainImageTitle()).toBe(PAGE_NAME);
   });
 });

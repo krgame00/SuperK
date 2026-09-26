@@ -53,6 +53,17 @@ EligibilityClassifier = Callable[
 ]
 ProgressCallback = Callable[[JobStage, int, int], None]
 
+# Single source of truth for the region-retry cleaner names: the retry API's
+# advertised set is derived from this mapping, so a new cleaner cannot be
+# accepted by the API without a working cleaner key here.
+RETRY_CLEANER_ALIASES: dict[str, str] = {
+    "flat": "flat",
+    "opencv": "gradient",
+    "aot": "aot",
+    "anime-lama": "anime-lama",
+    "lama-large": "lama-large",
+}
+
 
 @dataclass(frozen=True)
 class PipelineOutput:
@@ -876,13 +887,11 @@ class CleaningPipeline:
                     awaiting_review=_has_awaiting_review(updated_records),
                 )
 
-        cleaner_key = {
-            "auto": record.route.value,
-            "flat": CleanerRoute.FLAT.value,
-            "opencv": CleanerRoute.GRADIENT.value,
-            "aot": "aot",
-            "anime-lama": "anime-lama",
-        }.get(cleaner)
+        cleaner_key = (
+            record.route.value
+            if cleaner == "auto"
+            else RETRY_CLEANER_ALIASES.get(cleaner)
+        )
         selected = self.cleaners.get(cleaner_key or "")
         if selected is None:
             raise RuntimeError(f"cleaner is unavailable: {cleaner}")

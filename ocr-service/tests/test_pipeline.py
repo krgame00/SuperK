@@ -1,9 +1,11 @@
 import numpy as np
+import pytest
 
+from app.api import RETRY_CLEANERS
 from app.detector import DetectionResult, LetterboxTransform
 from app.mask_refiner import MaskRegion, RefinedMask
 from app.page_context import PageContext, PageFeatures
-from app.pipeline import CleaningPipeline, PipelineOutput
+from app.pipeline import CleaningPipeline, PipelineOutput, RETRY_CLEANER_ALIASES
 from app.protection import ProtectionResult
 from app.schemas import (
     AutomaticAction,
@@ -263,6 +265,83 @@ def test_protect_restores_source_pixels() -> None:
     )
     assert np.all(protected.protected_mask[support] == 255)
     assert not np.any(protected.mask[support])
+
+
+def test_retry_supports_every_cleaner_advertised_by_the_retry_api() -> None:
+    output = _single_region_output()
+    user_mask = np.zeros((32, 32), np.uint8)
+    user_mask[10:14, 10:14] = 255
+    cleaners_by_key = {
+        "flat": SolidCleaner(1),
+        "gradient": SolidCleaner(2),
+        "artwork": SolidCleaner(3),
+        "lama-large": SolidCleaner(4),
+        "anime-lama": SolidCleaner(5),
+        "aot": SolidCleaner(6),
+    }
+    pipeline = CleaningPipeline(
+        detector=NoTextDetector(),
+        cleaners=cleaners_by_key,
+        page_classifier=_comic_page,
+        protection_detector=_empty_protection,
+        eligibility_classifier=_clean_decision,
+    )
+
+    confirmed = pipeline.retry_region(
+        output,
+        "region-1",
+        user_mask,
+        "aot",
+        ManualRegionAction.CONFIRM_TEXT,
+    )
+
+    # Every cleaner name the retry API advertises must reach a real cleaner.
+    # The advertised set is derived from RETRY_CLEANER_ALIASES, so a cleaner
+    # added without a working alias fails here (the "auto" route resolves to
+    # the record's own route).
+    for cleaner in sorted(RETRY_CLEANERS):
+        cleaner_key = (
+            "flat" if cleaner == "auto" else RETRY_CLEANER_ALIASES[cleaner]
+        )
+        expected = cleaners_by_key[cleaner_key].value
+        cleaned = pipeline.retry_region(
+            confirmed,
+            "region-1",
+            user_mask,
+            cleaner,
+            ManualRegionAction.FORCE_CLEAN,
+        )
+        assert np.all(cleaned.clean_image[user_mask > 0] == expected), cleaner
+
+
+def test_retry_with_unavailable_cleaner_reports_availability() -> None:
+    output = _single_region_output()
+    user_mask = np.zeros((32, 32), np.uint8)
+    user_mask[10:14, 10:14] = 255
+    pipeline = CleaningPipeline(
+        detector=NoTextDetector(),
+        cleaners={"flat": SolidCleaner(1)},
+        page_classifier=_comic_page,
+        protection_detector=_empty_protection,
+        eligibility_classifier=_clean_decision,
+    )
+
+    confirmed = pipeline.retry_region(
+        output,
+        "region-1",
+        user_mask,
+        "aot",
+        ManualRegionAction.CONFIRM_TEXT,
+    )
+
+    with pytest.raises(RuntimeError, match="cleaner is unavailable: aot"):
+        pipeline.retry_region(
+            confirmed,
+            "region-1",
+            user_mask,
+            "aot",
+            ManualRegionAction.FORCE_CLEAN,
+        )
 
 
 def test_text_free_pipeline_is_pixel_identical() -> None:

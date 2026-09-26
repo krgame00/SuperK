@@ -16,7 +16,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 
-import { applyBrush, type BrushMode, type MaskPoint } from "@/lib/cleaning/maskEdits";
+import { applyBrush, type BrushMode } from "@/lib/cleaning/maskEdits";
 import type {
   CleanerOverride,
   CleaningRegion,
@@ -245,27 +245,6 @@ export function MaskEditor({
     };
   }, [sourceUrl, maskUrl, proposalMaskUrl, regionId, regions, selectedRegion?.textRole]);
 
-  const commitBrushAt = (point: MaskPoint) => {
-    const current = imageDataRef.current;
-    if (!current) return;
-    const before = cloneImageData(current);
-    const updated = applyBrush(current, [point], radius, mode);
-    renderMask(updated);
-    const after = cloneImageData(updated);
-    undoManager.push({
-      label: "แก้ Mask",
-      undo: () => renderMask(cloneImageData(before)),
-      redo: () => renderMask(cloneImageData(after)),
-    });
-    if (mode === "paint") {
-      setStatusMessage("เพิ่ม Mask แล้ว");
-    } else if (mode === "erase") {
-      setStatusMessage("ลบ Mask แล้ว");
-    } else {
-      setStatusMessage("กู้ภาพเดิมแล้ว");
-    }
-  };
-
   const drawAt = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     const current = imageDataRef.current;
@@ -402,6 +381,7 @@ export function MaskEditor({
       return;
     }
     if (event.key === " ") {
+      event.preventDefault();
       isSpacePressedRef.current = true;
     }
     if (event.key !== "Tab") return;
@@ -451,12 +431,8 @@ export function MaskEditor({
       return;
     }
 
-    if (event.key === " " || event.key === "Spacebar") {
-      event.preventDefault();
-      event.stopPropagation();
-      commitBrushAt(brushPoint);
-      return;
-    }
+    // Space is reserved for panning: let it bubble to the dialog handler,
+    // which owns the pan flag. Keyboard events never paint the mask.
 
     if (event.key === "[" || event.key === "]") {
       event.preventDefault();

@@ -70,6 +70,20 @@ import {
 } from "@/components/workspace/TranslationDiagnosticModal";
 import { recoverDesktopCleaner } from "@/lib/desktopBridge";
 
+// Global shortcuts must not fire while the event originates from a form field,
+// a content-editable surface, or inside any modal dialog.
+function isShortcutTargetBlocked(target: HTMLElement | null): boolean {
+  if (!target) return false;
+  return (
+    target.tagName === 'INPUT' ||
+    target.tagName === 'TEXTAREA' ||
+    target.tagName === 'SELECT' ||
+    target.isContentEditable ||
+    (typeof target.closest === 'function' &&
+      Boolean(target.closest('[role="dialog"]')))
+  );
+}
+
 function formatStopwatchTime(elapsedMs: number): string {
   const safeMs = Math.max(0, Number.isFinite(elapsedMs) ? elapsedMs : 0);
   const totalTenths = Math.floor(safeMs / 100);
@@ -168,14 +182,7 @@ export default function WorkspacePage() {
   // Global keyboard shortcuts for Focus Mode (F to toggle, T to toggle top bar, Esc to exit)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (
-        target &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable ||
-          (typeof target.closest === "function" && Boolean(target.closest('[role="dialog"]'))))
-      ) {
+      if (isShortcutTargetBlocked(e.target as HTMLElement | null)) {
         return;
       }
 
@@ -765,9 +772,11 @@ export default function WorkspacePage() {
     const unsub = undoManager.onChange(syncState);
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Skip if user is typing in an input/textarea
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      // Skip when typing in a form field, editing text, or interacting inside a modal
+      const target = e.target as HTMLElement | null;
+      if (isShortcutTargetBlocked(target)) {
+        return;
+      }
 
       // Undo: Ctrl+Z
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
@@ -819,8 +828,15 @@ export default function WorkspacePage() {
           void handleTranslateCurrent();
         }
       }
-      // Space = Toggle Original/Translated
+      // Space = Toggle Original/Translated (but let focused buttons/links activate)
       if (e.key === ' ') {
+        if (
+          target &&
+          typeof target.closest === 'function' &&
+          target.closest('button, a, [role="button"]')
+        ) {
+          return;
+        }
         e.preventDefault();
         toggleOriginalTranslated();
       }

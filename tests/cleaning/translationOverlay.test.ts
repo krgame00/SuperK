@@ -598,6 +598,52 @@ describe("translation overlay live editor and keyboard controls", () => {
     expect(wrapper.style.display).toBe("block");
   });
 
+  test("excludes deleted bubbles from export compositing until undo", async () => {
+    const { container, toolbar, canvas } = await renderOverlay("จะลบแล้ว export");
+
+    const drawImageArgs: unknown[][] = [];
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
+      new Proxy(
+        {
+          measureText: () => ({ width: 20 }),
+          drawImage: (...args: unknown[]) => {
+            drawImageArgs.push(args);
+          },
+        },
+        {
+          get(target, property) {
+            if (property in target) {
+              return target[property as keyof typeof target];
+            }
+            return vi.fn();
+          },
+          set(target, property, value) {
+            return Reflect.set(target as Record<PropertyKey, unknown>, property, value);
+          },
+        },
+      ) as unknown as CanvasRenderingContext2D,
+    );
+
+    const drawTargetsOfExport = () => {
+      drawImageArgs.length = 0;
+      downloadTranslatedImage("single", 0, "export.png", true, container);
+      return drawImageArgs.map((args) => args[0]);
+    };
+
+    // Baseline: the visible bubble canvas is composited.
+    expect(drawTargetsOfExport()).toContain(canvas);
+
+    toolbar.querySelector<HTMLButtonElement>('[aria-label="ลบกล่องข้อความ"]')!.click();
+
+    // A Deleted bubble stays in the DOM (for undo) but must not be composited.
+    expect(drawTargetsOfExport()).not.toContain(canvas);
+
+    undoManager.undo();
+
+    // Undo restores the bubble into future exports.
+    expect(drawTargetsOfExport()).toContain(canvas);
+  });
+
   test("preserves style profile across movement, resizing, and text edits", async () => {
     const profile = {
       fill: "#ff5500",

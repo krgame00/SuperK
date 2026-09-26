@@ -18,7 +18,7 @@ from app.cleaners.lama_large import LamaLargeCleaner
 from app.detector import HybridTextDetector
 from app.jobs import JobStore, Pipeline, PipelineFactory
 from app.model_store import ModelStore
-from app.pipeline import CleaningPipeline
+from app.pipeline import CleaningPipeline, RETRY_CLEANER_ALIASES
 from app.residual_probe import CompositeResidualProbe
 from app.schemas import (
     CleanerRoute,
@@ -47,7 +47,7 @@ SUPPORTED_MEDIA_TYPES = {
 }
 # Common manga scan and web formats; decoded to RGB in jobs.
 SUPPORTED_FORMATS = {"PNG", "JPEG", "WEBP", "GIF", "AVIF", "BMP", "TIFF", "MPO"}
-RETRY_CLEANERS = {"auto", "flat", "opencv", "aot", "anime-lama", "lama-large"}
+RETRY_CLEANERS = {"auto", *RETRY_CLEANER_ALIASES}
 
 
 def create_app(

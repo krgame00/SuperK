@@ -159,7 +159,7 @@ describe("MaskEditor", () => {
     expect(first).toHaveFocus();
   });
 
-  test("moves the keyboard brush and applies one undoable mark", async () => {
+  test("moves the keyboard brush but space never paints", async () => {
     const applyBrushSpy = vi.spyOn(maskEditsModule, "applyBrush");
     renderMaskEditor();
 
@@ -169,15 +169,47 @@ describe("MaskEditor", () => {
     // Move brush from center (50, 40) right by 1 -> (51, 40), then down by 10 (Shift) -> (51, 50)
     fireEvent.keyDown(canvas, { key: "ArrowRight" });
     fireEvent.keyDown(canvas, { key: "ArrowDown", shiftKey: true });
+
+    // Space is reserved for panning: it must not stamp mask pixels.
     fireEvent.keyDown(canvas, { key: " " });
 
-    expect(applyBrushSpy).toHaveBeenCalledWith(
-      expect.any(ImageData),
-      [{ x: 51, y: 50 }],
-      8,
-      "paint",
+    expect(applyBrushSpy).not.toHaveBeenCalled();
+    expect(undoManager.canUndo()).toBe(false);
+  });
+
+  test("space sets pan mode so dragging pans instead of painting", async () => {
+    const applyBrushSpy = vi.spyOn(maskEditsModule, "applyBrush");
+    renderMaskEditor();
+
+    const canvas = await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+    canvas.focus();
+
+    fireEvent.keyDown(canvas, { key: " " });
+    fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 10, clientY: 10, button: 0 });
+    fireEvent.pointerMove(canvas, { pointerId: 1, clientX: 40, clientY: 25 });
+    fireEvent.pointerUp(canvas, { pointerId: 1 });
+    fireEvent.keyUp(canvas, { key: " " });
+
+    expect(applyBrushSpy).not.toHaveBeenCalled();
+    const panWrapper = document.querySelector<HTMLElement>(
+      ".transition-transform.duration-75",
     );
-    expect(undoManager.undo()).toBe("แก้ Mask");
+    expect(panWrapper?.getAttribute("style")).toContain("translate(30px, 15px)");
+  });
+
+  test("mouse painting keeps working and supports Ctrl+Z undo", async () => {
+    const applyBrushSpy = vi.spyOn(maskEditsModule, "applyBrush");
+    renderMaskEditor();
+
+    const canvas = await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+    canvas.focus();
+
+    fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 30, clientY: 40, button: 0 });
+    fireEvent.pointerUp(canvas, { pointerId: 1 });
+    expect(applyBrushSpy).toHaveBeenCalled();
+
+    fireEvent.keyDown(canvas, { key: "z", ctrlKey: true });
+    expect(screen.getByRole("status")).toHaveTextContent("เลิกทำแล้ว");
   });
 
   test("brackets clamp radius and announce the new size", async () => {
@@ -194,19 +226,18 @@ describe("MaskEditor", () => {
     expect(screen.getByRole("status")).toHaveTextContent("ขนาดแปรง 8 พิกเซล");
   });
 
-  test("clamps keyboard brush movement to image bounds and supports Ctrl+Z undo", async () => {
+  test("space never announces painting or pushes undo entries", async () => {
     renderMaskEditor();
 
     const canvas = await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
     canvas.focus();
 
-    // Paint once
     fireEvent.keyDown(canvas, { key: " " });
-    expect(screen.getByRole("status")).toHaveTextContent("เพิ่ม Mask แล้ว");
+    expect(screen.getByRole("status")).not.toHaveTextContent("เพิ่ม Mask แล้ว");
 
-    // Ctrl+Z undoes
+    // Ctrl+Z has nothing to undo because space never painted.
     fireEvent.keyDown(canvas, { key: "z", ctrlKey: true });
-    expect(screen.getByRole("status")).toHaveTextContent("เลิกทำแล้ว");
+    expect(screen.getByRole("status")).not.toHaveTextContent("เลิกทำแล้ว");
   });
 
   test("cursor movement alone does not announce continuously", async () => {

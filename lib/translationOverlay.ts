@@ -221,6 +221,8 @@ export const downloadTranslatedImage = (
   const wrappers = container.querySelectorAll(".tl-canvas > div");
   wrappers.forEach((wrapperEl) => {
     const wrapper = wrapperEl as HTMLElement;
+    // A Deleted bubble stays in the DOM for undo but must never reach the export.
+    if (wrapper.dataset.deleted === "true" || wrapper.style.display === "none") return;
     const leftPercent = parseFloat(wrapper.style.left) || 0;
     const topPercent = parseFloat(wrapper.style.top) || 0;
     const widthPercent = parseFloat(wrapper.style.width) || 0;
@@ -1063,18 +1065,21 @@ export const applyTranslationOverlay = async (
         b.deleted = true;
         onBubblesMutated?.();
         wrapper.style.display = "none";
+        wrapper.dataset.deleted = "true";
         setSelectedBubble(null);
         undoManager.push({
           label: "ลบกล่องข้อความ",
           undo: () => {
             b.deleted = false;
             wrapper.style.display = "block";
+            delete wrapper.dataset.deleted;
             renderBubble();
             onBubblesMutated?.();
           },
           redo: () => {
             b.deleted = true;
             wrapper.style.display = "none";
+            wrapper.dataset.deleted = "true";
             setSelectedBubble(null);
             onBubblesMutated?.();
           },
