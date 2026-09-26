@@ -14,7 +14,7 @@ The editor reuses the proposed mask and attempts at most one refresh, then stops
 
 ## Validation
 
-Deterministic frontend and Python tests cover empty masks, bounded drift, stale region matching, confirmation retry, revision mismatch, and cache restoration. Final suites: 929 Vitest tests passed (1 skipped) and 186 Python tests passed (3 skipped). A browser run on the cached Region 17 source produced a repaired and approved Region 17, with 13,278 changed pixels inside the selected region and zero outside that region or the final mask. The live browser run did not replay a cleaner restart or two-pixel drift; those cases remain covered by deterministic tests.
+Deterministic frontend and Python tests cover empty masks, bounded drift, stale region matching, confirmation retry, revision mismatch, and cache restoration. Final suites: 929 Vitest tests passed (1 skipped) and 186 Python tests passed (3 skipped). Live Region 17 replay used a fresh isolated cleaner cache to force stale-job recovery, then a 2 px brush at the region boundary. Recovery completed without "Job not found"; the bounded-drift run kept the editor open with an adjustment notice. Comparing its result with the immediately preceding clean image showed 128 changed pixels inside the region and none outside the region or final approved mask.
 
 ## Why it slipped through
 
