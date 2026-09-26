@@ -28,6 +28,22 @@ test("GET forwards path and query to the local cleaner", async () => {
   expect(response.headers.get("cache-control")).toBe("no-store");
 });
 
+test("rejects dot-segment paths instead of forwarding them", async () => {
+  const response = await GET(
+    new Request("http://localhost/api/clean/v1/%2e%2e/admin"),
+    { params: Promise.resolve({ path: ["v1", "..", "admin"] }) },
+  );
+  expect(response.status).toBe(400);
+});
+
+test("rejects paths outside the /v1 scope", async () => {
+  const response = await GET(
+    new Request("http://localhost/api/clean/admin/health"),
+    { params: Promise.resolve({ path: ["admin", "health"] }) },
+  );
+  expect(response.status).toBe(400);
+});
+
 test("POST forwards the original multipart bytes and content type", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
     Response.json(

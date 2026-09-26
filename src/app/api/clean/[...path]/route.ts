@@ -44,12 +44,26 @@ async function forward(
   if (body && body.byteLength > MAX_PROXY_BODY_BYTES) return tooLarge();
 
   const { path } = await context.params;
+  // encodeURIComponent leaves "." and ".." untouched, and new URL() then
+  // normalizes them away — so dot-segments and any non-/v1 scope must be
+  // rejected before the upstream URL is ever built.
+  if (
+    path[0] !== "v1" ||
+    path.some((segment) => segment === "." || segment === "..")
+  ) {
+    return outOfScope();
+  }
   const encodedPath = path.map(encodeURIComponent).join("/");
   const base = (
     process.env.SUPERK_CLEANER_URL ?? DEFAULT_CLEANER_URL
   ).replace(/\/+$/, "");
   const target = new URL(`${base}/${encodedPath}`);
   target.search = new URL(request.url).search;
+  // Defense in depth: re-verify the normalized upstream path stayed in scope.
+  const basePath = new URL(base).pathname.replace(/\/+$/, "");
+  if (!target.pathname.startsWith(`${basePath}/v1/`)) {
+    return outOfScope();
+  }
 
   const headers = new Headers();
   const contentType = request.headers.get("content-type");
@@ -96,5 +110,12 @@ function tooLarge(): Response {
   return Response.json(
     { detail: "Image is too large. Maximum upload size is 80 MB." },
     { status: 413, headers: { "cache-control": "no-store" } },
+  );
+}
+
+function outOfScope(): Response {
+  return Response.json(
+    { detail: "Requested cleaning path is outside the proxy scope." },
+    { status: 400, headers: { "cache-control": "no-store" } },
   );
 }

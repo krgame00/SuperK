@@ -137,11 +137,18 @@ chrome.runtime.onMessage?.addListener?.(async (message, sender) => {
     await runTranslationFlow(sender.tab.id, sender.frameId ?? 0, message.imageUrl);
   } else if (message.action === "OPEN_EDITOR" && message.payload) {
     try {
-      const stored = await chrome.storage.sync.get({ serverUrl: "http://127.0.0.1:3000" });
+      const stored = await chrome.storage.sync.get({
+        serverUrl: "http://127.0.0.1:3000",
+        pairingToken: "",
+      });
       const appendUrl = `${stored.serverUrl}/api/extension/workspace/append`;
+      const headers = { "Content-Type": "application/json" };
+      if (stored.pairingToken) {
+        headers["Authorization"] = `Bearer ${stored.pairingToken}`;
+      }
       const res = await fetch(appendUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(message.payload),
       });
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
@@ -355,8 +362,12 @@ async function checkPublishedUpdates() {
   if (isSyncInProgress) return [];
   isSyncInProgress = true;
   try {
-    const stored = (await chrome.storage?.sync?.get?.({ serverUrl: "http://127.0.0.1:3000" })) || {
+    const stored = (await chrome.storage?.sync?.get?.({
       serverUrl: "http://127.0.0.1:3000",
+      pairingToken: "",
+    })) || {
+      serverUrl: "http://127.0.0.1:3000",
+      pairingToken: "",
     };
     const normalizedUrl = normalizeServerUrl(stored.serverUrl);
     let cursor = await getSyncCursor(normalizedUrl);
@@ -373,7 +384,10 @@ async function checkPublishedUpdates() {
     }
 
     const url = `${normalizedUrl}/api/extension/publish-back?${query}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
+    const syncHeaders = stored.pairingToken
+      ? { Authorization: `Bearer ${stored.pairingToken}` }
+      : {};
+    const res = await fetch(url, { headers: syncHeaders, signal: AbortSignal.timeout(4000) });
     if (!res.ok) return [];
     const data = await res.json();
 

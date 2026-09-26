@@ -61,12 +61,12 @@ describe("P3: Extension Pairing Security & Local-by-Default Hardening", () => {
     expect(data.error).toContain("Forbidden");
   });
 
-  it("allows loopback Origin (http://localhost:3000 or http://127.0.0.1:3000)", async () => {
+  it("allows a loopback Origin that matches the listener host exactly", async () => {
     const req = new NextRequest("http://127.0.0.1:3000/api/extension/pair", {
       method: "GET",
       headers: {
         host: "127.0.0.1:3000",
-        origin: "http://localhost:3000",
+        origin: "http://127.0.0.1:3000",
       },
     });
     const res = await GET(req);
@@ -75,7 +75,37 @@ describe("P3: Extension Pairing Security & Local-by-Default Hardening", () => {
     expect(data.pairingToken).toBeTruthy();
   });
 
-  it("allows exact same-host Origin for self-hosted instances", async () => {
+  it("rejects a loopback Origin whose host differs from the listener host", async () => {
+    // Mixed loopback aliases are never produced by the app page itself
+    // (it fetches its own origin), so only the exact listener origin passes.
+    const req = new NextRequest("http://127.0.0.1:3000/api/extension/pair", {
+      method: "GET",
+      headers: {
+        host: "127.0.0.1:3000",
+        origin: "http://localhost:3000",
+      },
+    });
+    const res = await GET(req);
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects a DNS-rebound Host/Origin pair that points at loopback", async () => {
+    // attacker.test resolves to 127.0.0.1; the browser sends this exact pair
+    // and considers the request same-origin, so the token must not be returned.
+    const req = new NextRequest("http://attacker.test:3000/api/extension/pair", {
+      method: "GET",
+      headers: {
+        host: "attacker.test:3000",
+        origin: "http://attacker.test:3000",
+      },
+    });
+    const res = await GET(req);
+    expect(res.status).toBe(403);
+    const data = await res.json();
+    expect(data.error).toContain("Forbidden");
+  });
+
+  it("rejects same-host remote Origins now that the self-hosted exception is gone", async () => {
     const req = new NextRequest("http://superk.internal:3000/api/extension/pair", {
       method: "GET",
       headers: {
@@ -84,8 +114,8 @@ describe("P3: Extension Pairing Security & Local-by-Default Hardening", () => {
       },
     });
     const res = await GET(req);
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
     const data = await res.json();
-    expect(data.pairingToken).toBeTruthy();
+    expect(data.error).toContain("Forbidden");
   });
 });

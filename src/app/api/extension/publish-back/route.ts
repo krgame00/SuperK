@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requirePairingAuth } from "@/lib/server/pairing";
 
 export interface PublishBackPayload {
   pageUrl: string;
@@ -7,6 +8,7 @@ export interface PublishBackPayload {
   textStyle?: Record<string, unknown>;
   cleanUrl?: string;
 }
+
 
 interface StoredPublication extends PublishBackPayload {
   seq: number;
@@ -52,7 +54,7 @@ function buildCorsHeaders(origin: string | null): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": allowed && origin ? origin : "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, x-superk-pairing-token",
   };
 }
 
@@ -75,6 +77,9 @@ export async function POST(request: NextRequest) {
   if (!isOriginAllowed(origin)) {
     return NextResponse.json({ error: "Forbidden origin" }, { status: 403 });
   }
+
+  const unauthorized = requirePairingAuth(request, buildCorsHeaders(origin));
+  if (unauthorized) return unauthorized;
 
   try {
     const body = (await request.json()) as PublishBackPayload;
@@ -111,6 +116,9 @@ export async function GET(request: NextRequest) {
   if (!isOriginAllowed(origin)) {
     return NextResponse.json({ error: "Forbidden origin" }, { status: 403 });
   }
+
+  const unauthorized = requirePairingAuth(request, buildCorsHeaders(origin));
+  if (unauthorized) return unauthorized;
 
   const url = new URL(request.url);
   const pageUrl = url.searchParams.get("pageUrl");

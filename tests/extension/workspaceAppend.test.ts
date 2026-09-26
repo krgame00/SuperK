@@ -11,12 +11,15 @@ import {
   POST as appendEndpoint,
   GET as handoffEndpoint,
   _resetHandoffsForTest,
+  _setHandoffTtlForTest,
 } from "@/src/app/api/extension/workspace/append/route";
+import { _resetPairingTokenForTest } from "@/lib/server/pairing";
 
 describe("Workspace Handoff & Session Append Protocol (Ticket 04)", () => {
   beforeEach(async () => {
     await clearProjectSession();
     _resetHandoffsForTest();
+    _resetPairingTokenForTest("test-token");
   });
 
   describe("projectStore.appendPageToProjectSession", () => {
@@ -83,6 +86,7 @@ describe("Workspace Handoff & Session Append Protocol (Ticket 04)", () => {
           "Content-Type": "application/json",
           host: "127.0.0.1:3000",
           origin: "chrome-extension://abcdefg",
+          authorization: "Bearer test-token",
         },
         body: JSON.stringify({
           pageUrl: "https://manga.test/p1.png",
@@ -101,7 +105,7 @@ describe("Workspace Handoff & Session Append Protocol (Ticket 04)", () => {
       // Now query handoff endpoint
       const handoffReq = new NextRequest(`http://127.0.0.1:3000/api/extension/workspace/append?id=${appendData.handoffId}`, {
         method: "GET",
-        headers: { host: "127.0.0.1:3000", origin: "http://127.0.0.1:3000" },
+        headers: { host: "127.0.0.1:3000", origin: "http://127.0.0.1:3000", authorization: "Bearer test-token" },
       });
 
       const handoffRes = await handoffEndpoint(handoffReq);
@@ -110,6 +114,50 @@ describe("Workspace Handoff & Session Append Protocol (Ticket 04)", () => {
       expect(handoffData.pageUrl).toBe("https://manga.test/p1.png");
       expect(handoffData.bubbles[0].t).toBe("แปลแล้ว");
       expect(handoffData.originUrl).toBe("https://manga.test/chapter/1");
+    });
+  });
+
+  describe("pairing token gate", () => {
+    it("rejects handoff publish and retrieval without a pairing token with 401", async () => {
+      const post = await appendEndpoint(
+        new NextRequest("http://127.0.0.1:3000/api/extension/workspace/append", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", origin: "chrome-extension://abcdefg" },
+          body: JSON.stringify({ pageUrl: "https://m.test/p.png" }),
+        }),
+      );
+      expect(post.status).toBe(401);
+
+      const get = await handoffEndpoint(
+        new NextRequest("http://127.0.0.1:3000/api/extension/workspace/append?id=hnd_x", {
+          headers: { origin: "chrome-extension://abcdefg" },
+        }),
+      );
+      expect(get.status).toBe(401);
+    });
+
+    it("expires handoffs past the configured TTL", async () => {
+      _setHandoffTtlForTest(0);
+      const post = await appendEndpoint(
+        new NextRequest("http://127.0.0.1:3000/api/extension/workspace/append", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            origin: "chrome-extension://abcdefg",
+            authorization: "Bearer test-token",
+          },
+          body: JSON.stringify({ pageUrl: "https://m.test/p.png" }),
+        }),
+      );
+      expect(post.status).toBe(200);
+      const { handoffId } = await post.json();
+
+      const get = await handoffEndpoint(
+        new NextRequest(`http://127.0.0.1:3000/api/extension/workspace/append?id=${handoffId}`, {
+          headers: { origin: "chrome-extension://abcdefg", authorization: "Bearer test-token" },
+        }),
+      );
+      expect(get.status).toBe(404);
     });
   });
 });

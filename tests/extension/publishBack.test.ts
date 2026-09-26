@@ -5,17 +5,19 @@ import {
   GET as getPublishedEndpoint,
   _resetPublishedForTest,
 } from "@/src/app/api/extension/publish-back/route";
+import { _resetPairingTokenForTest } from "@/lib/server/pairing";
 
 describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
   beforeEach(() => {
     _resetPublishedForTest();
+    _resetPairingTokenForTest("test-token");
   });
 
   describe("API /api/extension/publish-back", () => {
     it("rejects request without pageUrl", async () => {
       const req = new NextRequest("http://127.0.0.1:3000/api/extension/publish-back", {
         method: "POST",
-        headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000" },
+        headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000", authorization: "Bearer test-token" },
         body: JSON.stringify({ bubbles: [] }),
       });
 
@@ -28,7 +30,7 @@ describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
     it("publishes refined bubbles and allows retrieval by pageUrl", async () => {
       const req = new NextRequest("http://127.0.0.1:3000/api/extension/publish-back", {
         method: "POST",
-        headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000" },
+        headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000", authorization: "Bearer test-token" },
         body: JSON.stringify({
           pageUrl: "https://manga.example.com/chapter-5/page-2.png",
           originUrl: "https://manga.example.com/chapter-5",
@@ -59,7 +61,7 @@ describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
           encodeURIComponent("https://manga.example.com/chapter-5/page-2.png"),
         {
           method: "GET",
-          headers: { origin: "chrome-extension://my-extension" },
+          headers: { origin: "chrome-extension://my-extension", authorization: "Bearer test-token" },
         }
       );
 
@@ -75,7 +77,7 @@ describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
       const now = Date.now();
       const req = new NextRequest("http://127.0.0.1:3000/api/extension/publish-back", {
         method: "POST",
-        headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000" },
+        headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000", authorization: "Bearer test-token" },
         body: JSON.stringify({
           pageUrl: "https://manga.example.com/p1.jpg",
           bubbles: [{ t: "คำแปลอัปเดต", box: [10, 10, 50, 50] }],
@@ -87,7 +89,7 @@ describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
         `http://127.0.0.1:3000/api/extension/publish-back?since=${now - 1000}`,
         {
           method: "GET",
-          headers: { origin: "chrome-extension://my-extension" },
+          headers: { origin: "chrome-extension://my-extension", authorization: "Bearer test-token" },
         }
       );
 
@@ -104,7 +106,7 @@ describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
       const post1 = await publishEndpoint(
         new NextRequest("http://127.0.0.1:3000/api/extension/publish-back", {
           method: "POST",
-          headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000" },
+          headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000", authorization: "Bearer test-token" },
           body: JSON.stringify({
             pageUrl: "https://manga.example.com/p1.jpg",
             bubbles: [{ t: "First", box: [0, 0, 10, 10] }],
@@ -119,7 +121,7 @@ describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
       const post2 = await publishEndpoint(
         new NextRequest("http://127.0.0.1:3000/api/extension/publish-back", {
           method: "POST",
-          headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000" },
+          headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000", authorization: "Bearer test-token" },
           body: JSON.stringify({
             pageUrl: "https://manga.example.com/p2.jpg",
             bubbles: [{ t: "Second", box: [0, 0, 10, 10] }],
@@ -135,7 +137,7 @@ describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
         `http://127.0.0.1:3000/api/extension/publish-back?sinceSeq=${seq1}`,
         {
           method: "GET",
-          headers: { origin: "chrome-extension://my-extension" },
+          headers: { origin: "chrome-extension://my-extension", authorization: "Bearer test-token" },
         },
       );
       const pollRes = await getPublishedEndpoint(pollReq);
@@ -149,7 +151,7 @@ describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
         `http://127.0.0.1:3000/api/extension/publish-back?sinceSeq=${seq2}`,
         {
           method: "GET",
-          headers: { origin: "chrome-extension://my-extension" },
+          headers: { origin: "chrome-extension://my-extension", authorization: "Bearer test-token" },
         },
       );
       const repeatPollRes = await getPublishedEndpoint(repeatPollReq);
@@ -162,7 +164,7 @@ describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
       await publishEndpoint(
         new NextRequest("http://127.0.0.1:3000/api/extension/publish-back", {
           method: "POST",
-          headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000" },
+          headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000", authorization: "Bearer test-token" },
           body: JSON.stringify({ pageUrl: "https://manga.example.com/p1.jpg", bubbles: [{ t: "1" }] }),
         }),
       );
@@ -171,7 +173,7 @@ describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
       await publishEndpoint(
         new NextRequest("http://127.0.0.1:3000/api/extension/publish-back", {
           method: "POST",
-          headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000" },
+          headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000", authorization: "Bearer test-token" },
           body: JSON.stringify({ pageUrl: "https://manga.example.com/p2.jpg", bubbles: [{ t: "2" }] }),
         }),
       );
@@ -180,7 +182,7 @@ describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
       await publishEndpoint(
         new NextRequest("http://127.0.0.1:3000/api/extension/publish-back", {
           method: "POST",
-          headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000" },
+          headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000", authorization: "Bearer test-token" },
           body: JSON.stringify({ pageUrl: "https://manga.example.com/p1.jpg", bubbles: [{ t: "1-v2" }] }),
         }),
       );
@@ -190,7 +192,7 @@ describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
         "http://127.0.0.1:3000/api/extension/publish-back",
         {
           method: "GET",
-          headers: { origin: "chrome-extension://my-extension" },
+          headers: { origin: "chrome-extension://my-extension", authorization: "Bearer test-token" },
         },
       );
       const pollRes = await getPublishedEndpoint(pollReq);
@@ -200,6 +202,41 @@ describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
       expect(pollData.updates[0].seq).toBe(2);
       expect(pollData.updates[1].pageUrl).toBe("https://manga.example.com/p1.jpg");
       expect(pollData.updates[1].seq).toBe(3);
+    });
+  });
+
+  describe("pairing token gate", () => {
+    it("rejects publish and sync without a pairing token with 401", async () => {
+      const post = await publishEndpoint(
+        new NextRequest("http://127.0.0.1:3000/api/extension/publish-back", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000" },
+          body: JSON.stringify({ pageUrl: "https://m.test/p.png", bubbles: [] }),
+        }),
+      );
+      expect(post.status).toBe(401);
+
+      const get = await getPublishedEndpoint(
+        new NextRequest("http://127.0.0.1:3000/api/extension/publish-back?since=0", {
+          headers: { origin: "http://127.0.0.1:3000" },
+        }),
+      );
+      expect(get.status).toBe(401);
+    });
+
+    it("rejects a wrong token with 401", async () => {
+      const res = await publishEndpoint(
+        new NextRequest("http://127.0.0.1:3000/api/extension/publish-back", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            origin: "http://127.0.0.1:3000",
+            authorization: "Bearer wrong-token",
+          },
+          body: JSON.stringify({ pageUrl: "https://m.test/p.png", bubbles: [] }),
+        }),
+      );
+      expect(res.status).toBe(401);
     });
   });
 });

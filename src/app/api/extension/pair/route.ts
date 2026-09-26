@@ -33,14 +33,15 @@ function isAuthorizedPairingOrigin(request: NextRequest): boolean {
 
   try {
     const originUrl = new URL(origin);
-    // Allow loopback origins
-    if (isLoopbackHostname(originUrl.hostname)) {
-      return true;
-    }
-    // Allow exact same host for self-hosted instances
-    if (host && (originUrl.host === host || originUrl.hostname === hostName)) {
-      return true;
-    }
+    // Only the app page's own origin, as served by this listener: the origin
+    // host must equal the request Host header and be a loopback hostname. A
+    // DNS-rebound public domain points at 127.0.0.1 but keeps its hostname,
+    // so requiring the loopback hostname here defeats reading the token.
+    return (
+      host !== "" &&
+      originUrl.host === host &&
+      isLoopbackHostname(originUrl.hostname)
+    );
   } catch {
     return false;
   }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requirePairingAuth } from "@/lib/server/pairing";
 
 export interface WorkspaceHandoffPayload {
   pageUrl: string;
@@ -15,9 +16,29 @@ interface StoredHandoff extends WorkspaceHandoffPayload {
 
 const handoffs = new Map<string, StoredHandoff>();
 
+// Handoffs are one-shot editor invitations: they expire after a day so long
+// desktop sessions do not accumulate them forever.
+const HANDOFF_TTL_MS = 24 * 60 * 60 * 1000;
+let handoffTtlMs = HANDOFF_TTL_MS;
+
 export function _resetHandoffsForTest() {
   handoffs.clear();
+  handoffTtlMs = HANDOFF_TTL_MS;
 }
+
+export function _setHandoffTtlForTest(ms: number) {
+  handoffTtlMs = ms;
+}
+
+function sweepExpiredHandoffs() {
+  const now = Date.now();
+  for (const [id, handoff] of handoffs) {
+    if (now - handoff.createdAt >= handoffTtlMs) {
+      handoffs.delete(id);
+    }
+  }
+}
+
 
 function isOriginAllowed(origin: string | null): boolean {
   if (!origin) return true;
@@ -41,7 +62,7 @@ function buildCorsHeaders(origin: string | null): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": allowed && origin ? origin : "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, x-superk-pairing-token",
   };
 }
 
@@ -64,6 +85,11 @@ export async function POST(request: NextRequest) {
   if (!isOriginAllowed(origin)) {
     return NextResponse.json({ error: "Forbidden origin" }, { status: 403 });
   }
+
+  const unauthorized = requirePairingAuth(request, buildCorsHeaders(origin));
+  if (unauthorized) return unauthorized;
+
+  sweepExpiredHandoffs();
 
   try {
     const body = (await request.json()) as WorkspaceHandoffPayload;
@@ -108,6 +134,11 @@ export async function GET(request: NextRequest) {
   if (!isOriginAllowed(origin)) {
     return NextResponse.json({ error: "Forbidden origin" }, { status: 403 });
   }
+
+  const unauthorized = requirePairingAuth(request, buildCorsHeaders(origin));
+  if (unauthorized) return unauthorized;
+
+  sweepExpiredHandoffs();
 
   const url = new URL(request.url);
   const id = url.searchParams.get("id");

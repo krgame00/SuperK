@@ -84,6 +84,21 @@ function isShortcutTargetBlocked(target: HTMLElement | null): boolean {
   );
 }
 
+// Extension handoff/publish-back endpoints require the pairing token; the
+// app page fetches its own token from the pairing endpoint (same origin).
+async function fetchExtensionPairingToken(): Promise<string | null> {
+  try {
+    const res = await fetch("/api/extension/pair");
+    if (!res.ok) return null;
+    const data = (await res.json()) as { pairingToken?: unknown };
+    return typeof data.pairingToken === "string" && data.pairingToken
+      ? data.pairingToken
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function formatStopwatchTime(elapsedMs: number): string {
   const safeMs = Math.max(0, Number.isFinite(elapsedMs) ? elapsedMs : 0);
   const totalTenths = Math.floor(safeMs / 100);
@@ -727,7 +742,10 @@ export default function WorkspacePage() {
 
     (async () => {
       try {
-        const res = await fetch(`/api/extension/workspace/append?id=${encodeURIComponent(handoffId)}`);
+        const pairingToken = await fetchExtensionPairingToken();
+        const res = await fetch(`/api/extension/workspace/append?id=${encodeURIComponent(handoffId)}`, {
+          headers: pairingToken ? { Authorization: `Bearer ${pairingToken}` } : undefined,
+        });
         if (!res.ok) return;
         const handoffData = await res.json();
 
@@ -943,9 +961,13 @@ export default function WorkspacePage() {
           console.warn("Failed to convert blob cleanUrl to base64 data URL for publish-back:", blobErr);
         }
       }
+      const pairingToken = await fetchExtensionPairingToken();
       const res = await fetch("/api/extension/publish-back", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(pairingToken ? { Authorization: `Bearer ${pairingToken}` } : {}),
+        },
         body: JSON.stringify({
           pageUrl: page.url,
           originUrl: page.originUrl,
