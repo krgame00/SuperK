@@ -1644,6 +1644,14 @@ export const applyTranslationOverlay = async (
             handle.style.left = left;
             handle.style.top = top;
           });
+          const wrapperChromeScale = Math.max(
+            0.6,
+            Math.min(1, wrapper.offsetWidth / 220, wrapper.offsetHeight / 100),
+          );
+          toolbar.style.zoom = String(wrapperChromeScale);
+          chromeHandles.forEach((handle) => {
+            handle.style.zoom = String(wrapperChromeScale);
+          });
           toolbar.style.left = "50%";
           toolbar.style.top = "-10px";
           toolbar.style.transform = "translate(-50%, -100%)";
@@ -1674,9 +1682,23 @@ export const applyTranslationOverlay = async (
         const toolbarWidth = toolbar.offsetWidth || 286;
         const toolbarHeight = toolbar.offsetHeight || 46;
         const rootWidth = rootRect.width || Math.max(right + 16, toolbarWidth + 16);
-        const placeBelow = top < toolbarHeight + 14;
-        const minCenter = toolbarWidth / 2 + 8;
-        const maxCenter = Math.max(minCenter, rootWidth - toolbarWidth / 2 - 8);
+        // Chrome (toolbar + handles) must not dwarf small bubbles: shrink it
+        // as the bubble shrinks, floored so buttons stay grabbable. `zoom`
+        // keeps the translate(-50%, ±100%) anchors intact while scaling the
+        // whole rendered chrome.
+        const chromeScale = Math.max(
+          0.6,
+          Math.min(1, bubbleRect.width / 220, bubbleRect.height / 100),
+        );
+        toolbar.style.zoom = String(chromeScale);
+        chromeHandles.forEach((handle) => {
+          handle.style.zoom = String(chromeScale);
+        });
+        const scaledWidth = toolbarWidth * chromeScale;
+        const scaledHeight = toolbarHeight * chromeScale;
+        const placeBelow = top < scaledHeight + 14;
+        const minCenter = scaledWidth / 2 + 8;
+        const maxCenter = Math.max(minCenter, rootWidth - scaledWidth / 2 - 8);
         const toolbarX = Math.max(minCenter, Math.min(maxCenter, centerX));
         const toolbarY = placeBelow ? bottom + 10 : top - 10;
         toolbar.style.left = `${toolbarX}px`;

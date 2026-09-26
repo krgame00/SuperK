@@ -598,7 +598,35 @@ describe("translation overlay live editor and keyboard controls", () => {
     expect(wrapper.style.display).toBe("block");
   });
 
-  test("excludes deleted bubbles from export compositing until undo", async () => {
+  test("chrome toolbar scales down for small bubbles and restores for large ones", async () => {
+  // vitest fake timers don't fake rAF; run chrome-sync frames synchronously
+  // so repositioning happens inside the test.
+  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+    cb(16);
+    return 1;
+  });
+  const { chromeRoot, wrapper, toolbar } = await renderOverlay("ปรับขนาดเครื่องมือ");
+
+  // jsdom rects are zero-sized → chrome sits at the small-bubble floor.
+  wrapper.dispatchEvent(new FocusEvent("focus"));
+  expect(toolbar.style.zoom).toBe("0.6");
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="nw"]')!;
+  expect(handle.style.zoom).toBe("0.6");
+
+  // A large bubble keeps full-size chrome.
+  vi.spyOn(wrapper, "getBoundingClientRect").mockReturnValue({
+    left: 40, top: 40, right: 540, bottom: 340, width: 500, height: 300,
+  } as DOMRect);
+  vi.spyOn(chromeRoot, "getBoundingClientRect").mockReturnValue({
+    left: 0, top: 0, right: 1200, bottom: 1600, width: 1200, height: 1600,
+  } as DOMRect);
+  wrapper.dispatchEvent(new FocusEvent("focus"));
+  await vi.runAllTimersAsync();
+  expect(toolbar.style.zoom).toBe("1");
+  expect(handle.style.zoom).toBe("1");
+});
+
+test("excludes deleted bubbles from export compositing until undo", async () => {
     const { container, toolbar, canvas } = await renderOverlay("จะลบแล้ว export");
 
     const drawImageArgs: unknown[][] = [];

@@ -59,6 +59,11 @@ test(
 test(
   "clean proxy forwards normal cleaning requests to the sidecar scope",
   async () => {
+    if (server.reused) {
+      // A reused dev server keeps its own SUPERK_CLEANER_URL, so the stub
+      // cannot observe its forwarding; the traversal test below still runs.
+      return;
+    }
     const res = await fetch(`${server.url}/api/clean/v1/health`);
     expect(res.status).toBe(200);
     const data = (await res.json()) as { ok?: boolean; path?: string };
@@ -78,6 +83,8 @@ test(
 
     const outsideScope = await fetch(`${server.url}/api/clean/admin/health`);
     expect(outsideScope.status).toBe(400);
+
+    if (server.reused) return;
 
     // Nothing outside /v1 ever reached the sidecar.
     const paths = sidecar.requestedPaths().slice(before);

@@ -9,13 +9,40 @@ export interface NextTestServer {
   url: string;
   port: number;
   close: () => Promise<void>;
+  /** True when an already-running dev server (e.g. the user's) is reused. */
+  reused: boolean;
 }
 
-// Boots the real Next.js server (real router: path decoding, Host/Origin
-// handling) on an ephemeral loopback port. The server runs in a child process
-// because loading Next's native modules inside the vitest worker segfaults
-// Node on Windows during teardown.
+// Resolves the integration-test server: reuse an already-running dev server
+// when one answers (Next 16 allows only one dev server per directory, so a
+// user-launched `npm run dev` must not be fought over); otherwise boot a
+// private child-process dev server. Override the target with
+// SUPERK_TEST_SERVER_URL when the dev server runs on a non-default port.
 export async function startNextTestServer(): Promise<NextTestServer> {
+  const candidates = process.env.SUPERK_TEST_SERVER_URL
+    ? [process.env.SUPERK_TEST_SERVER_URL, "http://127.0.0.1:3000"]
+    : ["http://127.0.0.1:3000"];
+  for (const candidate of candidates) {
+    try {
+      const probe = await fetch(`${candidate}/api/extension/pair`, {
+        signal: AbortSignal.timeout(1500),
+      });
+      if (probe.ok) {
+        return {
+          url: candidate,
+          port: Number(new URL(candidate).port) || 80,
+          close: async () => {},
+          reused: true,
+        };
+      }
+    } catch {
+      // Not running — try the next candidate.
+    }
+  }
+  return spawnNextTestServer();
+}
+
+async function spawnNextTestServer(): Promise<NextTestServer> {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
   const childScript = path.join(repoRoot, "tests", "api", "nextServerChild.mjs");
   const child: ChildProcess = spawn(
@@ -47,6 +74,7 @@ export async function startNextTestServer(): Promise<NextTestServer> {
   return {
     url: `http://127.0.0.1:${port}`,
     port,
+    reused: false,
     close: async () => {
       await new Promise<void>((resolve) => {
         const timer = setTimeout(() => {
