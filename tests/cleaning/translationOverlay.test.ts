@@ -813,3 +813,50 @@ test("regression: saved empty text remains editable after reopening overlay", as
   document.querySelector<HTMLButtonElement>('[aria-label="บันทึกข้อความ"]')!.click();
   expect(restoredBubble.t).toBe("restored text");
 });
+
+test("a stale overlay paint bails once a newer generation painted", async () => {
+  const explicitContainer = document.createElement("div");
+  const image = document.createElement("img");
+  Object.defineProperties(image, {
+    complete: { configurable: true, value: true },
+    naturalWidth: { configurable: true, value: 1000 },
+    naturalHeight: { configurable: true, value: 1200 },
+  });
+  explicitContainer.appendChild(image);
+  document.body.appendChild(explicitContainer);
+
+  const styleRef = {
+    current: { fontFamily: "Itim, sans-serif", textColor: "#000000", textOutline: "#ffffff", fontSizeMultiplier: 1 },
+  };
+
+  let fontCalls = 0;
+  let releaseFonts: (() => void) | undefined;
+  const fontsGate = new Promise<void>((resolve) => {
+    releaseFonts = resolve;
+  });
+  Object.defineProperty(document, "fonts", {
+    configurable: true,
+    value: {
+      load: vi.fn(() => (fontCalls++ === 0 ? fontsGate.then(() => []) : Promise.resolve([]))),
+    },
+  });
+
+  // Page A starts painting, then page B takes over the same container before
+  // A's deferred paint runs — A must bail instead of repainting over B.
+  const paintA = applyTranslationOverlay(
+    [{ box: [100, 100, 300, 400], t: "จากหน้าเก่า" }],
+    "single", 0, vi.fn(), undefined, styleRef, explicitContainer,
+  );
+  const paintB = applyTranslationOverlay(
+    [{ box: [100, 100, 300, 400], t: "จากหน้าใหม่" }],
+    "single", 0, vi.fn(), undefined, styleRef, explicitContainer,
+  );
+
+  releaseFonts!();
+  await Promise.all([paintA, paintB]);
+  await vi.runAllTimersAsync();
+
+  const painted = fillTextSpy.mock.calls.map((c) => String(c[0])).join("|");
+  expect(painted).toContain("จากหน้าใหม่");
+  expect(painted).not.toContain("จากหน้าเก่า");
+});

@@ -128,6 +128,11 @@ export const bubbleKeyOf = (bubble: TranslatedBubble): string => {
 // entries are pruned and cleaned up on the next apply.
 const overlayCleanups = new Map<Element, () => void>();
 
+// Each applyTranslationOverlay bumps its container's generation; a paint
+// whose generation is no longer current (page switched underneath it) must
+// bail instead of repainting the previous page over the current one.
+const overlayGenerations = new WeakMap<Element, number>();
+
 const pruneOverlayCleanups = (): void => {
   for (const [element, cleanup] of overlayCleanups) {
     if (!element.isConnected) {
@@ -519,6 +524,10 @@ export const applyTranslationOverlay = async (
 
   if (!container) return;
 
+  const generation = (overlayGenerations.get(container) ?? 0) + 1;
+  overlayGenerations.set(container, generation);
+  const isStaleOverlay = () => overlayGenerations.get(container) !== generation;
+
   // Detach document listeners left behind by overlays whose containers were
   // removed (page switches remount #pageContainer).
   pruneOverlayCleanups();
@@ -542,6 +551,8 @@ export const applyTranslationOverlay = async (
   }
 
   const paint = async () => {
+    // A newer apply on this container must win — bail without touching the DOM.
+    if (isStaleOverlay()) return;
     // Repaints (duplicate bubble, style change) must replace the previous
     // layer — otherwise every duplicate click stacks another full overlay
     // and leaks its document-level listeners.
@@ -558,6 +569,7 @@ export const applyTranslationOverlay = async (
     } catch {
       // Font loading is best-effort; measurement falls back below.
     }
+    if (isStaleOverlay()) return;
     const iw = img.naturalWidth || img.offsetWidth;
     const ih = img.naturalHeight || img.offsetHeight;
     if (!iw || !ih) { setTimeout(paint, 100); return; }

@@ -679,9 +679,18 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
             : await sourceFingerprintValue;
           if (sourceFingerprint !== metadata.sourceFingerprint) continue;
 
+          // Restoring with zero dimensions makes translationScope normalize
+          // rects against zero (NaN boxes) and the page silently degrades to
+          // clean-only — when dimensions are unusable, skip the fast path and
+          // let the guarded hydration path below run instead.
+          const canUseFastPath = !!metadata.width && !!metadata.height
+            && metadata.width > 0 && metadata.height > 0;
+
           // Fast Path: Check if cleaning image blobs were persisted locally in IndexedDB!
-          const localAssets = await loadCleaningResultAssets(metadata);
-          if (localAssets.cleanBlob && localAssets.maskBlob &&
+          const localAssets = canUseFastPath
+            ? await loadCleaningResultAssets(metadata)
+            : null;
+          if (localAssets && localAssets.cleanBlob && localAssets.maskBlob &&
             await fingerprintBlob(localAssets.maskBlob) === metadata.maskFingerprint) {
             const cleanUrl = URL.createObjectURL(localAssets.cleanBlob);
             const maskUrl = URL.createObjectURL(localAssets.maskBlob);

@@ -862,6 +862,8 @@ test("restores cleaning result directly from IndexedDB assets without contacting
           maskFingerprint: `${maskBlob.size}:image/png`,
           pipelineVersion: "2.3.1-enclosed-backing",
           jobId: "job-offline-1",
+          width: 1000,
+          height: 1400,
           regions: [{ ...staleMaskRegion, textConfirmed: true, maskApproved: true, approvalRevision: null }],
           updatedAt: Date.now(),
           cleanAssetId: "clean_blob%3Aone",
@@ -894,6 +896,54 @@ test("restores cleaning result directly from IndexedDB assets without contacting
   expect(result.current.currentResult?.regions[0].maskApproved).toBe(false);
   expect(result.current.error).toBeUndefined();
   expect(getCleaningResult).not.toHaveBeenCalled();
+});
+
+test("restore metadata without image dimensions falls back to guarded hydration", async () => {
+  const pageUrl = "blob:one";
+  vi.mocked(loadCleaningResultsMetadata).mockResolvedValue(
+    new Map([
+      [
+        pageUrl,
+        {
+          pageUrl,
+          sourceHash: "a".repeat(64),
+          sourceFingerprint: "5:image/png",
+          maskFingerprint: "4:image/png",
+          pipelineVersion: "2.3.1-enclosed-backing",
+          jobId: "job-offline-1",
+          regions: [{ ...staleMaskRegion, textConfirmed: true, maskApproved: true, approvalRevision: null }],
+          updatedAt: Date.now(),
+          cleanAssetId: "clean_blob%3Aone",
+          maskAssetId: "mask_blob%3Aone",
+        },
+      ],
+    ]),
+  );
+
+  vi.mocked(loadCleaningResultAssets).mockResolvedValue({
+    cleanBlob: new Blob(["clean"], { type: "image/png" }),
+    maskBlob: new Blob(["mask"], { type: "image/png" }),
+    reviewMaskBlob: null,
+    protectedMaskBlob: null,
+  });
+
+  vi.mocked(getCleaningResult).mockRejectedValue(
+    new CleaningClientError(503, "Python cleaner backend is offline", "retry"),
+  );
+
+  const { result } = renderHook(() =>
+    useCleaning({ pages: [pageUrl], currentPage: 0 }),
+  );
+
+  await act(async () => {
+    for (let index = 0; index < 12; index += 1) await Promise.resolve();
+  });
+
+  // Zero dimensions would make translationScope compute NaN boxes and cache
+  // the page as clean-only; the guarded hydration path must run instead.
+  expect(getCleaningResult).toHaveBeenCalled();
+  expect(result.current.currentResult).toBeUndefined();
+  expect(result.current.error?.recovery).toBe("reclean");
 });
 
 test("changed persisted mask asset invalidates offline approval reuse", async () => {
