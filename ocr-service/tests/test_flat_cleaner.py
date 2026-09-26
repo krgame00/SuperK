@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 
 from app.cleaners.flat import FlatCleaner, GradientCleaner
@@ -30,6 +31,36 @@ def test_flat_cleaner_changes_only_mask_support() -> None:
     result = FlatCleaner().clean(original, mask, _region())
     assert np.array_equal(result[mask == 0], original[mask == 0])
     assert not np.array_equal(result[mask > 0], original[mask > 0])
+
+
+def test_gradient_cleaner_inpaints_a_region_crop_not_the_full_page(monkeypatch) -> None:
+    # 320x320 page with a small 20x20 text region: inpainting must run on the
+    # region crop (+ context), not six full-page passes per region.
+    original, mask = _text_on_gradient()
+    big = cv2.resize(original, (320, 320), interpolation=cv2.INTER_NEAREST)
+    big_mask = cv2.resize(mask, (320, 320), interpolation=cv2.INTER_NEAREST)
+    region = MaskRegion(
+        id="region-1",
+        rect=PixelRect(x=136, y=100, width=40, height=120),
+        component_ids=(1,),
+        stroke_radius=2,
+    )
+
+    shapes: list[tuple[int, int]] = []
+    real_inpaint = cv2.inpaint
+
+    def tracking_inpaint(image, src_mask, radius, method):
+        shapes.append(image.shape[:2])
+        return real_inpaint(image, src_mask, radius, method)
+
+    monkeypatch.setattr(cv2, "inpaint", tracking_inpaint)
+
+    result = GradientCleaner().clean(big, big_mask, region)
+
+    assert shapes, "inpaint was never called"
+    assert all(h <= 184 and w <= 104 for (h, w) in shapes), shapes
+    assert np.array_equal(result[big_mask == 0], big[big_mask == 0])
+    assert not np.array_equal(result[big_mask > 0], big[big_mask > 0])
 
 
 def test_gradient_cleaner_changes_only_mask_support() -> None:

@@ -4,6 +4,7 @@ describe("Bidirectional Publishing Integration (Ticket 05)", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
     vi.clearAllMocks();
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   });
 
   it("updates DOM overlay and local storage when receiving published translation", async () => {

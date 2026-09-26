@@ -112,6 +112,11 @@ function createLoadingScrim(img, imageUrl) {
     container.style.height = `${newRect.height}px`;
   };
   win?.addEventListener?.('resize', updateLoadingPosition);
+  // Deterministic teardown: removing the scrim must also drop its resize
+  // listener, otherwise every translation leaks one until the next resize.
+  container.__superkScrimDispose = () => {
+    win?.removeEventListener?.('resize', updateLoadingPosition);
+  };
 
   return container;
 }
@@ -119,7 +124,10 @@ function createLoadingScrim(img, imageUrl) {
 function removeExistingLoadingScrim(imageUrl) {
   const hash = hashCode(imageUrl);
   const existing = document.querySelectorAll(`.superk-loading-scrim-container[data-superk-loading-for="${hash}"]`);
-  existing.forEach(el => el.remove());
+  existing.forEach(el => {
+    el.__superkScrimDispose?.();
+    el.remove();
+  });
 }
 
 function handleTranslationStart(imageUrl) {
@@ -527,12 +535,20 @@ function fitTextInBubble(text, width, height, fontFamily, fontSizeMultiplier = 1
     }
   };
 
-  const observer = new MutationObserver(updatePosition);
-  observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+  // Track only the target image: a ResizeObserver for box changes and a
+  // narrow attribute observer for src swaps — never the whole document
+  // (a document-wide observer forced layout on every host-page mutation).
+  const resizeObserver = new ResizeObserver(updatePosition);
+  resizeObserver.observe(img);
+  const srcObserver = new MutationObserver(updatePosition);
+  srcObserver.observe(img, { attributes: true, attributeFilter: ['src'] });
+  window.addEventListener('scroll', updatePosition, { passive: true });
 
   const cleanup = () => {
     window.removeEventListener('resize', updatePosition);
-    observer.disconnect();
+    window.removeEventListener('scroll', updatePosition);
+    resizeObserver.disconnect();
+    srcObserver.disconnect();
     overlayContainer.remove();
     activeOverlays.delete(imageUrl);
   };
@@ -550,10 +566,8 @@ function fitTextInBubble(text, width, height, fontFamily, fontSizeMultiplier = 1
 
   window.addEventListener('resize', updatePosition);
 
-  // Clean up after 2 minutes to prevent memory leaks
-  setTimeout(() => {
-    cleanup();
-  }, 120000);
+  // Overlays live as long as the reader stays on this page — cleanup happens
+  // on SPA navigation, manual close, or tab close, never on a fixed timer.
 
   // Success Toast
   showToast(img, "✨ แปลเสร็จเรียบร้อย!");
@@ -722,5 +736,18 @@ if (typeof document !== 'undefined') {
     setTimeout(restoreSavedTranslations, 100);
   }
 }
+
+// SPA navigation watcher: overlays belong to the page they were translated
+// for. When the reading site swaps pages without a reload, clean the old
+// page's overlays and restore any saved translations for the new one.
+let superkActivePageUrl = window.location.href;
+setInterval(() => {
+  if (window.location.href === superkActivePageUrl) return;
+  superkActivePageUrl = window.location.href;
+  for (const cleanup of Array.from(activeOverlays.values())) {
+    cleanup();
+  }
+  setTimeout(restoreSavedTranslations, 100);
+}, 1500);
 
 })();

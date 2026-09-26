@@ -311,8 +311,7 @@ export const wrapTextForBubble = (
   }
 
   let measureFn: (str: string) => number;
-  const tempCanvas = typeof document !== 'undefined' ? document.createElement("canvas") : null;
-  const tempCtx = tempCanvas ? tempCanvas.getContext("2d") : null;
+  const tempCtx = getSharedMeasureCtx();
   if (tempCtx) {
     tempCtx.font = `bold ${fs}px ${fontFamily}`;
     measureFn = (str: string) => tempCtx.measureText(str).width;
@@ -367,6 +366,17 @@ export interface BubbleTextFit {
   fits: boolean;
 }
 
+// One shared measuring context for text fitting — creating a fresh canvas
+// per wrap/fit iteration churned dozens of canvases per bubble render.
+let sharedMeasureCtx: CanvasRenderingContext2D | null | undefined;
+const getSharedMeasureCtx = (): CanvasRenderingContext2D | null => {
+  if (typeof document === "undefined") return null;
+  if (sharedMeasureCtx === undefined) {
+    sharedMeasureCtx = document.createElement("canvas").getContext("2d");
+  }
+  return sharedMeasureCtx;
+};
+
 export function fitTextForBubble(
   text: string,
   width: number,
@@ -393,8 +403,7 @@ export function fitTextForBubble(
     const totalH = lines.length * lineH;
     
     let maxWidthOk = true;
-    const tempCanvas = typeof document !== 'undefined' ? document.createElement("canvas") : null;
-    const tempCtx = tempCanvas ? tempCanvas.getContext("2d") : null;
+    const tempCtx = getSharedMeasureCtx();
     if (tempCtx) {
       tempCtx.font = `bold ${fs}px ${fontFamily}`;
       for (let i = 0; i < lines.length; i++) {
@@ -440,8 +449,7 @@ export function measureTextLinesWidth(
   fontFamily: string = "sans-serif",
 ): number {
   if (!lines || lines.length === 0) return 0;
-  const tempCanvas = typeof document !== 'undefined' ? document.createElement("canvas") : null;
-  const tempCtx = tempCanvas ? tempCanvas.getContext("2d") : null;
+  const tempCtx = getSharedMeasureCtx();
   if (tempCtx) {
     tempCtx.font = `bold ${fontSize}px ${fontFamily}`;
     let maxW = 0;

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   fitTextForBubble,
   fitTextInAdaptiveBubble,
@@ -7,6 +7,23 @@ import {
 } from "@/lib/translationOverlay";
 
 describe("wrapTextForBubble (Oval Text Fitting)", () => {
+describe("measuring canvas reuse (ticket 12)", () => {
+  it("reuses one shared measuring canvas across fitting calls", () => {
+    const createElementSpy = vi.spyOn(document, "createElement");
+    // Warm-up: the shared context may be created lazily on first use.
+    wrapTextForBubble("สวัสดีครับ", 150, 80, 16, "sans-serif", true);
+    fitTextForBubble("ข้อความทดสอบสำหรับการจัดขนาดฟอนต์", 200, 120, "sans-serif", false);
+    const canvasesAfterWarmup = createElementSpy.mock.calls.filter((call) => String(call[0]) === "canvas").length;
+
+    // Every subsequent fitting call must reuse the shared context.
+    fitTextForBubble("ข้อความทดสอบรอบสองที่ยาวกว่าเดิมพอสมควร", 200, 120, "sans-serif", false);
+    wrapTextForBubble("สวัสดีครับรอบสอง", 150, 80, 16, "sans-serif", true);
+    const newCanvases = createElementSpy.mock.calls.filter((call) => String(call[0]) === "canvas").length - canvasesAfterWarmup;
+    expect(newCanvases).toBe(0);
+  });
+});
+
+
   it("wraps short text into single centered line", () => {
     const lines = wrapTextForBubble("สวัสดีครับ", 150, 80, 16, "sans-serif", true);
     expect(lines.length).toBeGreaterThanOrEqual(1);

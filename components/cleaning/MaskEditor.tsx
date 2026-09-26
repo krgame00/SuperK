@@ -16,7 +16,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 
-import { applyBrush, type BrushMode } from "@/lib/cleaning/maskEdits";
+import { applyBrush, type BrushMode, type MaskPoint } from "@/lib/cleaning/maskEdits";
 import type {
   CleanerOverride,
   CleaningRegion,
@@ -156,8 +156,30 @@ export function MaskEditor({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageDataRef = useRef<ImageData | undefined>(undefined);
   const drawingRef = useRef(false);
-  const strokeBeforeRef = useRef<ImageData | undefined>(undefined);
   const loadedRegionRef = useRef("");
+  // Bounded undo memory: one base snapshot per edit window plus compact
+  // stroke operations — never two full-page ImageData clones per stroke.
+  const strokeOpsRef = useRef<Array<{ points: MaskPoint[]; radius: number; mode: BrushMode }>>([]);
+  const strokeStartIndexRef = useRef(0);
+  const opsBaseRef = useRef<ImageData | null>(null);
+
+  const snapshotOpsBase = () => {
+    opsBaseRef.current = imageDataRef.current ? cloneImageData(imageDataRef.current) : null;
+    strokeOpsRef.current = [];
+    strokeStartIndexRef.current = 0;
+  };
+
+  const renderReplayedOps = (
+    base: ImageData,
+    ops: Array<{ points: MaskPoint[]; radius: number; mode: BrushMode }>,
+    count: number,
+  ) => {
+    let current = cloneImageData(base);
+    for (let index = 0; index < count && index < ops.length; index++) {
+      current = applyBrush(current, ops[index].points, ops[index].radius, ops[index].mode);
+    }
+    renderMask(current);
+  };
 
   const [mode, setMode] = useState<BrushMode>("paint");
   const [radius, setRadius] = useState(8);
@@ -234,6 +256,7 @@ export function MaskEditor({
         source.data[index + 3] = activePixel ? 150 : 0;
       }
       renderMask(source);
+      snapshotOpsBase();
       loadedRegionRef.current = key;
     };
     maskImage.onerror = () => {
@@ -255,6 +278,7 @@ export function MaskEditor({
       y: (event.clientY - bounds.top) * (canvas.height / bounds.height),
     };
     setBrushPoint(point);
+    strokeOpsRef.current.push({ points: [point], radius, mode });
     renderMask(applyBrush(current, [point], radius, mode));
   };
 
@@ -267,7 +291,7 @@ export function MaskEditor({
     }
     if (!imageDataRef.current) return;
     drawingRef.current = true;
-    strokeBeforeRef.current = cloneImageData(imageDataRef.current);
+    strokeStartIndexRef.current = strokeOpsRef.current.length;
     event.currentTarget.setPointerCapture(event.pointerId);
     drawAt(event);
   };
@@ -290,16 +314,21 @@ export function MaskEditor({
       setIsPanning(false);
       return;
     }
-    if (!drawingRef.current || !strokeBeforeRef.current || !imageDataRef.current) {
+    if (!drawingRef.current || !imageDataRef.current) {
       return;
     }
     drawingRef.current = false;
-    const before = cloneImageData(strokeBeforeRef.current);
-    const after = cloneImageData(imageDataRef.current);
+    const startIndex = strokeStartIndexRef.current;
+    const endIndex = strokeOpsRef.current.length;
+    if (endIndex === startIndex || !opsBaseRef.current) {
+      return;
+    }
+    const base = opsBaseRef.current;
+    const ops = [...strokeOpsRef.current];
     undoManager.push({
       label: "แก้ Mask",
-      undo: () => renderMask(cloneImageData(before)),
-      redo: () => renderMask(cloneImageData(after)),
+      undo: () => renderReplayedOps(base, ops, startIndex),
+      redo: () => renderReplayedOps(base, ops, endIndex),
     });
   };
 
@@ -324,9 +353,16 @@ export function MaskEditor({
     renderMask(updated);
     undoManager.push({
       label: "เติม Mask เต็มกรอบ",
-      undo: () => renderMask(cloneImageData(before)),
-      redo: () => renderMask(cloneImageData(updated)),
+      undo: () => {
+        renderMask(cloneImageData(before));
+        snapshotOpsBase();
+      },
+      redo: () => {
+        renderMask(cloneImageData(updated));
+        snapshotOpsBase();
+      },
     });
+    snapshotOpsBase();
     setStatusMessage("เติม Mask เต็มกรอบแล้ว");
   };
 
@@ -348,9 +384,16 @@ export function MaskEditor({
     renderMask(updated);
     undoManager.push({
       label: "ล้าง Mask ในกรอบ",
-      undo: () => renderMask(cloneImageData(before)),
-      redo: () => renderMask(cloneImageData(updated)),
+      undo: () => {
+        renderMask(cloneImageData(before));
+        snapshotOpsBase();
+      },
+      redo: () => {
+        renderMask(cloneImageData(updated));
+        snapshotOpsBase();
+      },
     });
+    snapshotOpsBase();
     setStatusMessage("ล้าง Mask ในกรอบแล้ว");
   };
 

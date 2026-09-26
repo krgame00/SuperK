@@ -197,6 +197,35 @@ describe("MaskEditor", () => {
     expect(panWrapper?.getAttribute("style")).toContain("translate(30px, 15px)");
   });
 
+  test("keeps mask undo memory bounded with operation replay", async () => {
+    const imageSpy = vi.spyOn(globalThis, "ImageData");
+    const applyBrushSpy = vi.spyOn(maskEditsModule, "applyBrush");
+    renderMaskEditor();
+
+    const canvas = await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+    canvas.focus();
+
+    const strokes = [[30, 40], [60, 40], [45, 60], [70, 20], [20, 70]];
+    for (const [x, y] of strokes) {
+      fireEvent.pointerDown(canvas, { pointerId: 1, clientX: x, clientY: y, button: 0 });
+      fireEvent.pointerUp(canvas, { pointerId: 1 });
+    }
+
+    // Undo history must not allocate full-page clones per stroke (before: 3
+    // clones per stroke entered the undo stack). Remaining full-page
+    // allocations are the base snapshot plus transient applyBrush outputs.
+    const fullPageAllocations = imageSpy.mock.calls.filter(
+      (call) => call[1] === 100 && call[2] === 80,
+    ).length;
+    expect(fullPageAllocations).toBeLessThanOrEqual(8);
+
+    // Undo replays the four earlier stroke ops from the base snapshot.
+    const replayCallsBefore = applyBrushSpy.mock.calls.length;
+    undoManager.undo();
+    const replayCallsAfter = applyBrushSpy.mock.calls.length - replayCallsBefore;
+    expect(replayCallsAfter).toBe(strokes.length - 1);
+  });
+
   test("mouse painting keeps working and supports Ctrl+Z undo", async () => {
     const applyBrushSpy = vi.spyOn(maskEditsModule, "applyBrush");
     renderMaskEditor();

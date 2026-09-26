@@ -3,6 +3,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from app.cleaners.aot import _context_bounds
 from app.detector import RgbImage
 from app.mask_refiner import BinaryMask, MaskRegion
 from app.region_router import extract_region_features
@@ -52,27 +53,39 @@ class GradientCleaner:
         mask: BinaryMask,
         region: MaskRegion,
     ) -> RgbImage:
-        support = _region_mask(mask, region)
+        support_full = _region_mask(mask, region)
         result = image_rgb.copy()
-        if not np.any(support):
+        if not np.any(support_full):
             return result
+
+        # Inpaint the region crop (+ context ring) instead of the full page —
+        # this is the fallback cleaner when Big-LaMa is unavailable, exactly
+        # when full-page passes per candidate would hurt the most.
+        x0, y0, x1, y1 = _context_bounds(
+            region,
+            image_rgb.shape[1],
+            image_rgb.shape[0],
+            context=32,
+        )
+        crop = image_rgb[y0:y1, x0:x1]
+        support = support_full[y0:y1, x0:x1]
 
         binary = support.astype(np.uint8) * 255
         # Test both Telea and Navier-Stokes inpainting candidates
         candidates = [
-            cv2.inpaint(image_rgb, binary, radius, method)
+            cv2.inpaint(crop, binary, radius, method)
             for radius in (2, 3, 5)
             for method in (cv2.INPAINT_TELEA, cv2.INPAINT_NS)
         ]
         repaired = min(
             candidates,
             key=lambda candidate: _boundary_gradient_error(
-                image_rgb,
+                crop,
                 candidate,
                 support,
             ),
         )
-        result[support] = repaired[support]
+        result[y0:y1, x0:x1][support] = repaired[support]
         return result
 
 

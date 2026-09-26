@@ -83,6 +83,56 @@ it('renders an actionable error badge with a retry button on translation error',
   }));
 });
 
+it('observes only the target image (ResizeObserver + src attrs), not document.body', () => {
+  const app = setup();
+  const observeCalls: Array<{ target: Element | null; options: any }> = [];
+  const disconnectSpy = vi.fn();
+  class FakeRO { observe(target: Element) { observeCalls.push({ target, options: 'resize' }); } disconnect = disconnectSpy; }
+  class FakeMO { observe(target: Element, options: any) { observeCalls.push({ target, options }); } disconnect = disconnectSpy; }
+  vi.stubGlobal('ResizeObserver', FakeRO);
+  vi.stubGlobal('MutationObserver', FakeMO);
+
+  app.send({ action: 'TRANSLATION_SUCCESS', cleanMode: 'solid', bubbles: [{ t: 'สวัสดี', box: [0, 0, 200, 200] }] });
+
+  const img = document.querySelector('img');
+  expect(observeCalls).toHaveLength(2);
+  expect(observeCalls[0].target).toBe(img);
+  expect(observeCalls[1].target).toBe(img);
+  expect(observeCalls[1].options.attributeFilter).toContain('src');
+
+  window.history.pushState({}, '', '/chapter-2/page-2');
+  vi.advanceTimersByTime(2_000);
+  expect(disconnectSpy).toHaveBeenCalledTimes(2);
+});
+
+it('keeps the overlay beyond two minutes and cleans up on SPA navigation', () => {
+  const app = setup();
+  app.send({ action: 'TRANSLATION_SUCCESS', cleanMode: 'solid', bubbles: [{ t: 'สวัสดี', box: [0, 0, 200, 200] }] });
+  expect(document.querySelector('.superk-overlay-container')).not.toBeNull();
+
+  // A reader may stay on one page for many minutes.
+  vi.advanceTimersByTime(125_000);
+  expect(document.querySelector('.superk-overlay-container')).not.toBeNull();
+
+  // Leaving the page (SPA navigation without reload) removes overlays.
+  // (Unique path: window state persists across tests in this file.)
+  window.history.pushState({}, '', '/chapter-3/page-3');
+  vi.advanceTimersByTime(2_000);
+  expect(document.querySelector('.superk-overlay-container')).toBeNull();
+});
+
+it('removes the scrim resize listener whenever the scrim is removed', () => {
+  const app = setup();
+  const removeSpy = vi.spyOn(window, 'removeEventListener');
+  app.send({ action: 'TRANSLATION_START' });
+  expect(document.querySelector('.superk-loading-scrim-container')).not.toBeNull();
+
+  // Starting a new translation removes the old scrim: its resize listener
+  // must go with it instead of leaking until the next window resize.
+  app.send({ action: 'TRANSLATION_START' });
+  expect(removeSpy).toHaveBeenCalledWith('resize', expect.any(Function));
+});
+
 it('renders centered loading scrim overlay without mutating img.parentElement.style.position on TRANSLATION_START', () => {
   const app = setup();
   const img = document.querySelector('img')!;
