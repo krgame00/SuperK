@@ -148,6 +148,10 @@ _Avoid_: Full editor, translation workspace
 The full editing environment for inspecting and refining a manga page and its translation. Readers enter this workspace from the reading view when detailed editing is needed.
 _Avoid_: Reading overlay, extension popup
 
+**Deleted bubble**:
+A translated text bubble the person removed from a page's translation. A deleted bubble is shown nowhere and appears in no exported output until the person undoes the deletion.
+_Avoid_: Hidden bubble, permanently removed bubble, empty bubble
+
 **Inpainted clean background**:
 The restored page asset produced by the inpainting pipeline, where detected text glyphs are removed and underlying manga artwork is reconstructed.
 _Avoid_: Blanked background, white mask canvas
