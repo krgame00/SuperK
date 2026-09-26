@@ -77,6 +77,26 @@ const cleaningResult = {
   pipelineVersion: "2.3.1-enclosed-backing",
 };
 
+const staleMaskRegion = {
+  id: "region-old",
+  rect: { x: 10, y: 10, width: 20, height: 12 },
+  route: "flat" as const,
+  confidence: 0.9,
+  status: "needs_review" as const,
+  residualScore: 0,
+  damageScore: 0,
+  pageRole: "comic" as const,
+  textRole: "review" as const,
+  eligibilityConfidence: 0.8,
+  automaticAction: "clean" as const,
+  protectionReasons: [],
+};
+
+const recoveredMaskRegion = {
+  ...staleMaskRegion,
+  id: "region-new",
+};
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
@@ -529,6 +549,184 @@ test("cached cleanPage clears an earlier structured error", async () => {
   expect(result.current.error).toBeUndefined();
 });
 
+test("retryRegion rebuilds a stale cleaner job and remaps the Mask region", async () => {
+  const pixels = new ImageData(new Uint8ClampedArray(100 * 80 * 4), 100, 80);
+  pixels.data[(11 * 100 + 10) * 4] = 255;
+  pixels.data[(11 * 100 + 14) * 4] = 255;
+  const putImageData = vi.fn();
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+    drawImage: vi.fn(), getImageData: vi.fn(() => pixels), putImageData,
+  } as unknown as CanvasRenderingContext2D);
+  vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation((callback) => callback(new Blob(["clipped"], { type: "image/png" })));
+  const staleResult = {
+    ...cleaningResult,
+    jobId: "job-stale",
+    regions: [staleMaskRegion],
+  };
+  const rebuiltResult = {
+    ...cleaningResult,
+    jobId: "job-rebuilt",
+    regions: [{ ...recoveredMaskRegion, rect: { ...recoveredMaskRegion.rect, x: 13 } }],
+  };
+  const confirmedResult = {
+    ...rebuiltResult,
+    jobId: "job-confirmed",
+  };
+  const cleanedResult = {
+    ...rebuiltResult,
+    jobId: "job-cleaned",
+  };
+
+  vi.mocked(createCleaningJob)
+    .mockResolvedValueOnce({ ...succeededJob, jobId: "job-stale" })
+    .mockResolvedValueOnce({ ...succeededJob, jobId: "job-rebuilt" });
+  vi.mocked(getCleaningResult)
+    .mockResolvedValueOnce(staleResult)
+    .mockResolvedValueOnce(rebuiltResult)
+    .mockResolvedValueOnce(confirmedResult)
+    .mockResolvedValueOnce(cleanedResult);
+  vi.mocked(retryCleaningRegion)
+    .mockRejectedValueOnce(
+      new CleaningClientError(404, "Job not found.", "retry"),
+    )
+    .mockResolvedValueOnce({ ...succeededJob, jobId: "job-confirmed" })
+    .mockResolvedValueOnce({ ...succeededJob, jobId: "job-cleaned" });
+
+  const { result } = renderHook(() =>
+    useCleaning({ pages: ["blob:one"], currentPage: 0 }),
+  );
+
+  await act(async () => {
+    await result.current.cleanPage(
+      "blob:one",
+      new Blob(["png"], { type: "image/png" }),
+    );
+  });
+  vi.stubGlobal("createImageBitmap", vi.fn().mockImplementation(async (blob: Blob) => ({
+    width: blob.size === 5 ? 8 : 100,
+    height: blob.size === 5 ? 8 : 80,
+    close: vi.fn(),
+  })));
+
+  let confirmed!: PageCleaningResult | undefined;
+  await act(async () => {
+    confirmed = await result.current.retryRegion(
+      "region-old",
+      new Blob(["mask"], { type: "image/png" }),
+      "auto",
+      "confirm-text",
+    );
+  });
+
+  expect(retryCleaningRegion).toHaveBeenNthCalledWith(
+    1,
+    "job-stale",
+    "region-old",
+    expect.any(Blob),
+    "auto",
+    "confirm-text",
+  );
+  expect(retryCleaningRegion).toHaveBeenNthCalledWith(
+    2,
+    "job-rebuilt",
+    "region-new",
+    expect.any(Blob),
+    "auto",
+    "confirm-text",
+  );
+  expect(confirmed?.jobId).toBe("job-confirmed");
+  expect(result.current.error).toBeUndefined();
+
+  let cleaned!: PageCleaningResult | undefined;
+  const secondActionMask = new Blob(["mask"], { type: "image/png" });
+  await act(async () => {
+    cleaned = await result.current.retryRegion(
+      "region-old",
+      secondActionMask,
+      "auto",
+      "force-clean",
+    );
+  });
+
+  expect(retryCleaningRegion).toHaveBeenNthCalledWith(
+    3,
+    "job-confirmed",
+    "region-new",
+    expect.any(Blob),
+    "auto",
+    "force-clean",
+  );
+  expect(vi.mocked(retryCleaningRegion).mock.calls[2][2]).not.toBe(secondActionMask);
+  expect(putImageData).toHaveBeenCalled();
+  expect(pixels.data[(11 * 100 + 10) * 4]).toBe(0);
+  expect(pixels.data[(11 * 100 + 14) * 4]).toBe(255);
+  expect(cleaned?.jobId).toBe("job-cleaned");
+  expect(result.current.error).toBeUndefined();
+});
+
+test("same region ID with a shifted rectangle reports an adjustment after stale-job recovery", async () => {
+  const shiftedRegion = { ...staleMaskRegion, rect: { ...staleMaskRegion.rect, x: 11 } };
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+    drawImage: vi.fn(),
+    getImageData: vi.fn(() => new ImageData(new Uint8ClampedArray(100 * 80 * 4), 100, 80)),
+    putImageData: vi.fn(),
+  } as unknown as CanvasRenderingContext2D);
+  vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation((callback) => callback(new Blob(["clipped"], { type: "image/png" })));
+  vi.mocked(createCleaningJob)
+    .mockResolvedValueOnce({ ...succeededJob, jobId: "job-stale" })
+    .mockResolvedValueOnce({ ...succeededJob, jobId: "job-rebuilt" });
+  vi.mocked(getCleaningResult)
+    .mockResolvedValueOnce({ ...cleaningResult, jobId: "job-stale", regions: [staleMaskRegion] })
+    .mockResolvedValueOnce({ ...cleaningResult, jobId: "job-rebuilt", regions: [shiftedRegion] })
+    .mockResolvedValueOnce({ ...cleaningResult, jobId: "job-confirmed", regions: [shiftedRegion] });
+  vi.mocked(retryCleaningRegion)
+    .mockRejectedValueOnce(new CleaningClientError(404, "Job not found.", "retry"))
+    .mockResolvedValueOnce({ ...succeededJob, jobId: "job-confirmed" });
+  const { result } = renderHook(() => useCleaning({ pages: ["blob:one"], currentPage: 0 }));
+  await act(async () => { await result.current.cleanPage("blob:one", new Blob(["png"], { type: "image/png" })); });
+  vi.stubGlobal("createImageBitmap", vi.fn().mockImplementation(async (blob: Blob) => ({
+    width: blob.size === 5 ? 8 : 100,
+    height: blob.size === 5 ? 8 : 80,
+    close: vi.fn(),
+  })));
+  let recovered!: PageCleaningResult | undefined;
+  await act(async () => {
+    recovered = await result.current.retryRegion("region-old", new Blob(["mask"], { type: "image/png" }), "auto", "confirm-text");
+  });
+  expect(recovered?.maskAdjustment).toBe("remapped");
+  expect(recovered?.recoveredRegionId).toBe("region-old");
+  expect(retryCleaningRegion).toHaveBeenCalledTimes(2);
+});
+
+test.each([
+  { name: "exact identity", regions: [recoveredMaskRegion, staleMaskRegion], expected: "region-old" },
+  { name: "strong changed identity", regions: [recoveredMaskRegion], expected: "region-new" },
+  { name: "weak overlap", regions: [{ ...recoveredMaskRegion, rect: { x: 25, y: 10, width: 20, height: 12 } }], expected: undefined },
+  { name: "ambiguous overlap", regions: [recoveredMaskRegion, { ...recoveredMaskRegion, id: "region-other" }], expected: undefined },
+])("resolveMaskRegion handles $name before authorization", async ({ regions, expected }) => {
+  vi.mocked(createCleaningJob)
+    .mockResolvedValueOnce({ ...succeededJob, jobId: "job-stale" })
+    .mockResolvedValueOnce({ ...succeededJob, jobId: "job-rebuilt" });
+  vi.mocked(getCleaningResult)
+    .mockResolvedValueOnce({ ...cleaningResult, jobId: "job-stale", regions: [staleMaskRegion] })
+    .mockResolvedValueOnce({ ...cleaningResult, jobId: "job-rebuilt", regions });
+  vi.mocked(getCleaningJob).mockRejectedValueOnce(new CleaningClientError(404, "Job not found.", "retry"));
+  const { result } = renderHook(() => useCleaning({ pages: ["blob:one"], currentPage: 0 }));
+  await act(async () => {
+    await result.current.cleanPage("blob:one", new Blob(["png"], { type: "image/png" }));
+  });
+
+  if (expected) {
+    let resolved!: Awaited<ReturnType<typeof result.current.resolveMaskRegion>>;
+    await act(async () => { resolved = await result.current.resolveMaskRegion(staleMaskRegion); });
+    expect(resolved?.region.id).toBe(expected);
+    expect(resolved?.remapped).toBe(expected !== "region-old");
+  } else {
+    await expect(result.current.resolveMaskRegion(staleMaskRegion)).rejects.toThrow("ไม่พบพื้นที่ Mask");
+  }
+  expect(retryCleaningRegion).not.toHaveBeenCalled();
+});
+
 test("page change aborts retryRegion polling", async () => {
   vi.mocked(createCleaningJob).mockResolvedValue(succeededJob);
   vi.mocked(getCleaningResult).mockResolvedValue(cleaningResult);
@@ -661,10 +859,10 @@ test("restores cleaning result directly from IndexedDB assets without contacting
           pageUrl,
           sourceHash: "a".repeat(64),
           sourceFingerprint: "5:image/png",
-          maskFingerprint: "5:image/png",
+          maskFingerprint: `${maskBlob.size}:image/png`,
           pipelineVersion: "2.3.1-enclosed-backing",
           jobId: "job-offline-1",
-          regions: [],
+          regions: [{ ...staleMaskRegion, textConfirmed: true, maskApproved: true, approvalRevision: null }],
           updatedAt: Date.now(),
           cleanAssetId: "clean_blob%3Aone",
           maskAssetId: "mask_blob%3Aone",
@@ -693,8 +891,33 @@ test("restores cleaning result directly from IndexedDB assets without contacting
   });
 
   expect(result.current.currentResult?.jobId).toBe("job-offline-1");
+  expect(result.current.currentResult?.regions[0].maskApproved).toBe(false);
   expect(result.current.error).toBeUndefined();
   expect(getCleaningResult).not.toHaveBeenCalled();
+});
+
+test("changed persisted mask asset invalidates offline approval reuse", async () => {
+  vi.mocked(loadCleaningResultsMetadata).mockResolvedValue(new Map([["blob:one", {
+    pageUrl: "blob:one",
+    sourceHash: "a".repeat(64),
+    sourceFingerprint: "5:image/png",
+    maskFingerprint: "old-mask:image/png",
+    pipelineVersion: "2.3.1-enclosed-backing",
+    jobId: "job-offline-1",
+    regions: [{ ...staleMaskRegion, textConfirmed: true, maskApproved: true, approvalRevision: "approved-revision" }],
+    updatedAt: Date.now(),
+  }]]));
+  vi.mocked(loadCleaningResultAssets).mockResolvedValue({
+    cleanBlob: new Blob(["clean"], { type: "image/png" }),
+    maskBlob: new Blob(["changed"], { type: "image/png" }),
+    reviewMaskBlob: null,
+    protectedMaskBlob: null,
+  });
+  vi.mocked(getCleaningResult).mockRejectedValue(new CleaningClientError(404, "missing", "retry"));
+  const { result } = renderHook(() => useCleaning({ pages: ["blob:one"], currentPage: 0 }));
+  await act(async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); });
+  expect(result.current.currentResult).toBeUndefined();
+  expect(result.current.error?.recovery).toBe("reclean");
 });
 
 test("clears progress when polling job fails", async () => {

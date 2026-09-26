@@ -49,6 +49,7 @@ test("getCleaningResult decodes snake case and proxies asset paths", async () =>
           text_role: "narration",
           eligibility_confidence: 0.84,
           automatic_action: "clean",
+          mask_approved: true,
           protection_reasons: [],
         },
       ],
@@ -69,6 +70,7 @@ test("getCleaningResult decodes snake case and proxies asset paths", async () =>
     "/api/clean/v1/jobs/job-1/assets/protected-mask.png",
   );
   expect(result.regions[0].residualScore).toBe(0.1);
+  expect(result.regions[0].maskApproved).toBe(false);
   expect(result.regions[0]).toEqual(
     expect.objectContaining({
       pageRole: "comic",

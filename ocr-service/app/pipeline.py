@@ -742,18 +742,41 @@ class CleaningPipeline:
                 "approval_revision": None,
             })
             return replace(output, regions=records)
+
+        points = cv2.findNonZero(binary_mask)
+        if points is None:
+            raise ValueError("authorized mask is empty")
+        x, y, width, height = cv2.boundingRect(points)
+        bounds = record.rect
+        overflow = max(
+            max(0, bounds.x - x),
+            max(0, bounds.y - y),
+            max(0, x + width - (bounds.x + bounds.width)),
+            max(0, y + height - (bounds.y + bounds.height)),
+        )
+        if overflow > 2:
+            raise ValueError("mask must stay within the selected region")
+        if overflow > 0:
+            normalized = np.zeros_like(binary_mask)
+            ys = slice(bounds.y, bounds.y + bounds.height)
+            xs = slice(bounds.x, bounds.x + bounds.width)
+            normalized[ys, xs] = binary_mask[ys, xs]
+            binary_mask = normalized
+            points = cv2.findNonZero(binary_mask)
+            if points is None:
+                raise ValueError("authorized mask is empty")
+            x, y, width, height = cv2.boundingRect(points)
+
         revision = hashlib.sha256(output.source_image.tobytes() + binary_mask.tobytes()).hexdigest()
         if action is ManualRegionAction.FORCE_CLEAN and not record.text_confirmed:
             raise ValueError("confirm text before approving its removal mask")
         if action is ManualRegionAction.AUTOMATIC:
             if not record.text_confirmed:
                 raise ValueError("confirm text before cleaning this candidate")
-            if record.approval_revision and record.approval_revision != revision:
-                raise ValueError("changed mask requires fresh removal-mask approval")
-            if not record.mask_approved:
+            if record.approval_revision is None or not record.mask_approved:
                 raise ValueError("removal-mask approval is required")
-            if not record.approval_revision and np.any((binary_mask > 0) & (output.mask == 0)):
-                raise ValueError("expanded mask requires fresh removal-mask approval")
+            if record.approval_revision != revision:
+                raise ValueError("changed mask requires fresh removal-mask approval")
         working_image = output.clean_image.copy()
         eligible = output.mask.copy()
         if action is ManualRegionAction.FORCE_CLEAN:
@@ -772,40 +795,6 @@ class CleaningPipeline:
             working_region[removed_from_mask] = source_region[removed_from_mask]
             eligible[ys, xs] = 0
 
-        points = cv2.findNonZero(binary_mask)
-        if points is None:
-            if action is not ManualRegionAction.FORCE_CLEAN:
-                raise ValueError("retry mask is empty")
-            review = output.review_mask.copy()
-            review[ys, xs] = 0
-            updated_records = list(output.regions)
-            updated_records[record_index] = record.model_copy(
-                update={
-                    "status": RegionStatus.PRESERVED,
-                    "residual_score": 0.0,
-                    "damage_score": 0.0,
-                    "text_confirmed": True,
-                    "mask_approved": True,
-                    "approval_revision": revision,
-                    "automatic_action": AutomaticAction.PRESERVE,
-                    "text_role": TextRole.DIALOGUE,
-                },
-            )
-            return PipelineOutput(
-                source_image=output.source_image,
-                clean_image=working_image,
-                mask=eligible,
-                review_mask=review,
-                protected_mask=output.protected_mask.copy(),
-                regions=updated_records,
-                timings_ms=dict(output.timings_ms),
-                awaiting_review=_has_awaiting_review(updated_records),
-            )
-        x, y, width, height = cv2.boundingRect(points)
-        bounds = record.rect
-        if (x < bounds.x or y < bounds.y or x + width > bounds.x + bounds.width
-                or y + height > bounds.y + bounds.height):
-            raise ValueError("mask must stay within the selected region")
         region = MaskRegion(
             id=region_id,
             rect=record.rect.model_copy(

@@ -1,3 +1,4 @@
+import hashlib
 from dataclasses import replace
 
 import numpy as np
@@ -78,6 +79,89 @@ def test_confirm_then_approve_changes_only_inspected_mask():
         pipeline.retry_region(approved, "region-1", changed, "flat", ManualRegionAction.AUTOMATIC)
 
 
+def test_restored_legacy_approval_without_revision_cannot_clean():
+    pipeline = CleaningPipeline(detector=NoTextDetector(), cleaners={"flat": SolidCleaner(0)})
+    original = _single_region_output()
+    mask = np.zeros_like(original.mask)
+    mask[9:11, 9:11] = 255
+    legacy = replace(original, regions=[original.regions[0].model_copy(update={
+        "text_confirmed": True, "mask_approved": True, "approval_revision": None,
+    })])
+
+    with pytest.raises(ValueError, match="removal-mask approval is required"):
+        pipeline.retry_region(legacy, "region-1", mask, "flat", ManualRegionAction.AUTOMATIC)
+    assert np.array_equal(legacy.clean_image, original.clean_image)
+
+
+def test_force_clean_normalizes_two_pixel_boundary_drift_before_approval():
+    pipeline = CleaningPipeline(detector=NoTextDetector(), cleaners={"flat": SolidCleaner(0)})
+    original = _single_region_output()
+    confirmed_record = original.regions[0].model_copy(update={"text_confirmed": True})
+    confirmed = replace(original, regions=[confirmed_record])
+
+    submitted = np.zeros_like(original.mask)
+    submitted[9:12, 6:12] = 255  # two pixels left of the selected region
+    normalized = np.zeros_like(submitted)
+    normalized[9:12, 8:12] = 255
+
+    cleaned = pipeline.retry_region(
+        confirmed,
+        "region-1",
+        submitted,
+        "flat",
+        ManualRegionAction.FORCE_CLEAN,
+    )
+
+    assert not cleaned.mask[:, :8].any()
+    assert np.array_equal(cleaned.clean_image[:, :8], original.clean_image[:, :8])
+    assert np.array_equal(cleaned.clean_image[normalized == 0], original.clean_image[normalized == 0])
+    assert (cleaned.clean_image[normalized > 0] == 0).all()
+    expected_revision = hashlib.sha256(
+        original.source_image.tobytes() + normalized.tobytes()
+    ).hexdigest()
+    assert cleaned.regions[0].approval_revision == expected_revision
+
+
+def test_force_clean_rejects_mask_more_than_two_pixels_outside_selected_region():
+    pipeline = CleaningPipeline(detector=NoTextDetector(), cleaners={"flat": SolidCleaner(0)})
+    original = _single_region_output()
+    confirmed = replace(
+        original,
+        regions=[original.regions[0].model_copy(update={"text_confirmed": True})],
+    )
+    submitted = np.zeros_like(original.mask)
+    submitted[9:12, 5:12] = 255  # three pixels left of the selected region
+
+    with pytest.raises(ValueError, match="mask must stay within the selected region"):
+        pipeline.retry_region(
+            confirmed,
+            "region-1",
+            submitted,
+            "flat",
+            ManualRegionAction.FORCE_CLEAN,
+        )
+
+
+def test_force_clean_rejects_empty_authorized_mask_after_boundary_normalization():
+    pipeline = CleaningPipeline(detector=NoTextDetector(), cleaners={"flat": SolidCleaner(0)})
+    original = _single_region_output()
+    confirmed = replace(
+        original,
+        regions=[original.regions[0].model_copy(update={"text_confirmed": True})],
+    )
+    submitted = np.zeros_like(original.mask)
+    submitted[9:12, 6:8] = 255  # within tolerance but entirely outside the region
+
+    with pytest.raises(ValueError, match="authorized mask is empty"):
+        pipeline.retry_region(
+            confirmed,
+            "region-1",
+            submitted,
+            "flat",
+            ManualRegionAction.FORCE_CLEAN,
+        )
+
+
 def test_force_clean_shrinking_mask_restores_erased_pixels_and_replaces_region_mask():
     pipeline = CleaningPipeline(detector=NoTextDetector(), cleaners={"flat": SolidCleaner(0)})
     original = _single_region_output()
@@ -112,7 +196,7 @@ def test_force_clean_shrinking_mask_restores_erased_pixels_and_replaces_region_m
     assert np.array_equal(retried.mask, edited_mask)
 
 
-def test_force_clean_empty_edited_mask_restores_region_instead_of_reusing_old_clean():
+def test_force_clean_empty_edited_mask_requires_review_instead_of_whole_region_fallback():
     pipeline = CleaningPipeline(detector=NoTextDetector(), cleaners={"flat": SolidCleaner(0)})
     original = _single_region_output()
     previous_mask = np.zeros_like(original.mask)
@@ -128,19 +212,18 @@ def test_force_clean_empty_edited_mask_restores_region_instead_of_reusing_old_cl
     )
 
     empty_mask = np.zeros_like(previous_mask)
-    retried = pipeline.retry_region(
-        previous,
-        "region-1",
-        empty_mask,
-        "flat",
-        ManualRegionAction.FORCE_CLEAN,
-    )
+    with pytest.raises(ValueError, match="authorized mask is empty"):
+        pipeline.retry_region(
+            previous,
+            "region-1",
+            empty_mask,
+            "flat",
+            ManualRegionAction.FORCE_CLEAN,
+        )
 
-    selected = previous_mask > 0
-    assert np.array_equal(retried.clean_image[selected], previous.source_image[selected])
-    assert not retried.mask.any()
-    assert retried.regions[0].text_confirmed
-    assert retried.regions[0].mask_approved
+    assert np.array_equal(previous.clean_image, already_cleaned)
+    assert previous.regions[0].text_confirmed
+    assert not previous.regions[0].mask_approved
 
 
 @pytest.mark.parametrize("confidence", [0.59, 0.60, 0.90])

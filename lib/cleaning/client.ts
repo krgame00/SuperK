@@ -196,10 +196,11 @@ function decodeResult(payload: unknown): CleaningResult {
 function decodeRegion(value: unknown): CleaningRegion {
   const raw = requireRecord(value, "cleaning region");
   const rect = requireRecord(raw.rect, "region.rect");
+  const approvalRevision = typeof raw.approval_revision === "string" ? raw.approval_revision : null;
   return {
     textConfirmed: raw.text_confirmed === true,
-    maskApproved: raw.mask_approved === true,
-    approvalRevision: typeof raw.approval_revision === "string" ? raw.approval_revision : null,
+    maskApproved: raw.mask_approved === true && approvalRevision !== null,
+    approvalRevision,
     id: requireString(raw.id, "region.id"),
     rect: {
       x: requireNumber(rect.x, "rect.x"),

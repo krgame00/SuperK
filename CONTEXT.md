@@ -13,8 +13,44 @@ The particular image and text of a page that a person has reviewed and accepted 
 _Avoid_: Permanently approved page, automatic approval
 
 **Text-removal mask**:
-The pixels that the cleaner is authorized to replace. Uncertain character artwork stays outside this mask even when that leaves small text remnants.
-_Avoid_: Cleaning box, OCR rectangle
+The pixels that the cleaner is authorized to replace. Uncertain character artwork stays outside this mask even when that leaves small text remnants. A manual text-removal mask is bounded by the currently selected cleaning region; if that region is refreshed or remapped, only mask pixels that still overlap the current region remain authorized.
+_Avoid_: Cleaning box, OCR rectangle, whole-region authorization
+
+**Selected cleaning region**:
+The current reviewed text candidate whose boundary limits a manual cleaning action. Its boundary constrains removal authorization but is not itself permission to erase every pixel inside the rectangle.
+_Avoid_: Removal mask, whole-box approval
+
+**Proposed removal mask**:
+The detector/refiner-produced candidate pixels offered as the starting point for manual review or one-click cleaning. One-click cleaning may use this proposal when available, but an absent proposal does not imply permission to erase the entire selected cleaning region.
+_Avoid_: Full region box, automatic whole-box mask
+
+**Recovered cleaning region**:
+The current cleaning region accepted as the continuation of a previously reviewed region after the cleaner refreshes or rebuilds its page state. Recovery requires strong spatial agreement with the prior region; proximity alone is not enough when nearby text candidates could be confused.
+_Avoid_: Nearest region, arbitrary replacement region
+
+**Boundary-clipped removal mask**:
+A manual or proposed text-removal mask normalized to the current selected cleaning region when only a small boundary drift exists. Pixels outside the current region lose removal authorization; a materially mismatched mask remains a review error instead of being silently expanded or accepted.
+_Avoid_: Expanded region, silent large-mask acceptance
+
+**Manual mask preservation**:
+When a reviewed region is recovered or remapped, user-edited removal pixels remain authorized only where they still overlap the recovered cleaning region. User edits outside that region are discarded rather than widening the cleaning boundary.
+_Avoid_: Whole-mask carryover, region expansion from brush edits
+
+**Normalized removal mask**:
+The exact text-removal mask after safe boundary normalization and before removal approval is recorded. Approval refers to this effective mask, not to a larger pre-normalized proposal that will not actually be used.
+_Avoid_: Raw submitted mask, post-approval mask mutation
+
+**Empty authorized mask**:
+A reviewed state in which boundary normalization leaves no pixels authorized for removal. It requires further human mask editing or a new safe proposal; it never grants permission to clean the entire selected region.
+_Avoid_: Whole-region fallback, successful empty clean
+
+**Removal authorization gate**:
+The final safety boundary that accepts only the effective removal pixels authorized for the current selected cleaning region. UI assistance may preview or normalize a mask, but it cannot widen this authorization boundary.
+_Avoid_: Client-only validation, implicit region-wide authorization
+
+**Approved removal revision**:
+The specific normalized removal mask accepted for a confirmed text candidate. If the effective mask changes materially, its previous removal approval no longer applies.
+_Avoid_: Approval of the raw proposal, permanent mask approval
 
 **Glyph mask**:
 The pixels belonging to the visible shapes of detected letters, including their fill and outline. Artwork elsewhere inside the surrounding text region is not part of the glyph mask.

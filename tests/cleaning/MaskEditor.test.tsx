@@ -20,6 +20,8 @@ const preservedRegion: CleaningRegion = {
   automaticAction: "preserve",
   protectionReasons: ["low-confidence"],
 };
+let mockMaskHasPixels = true;
+let mockMaskPixels: Array<[number, number]> = [[11, 11], [12, 11], [11, 12], [12, 12]];
 
 function renderMaskEditor(props: Partial<React.ComponentProps<typeof MaskEditor>> = {}) {
   return render(
@@ -37,6 +39,8 @@ function renderMaskEditor(props: Partial<React.ComponentProps<typeof MaskEditor>
 describe("MaskEditor", () => {
   beforeEach(() => {
     undoManager.clear();
+    mockMaskHasPixels = true;
+    mockMaskPixels = [[11, 11], [12, 11], [11, 12], [12, 12]];
 
     // Mock Image naturalWidth/naturalHeight and auto onload
     class MockImage {
@@ -61,9 +65,21 @@ describe("MaskEditor", () => {
     // Mock Canvas 2D Context
     const mockContext = {
       drawImage: vi.fn(),
-      getImageData: vi.fn((_x, _y, w, h) => new ImageData(w || 100, h || 80)),
+      getImageData: vi.fn((_x, _y, w, h) => {
+        const width = w || 100;
+        const height = h || 80;
+        const data = new ImageData(new Uint8ClampedArray(width * height * 4), width, height);
+        if (mockMaskHasPixels) {
+          for (const [x, y] of mockMaskPixels) {
+            const index = (y * data.width + x) * 4;
+            data.data[index] = 255;
+            data.data[index + 3] = 255;
+          }
+        }
+        return data;
+      }),
       putImageData: vi.fn(),
-      createImageData: vi.fn((w, h) => new ImageData(w, h)),
+      createImageData: vi.fn((w, h) => new ImageData(new Uint8ClampedArray(w * h * 4), w, h)),
     };
     HTMLCanvasElement.prototype.getContext = vi.fn(
       () => mockContext as unknown as CanvasRenderingContext2D,
@@ -79,6 +95,7 @@ describe("MaskEditor", () => {
       y: 0,
       toJSON: () => ({}),
     }));
+    HTMLCanvasElement.prototype.setPointerCapture = vi.fn();
   });
 
   test("preserved region offers force clean, protect, and automatic actions", () => {
@@ -234,6 +251,12 @@ describe("MaskEditor", () => {
       // Closes dialog after completion
       expect(onClose).toHaveBeenCalled();
     });
+    const context = HTMLCanvasElement.prototype.getContext.call(document.createElement("canvas"), "2d") as CanvasRenderingContext2D;
+    const grayscale = vi.mocked(context.putImageData).mock.calls.at(-1)?.[0];
+    expect(grayscale).toBeDefined();
+    const authorized = Array.from({ length: grayscale!.width * grayscale!.height }, (_, i) => grayscale!.data[i * 4])
+      .filter((value) => value === 255);
+    expect(authorized).toHaveLength(4);
   });
 
   test("One-Click Clean stays open and stops when text confirmation fails", async () => {
@@ -297,6 +320,92 @@ describe("MaskEditor", () => {
       "auto",
       "force-clean",
     );
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /คลีนจุดนี้ทันที/ }));
+    await waitFor(() => expect(onRetry).toHaveBeenCalledTimes(3));
+    expect(onRetry.mock.calls.map((call) => call[3])).toEqual(["confirm-text", "force-clean", "force-clean"]);
+  });
+
+  test("Clean Now makes one proposal refresh and keeps the editor open when no pixels exist", async () => {
+    mockMaskHasPixels = false;
+    const onRetry = vi.fn();
+    const onClose = vi.fn();
+    const onRefreshProposal = vi.fn().mockResolvedValue({ region: preservedRegion, maskUrl: "blob:refreshed" });
+    renderMaskEditor({ onRetry, onClose, onRefreshProposal });
+
+    await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+    fireEvent.click(screen.getByRole("button", { name: /คลีนจุดนี้ทันที/ }));
+
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("กรุณาวาด Mask หรือกดเติมเต็มกรอบเอง"));
+    expect(onRefreshProposal).toHaveBeenCalledOnce();
+    expect(onRetry).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  test("strong three-pixel remap intersects old edits before material-overflow validation", async () => {
+    mockMaskPixels = [[10, 11], [14, 11]];
+    HTMLCanvasElement.prototype.toBlob = vi.fn((callback) => callback(new Blob(["mask"], { type: "image/png" }))) as typeof HTMLCanvasElement.prototype.toBlob;
+    const recovered = { ...preservedRegion, id: "region-new", rect: { ...preservedRegion.rect, x: 13 } };
+    const onResolveRegion = vi.fn().mockResolvedValue({ region: recovered, proposalMaskUrl: "blob:proposal", remapped: true });
+    const onRetry = vi.fn().mockResolvedValue({ ok: true });
+    const onClose = vi.fn();
+    renderMaskEditor({ onResolveRegion, onRetry, onClose });
+    await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+    fireEvent.click(screen.getByRole("button", { name: /คลีนจุดนี้ทันที/ }));
+
+    await waitFor(() => expect(onRetry).toHaveBeenCalledTimes(2));
+    expect(onRetry.mock.calls.map((call) => call[0])).toEqual(["region-new", "region-new"]);
+    expect(screen.getByRole("status")).toHaveTextContent("จับคู่พื้นที่ใหม่");
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  test("proposal refresh retains an earlier remap notice", async () => {
+    mockMaskHasPixels = false;
+    HTMLCanvasElement.prototype.toBlob = vi.fn((callback) => callback(new Blob(["mask"], { type: "image/png" }))) as typeof HTMLCanvasElement.prototype.toBlob;
+    const recovered = { ...preservedRegion, id: "region-new" };
+    const onResolveRegion = vi.fn().mockResolvedValue({ region: recovered, proposalMaskUrl: "blob:empty", remapped: true });
+    const onRefreshProposal = vi.fn().mockImplementation(async () => {
+      mockMaskHasPixels = true;
+      return { region: preservedRegion, maskUrl: "blob:refreshed" };
+    });
+    const onRetry = vi.fn().mockResolvedValue({ ok: true });
+    const onClose = vi.fn();
+    renderMaskEditor({ onResolveRegion, onRefreshProposal, onRetry, onClose });
+    await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+    fireEvent.click(screen.getByRole("button", { name: /คลีนจุดนี้ทันที/ }));
+
+    await waitFor(() => expect(onRetry).toHaveBeenCalledTimes(2));
+    expect(onRefreshProposal).toHaveBeenCalledOnce();
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("ปรับ Mask"));
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  test("small brush overflow is clipped and reported after Clean Now", async () => {
+    HTMLCanvasElement.prototype.toBlob = vi.fn((callback) => callback(new Blob(["mask"], { type: "image/png" }))) as typeof HTMLCanvasElement.prototype.toBlob;
+    const onRetry = vi.fn().mockResolvedValue({ ok: true });
+    const onClose = vi.fn();
+    renderMaskEditor({ onRetry, onClose });
+    const canvas = await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+    fireEvent.change(screen.getByRole("slider"), { target: { value: "2" } });
+    fireEvent.pointerDown(canvas, { clientX: 11, clientY: 11, pointerId: 1, button: 0 });
+    fireEvent.pointerUp(canvas, { pointerId: 1 });
+    fireEvent.click(screen.getByRole("button", { name: /คลีนจุดนี้ทันที/ }));
+    await waitFor(() => expect(onRetry).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("status")).toHaveTextContent("ปรับ Mask");
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  test("material brush overflow stops without closing or confirming", async () => {
+    const onRetry = vi.fn();
+    const onClose = vi.fn();
+    renderMaskEditor({ onRetry, onClose });
+    const canvas = await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+    fireEvent.change(screen.getByRole("slider"), { target: { value: "2" } });
+    fireEvent.pointerDown(canvas, { clientX: 5, clientY: 11, pointerId: 1, button: 0 });
+    fireEvent.pointerUp(canvas, { pointerId: 1 });
+    fireEvent.click(screen.getByRole("button", { name: /คลีนจุดนี้ทันที/ }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Mask เกินพื้นที่"));
+    expect(onRetry).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
   });
 

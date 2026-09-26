@@ -16,7 +16,7 @@ import {
 import { Upload, Download, Flame, Eye, EyeOff, Undo2, Redo2, GalleryVertical, RectangleHorizontal, Menu, X, Settings, FileArchive, BookOpen, FileText, Sparkles, Loader2, Check, AlertCircle, RefreshCw, ArrowDown, ArrowUp, ChevronDown, ChevronUp, Eraser, Paintbrush, RotateCcw } from "lucide-react";
 import { undoManager } from "@/lib/undoManager";
 import JSZip from "jszip";
-import { useCleaning } from "@/hooks/useCleaning";
+import { findRecoveredRegionId, useCleaning } from "@/hooks/useCleaning";
 import {
   CleaningToolbar,
   stageLabel,
@@ -25,6 +25,7 @@ import {
 import { MaskEditor } from "@/components/cleaning/MaskEditor";
 import type {
   CleanerOverride,
+  CleaningRegion,
   ManualRegionAction,
 } from "@/lib/cleaning/types";
 import { PageViewer } from "@/components/workspace/PageViewer";
@@ -224,6 +225,7 @@ export default function WorkspacePage() {
     cleanPage,
     cleanCurrentPage,
     retryRegion,
+    resolveMaskRegion,
     currentResult: currentCleaningResult,
     progress: cleaningProgress,
     error: cleaningError,
@@ -677,6 +679,18 @@ export default function WorkspacePage() {
       setWorkspaceLayer("clean");
     }
     return result;
+  };
+
+  const refreshMaskProposal = async (region: CleaningRegion) => {
+    const page = pages[currentPage];
+    if (!page) return undefined;
+    const response = await fetch(page.url, { cache: "no-store" });
+    if (!response.ok) return undefined;
+    const refreshed = await cleanCurrentPage(await response.blob(), true);
+    if (!refreshed) return undefined;
+    const recoveredId = findRecoveredRegionId(region, refreshed.regions, region.id);
+    const recovered = refreshed.regions.find((item) => item.id === recoveredId);
+    return recovered ? { region: recovered, maskUrl: refreshed.reviewMaskUrl } : undefined;
   };
 
   const [savedSessionData, setSavedSessionData] = useState<{ pages: { url: string, name: string, originUrl?: string, unrecoverableSource?: boolean }[], currentPage: number, hasUnrecoverableSources?: boolean } | null>(null);
@@ -2566,6 +2580,8 @@ export default function WorkspacePage() {
           regions={currentCleaningResult.regions}
           onClose={() => setIsMaskEditorOpen(false)}
           onRetry={handleRetryRegion}
+          onResolveRegion={resolveMaskRegion}
+          onRefreshProposal={refreshMaskProposal}
         />
       )}
 

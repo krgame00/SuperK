@@ -818,3 +818,15 @@ Verification evidence:
 - **Verification Evidence**:
   - `tests/workspace/SettingsModalExport.test.tsx` and `tests/export/saveLocation.test.ts`: **33/33 passed**.
   - `npx tsc --noEmit`: passed with 0 errors.
+
+## Mask region safe cleaning — 2026-09-26
+
+### VERIFIED WORKING: bounded manual cleaning and Region 17 ordinary path
+
+- The previous approved-mask rule allowed an empty approved mask to remove nothing. The new Region 17 specification supersedes this at the manual action boundary: an empty force-clean mask now stops with a visible message; the backend also refuses it. A mask drifting at most 2 pixels is clipped to the selected region, while larger overflow stops for user correction.
+- Missing cleaner jobs are rebuilt and matched by region identity or bounded geometry. Weak or ambiguous matches stop; recovered edits are intersected with the recovered rectangle. Clean Now uses the proposed mask, allows one proposal refresh, and never synthesizes a full-region deletion mask.
+- Text confirmation survives a failed force-clean attempt. Approval requires a revision matching the exact normalized mask. Restart restoration requires both actual image blobs and matching metadata; legacy approval without a revision is treated as unapproved.
+- The real browser Region 17 run used cached source `F:\manga-cache\ocr-jobs\jobs\ffdc3263f7534fc6809dee81b463a312\source.png`. The resulting job `c88205b0cac64f5fb54f8a55315c2a03` had Region 17 repaired with text and mask approval; 13,278 pixels changed inside the region, zero outside the region and zero outside the final mask. This verified the ordinary end-to-end path; stale-job and 2-pixel drift paths were covered by deterministic tests rather than a live replay.
+- Final verification: Vitest **144 files passed, 1 skipped; 929 tests passed, 1 skipped**. Python OCR service **186 passed, 3 skipped**. `tsc --noEmit` and `git diff --check` passed. Focused lint result is recorded in the execution plan.
+- Execution evidence and ticket mapping are in `docs/plans/mask-region-safe-cleaning.md`.
+- Independent review caught a follow-up stale-job alias path: a later granular action could send the original mask after the first action remapped the region. Aliased actions now intersect the mask with the current recovered rectangle before transport. Same-ID rectangle shifts also retain the adjustment notice. Shifted-region regressions passed with the other MaskEditor/useCleaning cases (49/49).

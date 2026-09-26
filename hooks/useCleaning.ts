@@ -13,6 +13,7 @@ import type {
   CleaningJob,
   CleaningProgress,
   CleaningResult,
+  CleaningRegion,
   ManualRegionAction,
 } from "@/lib/cleaning/types";
 import {
@@ -55,7 +56,86 @@ const buildPreparedIdentity = (
   regions: CleaningResult["regions"] = [],
 ) => `${sourceFingerprint}:${maskFingerprint}:${pipelineVersion ?? "unknown-pipeline"}:${authorizationIdentity(regions)}`;
 
+const safeRestoredRegions = (regions: CleaningResult["regions"]): CleaningResult["regions"] =>
+  regions.map((region) => region.maskApproved && !region.approvalRevision
+    ? { ...region, maskApproved: false, approvalRevision: null }
+    : region);
+
+const regionAliasKey = (pageUrl: string, regionId: string) =>
+  `${pageUrl}\u0000${regionId}`;
+
+async function intersectMaskWithRegion(mask: Blob, rect: CleaningResult["regions"][number]["rect"]): Promise<Blob> {
+  const bitmap = await createImageBitmap(mask);
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Cannot inspect the recovered Mask.");
+    context.drawImage(bitmap, 0, 0);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+    for (let y = 0; y < canvas.height; y++) {
+      for (let x = 0; x < canvas.width; x++) {
+        if (x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height) continue;
+        const index = (y * canvas.width + x) * 4;
+        pixels.data[index] = pixels.data[index + 1] = pixels.data[index + 2] = 0;
+      }
+    }
+    context.putImageData(pixels, 0, 0);
+    return await new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Cannot save the recovered Mask.")), "image/png"),
+    );
+  } finally {
+    bitmap.close();
+  }
+}
+
+export function findRecoveredRegionId(
+  previousRegion: CleaningResult["regions"][number] | undefined,
+  refreshed: CleaningResult["regions"],
+  preferredId: string,
+): string | undefined {
+  if (refreshed.some((region) => region.id === preferredId)) return preferredId;
+  if (!previousRegion) return undefined;
+
+  const previous = previousRegion.rect;
+  const previousArea = Math.max(1, previous.width * previous.height);
+  let bestId: string | undefined;
+  let bestScore = 0;
+  let runnerUp = 0;
+
+  for (const region of refreshed) {
+    const rect = region.rect;
+    const left = Math.max(previous.x, rect.x);
+    const top = Math.max(previous.y, rect.y);
+    const right = Math.min(previous.x + previous.width, rect.x + rect.width);
+    const bottom = Math.min(previous.y + previous.height, rect.y + rect.height);
+    const intersection =
+      Math.max(0, right - left) * Math.max(0, bottom - top);
+    const area = Math.max(1, rect.width * rect.height);
+    const union = previousArea + area - intersection;
+    const score = union > 0 ? intersection / union : 0;
+    const centerDistance = Math.hypot(
+      previous.x + previous.width / 2 - rect.x - rect.width / 2,
+      previous.y + previous.height / 2 - rect.y - rect.height / 2,
+    );
+    const centerLimit = Math.min(previous.width, previous.height) / 4;
+    if (score < 0.5 || centerDistance > centerLimit) continue;
+    if (score > bestScore) {
+      runnerUp = bestScore;
+      bestScore = score;
+      bestId = region.id;
+    } else if (score > runnerUp) {
+      runnerUp = score;
+    }
+  }
+
+  return bestScore - runnerUp > 0.05 ? bestId : undefined;
+}
+
 export interface PageCleaningResult extends CleaningResult {
+  maskAdjustment?: "remapped";
+  recoveredRegionId?: string;
   cleanUrl: string;
   maskUrl: string;
   reviewMaskUrl: string;
@@ -99,6 +179,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
   pageIdsRef.current = pageIds;
   const resultsRef = useRef(resultsByPage);
   const restoreStartedRef = useRef(false);
+  const regionAliasRef = useRef<Map<string, string>>(new Map());
   const cancelOnPageChangeRef = useRef(false);
   const activeRequestRef = useRef<
     { token: number; pageUrl: string } | undefined
@@ -340,6 +421,13 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       setError({ message: caught.message, recovery: "start-local-service" });
       return;
     }
+    if (caught instanceof CleaningClientError && caught.status === 404) {
+      setError({
+        message: "งานคลีนเดิมหมดอายุหลังรีสตาร์ตระบบ กรุณาคลีนหน้านี้ใหม่แล้วลอง Mask อีกครั้ง",
+        recovery: "reclean",
+      });
+      return;
+    }
     setError({
       message:
         caught instanceof Error ? caught.message : "Image cleaning failed.",
@@ -417,6 +505,34 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     [cleanPage],
   );
 
+  const resolveMaskRegion = useCallback(async (region: CleaningRegion): Promise<{
+    region: CleaningRegion;
+    proposalMaskUrl: string;
+    remapped: boolean;
+  } | undefined> => {
+    const pageUrl = pageUrlRef.current;
+    const current = pageUrl ? resultsRef.current.get(pageUrl) : undefined;
+    if (!pageUrl || !current) return undefined;
+    const aliasedId = regionAliasRef.current.get(regionAliasKey(pageUrl, region.id)) ?? region.id;
+    try {
+      await getCleaningJob(current.jobId);
+      const selected = current.regions.find((item) => item.id === aliasedId);
+      return selected ? { region: selected, proposalMaskUrl: current.reviewMaskUrl, remapped: aliasedId !== region.id } : undefined;
+    } catch (error) {
+      if (!(error instanceof CleaningClientError) || error.status !== 404) throw error;
+      const response = await fetch(pageUrl, { cache: "no-store" });
+      if (!response.ok) throw error;
+      const refreshed = await cleanPage(pageUrl, await response.blob(), true);
+      const recoveredId = findRecoveredRegionId(region, refreshed.regions, aliasedId);
+      const recovered = refreshed.regions.find((item) => item.id === recoveredId);
+      if (!recovered) throw new Error("ไม่พบพื้นที่ Mask ที่ตรงกันอย่างปลอดภัย กรุณาตรวจและเลือกพื้นที่ใหม่");
+      const remapped = recovered.id !== region.id ||
+        JSON.stringify(recovered.rect) !== JSON.stringify(region.rect);
+      if (remapped) regionAliasRef.current.set(regionAliasKey(pageUrl, region.id), recovered.id);
+      return { region: recovered, proposalMaskUrl: refreshed.reviewMaskUrl, remapped };
+    }
+  }, [cleanPage]);
+
   const retryRegion = useCallback(
     async (
       regionId: string,
@@ -425,24 +541,95 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       action: ManualRegionAction = "automatic",
     ): Promise<PageCleaningResult | undefined> => {
       const pageUrl = pageUrlRef.current;
-      const current = pageUrl
+      let current = pageUrl
         ? resultsRef.current.get(pageUrl)
         : undefined;
       if (!pageUrl || !current) return;
-      const token = (pageTokensRef.current.get(pageUrl) ?? 0) + 1;
+
+      const originalRegionId = regionId;
+      const aliasKey = regionAliasKey(pageUrl, regionId);
+      let resolvedRegionId =
+        regionAliasRef.current.get(aliasKey) ?? regionId;
+      let previousRegion = current.regions.find(
+        (region) => region.id === resolvedRegionId || region.id === originalRegionId,
+      );
+      let remapped = false;
+      let token = (pageTokensRef.current.get(pageUrl) ?? 0) + 1;
       pageTokensRef.current.set(pageUrl, token);
       activeRequestRef.current = { token, pageUrl };
       cancelOnPageChangeRef.current = true;
       setError(undefined);
+
       try {
-        const job = await retryCleaningRegion(
-          current.jobId,
-          regionId,
-          mask,
-          cleaner,
-          action,
-        );
-        return await runJob(job, token, pageUrl, current.sourceFingerprint);
+        // A previous 404 may already have established an alias. Subsequent
+        // actions can still carry the editor's original mask.
+        const maskForCurrentRegion = regionAliasRef.current.has(aliasKey) && previousRegion
+          ? await intersectMaskWithRegion(mask, previousRegion.rect)
+          : mask;
+        let job;
+        try {
+          job = await retryCleaningRegion(
+            current.jobId,
+            resolvedRegionId,
+            maskForCurrentRegion,
+            cleaner,
+            action,
+          );
+        } catch (caught) {
+          if (!(caught instanceof CleaningClientError) || caught.status !== 404) {
+            throw caught;
+          }
+
+          // The browser can restore a persisted clean result after the local
+          // Python cleaner has restarted, leaving its jobId stale. Rebuild the
+          // page job from the original image, remap the region, then retry the
+          // user's Mask action transparently.
+          const sourceResponse = await fetch(pageUrl, { cache: "no-store" });
+          if (!sourceResponse.ok) throw caught;
+          const refreshed = await cleanPage(pageUrl, await sourceResponse.blob(), true);
+          current = refreshed;
+          const recoveredRegionId = findRecoveredRegionId(
+            previousRegion,
+            refreshed.regions,
+            resolvedRegionId,
+          );
+          if (!recoveredRegionId) {
+            throw new CleaningClientError(
+              404,
+              "Cleaning job expired and the matching Mask region could not be restored.",
+              "Re-clean this page and reopen Mask.",
+            );
+          }
+
+          const recoveredRegion = refreshed.regions.find((region) => region.id === recoveredRegionId);
+          if (!recoveredRegion) throw new Error("Recovered Mask region is unavailable.");
+          const oldRect = previousRegion?.rect;
+          const maskForRecoveredRegion = oldRect && JSON.stringify(oldRect) !== JSON.stringify(recoveredRegion.rect)
+            ? await intersectMaskWithRegion(mask, recoveredRegion.rect)
+            : maskForCurrentRegion;
+          resolvedRegionId = recoveredRegionId;
+          remapped = recoveredRegionId !== originalRegionId ||
+            Boolean(oldRect && JSON.stringify(oldRect) !== JSON.stringify(recoveredRegion.rect));
+          if (remapped || (oldRect && JSON.stringify(oldRect) !== JSON.stringify(recoveredRegion.rect))) {
+            regionAliasRef.current.set(aliasKey, recoveredRegionId);
+          }
+          previousRegion = recoveredRegion;
+          token = (pageTokensRef.current.get(pageUrl) ?? 0) + 1;
+          pageTokensRef.current.set(pageUrl, token);
+          activeRequestRef.current = { token, pageUrl };
+          job = await retryCleaningRegion(
+            refreshed.jobId,
+            recoveredRegionId,
+            maskForRecoveredRegion,
+            cleaner,
+            action,
+          );
+        }
+
+        const result = await runJob(job, token, pageUrl, current.sourceFingerprint);
+        return remapped
+          ? { ...result, maskAdjustment: "remapped", recoveredRegionId: resolvedRegionId }
+          : result;
       } catch (caught) {
         handleFailure(caught, pageUrl);
       } finally {
@@ -453,7 +640,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
         }
       }
     },
-    [handleFailure, runJob],
+    [cleanPage, handleFailure, runJob],
   );
 
   useEffect(() => {
@@ -494,9 +681,10 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
 
           // Fast Path: Check if cleaning image blobs were persisted locally in IndexedDB!
           const localAssets = await loadCleaningResultAssets(metadata);
-          if (localAssets.cleanBlob) {
+          if (localAssets.cleanBlob && localAssets.maskBlob &&
+            await fingerprintBlob(localAssets.maskBlob) === metadata.maskFingerprint) {
             const cleanUrl = URL.createObjectURL(localAssets.cleanBlob);
-            const maskUrl = localAssets.maskBlob ? URL.createObjectURL(localAssets.maskBlob) : cleanUrl;
+            const maskUrl = URL.createObjectURL(localAssets.maskBlob);
             const reviewMaskUrl = localAssets.reviewMaskBlob ? URL.createObjectURL(localAssets.reviewMaskBlob) : maskUrl;
             const protectedMaskUrl = localAssets.protectedMaskBlob ? URL.createObjectURL(localAssets.protectedMaskBlob) : maskUrl;
 
@@ -509,7 +697,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
               maskAsset: maskUrl,
               reviewMaskAsset: reviewMaskUrl,
               protectedMaskAsset: protectedMaskUrl,
-              regions: metadata.regions,
+              regions: safeRestoredRegions(metadata.regions),
               timingsMs: metadata.timingsMs ?? {},
               pipelineVersion: metadata.pipelineVersion,
               cleanUrl,
@@ -527,7 +715,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
                     metadata.sourceFingerprint,
                     metadata.maskFingerprint ?? "unknown-mask",
                     metadata.pipelineVersion,
-                    metadata.regions,
+                    safeRestoredRegions(metadata.regions),
                   )
                 : undefined,
             };
@@ -605,7 +793,6 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     }
     if (!removed) return;
     resultsRef.current = retained;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- Prunes revoked blob results on page removal
     setResultsByPage(retained);
     setCacheRevision((revision) => revision + 1);
   }, [pages, revokeResult]);
@@ -633,6 +820,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     cleanPage,
     cleanCurrentPage,
     retryRegion,
+    resolveMaskRegion,
     cancelPolling,
     currentResult,
     progress,

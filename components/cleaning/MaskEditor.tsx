@@ -20,6 +20,7 @@ import { applyBrush, type BrushMode, type MaskPoint } from "@/lib/cleaning/maskE
 import type {
   CleanerOverride,
   CleaningRegion,
+  PixelRect,
   ManualRegionAction,
 } from "@/lib/cleaning/types";
 import { undoManager } from "@/lib/undoManager";
@@ -36,6 +37,15 @@ interface MaskEditorProps {
     cleaner: CleanerOverride,
     action: ManualRegionAction,
   ) => Promise<unknown>;
+  onRefreshProposal?: (region: CleaningRegion) => Promise<{
+    region: CleaningRegion;
+    maskUrl: string;
+  } | undefined>;
+  onResolveRegion?: (region: CleaningRegion) => Promise<{
+    region: CleaningRegion;
+    proposalMaskUrl: string;
+    remapped: boolean;
+  } | undefined>;
   returnFocusRef?: React.RefObject<HTMLElement | null>;
 }
 
@@ -47,6 +57,87 @@ const cleaners: { value: CleanerOverride; label: string }[] = [
   { value: "anime-lama", label: "AnimeLaMa" },
 ];
 
+function maskHasPixels(mask: ImageData, rect: PixelRect): boolean {
+  for (let y = Math.max(0, rect.y); y < Math.min(mask.height, rect.y + rect.height); y++) {
+    for (let x = Math.max(0, rect.x); x < Math.min(mask.width, rect.x + rect.width); x++) {
+      if (mask.data[(y * mask.width + x) * 4 + 3] > 0) return true;
+    }
+  }
+  return false;
+}
+
+function maskOverflow(mask: ImageData, rect: PixelRect): number {
+  let overflow = 0;
+  for (let y = 0; y < mask.height; y++) {
+    for (let x = 0; x < mask.width; x++) {
+      if (mask.data[(y * mask.width + x) * 4 + 3] === 0) continue;
+      overflow = Math.max(overflow, rect.x - x, rect.y - y,
+        x - (rect.x + rect.width - 1), y - (rect.y + rect.height - 1));
+    }
+  }
+  return overflow;
+}
+
+function normalizeDisplayMask(mask: ImageData, rect: PixelRect): ImageData {
+  const normalized = cloneImageData(mask);
+  for (let y = 0; y < mask.height; y++) {
+    for (let x = 0; x < mask.width; x++) {
+      if (x < rect.x || x >= rect.x + rect.width || y < rect.y || y >= rect.y + rect.height) {
+        normalized.data[(y * mask.width + x) * 4 + 3] = 0;
+      }
+    }
+  }
+  return normalized;
+}
+
+async function encodeAuthorizedMask(mask: ImageData, rect: PixelRect): Promise<Blob> {
+  const canvas = document.createElement("canvas");
+  canvas.width = mask.width;
+  canvas.height = mask.height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("สร้าง Mask ไม่สำเร็จ");
+  const grayscale = context.createImageData(mask.width, mask.height);
+  for (let index = 0; index < mask.data.length; index += 4) {
+    const x = (index / 4) % mask.width;
+    const y = Math.floor(index / 4 / mask.width);
+    const inside = x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
+    const value = inside && mask.data[index + 3] > 0 ? 255 : 0;
+    grayscale.data[index] = value;
+    grayscale.data[index + 1] = value;
+    grayscale.data[index + 2] = value;
+    grayscale.data[index + 3] = 255;
+  }
+  context.putImageData(grayscale, 0, 0);
+  return canvasToBlob(canvas);
+}
+
+function isRecoveredResult(value: unknown): value is { recoveredRegionId: string; regions: CleaningRegion[] } {
+  return typeof value === "object" && value !== null &&
+    "recoveredRegionId" in value && typeof value.recoveredRegionId === "string" &&
+    "regions" in value && Array.isArray(value.regions);
+}
+
+function loadMaskImage(url: string): Promise<ImageData> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onerror = () => reject(new Error("โหลด Mask ที่เสนอใหม่ไม่สำเร็จ"));
+    image.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext("2d");
+      if (!context) return reject(new Error("อ่าน Mask ที่เสนอใหม่ไม่สำเร็จ"));
+      context.drawImage(image, 0, 0);
+      const data = context.getImageData(0, 0, canvas.width, canvas.height);
+      for (let i = 0; i < data.data.length; i += 4) {
+        data.data[i + 3] = data.data[i] > 16 ? 150 : 0;
+      }
+      resolve(data);
+    };
+    image.src = url;
+  });
+}
+
 export function MaskEditor({
   sourceUrl,
   maskUrl,
@@ -54,6 +145,8 @@ export function MaskEditor({
   regions,
   onClose,
   onRetry,
+  onRefreshProposal,
+  onResolveRegion,
   returnFocusRef,
 }: MaskEditorProps) {
   const titleId = useId();
@@ -83,6 +176,7 @@ export function MaskEditor({
   });
   const [isCanvasFocused, setIsCanvasFocused] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
+  const confirmedRegionRef = useRef<Set<string>>(new Set());
 
   // Zoom and Pan state
   const [zoom, setZoom] = useState(1);
@@ -141,6 +235,9 @@ export function MaskEditor({
       }
       renderMask(source);
       loadedRegionRef.current = key;
+    };
+    maskImage.onerror = () => {
+      if (active) setStatusMessage("โหลด Mask ไม่สำเร็จ กรุณาคลีนหน้านี้ใหม่แล้วเปิด Mask อีกครั้ง");
     };
     maskImage.src = selectedRegion?.textRole === "review" && proposalMaskUrl ? proposalMaskUrl : maskUrl;
     return () => {
@@ -398,58 +495,62 @@ export function MaskEditor({
     if (!imageData || !regionId) return;
     setIsSubmitting(true);
     try {
-      const output = document.createElement("canvas");
-      output.width = imageData.width;
-      output.height = imageData.height;
-      const context = output.getContext("2d");
-      if (!context) return;
-      const grayscale = context.createImageData(output.width, output.height);
       const r = selectedRegion?.rect;
-
-      let hasActivePixels = false;
-      if (r) {
-        for (let y = r.y; y < r.y + r.height; y++) {
-          for (let x = r.x; x < r.x + r.width; x++) {
-            if (x >= 0 && x < imageData.width && y >= 0 && y < imageData.height) {
-              const offset = (y * imageData.width + x) * 4;
-              if (imageData.data[offset + 3] > 0) {
-                hasActivePixels = true;
-                break;
-              }
-            }
-          }
-          if (hasActivePixels) break;
-        }
+      if (r && action !== "confirm-text" && maskOverflow(imageData, r) > 2) {
+        setStatusMessage("Mask เกินพื้นที่ที่เลือกมากเกินไป กรุณาปรับ Mask แล้วลองใหม่");
+        return;
+      }
+      if (r && action === "force-clean" && !maskHasPixels(imageData, r)) {
+        setStatusMessage("ไม่มี Mask ที่ใช้คลีนได้ กรุณาวาด Mask หรือกดเติมเต็มกรอบเอง");
+        return;
       }
 
-      for (let index = 0; index < imageData.data.length; index += 4) {
-        const x = (index / 4) % output.width;
-        const y = Math.floor(index / 4 / output.width);
-        const inside = r && x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
-        const value = inside && (hasActivePixels ? imageData.data[index + 3] > 0 : true) ? 255 : 0;
-        grayscale.data[index] = value;
-        grayscale.data[index + 1] = value;
-        grayscale.data[index + 2] = value;
-        grayscale.data[index + 3] = 255;
-      }
-      context.putImageData(grayscale, 0, 0);
-      const blob = await canvasToBlob(output);
+      let effectiveRegionId = regionId;
+      let adjusted = false;
+      let blob = await encodeAuthorizedMask(imageData, r ?? { x: 0, y: 0, width: 0, height: 0 });
 
-      if (action === "force-clean" && selectedRegion && selectedRegion.textConfirmed !== true) {
-        const confirmed = await onRetry(regionId, blob, cleaner, "confirm-text");
+      if (action === "force-clean" && selectedRegion && selectedRegion.textConfirmed !== true &&
+        !confirmedRegionRef.current.has(effectiveRegionId)) {
+        const confirmed = await onRetry(effectiveRegionId, blob, cleaner, "confirm-text");
         if (!confirmed) {
           setStatusMessage("ยืนยันข้อความไม่สำเร็จ กรุณาลองใหม่");
           return;
         }
+        if (isRecoveredResult(confirmed)) {
+          adjusted = true;
+          const recovered = confirmed.regions.find((item) => item.id === confirmed.recoveredRegionId);
+          if (recovered) {
+            effectiveRegionId = recovered.id;
+            blob = await encodeAuthorizedMask(imageData, recovered.rect);
+            loadedRegionRef.current = `${sourceUrl}:${recovered.id}`;
+            renderMask(normalizeDisplayMask(imageData, recovered.rect));
+            setRegionId(recovered.id);
+          }
+        }
+        confirmedRegionRef.current.add(effectiveRegionId);
       }
 
-      const result = await onRetry(regionId, blob, cleaner, action);
+      const result = await onRetry(effectiveRegionId, blob, cleaner, action);
       if (!result) {
         setStatusMessage("บันทึก Mask ไม่สำเร็จ กรุณาลองใหม่");
         return;
       }
       if (action === "confirm-text") {
-        setStatusMessage("ยืนยันข้อความแล้ว ตรวจพื้นที่สีแดงที่จะลบเฉพาะบริเวณที่เลือก");
+        const confirmedId = isRecoveredResult(result) ? result.recoveredRegionId : regionId;
+        confirmedRegionRef.current.add(confirmedId);
+        if (isRecoveredResult(result)) {
+          const recovered = result.regions.find((item) => item.id === confirmedId);
+          if (recovered) {
+            loadedRegionRef.current = `${sourceUrl}:${confirmedId}`;
+            renderMask(normalizeDisplayMask(imageData, recovered.rect));
+            setRegionId(confirmedId);
+          }
+          setStatusMessage("ยืนยันข้อความแล้วและจับคู่พื้นที่ใหม่ กรุณาตรวจ Mask ก่อนคลีน");
+        } else {
+          setStatusMessage("ยืนยันข้อความแล้ว ตรวจพื้นที่สีแดงที่จะลบเฉพาะบริเวณที่เลือก");
+        }
+      } else if (isRecoveredResult(result) || adjusted || (r && maskOverflow(imageData, r) > 0)) {
+        setStatusMessage("ปรับ Mask หรือจับคู่พื้นที่ใหม่แล้ว กรุณาตรวจบริเวณที่คลีนก่อนปิด");
       } else {
         closeAndRestoreFocus();
       }
@@ -463,65 +564,91 @@ export function MaskEditor({
   // One-Click Clean: seamlessly confirms text if necessary and cleans the region immediately
   const handleOneClickClean = async () => {
     const imageData = imageDataRef.current;
-    if (!imageData || !regionId) return;
+    if (!imageData || !regionId || !selectedRegion) return;
     setIsSubmitting(true);
     setStatusMessage("กำลังคลีนข้อความจุดนี้...");
     try {
-      const output = document.createElement("canvas");
-      output.width = imageData.width;
-      output.height = imageData.height;
-      const context = output.getContext("2d");
-      if (!context) return;
-      const grayscale = context.createImageData(output.width, output.height);
-      const r = selectedRegion?.rect;
-
-      // Check if there are active mask pixels in this region
-      let hasActivePixels = false;
-      if (r) {
-        for (let y = r.y; y < r.y + r.height; y++) {
-          for (let x = r.x; x < r.x + r.width; x++) {
-            if (x >= 0 && x < imageData.width && y >= 0 && y < imageData.height) {
-              const offset = (y * imageData.width + x) * 4;
-              if (imageData.data[offset + 3] > 0) {
-                hasActivePixels = true;
-                break;
-              }
-            }
-          }
-          if (hasActivePixels) break;
+      let effectiveRegion = selectedRegion;
+      let effectiveMask = imageData;
+      const initialOverflow = maskOverflow(imageData, selectedRegion.rect);
+      if (initialOverflow > 2) {
+        setStatusMessage("Mask เกินพื้นที่ที่เลือกมากเกินไป กรุณาปรับ Mask แล้วลองใหม่");
+        return;
+      }
+      let adjusted = initialOverflow > 0;
+      if (onResolveRegion) {
+        const resolved = await onResolveRegion(selectedRegion);
+        if (!resolved) {
+          setStatusMessage("ไม่พบพื้นที่ Mask ที่ตรงกัน กรุณาตรวจและเลือกพื้นที่ใหม่");
+          return;
+        }
+        effectiveRegion = resolved.region;
+        adjusted = adjusted || resolved.remapped;
+        if (resolved.remapped) {
+          effectiveMask = normalizeDisplayMask(imageData, effectiveRegion.rect);
+          loadedRegionRef.current = `${sourceUrl}:${effectiveRegion.id}`;
+          renderMask(effectiveMask);
+          setRegionId(effectiveRegion.id);
+        }
+        if (!maskHasPixels(effectiveMask, effectiveRegion.rect) && resolved.proposalMaskUrl) {
+          effectiveMask = normalizeDisplayMask(await loadMaskImage(resolved.proposalMaskUrl), effectiveRegion.rect);
+          if (maskHasPixels(effectiveMask, effectiveRegion.rect)) renderMask(effectiveMask);
         }
       }
-
-      for (let index = 0; index < imageData.data.length; index += 4) {
-        const x = (index / 4) % output.width;
-        const y = Math.floor(index / 4 / output.width);
-        const inside = r && x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
-        // If user hasn't painted any mask in this region, automatically treat the whole balloon box as the mask
-        const value = inside && (hasActivePixels ? imageData.data[index + 3] > 0 : true) ? 255 : 0;
-        grayscale.data[index] = value;
-        grayscale.data[index + 1] = value;
-        grayscale.data[index + 2] = value;
-        grayscale.data[index + 3] = 255;
+      let hasPixels = maskHasPixels(effectiveMask, effectiveRegion.rect);
+      if (!hasPixels && onRefreshProposal) {
+        const refreshed = await onRefreshProposal(selectedRegion);
+        if (refreshed) {
+          effectiveRegion = refreshed.region;
+          adjusted = adjusted || effectiveRegion.id !== regionId;
+          effectiveMask = normalizeDisplayMask(await loadMaskImage(refreshed.maskUrl), effectiveRegion.rect);
+          hasPixels = maskHasPixels(effectiveMask, effectiveRegion.rect);
+          if (hasPixels) {
+            renderMask(normalizeDisplayMask(effectiveMask, effectiveRegion.rect));
+            if (effectiveRegion.id !== regionId) {
+              loadedRegionRef.current = `${sourceUrl}:${effectiveRegion.id}`;
+              setRegionId(effectiveRegion.id);
+            }
+          }
+        }
       }
-      context.putImageData(grayscale, 0, 0);
-      const blob = await canvasToBlob(output);
+      if (!hasPixels) {
+        setStatusMessage("ไม่มี Mask ที่ใช้คลีนได้ กรุณาวาด Mask หรือกดเติมเต็มกรอบเอง");
+        return;
+      }
+      adjusted = adjusted || maskOverflow(effectiveMask, effectiveRegion.rect) > 0;
+      let blob = await encodeAuthorizedMask(effectiveMask, effectiveRegion.rect);
 
       // Auto confirm text if needed by backend authorization gate.
       // retryRegion returns undefined when the cleaning job fails, so do not
       // continue to force-clean or close the editor unless each step succeeds.
-      if (selectedRegion && selectedRegion.textConfirmed !== true) {
-        const confirmed = await onRetry(regionId, blob, cleaner, "confirm-text");
+      if (effectiveRegion.textConfirmed !== true && !confirmedRegionRef.current.has(effectiveRegion.id)) {
+        const confirmed = await onRetry(effectiveRegion.id, blob, cleaner, "confirm-text");
         if (!confirmed) {
           setStatusMessage("ยืนยันข้อความไม่สำเร็จ กรุณาลองใหม่");
           return;
         }
+        confirmedRegionRef.current.add(effectiveRegion.id);
+        if (isRecoveredResult(confirmed)) {
+          effectiveRegion = confirmed.regions.find((item) => item.id === confirmed.recoveredRegionId) ?? effectiveRegion;
+          adjusted = true;
+          blob = await encodeAuthorizedMask(effectiveMask, effectiveRegion.rect);
+          loadedRegionRef.current = `${sourceUrl}:${effectiveRegion.id}`;
+          renderMask(normalizeDisplayMask(effectiveMask, effectiveRegion.rect));
+          setRegionId(effectiveRegion.id);
+        }
       }
-      const cleaned = await onRetry(regionId, blob, cleaner, "force-clean");
+      const cleaned = await onRetry(effectiveRegion.id, blob, cleaner, "force-clean");
       if (!cleaned) {
         setStatusMessage("คลีนตาม Mask ไม่สำเร็จ กรุณาลองใหม่");
         return;
       }
-      closeAndRestoreFocus();
+      if (isRecoveredResult(cleaned)) adjusted = true;
+      if (adjusted) {
+        setStatusMessage("ปรับ Mask หรือจับคู่พื้นที่ใหม่แล้ว กรุณาตรวจบริเวณที่คลีนก่อนปิด");
+      } else {
+        closeAndRestoreFocus();
+      }
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "บันทึกไม่สำเร็จ");
     } finally {
@@ -762,7 +889,7 @@ export function MaskEditor({
           </p>
         </div>
 
-        <div role="status" aria-live="polite" className="sr-only">
+        <div role="status" aria-live="polite" className={statusMessage ? "px-4 py-2 text-sm text-amber-300" : "sr-only"}>
           {statusMessage}
         </div>
 
