@@ -1037,17 +1037,20 @@ async function renderOverlayFresh(text: string, overrides: Partial<TranslatedBub
   return { wrapper, canvas, container, chromeRoot, bubble };
 }
 
-test("grows a manually adjusted frame until its text fits inside", async () => {
+test("grows a manually adjusted frame's height downward until its text fits inside, preserving user width", async () => {
   const { canvas, wrapper } = await renderOverlayFresh(
     "ชื่อนี้ต้องเป็นชื่อที่ถูกใจที่สุดของฉันจริงๆ",
   );
-  // The 90x70 frame is too small for this text once the font has reached
-  // its floor, so the frame itself must grow (capped at 2.5x) instead of
-  // letting the text overflow the bubble.
+  // Under content-driven reflow (ADR 0018), user-adjusted width is authoritative
+  // and stays locked, while height expands downward to fit the lines.
   const grownW = (Number.parseFloat(wrapper.style.width) / 100) * 1000;
-  expect(grownW).toBeGreaterThan(90 * 1.3);
-  expect(grownW).toBeLessThanOrEqual(90 * 2.5 + 1);
-  expect(Number(canvas.width)).toBeCloseTo(grownW, 0);
+  expect(grownW).toBeCloseTo(90, 0);
+  expect(Number(canvas.width)).toBeCloseTo(90, 0);
+
+  const grownH = (Number.parseFloat(wrapper.style.height) / 100) * 1200;
+  expect(grownH).toBeGreaterThan(70 * 1.3);
+  expect(grownH).toBeLessThanOrEqual(70 * 2.5 + 1);
+  expect(Number(canvas.height)).toBeCloseTo(grownH, 0);
   expect(fillTextSpy).toHaveBeenCalled();
 });
 
@@ -1091,8 +1094,8 @@ test("scales the text with the corner resize handle", async () => {
   expect(bubble.fontSizeMultiplier).toBeCloseTo(1.25, 5);
 });
 
-test("scales the text with the width handle too", async () => {
-  const { container, chromeRoot, bubble } = await renderOverlayFresh("ปรับกว้าง", {
+test("preserves font size multiplier and reflows with top-anchored height when width handle is dragged", async () => {
+  const { container, chromeRoot, bubble, wrapper } = await renderOverlayFresh("ปรับกว้าง", {
     layoutAdjustment: { bx: 100, by: 100, bw: 200, bh: 360, iw: 1000, ih: 1200 },
     fontSizeMultiplier: 1,
   });
@@ -1102,13 +1105,18 @@ test("scales the text with the width handle too", async () => {
   (handle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
   handle.releasePointerCapture = vi.fn();
 
+  const initTop = Number.parseFloat(wrapper.style.top);
   firePointer(handle, "pointerdown", 500, 500);
-  // Stretching +60 source px on a 200px frame is x1.3 — the text must
-  // follow the frame exactly like the corner handle does.
+  // Stretching +60 source px on a 200px frame increases width to 260px.
+  // Font size multiplier MUST remain preserved (Ticket 02).
   firePointer(handle, "pointermove", 560, 500);
-  expect(bubble.fontSizeMultiplier).toBeCloseTo(1.3, 5);
+  expect(bubble.fontSizeMultiplier).toBe(1);
+  // Top coordinate remains anchored (Ticket 03)
+  expect(Number.parseFloat(wrapper.style.top)).toBeCloseTo(initTop, 2);
+
   firePointer(handle, "pointerup", 560, 500);
-  expect(bubble.fontSizeMultiplier).toBeCloseTo(1.3, 5);
+  expect(bubble.fontSizeMultiplier).toBe(1);
+  expect(bubble.layoutAdjustment?.bw).toBeCloseTo(260, 1);
 });
 
 test("holds the dragged frame during a resize and never rockets the floor", async () => {
@@ -1152,4 +1160,65 @@ test("repairs inflated legacy adjustments left by the old floor bug", async () =
   expect(wPct).toBeLessThanOrEqual(120.1);
   expect(Number(canvas.width)).toBeLessThanOrEqual(1201);
   expect(Number.parseFloat(wrapper.style.left)).toBeGreaterThanOrEqual(0);
+});
+
+test("narrowing width handle reflows text, expands height downward top-anchored, and supports undo", async () => {
+  const { container, chromeRoot, bubble, wrapper } = await renderOverlayFresh(
+    "ทั้งที่ข้าอุตส่าห์แต่งตัวในแบบที่เจ้าชอบแท้ๆ",
+    {
+      layoutAdjustment: { bx: 100, by: 100, bw: 240, bh: 120, iw: 1000, ih: 1200 },
+      fontSizeMultiplier: 1,
+    },
+  );
+  mockCanvasRect(container);
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  handle.setPointerCapture = vi.fn();
+  (handle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  handle.releasePointerCapture = vi.fn();
+
+  const initTop = Number.parseFloat(wrapper.style.top);
+  const initHeight = Number.parseFloat(wrapper.style.height);
+
+  firePointer(handle, "pointerdown", 500, 500);
+  // Drag narrower by -160 source px (from 240px down to 80px)
+  firePointer(handle, "pointermove", 340, 500);
+
+  // Top coordinate must remain strictly anchored (no jump)
+  expect(Number.parseFloat(wrapper.style.top)).toBeCloseTo(initTop, 2);
+  // Height must expand downward to fit the reflowed lines
+  const newHeight = Number.parseFloat(wrapper.style.height);
+  expect(newHeight).toBeGreaterThan(initHeight);
+  // Font size multiplier remains locked
+  expect(bubble.fontSizeMultiplier).toBe(1);
+
+  firePointer(handle, "pointerup", 340, 500);
+  expect(bubble.layoutAdjustment?.bw).toBeCloseTo(80, 1);
+  expect(bubble.layoutAdjustment?.bh).toBeGreaterThan(120);
+
+  const { undoManager: freshUndoManager } = await import("@/lib/undoManager");
+  // Undo reverts both width and height
+  freshUndoManager.undo();
+  expect(bubble.layoutAdjustment?.bw).toBeCloseTo(240, 1);
+  expect(bubble.layoutAdjustment?.bh).toBeCloseTo(120, 1);
+});
+
+test("editing text via editor textarea expands height downward while keeping user-specified width intact", async () => {
+  const { wrapper, chromeRoot } = await renderOverlayFresh("ข้อความสั้น", {
+    layoutAdjustment: { bx: 100, by: 100, bw: 150, bh: 80, iw: 1000, ih: 1200 },
+  });
+  const widthBefore = Number.parseFloat(wrapper.style.width);
+  const heightBefore = Number.parseFloat(wrapper.style.height);
+
+  chromeRoot.querySelector<HTMLButtonElement>('[aria-label="แก้ไขข้อความ"]')!.click();
+  const textarea = document.querySelector<HTMLTextAreaElement>("[data-translation-editor] textarea")!;
+  textarea.value = "นี่คือข้อความที่ยาวขึ้นมากซึ่งต้องการพื้นที่แนวตั้งเพิ่มเติมสำหรับการแสดงผลหลายบรรทัด";
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+
+  const widthAfter = Number.parseFloat(wrapper.style.width);
+  const heightAfter = Number.parseFloat(wrapper.style.height);
+
+  // Width is locked to user adjustment
+  expect(widthAfter).toBeCloseTo(widthBefore, 1);
+  // Height expands downward to accommodate longer text
+  expect(heightAfter).toBeGreaterThan(heightBefore);
 });
