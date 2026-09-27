@@ -70,6 +70,14 @@ export function buildTranslationPrompt({
 
   const glossaryDirective = buildGlossaryDirectives(glossary);
   const policyRules = buildPolicyDirectives(policy);
+  // Foreign-script leakage (Japanese kana/kanji carried over from the source
+  // page, Cyrillic glitch runs) is a recurring Gemini failure mode for Thai
+  // output — forbid it explicitly; the client's script guard retries when it
+  // still slips through.
+  const thaiTargetDirective =
+    !targetLang || /thai|ไทย/i.test(targetLang)
+      ? `- Write 't' ENTIRELY in Thai script. Do NOT leave any Japanese kana/kanji, Cyrillic, Hangul, or other foreign-script characters in 't' — translate or transliterate every one of them into Thai. Latin letters are allowed only for proper names, SFX and brand words.\n`
+      : "";
 
   return (
     `You are an expert manga translator. ${sourceHint}Translate this manga page to ${targetLang || "Thai"}.${retryDirective}${contextDirective}${glossaryDirective}\n` +
@@ -78,6 +86,7 @@ export function buildTranslationPrompt({
     `- Do NOT use line breaks (\\n) in the translated text. Keep the text of each bubble on a single continuous line (ห้ามเว้นบรรทัดมั่ว ให้ต่อเป็นบรรทัดเดียวกัน).\n` +
     `- For Thai: Adapt pronouns (แก, ฉัน, นาย, ข้า, เอ็ง) and endings (ครับ, ค่ะ, วะ, เว้ย, สิ, นะ) based on character relationships and mood.\n` +
     `${policyRules}\n` +
+    `${thaiTargetDirective}` +
     `- Read order is usually Right-to-Left, Top-to-Bottom.\n` +
     `- Classify each detected text region as styleCategory: dialogue, narration, or sfx. This is metadata only and must not change translation wording.\n` +
     `Output ONLY valid JSON, no markdown, no explanation.\n` +

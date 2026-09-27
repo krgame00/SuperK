@@ -122,6 +122,47 @@ export function normalizeThaiText(text: string): string {
 }
 
 /**
+ * Gemini occasionally leaks foreign-script characters into the translation:
+ * Japanese kana/kanji carried over from the source page, Cyrillic glitch
+ * runs, or Hangul. Latin letters stay allowed (names, SFX, brand words).
+ */
+const FOREIGN_SCRIPT_PATTERNS: Array<[RegExp, string]> = [
+  [/[\u3040-\u30FF\u31F0-\u31FF]/g, "Japanese kana"],
+  [/[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/g, "CJK kanji"],
+  [/[\u0400-\u04FF]/g, "Cyrillic"],
+  [/[\uAC00-\uD7AF\u1100-\u11FF]/g, "Hangul"],
+];
+
+export function countForeignScriptChars(text: string): number {
+  if (!text) return 0;
+  let count = 0;
+  for (const [pattern] of FOREIGN_SCRIPT_PATTERNS) {
+    count += (text.match(pattern) ?? []).length;
+  }
+  return count;
+}
+
+export function describeForeignScripts(text: string): string[] {
+  if (!text) return [];
+  // `.match` (not `.test`) — global regexes keep lastIndex state between tests.
+  return FOREIGN_SCRIPT_PATTERNS
+    .filter(([pattern]) => text.match(pattern) !== null)
+    .map(([, name]) => name);
+}
+
+/** How many bubbles carry foreign-script characters in their translation. */
+export function countContaminatedBubbles(
+  bubbles: Array<{ t?: unknown }>,
+): number {
+  return bubbles.reduce(
+    (total, b) =>
+      total +
+      (typeof b?.t === "string" && countForeignScriptChars(b.t) > 0 ? 1 : 0),
+    0,
+  );
+}
+
+/**
  * Normalize and spell-check all bubble texts in a parsed translation object.
  */
 export function normalizeTranslationPayload<T extends { bubbles?: unknown[] }>(payload: T): T {

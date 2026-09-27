@@ -4,6 +4,9 @@ import {
   cleanThaiVowelStacking,
   cleanPunctuationAndSpacing,
   normalizeTranslationPayload,
+  countForeignScriptChars,
+  describeForeignScripts,
+  countContaminatedBubbles,
 } from "@/lib/thaiSpellcheck";
 
 describe("Thai Spellcheck & Normalizer", () => {
@@ -51,5 +54,38 @@ describe("Thai Spellcheck & Normalizer", () => {
     const normalized = normalizeTranslationPayload(payload);
     expect(normalized.bubbles[0].t).toBe("ขอบคุณนะคะ ที่ช่วยสังเกต");
     expect(normalized.bubbles[1].t).toBe("ไม่เป็นไรค่ะ ใกล้ถึงแล้ว");
+  });
+});
+
+describe("Foreign-script contamination guard", () => {
+  it("counts Japanese kana/kanji, Cyrillic, and Hangul as foreign", () => {
+    expect(countForeignScriptChars("สวัสดีこんにちは")).toBe(5);
+    expect(countForeignScriptChars("俺はゴムだ")).toBe(5);
+    expect(countForeignScriptChars("Привет")).toBe(6);
+    expect(countForeignScriptChars("안녕")).toBe(2);
+  });
+
+  it("allows Thai, Latin, digits, and punctuation", () => {
+    expect(countForeignScriptChars("สวัสดีครับ! Zoro ล่ะ? ... 123")).toBe(0);
+    expect(countForeignScriptChars("")).toBe(0);
+  });
+
+  it("describes which scripts leaked, statelessly", () => {
+    const text = "สวัสดีこんにちは俺Привет";
+    expect(describeForeignScripts(text)).toEqual(["Japanese kana", "CJK kanji", "Cyrillic"]);
+    expect(describeForeignScripts(text)).toEqual(describeForeignScripts(text));
+    expect(describeForeignScripts("สวัสดี")).toEqual([]);
+  });
+
+  it("counts only bubbles whose translation carries foreign script", () => {
+    expect(
+      countContaminatedBubbles([
+        { t: "สวัสดี" },
+        { t: "こんにちは" },
+        { t: "Привет" },
+        { t: 123 },
+        {},
+      ]),
+    ).toBe(2);
   });
 });

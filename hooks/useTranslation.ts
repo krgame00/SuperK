@@ -20,7 +20,10 @@ import {
 import { LRUMap } from "@/lib/lruMap";
 import { resolveTranslationOutcome } from "@/lib/translationPipeline";
 import { parseLLMJSON } from "@/lib/parseLLMJSON";
-import { normalizeTranslationPayload } from "@/lib/thaiSpellcheck";
+import {
+  normalizeTranslationPayload,
+  countContaminatedBubbles,
+} from "@/lib/thaiSpellcheck";
 import { sampleBubbleRegion } from "@/lib/colorMatching/canvasSampler";
 import { extractTextColors } from "@/lib/colorMatching/sampleTextColors";
 import { analyzeImageElementMonochrome } from "@/lib/colorMatching/monochromePage";
@@ -1208,16 +1211,29 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       const typedParsed = parsed as { bubbles?: TranslatedBubble[] } & Record<string, unknown>;
       const normalized = normalizeTranslationPayload(typedParsed);
       let pageBubbles: TranslatedBubble[] = normalized.bubbles ?? [];
+      // Foreign-script leakage (Japanese kana/kanji from the source page,
+      // Cyrillic runs) is treated like the 0-bubble failure: retry once on
+      // the enhanced image and keep whichever pass came out cleaner. The
+      // guard only applies to Thai targets — kana/kanji are legitimate when
+      // translating INTO Japanese.
+      const isThaiTarget = !targetLang || /thai|ไทย/i.test(targetLang);
+      let contaminatedBubbles = isThaiTarget
+        ? countContaminatedBubbles(pageBubbles)
+        : 0;
 
       if (
-        pageBubbles.length === 0
+        (pageBubbles.length === 0 || contaminatedBubbles > 0)
         && !isAutoRetry
         && !nsfwBypassMode
         && !forceNsfwBypass
       ) {
-        console.log(`[Auto-Retry] 0 bubbles found for page ${pageIndex + 1}. Retrying with enhanced single image...`);
+        console.log(`[Auto-Retry] ${pageBubbles.length === 0 ? "0 bubbles found" : `${contaminatedBubbles} bubble(s) with foreign-script characters`} for page ${pageIndex + 1}. Retrying with enhanced single image...`);
         if (activePageRef.current === pageUrl) {
-          setTranslationResult("⏳ ไม่พบข้อความ! กำลังปรับความคมชัดภาพและ Auto-Retry...");
+          setTranslationResult(
+            pageBubbles.length === 0
+              ? "⏳ ไม่พบข้อความ! กำลังปรับความคมชัดภาพและ Auto-Retry..."
+              : `⏳ พบตัวอักษรภาษาอื่นปนในคำแปล ${contaminatedBubbles} จุด! กำลังแปลใหม่อัตโนมัติ...`,
+          );
         }
 
         const imgEl = await waitForImageReady(recognitionUrl);
@@ -1266,12 +1282,20 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         if (!retryParsed || !Array.isArray(retryParsed.bubbles)) {
           throw new Error("Translation retry response malformed: bubbles array missing.");
         }
-        parsed = normalizeTranslationPayload(retryParsed);
-        // The retry replaced the first response — its bubbles are the ones
-        // that must flow into dedupe/outcome below, not the empty first pass.
-        pageBubbles =
-          (parsed as { bubbles?: TranslatedBubble[] } & Record<string, unknown>)
-            .bubbles ?? [];
+        const retryNormalized = normalizeTranslationPayload(
+          retryParsed as { bubbles?: unknown[] } & Record<string, unknown>,
+        );
+        const retryBubbles: TranslatedBubble[] =
+          (retryNormalized as { bubbles?: TranslatedBubble[] }).bubbles ?? [];
+        const retryContamination = countContaminatedBubbles(retryBubbles);
+        // The retry replaced the first response only when the first pass had
+        // nothing to keep (0 bubbles) or the retry is actually cleaner —
+        // swapping for a dirtier result would throw away good translations.
+        if (pageBubbles.length === 0 || retryContamination < contaminatedBubbles) {
+          parsed = retryNormalized;
+          pageBubbles = retryBubbles;
+          contaminatedBubbles = retryContamination;
+        }
       }
 
       const filteredParsed = deduplicateBubbleSFX(pageBubbles, 3).filter(b => withinTranslationScope(b.box, textScope));
