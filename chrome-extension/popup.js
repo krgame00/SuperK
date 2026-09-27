@@ -85,7 +85,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   try {
-    const settings = await chrome.storage.sync.get({
+    const settings = await loadExtensionSettings({
       translationMode: 'server',
       serverUrl: 'http://127.0.0.1:3000',
       pairingToken: '',
@@ -124,7 +124,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       settings.allowPreviewModels = allowPreview.checked;
       if (settings.translationMode === 'server') settings.serverUrl = SuperKServer.normalizeUrl(settings.serverUrl);
       if (settings.translationMode === 'direct' && !settings.apiKey) throw new Error('กรุณากรอก Gemini API Key');
-      await chrome.storage.sync.set(settings);
+      // The pairing token is a local secret — it must never return to
+      // chrome.storage.sync.
+      const { pairingToken, ...syncSettings } = settings;
+      await chrome.storage.sync.set(syncSettings);
+      try {
+        if (pairingToken) await chrome.storage.local.set({ pairingToken });
+        else await chrome.storage.local.remove('pairingToken');
+      } catch {
+        // No local storage access — keep the legacy sync write so the token
+        // is not lost; the next read migrates it back to local.
+        await chrome.storage.sync.set({ pairingToken });
+      }
       report('บันทึกแล้ว คลิกขวาที่ภาพเพื่อเริ่มแปล');
     } catch (error) {
       report(error.message || 'บันทึกไม่ได้ กรุณาลองใหม่', true);

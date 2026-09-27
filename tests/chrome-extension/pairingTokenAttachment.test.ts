@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 // The background script registers its onMessage listener at import time, so
@@ -46,6 +47,9 @@ describe("background.js pairing token attachment", () => {
       },
     };
 
+    // The service worker importScripts server.js; the ESM import below does
+    // not, so load it into the global scope first.
+    window.eval(readFileSync("chrome-extension/server.js", "utf8"));
     // @ts-ignore - chrome extension script without module exports
     await import("../../chrome-extension/background.js");
 

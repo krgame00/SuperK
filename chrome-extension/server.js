@@ -484,3 +484,36 @@ globalThis.SuperKServer = {
     }
   },
 };
+
+// The pairing token is a local secret: it must not live in
+// chrome.storage.sync (it would sync to the user's Google profile, and sync
+// quota churn can silently drop it). Reads prefer chrome.storage.local and
+// migrate any token found in sync over to local, scrubbing it from sync.
+// Every storage access is defensive — the helper must keep working in
+// contexts where sync or local is unavailable.
+async function loadExtensionSettings(defaults) {
+  const fallback = { ...defaults };
+  let syncStored = fallback;
+  try {
+    syncStored = (await chrome.storage?.sync?.get?.(defaults)) || fallback;
+  } catch {
+    syncStored = fallback;
+  }
+  let localToken = '';
+  try {
+    const localStored = (await chrome.storage?.local?.get?.({ pairingToken: '' })) || {};
+    localToken = typeof localStored.pairingToken === 'string' ? localStored.pairingToken : '';
+  } catch {
+    localToken = '';
+  }
+  const syncToken = typeof syncStored.pairingToken === 'string' ? syncStored.pairingToken : '';
+  if (syncToken && !localToken) {
+    try {
+      await chrome.storage?.local?.set?.({ pairingToken: syncToken });
+      await chrome.storage?.sync?.remove?.('pairingToken');
+    } catch {
+      // Best-effort migration; the merged read below still returns the token.
+    }
+  }
+  return { ...syncStored, pairingToken: localToken || syncToken };
+}

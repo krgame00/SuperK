@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 describe("Bidirectional Publishing Integration (Ticket 05)", () => {
@@ -63,6 +64,7 @@ describe("Bidirectional Publishing Integration (Ticket 05)", () => {
 
     // Load background script
     // @ts-ignore - chrome extension script without module exports
+    window.eval(readFileSync("chrome-extension/server.js", "utf8"));
     await import("../../chrome-extension/background.js");
 
     // Mock fetch for /api/extension/publish-back

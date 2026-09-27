@@ -26,7 +26,7 @@ async function runTranslationFlow(tabId, frameId, imageUrl) {
       await send({ action: "TRANSLATION_START" });
     }
     const image = await fetchImageAsBase64(imageUrl);
-    const stored = await chrome.storage.sync.get({
+    const stored = await loadExtensionSettings({
       translationMode: "server", serverUrl: "http://127.0.0.1:3000",
       apiKey: "", pairingToken: "", targetLang: "Thai", sourceLang: "auto",
       modelPreference: "auto", allowPreviewModels: false, cleanMode: "inpainting"
@@ -137,7 +137,7 @@ chrome.runtime.onMessage?.addListener?.(async (message, sender) => {
     await runTranslationFlow(sender.tab.id, sender.frameId ?? 0, message.imageUrl);
   } else if (message.action === "OPEN_EDITOR" && message.payload) {
     try {
-      const stored = await chrome.storage.sync.get({
+      const stored = await loadExtensionSettings({
         serverUrl: "http://127.0.0.1:3000",
         pairingToken: "",
       });
@@ -362,13 +362,10 @@ async function checkPublishedUpdates() {
   if (isSyncInProgress) return [];
   isSyncInProgress = true;
   try {
-    const stored = (await chrome.storage?.sync?.get?.({
+    const stored = await loadExtensionSettings({
       serverUrl: "http://127.0.0.1:3000",
       pairingToken: "",
-    })) || {
-      serverUrl: "http://127.0.0.1:3000",
-      pairingToken: "",
-    };
+    });
     const normalizedUrl = normalizeServerUrl(stored.serverUrl);
     let cursor = await getSyncCursor(normalizedUrl);
 
