@@ -2024,6 +2024,36 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     void deleteAsset(`translated_${encodeURIComponent(pageUrl)}`);
   }, []);
 
+  // A manual cleaning retry replaces the clean image, but the bubble texts
+  // and boxes still apply — re-render the translated image over the fresh
+  // cleaning instead of dropping the translations entirely (a full
+  // re-translate would cost the user real tokens for unchanged text).
+  const refreshPageTranslation = useCallback(
+    async (pageUrl: string, backgroundUrl?: string) => {
+      const bubbles = bubbleCacheRef.current.get(pageUrl);
+      if (!bubbles || bubbles.length === 0) {
+        // Nothing to preserve — untranslated pages keep the drop behavior.
+        invalidatePageTranslation(pageUrl);
+        return;
+      }
+      try {
+        await renderAndCacheTranslation(
+          bubbles,
+          backgroundUrl ?? pageUrl,
+          pageUrl,
+          pagesRef.current.indexOf(pageUrl),
+        );
+      } catch {
+        // Drop the stale render; exports re-render it from the bubbles
+        // instead of shipping the outdated rendering.
+        translatedImageCacheRef.current.delete(pageUrl);
+        setTranslatedImages(new Map(translatedImageCacheRef.current));
+        setCacheRevision((revision) => revision + 1);
+      }
+    },
+    [invalidatePageTranslation, renderAndCacheTranslation],
+  );
+
   // Find & Replace support: rewrite bubble text in place so the bubble cache
   // survives (invalidating it would wipe the translations being edited).
   // Rendered images are re-rendered afterwards so they carry the new text.
@@ -2147,6 +2177,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     setAutoProceedOnReview,
     reviewFlaggedPages,
     invalidatePageTranslation,
+    refreshPageTranslation,
     replaceBubbleText,
     markPageDirty,
     getPageRevision,

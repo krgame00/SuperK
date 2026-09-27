@@ -403,6 +403,7 @@ export default function WorkspacePage() {
     setAutoProceedOnReview,
     reviewFlaggedPages,
     invalidatePageTranslation,
+    refreshPageTranslation,
     replaceBubbleText,
     markPageDirty,
     getPageSignature,
@@ -692,7 +693,10 @@ export default function WorkspacePage() {
     const result = await retryRegion(regionId, mask, cleaner, action);
     const page = pages[currentPage];
     if (page && result && action !== "confirm-text") {
-      invalidatePageTranslation(page.url);
+      // The cleaned pixels changed, but the translations still apply —
+      // re-render them over the fresh cleaning instead of dropping them
+      // (which would force an expensive full re-translate).
+      void refreshPageTranslation(page.url, result.cleanUrl);
       setReviewedPageUrls((current) => {
         const next = new Set(current);
         next.delete(page.url);

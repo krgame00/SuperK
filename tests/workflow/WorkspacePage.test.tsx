@@ -108,6 +108,7 @@ const cleaningResult = {
 let cleanCurrentPage: ReturnType<typeof vi.fn>;
 let retryRegion: ReturnType<typeof vi.fn>;
 let invalidatePageTranslation: ReturnType<typeof vi.fn>;
+let refreshPageTranslation: ReturnType<typeof vi.fn>;
 let handleTranslate: ReturnType<typeof vi.fn>;
 let translationMockState: Record<string, unknown>;
 
@@ -144,6 +145,7 @@ beforeEach(() => {
   cleanCurrentPage = vi.fn().mockResolvedValue(cleaningResult);
   retryRegion = vi.fn().mockResolvedValue(cleaningResult);
   invalidatePageTranslation = vi.fn();
+  refreshPageTranslation = vi.fn().mockResolvedValue(undefined);
   handleTranslate = vi.fn().mockResolvedValue(true);
 
   vi.mocked(useCleaning).mockReturnValue({
@@ -211,6 +213,7 @@ beforeEach(() => {
     workflowPhase: null,
     batchFailures: [],
     invalidatePageTranslation,
+    refreshPageTranslation,
     getPageSignature: vi.fn(() => "rev-0"),
     getPageRevision: vi.fn(() => 0),
   };
@@ -309,7 +312,7 @@ describe("workspace clean-then-translate integration", () => {
     expect(toolbar().getAttribute("data-layer")).not.toBe("clean");
   });
 
-  test("mask retry invalidates stale translation and selects clean", async () => {
+  test("mask retry preserves translations and re-renders over the new clean", async () => {
     await renderRestoredWorkspace();
     fireEvent.click(screen.getByRole("button", { name: "Edit mask" }));
     fireEvent.click(
@@ -323,7 +326,10 @@ describe("workspace clean-then-translate integration", () => {
         "force-clean",
       ),
     );
-    expect(invalidatePageTranslation).toHaveBeenCalledWith(ORIGINAL_URL);
+    // The cleaned pixels changed but the translations still apply: they are
+    // re-rendered over the fresh cleaning instead of being wiped.
+    expect(refreshPageTranslation).toHaveBeenCalledWith(ORIGINAL_URL, CLEAN_URL);
+    expect(invalidatePageTranslation).not.toHaveBeenCalled();
     expect(toolbar().getAttribute("data-layer")).toBe("clean");
   });
 
