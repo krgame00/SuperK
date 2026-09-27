@@ -89,3 +89,17 @@ describe("Foreign-script contamination guard", () => {
     ).toBe(2);
   });
 });
+
+describe("B7 Thai word-boundary spellcheck", () => {
+  it("does not corrupt real words that merely contain the typo substring", () => {
+    expect(normalizeThaiText("อักขระ")).toBe("อักขระ");
+    expect(normalizeThaiText("คระหนัก")).toBe("คระหนัก");
+    expect(normalizeThaiText("คร่าวๆ")).toBe("คร่าวๆ");
+  });
+
+  it("still fixes genuine typos at word boundaries", () => {
+    expect(normalizeThaiText("ใช่คระ")).toBe("ใช่ค่ะ");
+    expect(normalizeThaiText("บ้านอยู่ไกล้")).toBe("บ้านอยู่ใกล้");
+    expect(normalizeThaiText("ขอบคุณนะค่ะ")).toBe("ขอบคุณนะคะ");
+  });
+});

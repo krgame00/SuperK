@@ -4,13 +4,16 @@
  * manga slang typos (นะค่ะ -> นะคะ), and punctuation spacing.
  */
 
-// Common Thai word dictionary mappings (frequent AI translation misspellings)
-const THAI_SPELLCHECK_DICTIONARY: Array<[RegExp, string]> = [
+// Common Thai word dictionary mappings (frequent AI translation misspellings).
+// The optional third element marks FRAGMENT patterns — the matched text is not
+// a standalone Thai word (คระ, คร่า), so it is only fixed word-finally; applied
+// anywhere it would corrupt real words that begin with it (คระหนัก, คร่าว).
+const THAI_SPELLCHECK_DICTIONARY: Array<[RegExp, string, boolean?]> = [
   // 1. Classic Particle / Ending Typos
   [/นะค่ะ/g, "นะคะ"],
   [/นะค้ะ/g, "นะคะ"],
-  [/คระ/g, "ค่ะ"],
-  [/คร่า/g, "ค่า"],
+  [/คระ/g, "ค่ะ", true],
+  [/คร่า/g, "ค่า", true],
 
   // 2. Common Vowel / Consonant Confusion
   [/ไกล้/g, "ใกล้"],
@@ -97,6 +100,59 @@ export function cleanPunctuationAndSpacing(text: string): string {
 }
 
 /**
+ * Thai has no space-delimited words, so a bare substring replace corrupts
+ * real words that merely contain the typo ("อักขระ" contains คระ, "คร่าว"
+ * contains คร่า). Dictionary matches are therefore applied only when they
+ * align with word boundaries from Intl.Segmenter: the match must start at a
+ * word-like token's start and end at one's end — "นะค่ะ" spanning the tokens
+ * นะ|ค่ะ still counts, while a match inside a single token does not. Without
+ * Intl.Segmenter we fall back to the old substring behavior.
+ */
+type WordBounds = { starts: Set<number>; ends: Set<number> };
+
+const thaiWordSegmenter: Intl.Segmenter | undefined =
+  typeof Intl !== "undefined" && "Segmenter" in Intl
+    ? new Intl.Segmenter("th", { granularity: "word" })
+    : undefined;
+
+function segmentWordBounds(text: string): WordBounds | null {
+  if (!thaiWordSegmenter) return null;
+  const starts = new Set<number>();
+  const ends = new Set<number>();
+  for (const part of thaiWordSegmenter.segment(text)) {
+    if (part.isWordLike) {
+      starts.add(part.index);
+      ends.add(part.index + part.segment.length);
+    }
+  }
+  return { starts, ends };
+}
+
+function replaceAtWordBounds(
+  text: string,
+  pattern: RegExp,
+  replacement: string,
+  bounds: WordBounds,
+  wordFinal: boolean,
+): string {
+  let result = "";
+  let last = 0;
+  for (const match of text.matchAll(pattern)) {
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+    if (!bounds.starts.has(start) || !bounds.ends.has(end)) continue;
+    // Fragment patterns must end the word: a directly following Thai letter
+    // means the fragment is the prefix of a longer real word.
+    if (wordFinal && /^[\u0E01-\u0E3A\u0E40-\u0E4E]/.test(text.slice(end))) {
+      continue;
+    }
+    result += text.slice(last, start) + replacement;
+    last = end;
+  }
+  return result + text.slice(last);
+}
+
+/**
  * Primary normalization function for a single translated Thai sentence.
  */
 export function normalizeThaiText(text: string): string {
@@ -110,9 +166,12 @@ export function normalizeThaiText(text: string): string {
   // 2. Clean Unicode & Vowel Stacking
   cleaned = cleanThaiVowelStacking(cleaned);
 
-  // 3. Apply Thai Spellcheck Dictionary
-  for (const [pattern, replacement] of THAI_SPELLCHECK_DICTIONARY) {
-    cleaned = cleaned.replace(pattern, replacement);
+  // 3. Apply Thai Spellcheck Dictionary (word-boundary aligned)
+  for (const [pattern, replacement, wordFinal] of THAI_SPELLCHECK_DICTIONARY) {
+    const bounds = segmentWordBounds(cleaned);
+    cleaned = bounds
+      ? replaceAtWordBounds(cleaned, pattern, replacement, bounds, wordFinal === true)
+      : cleaned.replace(pattern, replacement);
   }
 
   // 4. Punctuation & Manga Layout Formatting
