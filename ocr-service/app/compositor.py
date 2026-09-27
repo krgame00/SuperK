@@ -26,12 +26,12 @@ def compose(
             (feather_radius * 2 + 1, feather_radius * 2 + 1),
         )
         support = cv2.dilate(binary, kernel)
-        alpha = cv2.GaussianBlur(
-            binary.astype(np.float32),
-            (feather_radius * 2 + 1, feather_radius * 2 + 1),
-            0,
-        )
-        alpha[support == 0] = 0
+        dist = cv2.distanceTransform((1 - binary).astype(np.uint8), cv2.DIST_L2, 3)
+        t = np.clip(dist / (feather_radius + 0.5), 0.0, 1.0)
+        alpha = 1.0 - (3.0 * t**2 - 2.0 * t**3)
+        alpha[binary > 0] = 1.0
+        alpha[support == 0] = 0.0
+
     blended = (
         original.astype(np.float32) * (1 - alpha[..., None])
         + repaired.astype(np.float32) * alpha[..., None]
