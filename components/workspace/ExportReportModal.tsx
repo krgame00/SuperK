@@ -135,7 +135,7 @@ export function ExportReportModal({
                     </td>
                     <td className="py-1.5">
                       {row.readabilityUnavailable ? (
-                        <span className="text-amber-400">ตรวจการจัดข้อความไม่ได้</span>
+                        <span className="text-amber-400">ตรวจไม่ได้</span>
                       ) : (row.readabilityFindings?.length ?? 0) > 0 ? (
                         <span className="text-amber-400">{row.readabilityFindings?.length} จุด</span>
                       ) : <span className="text-muted">–</span>}
@@ -149,7 +149,9 @@ export function ExportReportModal({
             <div className="mt-4 border-t border-border/60 pt-3">
               <h3 className="mb-2 text-xs font-semibold text-foreground">จุดที่ควรตรวจความอ่านง่าย</h3>
               {rows.flatMap((row) => row.readabilityFindings ?? []).map((finding) => {
-                const reason = finding.kind === "overflow" ? "ข้อความล้น" : "ตัวอักษรเล็ก";
+                const reason = finding.kind === "overflow" ? "ข้อความล้น"
+                  : finding.kind === "small-text" ? "ตัวอักษรเล็ก"
+                    : finding.kind === "color" ? "สีกลืนกับพื้นหลัง" : "ตรวจสีไม่ได้";
                 return (
                   <button
                     key={`${finding.pageUrl}:${finding.bubbleId}:${finding.kind}`}
@@ -166,7 +168,7 @@ export function ExportReportModal({
               })}
               {rows.filter((row) => row.readabilityUnavailable).map((row) => (
                 <p key={`unavailable-${row.pageIndex}`} className="px-2 py-1 text-xs text-amber-300">
-                  หน้า {row.pageIndex + 1} · ตรวจการจัดข้อความไม่ได้: {row.readabilityUnavailable}
+                  หน้า {row.pageIndex + 1} · {row.readabilityUnavailable}
                 </p>
               ))}
             </div>

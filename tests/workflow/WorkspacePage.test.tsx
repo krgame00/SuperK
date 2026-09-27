@@ -353,6 +353,7 @@ describe("workspace clean-then-translate integration", () => {
     } as never);
     vi.mocked(scanPageGeometry).mockResolvedValue({ findings: [
       { pageUrl: ORIGINAL_URL, pageIndex: 0, bubbleId: "id-bubble-1", text: "ข้อความยาว", kind: "overflow" },
+      { pageUrl: ORIGINAL_URL, pageIndex: 0, bubbleId: "id-bubble-1", text: "ข้อความยาว", kind: "color" },
     ] });
     await renderRestoredWorkspace();
     const overlay = document.createElement("button");
@@ -362,6 +363,7 @@ describe("workspace clean-then-translate integration", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: "รายงานก่อนส่งออก" }));
 
     const finding = await screen.findByRole("button", { name: /หน้า 1.*ข้อความล้น.*ข้อความยาว/ });
+    expect(screen.getByRole("button", { name: /หน้า 1.*สีกลืน.*ข้อความยาว/ })).toBeTruthy();
     fireEvent.click(finding);
     await waitFor(() => expect(overlay).toHaveAttribute("data-readability-target", "true"));
     expect(screen.queryByRole("dialog", { name: "รายงานก่อนส่งออก" })).toBeNull();

@@ -707,6 +707,7 @@ export default function WorkspacePage() {
         try {
           result = await scanPageGeometry({
             pageUrl: page.url,
+            backgroundUrl: cleaningResultsByPage.get(page.url)?.cleanUrl ?? page.url,
             pageIndex: row.pageIndex,
             bubbles,
             textStyle: textStyleRef.current,
