@@ -224,6 +224,44 @@ def refine_probability_mask(
     )
 
 
+def close_paragraph_notches(
+    mask: BinaryMask,
+    regions: list[MaskRegion],
+    envelope: BinaryMask | None,
+    protected_edges: BinaryMask,
+) -> BinaryMask:
+    """Closes inter-line gaps and stepped notches in multi-line text blocks."""
+    if envelope is None or not np.any(mask) or not regions:
+        return mask
+
+    result = mask.copy()
+    close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 9))
+
+    for region in regions:
+        # Only multi-component or multi-line blocks benefit from paragraph gap closing
+        if len(region.component_ids) < 2 and region.rect.height < 32:
+            continue
+        r = region.rect
+        y1, y2 = max(0, r.y), min(mask.shape[0], r.y + r.height)
+        x1, x2 = max(0, r.x), min(mask.shape[1], r.x + r.width)
+        sub_mask = result[y1:y2, x1:x2]
+        if not np.any(sub_mask):
+            continue
+
+        closed = cv2.morphologyEx(sub_mask, cv2.MORPH_CLOSE, close_kernel)
+        sub_env = envelope[y1:y2, x1:x2]
+        sub_prot = protected_edges[y1:y2, x1:x2]
+
+        valid_fill = (closed > 0) & (sub_env > 0) & (sub_prot == 0)
+        sub_result = result[y1:y2, x1:x2].copy()
+        sub_result[valid_fill] = 255
+        result[y1:y2, x1:x2] = sub_result
+
+    result[protected_edges > 0] = 0
+    return result
+
+
+
 def refine_mask(
     image_rgb: RgbImage,
     detection: DetectionResult,
@@ -285,8 +323,16 @@ def refine_mask(
                 and np.count_nonzero(pixels & support) / np.count_nonzero(pixels) >= 0.50
             )
             regions.append(replace(region, text_supported=supported))
-        return replace(refined, regions=regions)
-    return refined
+        refined = replace(refined, regions=regions)
+
+    smoothed_mask = close_paragraph_notches(
+        refined.mask,
+        refined.regions,
+        envelope,
+        protected_edges,
+    )
+    return replace(refined, mask=smoothed_mask)
+
 
 
 def _estimate_stroke_radius(component: BinaryMask) -> int:

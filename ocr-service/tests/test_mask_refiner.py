@@ -167,4 +167,35 @@ def test_adaptive_dilation_covers_stroke_and_shadow_without_breaching_protection
     assert np.all(refined.mask[:, 32:] == 0), "Mask must not breach protected edges"
 
 
+def test_paragraph_gap_closing_smoothes_notched_step() -> None:
+    from app.mask_refiner import close_paragraph_notches, MaskRegion
+    from app.schemas import PixelRect
+
+    # 60x60 mask with a stepped 2-line paragraph:
+    # Line 1: y=10..20, x=10..50 (width 40)
+    # Line 2: y=25..35, x=10..25 (width 15, leaves an empty notch at y=25..35, x=26..50)
+    mask = np.zeros((60, 60), np.uint8)
+    mask[10:20, 10:50] = 255
+    mask[25:35, 10:25] = 255
+
+    envelope = np.zeros((60, 60), np.uint8)
+    envelope[8:38, 8:52] = 255
+    protected_edges = np.zeros((60, 60), np.uint8)
+
+    region = MaskRegion(
+        id="test_para",
+        rect=PixelRect(x=10, y=10, width=40, height=25),
+        component_ids=(1, 2),
+        stroke_radius=3,
+    )
+
+    smoothed = close_paragraph_notches(mask, [region], envelope, protected_edges)
+
+    # The vertical inter-line gap (y=21..24, x=15..20) between lines should be bridged
+    assert np.all(smoothed[21:24, 15:20] == 255), "Inter-line vertical gap should be closed"
+    # Protected edges must still be respected
+    assert np.all(smoothed[protected_edges > 0] == 0)
+
+
+
 
