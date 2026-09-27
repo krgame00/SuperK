@@ -148,3 +148,23 @@ def test_non_text_artwork_and_body_marks_remain_fully_protected() -> None:
     assert protected[18:42, 18:42].sum() > 0, "Artwork / body mark edges must remain strictly protected"
 
 
+def test_adaptive_dilation_covers_stroke_and_shadow_without_breaching_protection() -> None:
+    # 50x50 image with text component having stroke radius 3
+    # Seed text core is 6px wide at x=20..26, y=20..30
+    seed = np.zeros((50, 50), np.uint8)
+    seed[20:30, 20:26] = 255
+
+    # A protected edge is located 6px away at x=32
+    protected_edges = np.zeros((50, 50), np.uint8)
+    protected_edges[:, 32] = 255
+
+    from app.mask_refiner import _refine_seed_mask
+    refined = _refine_seed_mask(seed, protected_edges)
+
+    # Adaptive dilation should expand the 6px seed beyond +1px (reaching at least x=27)
+    assert refined.mask[25, 27] == 255, "Mask must expand by at least 2px to cover stroke and shadow"
+    # But it must strictly respect the protected edge at x=32 (x>=32 must be 0)
+    assert np.all(refined.mask[:, 32:] == 0), "Mask must not breach protected edges"
+
+
+

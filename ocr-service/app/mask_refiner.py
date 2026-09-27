@@ -192,8 +192,8 @@ def _refine_seed_mask(
             continue
         component = np.where(labels == component_id, 255, 0).astype(np.uint8)
         radius = _estimate_stroke_radius(component)
-        # Spatial dilation after completion is strictly capped at 1 px
-        dilation_radius = 1
+        # Adaptive dilation based on estimated stroke radius (minimum 2px, up to 5px for thick stroke/shadow)
+        dilation_radius = max(2, min(5, radius))
         grown = constrained_dilate(component, protected_edges, dilation_radius)
         grown[protected_edges > 0] = 0
         grown = np.maximum(grown, component)
