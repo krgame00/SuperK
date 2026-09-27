@@ -62,4 +62,26 @@ describe("PageViewer navigation", () => {
     expect(typeof updater).toBe("function");
     expect(updater(1)).toBe(0);
   });
+
+  it("renders a compact page badge pinned to the top-left corner", () => {
+    render(
+      <PageViewer
+        pages={pages}
+        currentPage={1}
+        viewLayout="single"
+        workspaceLayer="original"
+        currentCleaningResult={null}
+        cleaningResultsByPage={new Map()}
+        brokenPages={new Set()}
+        onPageChange={vi.fn()}
+        onViewLayoutChange={vi.fn()}
+        onRemovePage={vi.fn()}
+        onImageError={vi.fn()}
+      />
+    );
+
+    const badge = screen.getByText("2 / 3");
+    expect(badge).toHaveClass("top-2", "left-2", "text-[10px]");
+    expect(badge).toHaveAttribute("aria-live", "polite");
+  });
 });

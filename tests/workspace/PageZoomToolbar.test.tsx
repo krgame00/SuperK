@@ -25,10 +25,12 @@ describe("PageZoomToolbar", () => {
     expect(screen.getByRole("button", { name: "พอดีหน้าจอ" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "ระดับการซูม 100 เปอร์เซ็นต์" })).toBeInTheDocument();
     expect(screen.getByRole("toolbar", { name: "เครื่องมือซูมและย่อขยายภาพ" })).toHaveClass(
-      "opacity-60",
+      "opacity-50",
       "hover:opacity-100",
       "focus-within:opacity-100",
     );
+    // Compact buttons so the toolbar stays unobtrusive over the page
+    expect(screen.getByRole("button", { name: "ซูมออก" })).toHaveClass("h-7", "w-7");
   });
 
   test("moves above bottom chrome when the filmstrip is visible", () => {

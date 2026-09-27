@@ -482,9 +482,13 @@ export function PageViewer({
             </button>
           )}
 
-          {/* Floating Page Badge */}
-          <div className={`absolute ${isFilmstripVisible ? "bottom-[8.5rem]" : "bottom-2"} bg-background/90 backdrop-blur-xs text-foreground text-xs font-medium px-3.5 py-1.5 rounded-full border border-border shadow-md pointer-events-none z-30 transition-[bottom] duration-200`} aria-live="polite">
-            <span className="sr-only">หน้าปัจจุบัน: </span>{currentPage + 1} / {pages.length}
+          {/* Floating Page Badge — small, pinned top-left so it never covers the artwork */}
+          <div
+            className="absolute top-2 left-2 bg-black/60 text-white/90 text-[10px] font-medium px-2 py-0.5 rounded-md pointer-events-none z-30 tabular-nums"
+            aria-live="polite"
+          >
+            <span className="sr-only">หน้าปัจจุบัน: </span>
+            {currentPage + 1} / {pages.length}
           </div>
 
           {/* Floating Zoom Toolbar in Single Mode */}
