@@ -390,6 +390,28 @@ describe("workspace clean-then-translate integration", () => {
     await waitFor(() => expect(downloadTranslatedImage).toHaveBeenCalled());
   });
 
+  test("returning to edit discards the export and a new attempt scans again", async () => {
+    vi.mocked(scanPageGeometry)
+      .mockResolvedValueOnce({ findings: [
+        { pageUrl: ORIGINAL_URL, pageIndex: 0, bubbleId: "id-bubble-1", text: "สวัสดี", kind: "overflow" },
+      ] })
+      .mockResolvedValue({ findings: [] });
+    await renderRestoredWorkspace();
+    fireEvent.click(screen.getByRole("button", { name: "Layer translated" }));
+    const requestImage = async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: "ส่งออก" })[0]);
+      fireEvent.click(await screen.findByRole("menuitem", { name: "รูปภาพหน้านี้" }));
+    };
+    await requestImage();
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "รายงานก่อนส่งออก" }))
+      .getByRole("button", { name: "กลับไปแก้" }));
+    expect(downloadTranslatedImage).not.toHaveBeenCalled();
+    await requestImage();
+    await waitFor(() => expect(vi.mocked(scanPageGeometry)).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(downloadTranslatedImage).toHaveBeenCalled());
+    expect(screen.queryByRole("dialog", { name: "รายงานก่อนส่งออก" })).toBeNull();
+  });
+
   test("book export offers progress and early continuation without a late popup", async () => {
     let finishScan!: (value: { findings: [] }) => void;
     vi.mocked(scanPageGeometry).mockReturnValue(new Promise((resolve) => { finishScan = resolve; }));
@@ -408,6 +430,42 @@ describe("workspace clean-then-translate integration", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "รายงานก่อนส่งออก" })).toBeNull());
     finishScan({ findings: [] });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "รายงานก่อนส่งออก" })).toBeNull());
+  });
+
+  test.each(["ZIP", "CBZ", "PDF", "Strip"])("%s book export checks readability", async (format) => {
+    vi.mocked(scanPageGeometry).mockResolvedValue({ findings: [
+      { pageUrl: ORIGINAL_URL, pageIndex: 0, bubbleId: "id-bubble-1", text: "สวัสดี", kind: "overflow" },
+    ] });
+    await renderRestoredWorkspace();
+    fireEvent.click(screen.getAllByRole("button", { name: "ส่งออก" })[0]);
+    fireEvent.click(await screen.findByRole("menuitem", { name: format }));
+    expect(await screen.findByRole("dialog", { name: "รายงานก่อนส่งออก" })).toHaveTextContent("ข้อความล้น");
+    expect(vi.mocked(scanPageGeometry)).toHaveBeenCalledWith(expect.objectContaining({ pageIndex: 0 }));
+  });
+
+  test("book report keeps completed findings when a later page cannot be checked", async () => {
+    vi.mocked(useTranslation).mockReturnValue({
+      ...translationMockState,
+      restoreSavedSession: vi.fn().mockResolvedValue({
+        pages: [
+          { url: ORIGINAL_URL, name: PAGE_NAME },
+          { url: "second-page", name: "second.png" },
+        ],
+        currentPage: 0,
+      }),
+    } as never);
+    vi.mocked(scanPageGeometry)
+      .mockResolvedValueOnce({ findings: [
+        { pageUrl: ORIGINAL_URL, pageIndex: 0, bubbleId: "id-bubble-1", text: "สวัสดี", kind: "overflow" },
+      ] })
+      .mockResolvedValueOnce({ findings: [], unavailableReason: "โหลดภาพพื้นหลังไม่สำเร็จ" });
+    await renderRestoredWorkspace();
+    fireEvent.click(screen.getAllByRole("button", { name: "ส่งออก" })[0]);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "ZIP" }));
+    const report = await screen.findByRole("dialog", { name: "รายงานก่อนส่งออก" });
+    await waitFor(() => expect(vi.mocked(scanPageGeometry)).toHaveBeenCalledTimes(2));
+    expect(report).toHaveTextContent("ข้อความล้น");
+    expect(report).toHaveTextContent("โหลดภาพพื้นหลังไม่สำเร็จ");
   });
 
   test("acknowledged warning does not interrupt a second export until page revision changes", async () => {
@@ -438,6 +496,24 @@ describe("workspace clean-then-translate integration", () => {
     revision = "rev-1";
     await requestImage();
     expect(await screen.findByRole("dialog", { name: "รายงานก่อนส่งออก" })).toBeTruthy();
+  });
+
+  test("an unavailable result is shown again after continuing an export", async () => {
+    vi.mocked(scanPageGeometry).mockResolvedValue({ findings: [], unavailableReason: "ตรวจสีไม่ได้" });
+    await renderRestoredWorkspace();
+    const requestImage = async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Layer translated" }));
+      fireEvent.click(screen.getAllByRole("button", { name: "ส่งออก" })[0]);
+      fireEvent.click(await screen.findByRole("menuitem", { name: "รูปภาพหน้านี้" }));
+    };
+    await requestImage();
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "รายงานก่อนส่งออก" }))
+      .getByRole("button", { name: "ส่งออกต่อ" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "รายงานก่อนส่งออก" })).toBeNull());
+    // The image route remains available for a second attempt in the same workspace.
+    fireEvent.click(screen.getAllByRole("button", { name: "ส่งออก" })[0]);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "รูปภาพหน้านี้" }));
+    expect(await screen.findByRole("dialog", { name: "รายงานก่อนส่งออก" })).toHaveTextContent("ตรวจสีไม่ได้");
   });
 
   test("whole-book scan flags contaminated pages and retranslates only those", async () => {
@@ -531,8 +607,9 @@ describe("workspace clean-then-translate integration", () => {
 
   test("Space and eye toggle between original and translated", async () => {
     await renderRestoredWorkspace();
+    await waitFor(() => expect(toolbar().getAttribute("data-has-translated")).toBe("true"));
     fireEvent.keyDown(window, { key: " " });
-    expect(toolbar().getAttribute("data-layer")).toBe("translated");
+    await waitFor(() => expect(toolbar().getAttribute("data-layer")).toBe("translated"));
 
     fireEvent.click(screen.getByTitle(/ต้นฉบับ|คำแปล/));
     expect(toolbar().getAttribute("data-layer")).toBe("original");

@@ -48,4 +48,22 @@ describe("pre-export text geometry", () => {
     });
     expect(result.unavailableReason).toBe("ไม่ทราบขนาดภาพ");
   });
+
+  it("uses the renderer's staggered fallback positions and persisted legacy font size", () => {
+    const result = assessPageGeometry({
+      pageUrl: "page-a", pageIndex: 0, width: 1000, height: 1000,
+      bubbles: [
+        { id: "first", t: "แรก", box: [0, 0, 1000, 1000] },
+        { id: "second", t: "สอง", box: [0, 0, 1000, 1000] },
+      ],
+      adjustments: {
+        "id-second": { bx: 250, by: 300, bw: 200, bh: 50, iw: 1000, ih: 1000, fontSizeMultiplier: 0.1 },
+      },
+    });
+    expect(result.measurements?.[0].top).toBeLessThan(150);
+    expect(result.measurements?.[1].top).toBe(300);
+    expect(result.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ bubbleId: "id-second", kind: "small-text" }),
+    ]));
+  });
 });

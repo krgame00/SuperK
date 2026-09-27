@@ -35,7 +35,7 @@ import { WorkspaceExportMenu } from "@/components/workspace/WorkspaceExportMenu"
 import { WorkspacePrimaryAction } from "@/components/workspace/WorkspacePrimaryAction";
 import { WorkspaceAdvancedTools } from "@/components/workspace/WorkspaceAdvancedTools";
 import { ExportReportModal, type ExportReportRow } from "@/components/workspace/ExportReportModal";
-import { scanPageGeometry, type ReadabilityFinding } from "@/lib/export/readabilityScan";
+import { scanPageGeometry, type PageGeometryResult, type ReadabilityFinding } from "@/lib/export/readabilityScan";
 import { readabilityAcknowledgmentKey, type ReadabilityPageSnapshot } from "@/lib/export/readabilityAcknowledgment";
 import {
   generateArchiveFilename,
@@ -410,7 +410,6 @@ export default function WorkspacePage() {
     scanTranslatedPages,
     inspectTranslatedPages,
     replaceBubbleText,
-    markPageDirty,
     getPageSignature,
     cacheRevision: translationCacheRevision,
   } = useTranslation({
@@ -698,6 +697,22 @@ export default function WorkspacePage() {
     });
   }, [pages, inspectTranslatedPages, cleaningResultsByPage]);
 
+  const scanReadabilityPage = useCallback(async (pageIndex: number): Promise<PageGeometryResult> => {
+    const page = pages[pageIndex];
+    if (!page) return { findings: [], unavailableReason: "ไม่พบหน้านี้" };
+    try {
+      return await scanPageGeometry({
+        pageUrl: page.url,
+        backgroundUrl: cleaningResultsByPage.get(page.url)?.cleanUrl ?? page.url,
+        pageIndex,
+        bubbles: bubbleCacheRef.current.get(page.url) ?? [],
+        textStyle: textStyleRef.current,
+      });
+    } catch {
+      return { findings: [], unavailableReason: "ประเมินหน้านี้ไม่สำเร็จ" };
+    }
+  }, [pages, cleaningResultsByPage, bubbleCacheRef, textStyleRef]);
+
   const handleOpenExportReport = useCallback(() => {
     const generation = ++reportScanGenerationRef.current;
     setPendingReadabilityAck(null);
@@ -715,25 +730,14 @@ export default function WorkspacePage() {
             : item));
           continue;
         }
-        let result;
-        try {
-          result = await scanPageGeometry({
-            pageUrl: page.url,
-            backgroundUrl: cleaningResultsByPage.get(page.url)?.cleanUrl ?? page.url,
-            pageIndex: row.pageIndex,
-            bubbles,
-            textStyle: textStyleRef.current,
-          });
-        } catch {
-          result = { findings: [], unavailableReason: "ประเมินหน้านี้ไม่สำเร็จ" };
-        }
+        const result = await scanReadabilityPage(row.pageIndex);
         if (generation !== reportScanGenerationRef.current) return;
         setExportReportRows((current) => current.map((item) => item.pageIndex === row.pageIndex
           ? { ...item, readabilityFindings: result.findings, readabilityUnavailable: result.unavailableReason }
           : item));
       }
     })();
-  }, [pages, buildExportReportRows, cleaningResultsByPage, bubbleCacheRef, textStyleRef]);
+  }, [pages, buildExportReportRows, bubbleCacheRef, scanReadabilityPage]);
 
   const closeExportReport = useCallback(() => {
     reportScanGenerationRef.current += 1;
@@ -1298,7 +1302,6 @@ export default function WorkspacePage() {
                     renderedUrl,
                     approxBytes,
                   );
-                  markPageDirty(pageUrl, false);
                   dirtyExportPagesRef.current.delete(pageUrl);
                   resolve(renderedUrl);
                 },
@@ -1627,19 +1630,7 @@ export default function WorkspacePage() {
     const page = pages[currentPage];
     if (!page) return;
     const generation = ++reportScanGenerationRef.current;
-    const bubbles = bubbleCacheRef.current.get(page.url) ?? [];
-    let result;
-    try {
-      result = await scanPageGeometry({
-        pageUrl: page.url,
-        backgroundUrl: cleaningResultsByPage.get(page.url)?.cleanUrl ?? page.url,
-        pageIndex: currentPage,
-        bubbles,
-        textStyle: textStyleRef.current,
-      });
-    } catch {
-      result = { findings: [], unavailableReason: "ประเมินหน้านี้ไม่สำเร็จ" };
-    }
+    const result = await scanReadabilityPage(currentPage);
     if (generation !== reportScanGenerationRef.current) return;
     if (result.findings.length === 0 && !result.unavailableReason) {
       await saveCurrentPageImage();
@@ -1686,19 +1677,7 @@ export default function WorkspacePage() {
     const snapshots: ReadabilityPageSnapshot[] = [];
     for (const row of rows) {
       const page = pages[row.pageIndex];
-      const bubbles = bubbleCacheRef.current.get(page.url) ?? [];
-      let result;
-      try {
-        result = await scanPageGeometry({
-          pageUrl: page.url,
-          backgroundUrl: cleaningResultsByPage.get(page.url)?.cleanUrl ?? page.url,
-          pageIndex: row.pageIndex,
-          bubbles,
-          textStyle: textStyleRef.current,
-        });
-      } catch {
-        result = { findings: [], unavailableReason: "ประเมินหน้านี้ไม่สำเร็จ" };
-      }
+      const result = await scanReadabilityPage(row.pageIndex);
       if (generation !== reportScanGenerationRef.current) return;
       needsReview ||= result.findings.length > 0 || Boolean(result.unavailableReason);
       snapshots.push({

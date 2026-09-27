@@ -1,5 +1,14 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Pre-export Typesetting Readability — 2026-09-27
+
+Status: **VERIFIED WORKING (automated tests; final gate recorded in implementation plan)**.
+
+- The approved pre-export report checks text overflow, rendered font size, and local text/background contrast. Unknown evidence is shown separately. The scanner uses the exported overlay's dimensions, layout adjustments, fallback positions, and font fitting.
+- Independent review caught and fixed an offscreen export render that advanced the page edit revision without a user edit; that would have reopened an already accepted warning on the next book export.
+- Image and whole-book exports now scan the requested pages. Book scans show progress and permit early continuation. The existing page-review gate still applies. Explicitly accepted completed warning sets are remembered only for the current workspace session and page revision; unknown and unfinished results prompt again.
+- Verification evidence: final four-worker full Vitest run **155 files passed, 1003 tests passed, 1 skipped**; focused review-fix tests **4 files passed, 33 tests passed**; touched-file ESLint **0 errors, 4 pre-existing warnings**. TypeScript's sole baseline error is TS2306 at `tests/chrome-extension/bidirectionalPublishing.test.ts:68` (`background.js` is not a module). See [implementation plan](superpowers/plans/2026-09-27-pre-export-readability-implementation.md) for details.
+
 ## Adaptive Stroke Dilation, Paragraph Notch Closing, and Compositor Feathering — 2026-09-27
 
 Status: **VERIFIED WORKING (Automated backend mask generation covers strokes/drop-shadows, bridges multi-line stepped paragraph notches, and outward Hermite smoothstep eliminates inpainting boundary seams; 193/193 Pytest passed, 959/959 Vitest passed, 0 TypeScript errors)**.

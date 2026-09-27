@@ -1,11 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { scanPageGeometry } from "@/lib/export/readabilityScan";
-import { sampleRectRegion } from "@/lib/colorMatching/canvasSampler";
+import { sampleGlyphBackground } from "@/lib/export/readabilityGlyphSampler";
 
-vi.mock("@/lib/colorMatching/canvasSampler", async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  sampleRectRegion: vi.fn(),
-}));
+vi.mock("@/lib/export/readabilityGlyphSampler", () => ({ sampleGlyphBackground: vi.fn() }));
 
 class LoadedImage {
   naturalWidth = 1000;
@@ -20,7 +17,10 @@ afterEach(() => vi.unstubAllGlobals());
 describe("readability scan against clean background", () => {
   it("flags locally unreadable manually styled text", async () => {
     vi.stubGlobal("Image", LoadedImage);
-    vi.mocked(sampleRectRegion).mockReturnValue({
+    Object.defineProperty(document, "fonts", { configurable: true, value: {
+      load: vi.fn().mockResolvedValue([{}]), check: vi.fn(() => true),
+    } });
+    vi.mocked(sampleGlyphBackground).mockReturnValue({
       width: 20, height: 1,
       rgba: new Uint8ClampedArray(Array.from({ length: 20 }, () => [0, 0, 0, 255]).flat()),
     });
@@ -32,5 +32,17 @@ describe("readability scan against clean background", () => {
     expect(result.findings).toEqual(expect.arrayContaining([
       expect.objectContaining({ bubbleId: "id-dark", kind: "color" }),
     ]));
+  });
+
+  it("reports unavailable when the requested font is missing", async () => {
+    vi.stubGlobal("Image", LoadedImage);
+    Object.defineProperty(document, "fonts", { configurable: true, value: {
+      load: vi.fn().mockResolvedValue([]), check: vi.fn(() => false),
+    } });
+    const result = await scanPageGeometry({
+      pageUrl: "source", pageIndex: 0,
+      bubbles: [{ id: "text", t: "สวัสดี", box: [100, 100, 200, 300] }],
+    });
+    expect(result.unavailableReason).toContain("ฟอนต์");
   });
 });

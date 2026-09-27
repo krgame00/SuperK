@@ -2,7 +2,6 @@ import {
   bubbleKeyOf,
   fitTextInAdaptiveBubble,
   getReadableMinimumFontSize,
-  measureTextLinesWidth,
   measureBubbleRenderFit,
   readPageOverlayAdjustments,
   resolveCanvasFontFamily,
@@ -11,8 +10,8 @@ import {
   type TranslatedBubble,
 } from "@/lib/translationOverlay";
 import { resolveBubbleTextStyle } from "@/lib/colorMatching/resolveTextStyle";
-import { sampleRectRegion } from "@/lib/colorMatching/canvasSampler";
 import { evaluateLocalContrast } from "./readabilityColor";
+import { sampleGlyphBackground } from "./readabilityGlyphSampler";
 
 export type ReadabilityFindingKind = "overflow" | "small-text" | "color" | "color-unavailable";
 
@@ -48,6 +47,7 @@ interface MeasuredBubble {
   lines: string[];
   fontSize: number;
   lineHeight: number;
+  rotation: number;
 }
 
 export interface PageGeometryResult {
@@ -64,18 +64,33 @@ export function assessPageGeometry(input: PageGeometryInput): PageGeometryResult
   const fontFamily = resolveCanvasFontFamily(textStyle.fontFamily);
   const globalMultiplier = textStyle.fontSizeMultiplier || 1;
   const threshold = getReadableMinimumFontSize(width) * 0.75;
+  let fallbackY = 10;
   for (const bubble of input.bubbles) {
     const text = (bubble.t || bubble.translated || "").trim();
     if (bubble.deleted || !text) continue;
     const bubbleId = bubbleKeyOf(bubble);
-    const adjustment = bubble.layoutAdjustment ?? adjustments[bubbleId];
     const box = bubble.box;
     const validBox = Array.isArray(box) && box.length === 4 && box.every((value) => Number.isFinite(value))
       && !(box[0] === 0 && box[1] === 0 && box[2] === 1000 && box[3] === 1000);
-    const boxWidth = validBox ? Math.max(4, (box![3] - box![1]) / 10) * width / 100 : width * 0.3;
-    const boxHeight = validBox ? Math.max(2, (box![2] - box![0]) / 10) * height / 100 : height * 0.15;
-    const centerX = validBox ? ((box![1] + box![3]) / 2000) * width : width / 2;
-    const centerY = validBox ? ((box![0] + box![2]) / 2000) * height : height / 2;
+    const invalidBox = Array.isArray(box) && box.length === 4
+      && box[0] === 0 && box[1] === 0 && box[2] === 1000 && box[3] === 1000;
+    let rawX = validBox ? (box![1] + box![3]) / 20 : 50;
+    let rawY = validBox ? (box![0] + box![2]) / 20 : 50;
+    let rawW = validBox ? Math.max(4, (box![3] - box![1]) / 10) : 20;
+    let rawH = validBox ? Math.max(2, (box![2] - box![0]) / 10) : 10;
+    if (invalidBox) {
+      rawX = 50; rawY = fallbackY; rawW = 30; rawH = 15;
+      fallbackY = fallbackY + 15 > 85 ? 8 : fallbackY + 12;
+    }
+    const legacyId = bubble.id !== undefined
+      ? `id-${bubble.id}`
+      : `text-${(bubble.t || bubble.translated || "").slice(0, 10)}-${rawX.toFixed(1)}-${rawY.toFixed(1)}`;
+    const legacyAdjustment = adjustments[bubbleId] ?? adjustments[legacyId];
+    const adjustment = bubble.layoutAdjustment ?? legacyAdjustment;
+    const boxWidth = rawW / 100 * width;
+    const boxHeight = rawH / 100 * height;
+    const centerX = rawX / 100 * width;
+    const centerY = rawY / 100 * height;
     let drawingWidth = adjustment?.bw ?? boxWidth;
     let drawingHeight = adjustment?.bh ?? boxHeight;
     let left = adjustment?.bx ?? centerX - drawingWidth / 2;
@@ -83,7 +98,7 @@ export function assessPageGeometry(input: PageGeometryInput): PageGeometryResult
     if (!adjustment) {
       const adaptive = fitTextInAdaptiveBubble(
         text, drawingWidth, drawingHeight, fontFamily,
-        !bubble.isInvalidBox && validBox, globalMultiplier,
+        !bubble.isInvalidBox && !invalidBox, globalMultiplier,
         Math.max(14, getReadableMinimumFontSize(width)), 3,
       );
       drawingWidth = adaptive.width;
@@ -91,14 +106,16 @@ export function assessPageGeometry(input: PageGeometryInput): PageGeometryResult
       left = Math.max(0, Math.min(width - drawingWidth, centerX - drawingWidth / 2));
       top = Math.max(0, Math.min(height - drawingHeight, centerY - drawingHeight / 2));
     }
-    const bubbleMultiplier = typeof bubble.fontSizeMultiplier === "number" ? bubble.fontSizeMultiplier : 1;
+    const bubbleMultiplier = typeof bubble.fontSizeMultiplier === "number" ? bubble.fontSizeMultiplier
+      : legacyAdjustment?.fontSizeMultiplier ?? 1;
     const fit = measureBubbleRenderFit(
       text, drawingWidth, drawingHeight, width, fontFamily,
-      globalMultiplier, bubbleMultiplier, !bubble.isInvalidBox && validBox,
+      globalMultiplier, bubbleMultiplier, !bubble.isInvalidBox && !invalidBox,
     );
     const base = { pageUrl: input.pageUrl, pageIndex: input.pageIndex, bubbleId, text };
     measurements.push({ bubble, bubbleId, text, left, top, width: drawingWidth, height: drawingHeight,
       lines: fit.lines, fontSize: fit.fontSize,
+      rotation: adjustment?.rotation ?? (bubble.rotation as number) ?? 0,
       lineHeight: Math.min(fit.fontSize * 1.30, drawingHeight / Math.max(1, fit.lines.length)) });
     if (!fit.fits) findings.push({ ...base, kind: "overflow", fontSize: fit.fontSize });
     if (fit.fontSize < threshold) findings.push({ ...base, kind: "small-text", fontSize: fit.fontSize, threshold });
@@ -123,13 +140,15 @@ export async function scanPageGeometry(input: Omit<PageGeometryInput, "width" | 
   const sourceImage = await loadImage(input.pageUrl);
   const width = sourceImage?.naturalWidth ?? 0;
   const height = sourceImage?.naturalHeight ?? 0;
-  if (document.fonts?.load) {
-    try {
-      const fontFamily = resolveCanvasFontFamily(input.textStyle?.fontFamily);
-      await document.fonts.load(`bold 16px ${fontFamily}`);
-    } catch {
+  if (!document.fonts?.load) return { findings: [], unavailableReason: "ตรวจสถานะฟอนต์ไม่ได้" };
+  try {
+    const fontFamily = resolveCanvasFontFamily(input.textStyle?.fontFamily);
+    const loaded = await document.fonts.load(`bold 16px ${fontFamily}`);
+    if (loaded.length === 0 || !document.fonts.check(`bold 16px ${fontFamily}`)) {
       return { findings: [], unavailableReason: "โหลดฟอนต์สำหรับตรวจการจัดข้อความไม่ได้" };
     }
+  } catch {
+    return { findings: [], unavailableReason: "โหลดฟอนต์สำหรับตรวจการจัดข้อความไม่ได้" };
   }
   const result = assessPageGeometry({
     ...input, width, height,
@@ -148,27 +167,13 @@ export async function scanPageGeometry(input: Omit<PageGeometryInput, "width" | 
       result.findings.push({ ...base, kind: "color-unavailable" });
       continue;
     }
-    const pixels: number[] = [];
-    const startY = measurement.top + measurement.height / 2
-      - ((measurement.lines.length - 1) * measurement.lineHeight) / 2;
-    measurement.lines.forEach((line, index) => {
-      const textWidth = measureTextLinesWidth([line], measurement.fontSize, fontFamily);
-      const sample = sampleRectRegion(backgroundImage, {
-        x: measurement.left + (measurement.width - textWidth) / 2,
-        y: startY + index * measurement.lineHeight - measurement.fontSize * 0.6,
-        width: textWidth,
-        height: measurement.fontSize * 1.2,
-      });
-      if (!sample) return;
-      const count = sample.width * sample.height;
-      const step = Math.max(1, Math.floor(count / 256));
-      for (let pixel = 0; pixel < count; pixel += step) {
-        const offset = pixel * 4;
-        pixels.push(...sample.rgba.slice(offset, offset + 4));
-      }
+    const glyphSample = sampleGlyphBackground(backgroundImage, {
+      left: measurement.left, top: measurement.top,
+      width: measurement.width, height: measurement.height,
+      rotation: measurement.rotation, lines: measurement.lines,
+      fontSize: measurement.fontSize, lineHeight: measurement.lineHeight, fontFamily,
     });
-    const colorResult = evaluateLocalContrast(pixels.length >= 16
-      ? { width: pixels.length / 4, height: 1, rgba: new Uint8ClampedArray(pixels) } : null,
+    const colorResult = evaluateLocalContrast(glyphSample,
     {
       fill: style.textColor,
       outline: style.hasOutline ? style.textOutline : undefined,
