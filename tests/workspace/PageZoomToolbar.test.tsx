@@ -36,8 +36,10 @@ describe("PageZoomToolbar", () => {
   test("moves above bottom chrome when the filmstrip is visible", () => {
     render(<PageZoomToolbar {...defaultSingleProps} avoidBottomChrome={true} />);
 
+    // The viewer's parent already reserves the filmstrip height via padding,
+    // so the toolbar only needs a small offset to clear it.
     expect(screen.getByRole("toolbar", { name: "เครื่องมือซูมและย่อขยายภาพ" })).toHaveClass(
-      "bottom-[8.5rem]",
+      "bottom-12",
     );
   });
 
