@@ -73,6 +73,8 @@ export interface TranslatedBubble {
   deleted?: boolean;
   /** runtime font size multiplier for this bubble */
   fontSizeMultiplier?: number;
+  /** locked base font size for width reflow and editing */
+  targetFontSize?: number;
   /** persisted interactive layout; source of truth for move/resize/rotation */
   layoutAdjustment?: OverlayAdjustment;
   /** redraw callback attached to overlay bubbles */
@@ -99,7 +101,24 @@ export interface OverlayAdjustment {
   ih: number;
   rotation?: number;
   fontSizeMultiplier?: number;
+  targetFontSize?: number;
 }
+
+/**
+ * Snaps a rotation angle (in degrees) to cardinal right angles (0, 90, 180, 270)
+ * if within thresholdDeg (default 6 degrees), matching Torii Translate scanlation ergonomics.
+ * Angles outside the threshold are normalized to [0, 360) and preserved.
+ */
+export function snapRotationToRightAngle(deg: number, thresholdDeg = 6): number {
+  const normalized = ((deg % 360) + 360) % 360;
+  const nearestQuarter = Math.round(normalized / 90) * 90;
+  if (Math.abs(normalized - nearestQuarter) <= thresholdDeg) {
+    return nearestQuarter % 360;
+  }
+  return deg >= 0 && deg < 360 ? deg : parseFloat(normalized.toFixed(6));
+}
+
+
 
 export const bubbleKeyOf = (bubble: TranslatedBubble): string => {
   if (bubble.id !== undefined && bubble.id !== null) {
@@ -294,7 +313,22 @@ export function measureBubbleRenderFit(
   globalMultiplier: number,
   bubbleMultiplier: number,
   isOval: boolean,
+  targetFontSize?: number,
 ): BubbleTextFit {
+  if (typeof targetFontSize === "number" && targetFontSize > 0) {
+    const effectiveFs = Math.max(8, Math.round(targetFontSize * globalMultiplier * bubbleMultiplier));
+    const safeW = width * 0.88;
+    const safeH = height * 0.88;
+    const lines = wrapTextForBubble(text, safeW, safeH, effectiveFs, fontFamily, isOval, "th", true);
+    const lineH = effectiveFs * 1.30;
+    const totalH = lines.length * lineH;
+    return {
+      fontSize: effectiveFs,
+      lines,
+      lineHeight: lineH,
+      fits: totalH <= safeH,
+    };
+  }
   const targetMinimum = Math.max(14, Math.round(getReadableMinimumFontSize(pageWidth) * 0.75));
   const allowedMinimum = Math.max(8, Math.round(targetMinimum * Math.min(1, bubbleMultiplier)));
   return fitTextForBubble(
@@ -320,12 +354,13 @@ export function growBubbleFrameToFit(
   bubbleMultiplier: number,
   isOval: boolean,
   lockWidth = false,
+  targetFontSize?: number,
 ): { width: number; height: number } {
   const maxWidth = lockWidth ? baseWidth : Math.min(pageWidth, baseWidth * 2.5);
   const maxHeight = Math.min(pageHeight, baseHeight * 2.5);
   let width = baseWidth;
   let height = baseHeight;
-  if (measureBubbleRenderFit(text, width, height, pageWidth, fontFamily, globalMultiplier, bubbleMultiplier, isOval).fits) {
+  if (measureBubbleRenderFit(text, width, height, pageWidth, fontFamily, globalMultiplier, bubbleMultiplier, isOval, targetFontSize).fits) {
     return { width, height };
   }
   for (let guard = 0; guard < 30; guard++) {
@@ -334,7 +369,7 @@ export function growBubbleFrameToFit(
     if (nextWidth <= width + 0.5 && nextHeight <= height + 0.5) break;
     width = nextWidth;
     height = nextHeight;
-    if (measureBubbleRenderFit(text, width, height, pageWidth, fontFamily, globalMultiplier, bubbleMultiplier, isOval).fits) break;
+    if (measureBubbleRenderFit(text, width, height, pageWidth, fontFamily, globalMultiplier, bubbleMultiplier, isOval, targetFontSize).fits) break;
   }
   return { width, height };
 }
@@ -722,7 +757,7 @@ export const applyTranslationOverlay = async (
       selectedBubbleWrapper = wrapper;
       if (!wrapper) return;
 
-      wrapper.style.outline = "2px solid #3b82f6";
+      wrapper.style.outline = "1.5px dashed #3b82f6";
       wrapper.style.zIndex = "30";
       wrapper.setAttribute("data-selected", "true");
       const controls = chromeControlsByWrapper.get(wrapper);
@@ -803,6 +838,12 @@ export const applyTranslationOverlay = async (
       if (legacyAdj?.fontSizeMultiplier !== undefined && b.fontSizeMultiplier === undefined) {
         b.fontSizeMultiplier = legacyAdj.fontSizeMultiplier;
       }
+      if (legacyAdj?.targetFontSize !== undefined && b.targetFontSize === undefined) {
+        b.targetFontSize = legacyAdj.targetFontSize;
+      }
+      if (adj?.targetFontSize !== undefined && b.targetFontSize === undefined) {
+        b.targetFontSize = adj.targetFontSize;
+      }
 
       let currentBx = adj ? adj.bx : (rawX / 100) * iw - ((rawW / 100) * iw) / 2;
       let currentBy = adj ? adj.by : (rawY / 100) * ih - ((rawH / 100) * ih) / 2;
@@ -824,6 +865,8 @@ export const applyTranslationOverlay = async (
           iw,
           ih,
           rotation: currentRotation,
+          ...(typeof b.fontSizeMultiplier === "number" ? { fontSizeMultiplier: b.fontSizeMultiplier } : {}),
+          ...(typeof b.targetFontSize === "number" ? { targetFontSize: b.targetFontSize } : {}),
         };
         b.layoutAdjustment = persistedLayout;
 
@@ -831,7 +874,6 @@ export const applyTranslationOverlay = async (
         if (!all[storagePageKey]) all[storagePageKey] = {};
         all[storagePageKey][bubbleId] = {
           ...persistedLayout,
-          ...(typeof b.fontSizeMultiplier === "number" ? { fontSizeMultiplier: b.fontSizeMultiplier } : {}),
         };
         saveOverlayAdjustments(all);
 
@@ -894,6 +936,7 @@ export const applyTranslationOverlay = async (
         const text = (b.t || b.translated || "").trim();
         const currentFontFam = resolveCanvasFontFamily(currentStyle.fontFamily);
         const bubbleMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
+        const lockedFs = typeof b.targetFontSize === "number" ? b.targetFontSize : (adj?.targetFontSize);
 
         // Frame floor: when the font has already reached its floor and the
         // text still cannot fit, grow the frame around its center instead of
@@ -905,16 +948,18 @@ export const applyTranslationOverlay = async (
           if (measureBubbleRenderFit(
             text, currentBw, currentBh, iw, currentFontFam,
             currentStyle.fontSizeMultiplier || 1.0, bubbleMult, !b.isInvalidBox,
+            lockedFs,
           ).fits) {
             floorBase = { w: currentBw, h: currentBh };
           } else {
             if (!floorBase) floorBase = { w: currentBw, h: currentBh };
-            const lockWidth = Boolean(adj || b.layoutAdjustment);
+            const lockWidth = Boolean(adj || b.layoutAdjustment || lockedFs);
             const baseW = lockWidth ? currentBw : floorBase.w;
             const grown = growBubbleFrameToFit(
               text, baseW, floorBase.h, iw, ih, currentFontFam,
               currentStyle.fontSizeMultiplier || 1.0, bubbleMult, !b.isInvalidBox,
               lockWidth,
+              lockedFs,
             );
             currentBw = grown.width;
             currentBh = grown.height;
@@ -952,6 +997,7 @@ export const applyTranslationOverlay = async (
           currentStyle.fontSizeMultiplier || 1.0,
           bubbleMult,
           !b.isInvalidBox,
+          lockedFs,
         );
         const fontSize = fit.fontSize;
         const lines = fit.lines;
@@ -1011,7 +1057,7 @@ export const applyTranslationOverlay = async (
       b.render = renderBubble;
 
       if (viewMode !== "offscreen") {
-        wrapper.addEventListener('mouseenter', () => { if (selectedBubbleWrapper !== wrapper) wrapper.style.outline = "1.5px dashed rgba(99,102,241,0.5)"; });
+        wrapper.addEventListener('mouseenter', () => { if (selectedBubbleWrapper !== wrapper) wrapper.style.outline = "1.5px dashed rgba(249,115,22,0.65)"; });
       wrapper.addEventListener('mouseleave', () => { if (selectedBubbleWrapper !== wrapper) wrapper.style.outline = "none"; });
 
       let isDragging = false;
@@ -1054,6 +1100,24 @@ export const applyTranslationOverlay = async (
             // ignore
           }
           saveAdjustment();
+          if (currentBx !== initialBx || currentBy !== initialBy) {
+            const finalBx = currentBx, finalBy = currentBy;
+            undoManager.push({
+              label: "ย้ายตำแหน่งกล่องข้อความ",
+              undo: () => {
+                currentBx = initialBx;
+                currentBy = initialBy;
+                renderBubble();
+                saveAdjustment();
+              },
+              redo: () => {
+                currentBx = finalBx;
+                currentBy = finalBy;
+                renderBubble();
+                saveAdjustment();
+              },
+            });
+          }
         }
       });
 
@@ -1388,33 +1452,33 @@ export const applyTranslationOverlay = async (
           id: 'rotate',
           pos: 'nw',
           cursor: 'grab',
-          title: 'หมุนข้อความ',
-          size: 38,
-          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>`
+          title: 'หมุนข้อความ (ดูดมุมฉาก 90° อัตโนมัติ)',
+          size: 36,
+          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>`
         },
         {
           id: 'scale',
           pos: 'ne',
           cursor: 'nesw-resize',
-          title: 'ปรับขนาดเฉียง',
-          size: 38,
-          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" x2="14" y1="3" y2="10"/><line x1="3" x2="10" y1="21" y2="14"/></svg>`
+          title: 'ปรับขนาดเฉียง (ย่อ-ขยายทั้งกล่องและตัวหนังสือ)',
+          size: 36,
+          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" x2="14" y1="3" y2="10"/><line x1="3" x2="10" y1="21" y2="14"/></svg>`
         },
         {
           id: 'width',
           pos: 'e',
           cursor: 'ew-resize',
-          title: 'ปรับความกว้าง',
-          size: 38,
-          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 8 22 12 18 16"/><polyline points="6 8 2 12 6 16"/><line x1="2" x2="22" y1="12" y2="12"/></svg>`
+          title: 'ปรับความกว้าง (ลากซ้าย-ขวา เพื่อตัดบรรทัดใหม่ ขนาดตัวหนังสือเท่าเดิม)',
+          size: 36,
+          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="6,8 2,12 6,16" fill="#2563eb"/><polygon points="18,8 22,12 18,16" fill="#2563eb"/><line x1="4" y1="12" x2="20" y2="12"/></svg>`
         },
         {
           id: 'move',
           pos: 'sw',
           cursor: 'move',
           title: 'ย้ายตำแหน่ง (ลากเพื่อย้ายกล่อง)',
-          size: 40,
-          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" x2="22" y1="12" y2="12"/><line x1="12" x2="12" y1="2" y2="22"/></svg>`
+          size: 36,
+          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" x2="22" y1="12" y2="12"/><line x1="12" x2="12" y1="2" y2="22"/></svg>`
         }
       ];
 
@@ -1425,18 +1489,20 @@ export const applyTranslationOverlay = async (
         handle.setAttribute("data-handle-position", pos);
         handle.title = title;
         const handleSize = size || 36;
-        handle.style.cssText = `position:absolute; width:${handleSize}px; height:${handleSize}px; background:#ffffff; border:2.5px solid #3b82f6; border-radius:50%; z-index:45; opacity:0; pointer-events:none; display:flex; align-items:center; justify-content:center; color:#2563eb; cursor:${cursor}; box-shadow:0 3px 10px rgba(0,0,0,0.35); transition:opacity 120ms ease, box-shadow 120ms ease, filter 120ms ease; touch-action:none; user-select:none; transform:translate(-50%, -50%);`;
+        handle.style.cssText = `position:absolute; width:${handleSize}px; height:${handleSize}px; background:#ffffff; border:2.5px solid #3b82f6; border-radius:50%; z-index:45; opacity:0; pointer-events:none; display:flex; align-items:center; justify-content:center; color:#2563eb; cursor:${cursor}; box-shadow:0 3px 10px rgba(0,0,0,0.35); transition:opacity 120ms ease, box-shadow 120ms ease, filter 120ms ease, transform 120ms ease; touch-action:none; user-select:none; transform:translate(-50%, -50%) scale(1);`;
         handle.innerHTML = icon;
 
         handle.addEventListener('mouseenter', () => {
-          handle.style.filter = 'brightness(1.04)';
+          handle.style.filter = 'brightness(1.05)';
           handle.style.boxShadow = '0 6px 16px rgba(37,99,235,0.45)';
           handle.style.borderColor = '#1d4ed8';
+          handle.style.transform = 'translate(-50%, -50%) scale(1.06)';
         });
         handle.addEventListener('mouseleave', () => {
           handle.style.filter = '';
           handle.style.boxShadow = '0 3px 10px rgba(0,0,0,0.35)';
           handle.style.borderColor = '#3b82f6';
+          handle.style.transform = 'translate(-50%, -50%) scale(1)';
         });
 
         let rStartX = 0, rStartY = 0;
@@ -1445,6 +1511,7 @@ export const applyTranslationOverlay = async (
         let rStartAngle = 0;
         let rInitRot = 0;
         let rInitFontMult = 1;
+        let rInitTargetFs: number | undefined = undefined;
 
         handle.addEventListener('pointerdown', (e) => {
           rStartX = e.clientX; rStartY = e.clientY;
@@ -1452,7 +1519,30 @@ export const applyTranslationOverlay = async (
           rInitBw = currentBw; rInitBh = currentBh;
           rInitRot = currentRotation;
           rInitFontMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1;
+          rInitTargetFs = typeof b.targetFontSize === "number" ? b.targetFontSize : (adj?.targetFontSize);
           resizeDragActive = id === 'width' || id === 'scale';
+
+          if (id === 'width') {
+            const text = (b.t || b.translated || "").trim();
+            if (text && typeof rInitTargetFs !== "number") {
+              const currentStyle = textStyleRef?.current || ts;
+              const currentFontFam = resolveCanvasFontFamily(currentStyle.fontFamily);
+              const bubbleMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
+              const globalMult = currentStyle.fontSizeMultiplier || 1.0;
+              const prevFit = measureBubbleRenderFit(
+                text,
+                currentBw,
+                currentBh,
+                iw,
+                currentFontFam,
+                globalMult,
+                bubbleMult,
+                !b.isInvalidBox,
+              );
+              rInitTargetFs = Math.max(8, Math.round(prevFit.fontSize / (bubbleMult * globalMult)));
+              b.targetFontSize = rInitTargetFs;
+            }
+          }
 
           const bRect = wrapper.getBoundingClientRect();
           rCenterX = bRect.left + bRect.width / 2;
@@ -1472,9 +1562,12 @@ export const applyTranslationOverlay = async (
           if (id === 'rotate') {
             const curAngle = Math.atan2(e.clientY - rCenterY, e.clientX - rCenterX) * (180 / Math.PI);
             const angleDiff = curAngle - rStartAngle;
-            currentRotation = (rInitRot + angleDiff + 360) % 360;
+            const rawRotation = (rInitRot + angleDiff + 360) % 360;
+            currentRotation = snapRotationToRightAngle(rawRotation);
           } else if (id === 'width') {
+            // Drag right (dx > 0) widens, drag left (dx < 0) narrows
             currentBw = Math.max(30, rInitBw + dx);
+            currentBx = rInitBx;
             // Ticket 02: Keep b.fontSizeMultiplier locked.
             // Ticket 03: Top-anchored dynamic auto-height:
             const text = (b.t || b.translated || "").trim();
@@ -1482,22 +1575,16 @@ export const applyTranslationOverlay = async (
               const currentStyle = textStyleRef?.current || ts;
               const currentFontFam = resolveCanvasFontFamily(currentStyle.fontFamily);
               const bubbleMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
-              const targetMin = Math.max(14, Math.round(getReadableMinimumFontSize(iw) * 0.75));
-              const allowedMin = Math.max(8, Math.round(targetMin * Math.min(1, bubbleMult)));
-              const fit = fitTextForBubble(
-                text,
-                currentBw * 0.92,
-                Math.max(ih, rInitBh * 4),
-                currentFontFam,
-                !b.isInvalidBox,
-                (currentStyle.fontSizeMultiplier || 1.0) * bubbleMult,
-                allowedMin,
-              );
-              const lineCount = Math.max(1, fit.lines.length);
-              const lineH = fit.fontSize * 1.30;
-              const contentH = (lineCount - 1) * lineH + fit.fontSize;
-              const verticalPadding = fit.fontSize * 0.6;
-              currentBh = Math.max(25, Math.ceil(contentH + verticalPadding));
+              const globalMult = currentStyle.fontSizeMultiplier || 1.0;
+              const targetFs = typeof b.targetFontSize === "number" ? b.targetFontSize : (rInitTargetFs || 16);
+              const effectiveFs = Math.max(8, Math.round(targetFs * globalMult * bubbleMult));
+              const isOvalBox = !b.isInvalidBox;
+              const safeW = currentBw * 0.88;
+              const lines = wrapTextForBubble(text, safeW, Infinity, effectiveFs, currentFontFam, isOvalBox, "th", true);
+              const lineCount = Math.max(1, lines.length);
+              const lineH = effectiveFs * 1.30;
+              const totalH = lineCount * lineH;
+              currentBh = Math.max(25, Math.ceil(totalH / 0.86));
               currentBy = rInitBy;
             }
           } else if (id === 'scale') {
@@ -1531,13 +1618,15 @@ export const applyTranslationOverlay = async (
 
           const finalBx = currentBx, finalBy = currentBy, finalBw = currentBw, finalBh = currentBh, finalRot = currentRotation;
           const finalFontMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
+          const finalTargetFs = b.targetFontSize;
           if (
             finalBx !== rInitBx ||
             finalBy !== rInitBy ||
             finalBw !== rInitBw ||
             finalBh !== rInitBh ||
             finalRot !== rInitRot ||
-            finalFontMult !== rInitFontMult
+            finalFontMult !== rInitFontMult ||
+            finalTargetFs !== rInitTargetFs
           ) {
             undoManager.push({
               label:
@@ -1555,6 +1644,7 @@ export const applyTranslationOverlay = async (
                 currentBh = rInitBh;
                 currentRotation = rInitRot;
                 b.fontSizeMultiplier = rInitFontMult;
+                b.targetFontSize = rInitTargetFs;
                 floorBase = { w: rInitBw, h: rInitBh };
                 renderBubble();
                 saveAdjustment();
@@ -1566,6 +1656,7 @@ export const applyTranslationOverlay = async (
                 currentBh = finalBh;
                 currentRotation = finalRot;
                 b.fontSizeMultiplier = finalFontMult;
+                b.targetFontSize = finalTargetFs;
                 floorBase = { w: finalBw, h: finalBh };
                 renderBubble();
                 saveAdjustment();

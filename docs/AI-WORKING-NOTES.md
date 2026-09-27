@@ -1,5 +1,98 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Torii-Aligned Interactive Handles with Magnetic 90° Snapping — 2026-09-28
+
+Status: **VERIFIED WORKING (4-handle system fully aligned with Torii Translate scanlation ergonomics: magnetic right-angle snapping `snapRotationToRightAngle` for Rotate Handle `nw` within ±6°, font-driven corner scale `ne`, top-anchored width reflow `e`, direct move `sw`, standardized 36px white circular pills with blue border `#3b82f6` and hover glow; Vitest 157 files / 1,026 tests passed, TypeScript 0 errors)**.
+
+- **User Context & Direction**:
+  - User requested: `"2. ชุด Interactive Handles (ปุ่มจับปรับรูปทรงรอบกรอบ) ในโค้ด Schema เค้าเตรียมไว้หลายแกนมาก... อยากดูพวกนี้"`, `"เราเอามาลองทั้งหมดได้ไหม แบบเอาตามเขาหมดเลย"`.
+  - Approved via Grilling session (Option A across all decisions: magnetic 90° snap with ±6° threshold, font-driven corner scaling, 4-handle chrome with hover preview, exact Torii visual tokens).
+  - Tracked via Spec (`.scratch/torii-interactive-handles-alignment/spec.md`) and 5 tracer-bullet tickets (`.scratch/torii-interactive-handles-alignment/issues/01–05`, all marked `done`).
+- **Technical Solutions**:
+  1. **Magnetic Right-Angle Snapping (`snapRotationToRightAngle`)**:
+     - Exported pure function `snapRotationToRightAngle(deg: number, thresholdDeg = 6): number`.
+     - Normalizes angle to $[0, 360)$ and calculates distance to nearest right angle multiple ($0^\circ, 90^\circ, 180^\circ, 270^\circ$).
+     - Snaps cleanly to the cardinal right angle when within threshold; preserves exact floating-point degree precision when outside threshold.
+  2. **Rotate Handle Integration (`nw` / Top-Left)**:
+     - During pointer drag on `nw`, computed angle is passed through `snapRotationToRightAngle(rawRotation)`.
+     - Live preview updates `wrapper.style.transform` to snapped angle (0° maps to clean unrotated string `""`).
+     - Snapped rotation is committed to `b.rotation`, `OverlayAdjustment.rotation`, IndexedDB persistence, and undo history (`Ctrl+Z` / `Ctrl+Y`).
+  3. **Visual Tokens & Micro-interactions**:
+     - Handles standardized to 36px circular badges with `#ffffff` fill, 2.5px solid `#3b82f6` border, and `0 3px 10px rgba(0,0,0,0.35)` drop shadow.
+     - Vector SVG icons aligned to Torii ergonomics: clockwise circular arc arrow (`rotate`), diagonal double arrow (`scale`), bidirectional `◀ ▶` (`width`), 4-way crosshair (`move`).
+     - Hover micro-interaction: `brightness(1.05)`, border `#1d4ed8`, blue glow `0 6px 16px rgba(37,99,235,0.45)`, and tactile scale `1.06x`.
+- **Verification Evidence**:
+  - Vitest Pure Math Tests (`tests/unit/snapRotationToRightAngle.test.ts`): 7/7 tests passed.
+  - Vitest DOM Interaction Tests (`tests/cleaning/translationOverlay.test.ts`): 39/39 tests passed, including `rotate handle snaps magnetically to cardinal right angles (0, 90, 180, 270) within 6 degrees`.
+  - Full Test Suite: **157 files passed, 1,026 tests passed / 1 skipped** (100% green, 0 regressions).
+  - TypeScript: **0 errors** (`npx tsc --noEmit`).
+
+## Single Right-Side Width Handle with Smooth Left/Right Sliding ("ลื่นๆ") — 2026-09-27
+
+
+Status: **VERIFIED WORKING (Single width handle on right edge `pos: 'e'` with Torii `◀ ▶` indicator styling, blue dashed active outline `1.5px dashed #3b82f6`, orange dashed hover outline `1.5px dashed rgba(249,115,22,0.65)`, butter-smooth sliding to the left (narrow) and right (widen) with zero release snap/pop, locked font size, top-anchored auto-height, and full undo/redo; Vitest 38 tests passed, TypeScript 0 errors)**.
+
+- **User Context & Clarification**:
+  - User requested: `"ไม่ เอาแค่ฝั่งเดียวพอครับ"` (clarifying that only ONE width handle on the right side is desired, rather than handles on both sides, but it must slide left and right butter-smooth without jumping or lag).
+- **Technical Implementation**:
+  1. **Clean 4-Handle Layout Maintained**:
+     - NW: Rotate (`↻`)
+     - NE: Proportional Scale / Zoom (`⤢`)
+     - E: Dedicated Width Reflow Handle (`◀ ▶`)
+     - SW: Move Handle (`✛`)
+     - Left edge handle (`pos: 'w'`) removed per user instruction to keep the canvas clean and minimal.
+  2. **Butter-Smooth Bidirectional Sliding on Single Right Handle**:
+     - Dragging right ($dx > 0$): Widens the text column, reflowing lines into fewer lines, adapting height downward top-anchored.
+     - Dragging left ($dx < 0$): Narrows the text column, reflowing lines into more lines, dynamically expanding height downward top-anchored.
+     - Font size strictly locked at `targetFontSize` (no font ballooning or shrinking).
+     - Safe padding `currentBh = Math.max(25, Math.ceil(totalH / 0.86))` guarantees `measureBubbleRenderFit(...).fits` evaluates to `true` instantly on `pointerup`, completely eliminating any release snap or jump.
+  3. **Visual Parity**:
+     - Width handle styled with horizontal double arrow `◀ ▶`.
+     - Active selected bubble uses `1.5px dashed #3b82f6`.
+     - Unselected bubble hover uses `1.5px dashed rgba(249,115,22,0.65)`.
+     - Direct wrapper drag across canvas supports undo/redo on `pointerup`.
+- **Verification Evidence**:
+  - TDD tests in `tests/cleaning/translationOverlay.test.ts`:
+    - `anchors toolbar and handles to the bubble screen rect`: verifies only 4 handles exist, with `.action-handle--width-left` being null.
+    - `single width handle slides left and right smoothly: widening to right wraps into fewer lines, narrowing to left expands height top-anchored`: verifies sliding right widens column, sliding left narrows column, top stays anchored, font size stays locked, and undo works.
+  - Vitest: **38 passed in `translationOverlay.test.ts` (100% green)**.
+  - TypeScript: **0 errors** (`npx tsc --noEmit`).
+
+## Width Drag Target Font Size Locking (Fixing Font Ballooning on Width Resize) — 2026-09-27
+
+Status: **VERIFIED WORKING (Target font size locked strictly on width handle drag; font ballooning on widening eliminated 100%; corner scale handle preserved for proportional zoom; Vitest 156 files / 1017 tests passed, Pytest 193 passed, TypeScript 0 errors)**.
+
+- **User Context & Symptom**:
+  - User reported: `z,]v'c]h; x6j,-;k,yopy'-pkp-hv8;k,wfhvp^jkg]p =j;pz,mu` ("ผมลองแล้ว ปุ่มขวามันยังขยายข้อความได้อยู่เลย ช่วยผมที").
+  - Dragging the right-edge `width` handle (`action-handle--width` / `e`) wider caused the rendered text font size to grow/balloon (e.g. from 17px to 31px), rather than keeping font size locked and only wrapping text into fewer lines.
+- **Root Cause**:
+  1. `fitTextForBubble()` computes `maxFs = Math.max(minFontSize, Math.round(Math.min(height * 0.55, width * 0.55, 96) * fontSizeMultiplier))`. As `currentBw` widened from e.g. 100px to 300px, `maxFs` scaled up proportionally.
+  2. Because `fitTextForBubble` loops downward from `maxFs` to find the largest font that fits in the bounding box, widening the box caused `renderBubble()` to select a larger font size.
+  3. `TranslatedBubble` and `OverlayAdjustment` had no field to track the authoritative locked font size (`targetFontSize`), so every render re-estimated font size from geometry.
+- **Technical Solutions**:
+  1. **Added `targetFontSize?: number` to `TranslatedBubble` and `OverlayAdjustment`**:
+     - Represents the base unscaled font size for the bubble.
+     - Persisted to IndexedDB via `saveAdjustment()` and restored on page mount.
+  2. **Supported `targetFontSize` in `measureBubbleRenderFit` and `growBubbleFrameToFit`**:
+     - When `targetFontSize` is provided, `effectiveFs = Math.max(8, Math.round(targetFontSize * globalMultiplier * bubbleMultiplier))`.
+     - `wrapTextForBubble` is called directly at `effectiveFs` with `allowWordBreak = true` and `locale = "th"`.
+     - Eliminates the dynamic font-scaling loop, keeping the font size strictly constant regardless of how wide the bubble is dragged.
+  3. **Strict Font Size Locking on Width Handle (`id === 'width'`)**:
+     - On `pointerdown`, captures the current rendered font size as `b.targetFontSize` if not already set.
+     - On `pointermove`, dynamically reflows text lines at `effectiveFs` with `currentBh` adapting to the line count while `currentBy` remains top-anchored.
+     - On `pointerup`, registers full undo/redo with `undoManager`, restoring both `b.targetFontSize` and coordinates.
+  4. **Updated Handle Tooltip Titles for Visual Clarity**:
+     - Corner scale handle (`ne`): "ปรับขนาดเฉียง (ย่อ-ขยายทั้งกล่องและตัวหนังสือ)".
+     - Right width handle (`e`): "ปรับความกว้าง (ตัดบรรทัดใหม่ ขนาดตัวหนังสือเท่าเดิม)".
+  5. **100% Export Compositing Parity in `lib/export/readabilityScan.ts`**:
+     - Passed `bubble.targetFontSize ?? adjustment?.targetFontSize` into `growBubbleFrameToFit` and `measureBubbleRenderFit`.
+- **Verification Evidence**:
+  - TDD unit test in `tests/unit/textFitting.test.ts`: "keeps font size strictly locked when targetFontSize is specified, reflowing lines only" (passed).
+  - TDD regression test in `tests/cleaning/translationOverlay.test.ts`: "widening width handle locks font size and does not expand or balloon the text" (demonstrated reproduction failure from 17px -> 31px, now passed at 17px == 17px).
+  - Vitest: **156 passed, 1 skipped (1017 tests passed, 0 failures)**.
+  - Pytest: **193 passed, 3 skipped, 0 failures** (`ocr-service/tests`).
+  - TypeScript: **0 errors** (`npx tsc --noEmit`).
+
 ## Content-Driven Bubble Reflow and Top-Anchored Auto-Height — 2026-09-27
 
 Status: **VERIFIED WORKING (All 5 tickets resolved: 01 Text fitting word-break, 02 Width drag font decoupling, 03 Top-anchored auto-height, 04 Modernized frame floor & persistence, 05 Export parity & verification; Vitest 156 files / 1015 tests passed, Pytest 193 passed, TypeScript 0 errors)**.

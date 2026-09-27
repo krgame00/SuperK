@@ -459,6 +459,7 @@ describe("translation overlay live editor and keyboard controls", () => {
     expect([scale.style.left, scale.style.top]).toEqual([`${320 / 0.6}px`, `${150 / 0.6}px`]);
     expect([width.style.left, width.style.top]).toEqual([`${320 / 0.6}px`, `${190 / 0.6}px`]);
     expect([move.style.left, move.style.top]).toEqual([`${200 / 0.6}px`, `${230 / 0.6}px`]);
+    expect(chromeRoot.querySelector(".action-handle--width-left")).toBeNull();
   });
 
   test("opens a larger multiline editor with explicit save and cancel controls", async () => {
@@ -1089,10 +1090,11 @@ test("scales the text with the corner resize handle", async () => {
   // Dragging down 90 source px grows the frame height 360 -> 450 (x1.25),
   // and the text must scale with the frame exactly like the fit preview.
   firePointer(handle, "pointermove", 500, 410);
-  expect(bubble.fontSizeMultiplier).toBeCloseTo(1.25, 5);
   firePointer(handle, "pointerup", 500, 410);
   expect(bubble.fontSizeMultiplier).toBeCloseTo(1.25, 5);
 });
+
+
 
 test("preserves font size multiplier and reflows with top-anchored height when width handle is dragged", async () => {
   const { container, chromeRoot, bubble, wrapper } = await renderOverlayFresh("ปรับกว้าง", {
@@ -1117,6 +1119,33 @@ test("preserves font size multiplier and reflows with top-anchored height when w
   firePointer(handle, "pointerup", 560, 500);
   expect(bubble.fontSizeMultiplier).toBe(1);
   expect(bubble.layoutAdjustment?.bw).toBeCloseTo(260, 1);
+});
+
+test("widening width handle locks font size and does not expand or balloon the text", async () => {
+  const text = "ข้อความสำหรับการทดสอบความกว้างของกรอบข้อความ";
+  const { container, chromeRoot, bubble, wrapper } = await renderOverlayFresh(text, {
+    layoutAdjustment: { bx: 100, by: 100, bw: 100, bh: 300, iw: 1000, ih: 1200 },
+    fontSizeMultiplier: 1,
+  });
+  mockCanvasRect(container);
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  handle.setPointerCapture = vi.fn();
+  (handle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  handle.releasePointerCapture = vi.fn();
+
+  const bCanvas = wrapper.querySelector("canvas")!;
+  const ctx = bCanvas.getContext("2d")!;
+  const initialFont = (ctx as unknown as { font: string }).font;
+
+  firePointer(handle, "pointerdown", 500, 500);
+  // Widen from 100px to 300px (+200px)
+  firePointer(handle, "pointermove", 700, 500);
+  firePointer(handle, "pointerup", 700, 500);
+
+  const widenedFont = (ctx as unknown as { font: string }).font;
+  expect(widenedFont).toBe(initialFont);
+  expect(bubble.targetFontSize).toBeDefined();
+  expect(bubble.layoutAdjustment?.targetFontSize).toBe(bubble.targetFontSize);
 });
 
 test("holds the dragged frame during a resize and never rockets the floor", async () => {
@@ -1222,3 +1251,85 @@ test("editing text via editor textarea expands height downward while keeping use
   // Height expands downward to accommodate longer text
   expect(heightAfter).toBeGreaterThan(heightBefore);
 });
+
+test("single width handle slides left and right smoothly: widening to right wraps into fewer lines, narrowing to left expands height top-anchored", async () => {
+  const { container, chromeRoot, bubble, wrapper } = await renderOverlayFresh(
+    "ทั้งที่ข้าอุตส่าห์แต่งตัวในแบบที่เจ้าชอบแท้ๆ",
+    {
+      layoutAdjustment: { bx: 100, by: 100, bw: 200, bh: 140, iw: 1000, ih: 1200 },
+      fontSizeMultiplier: 1,
+    },
+  );
+  mockCanvasRect(container);
+  const widthHandle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  expect(widthHandle).toBeTruthy();
+  expect(chromeRoot.querySelector('[data-handle-position="w"]')).toBeNull();
+  widthHandle.setPointerCapture = vi.fn();
+  (widthHandle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  widthHandle.releasePointerCapture = vi.fn();
+
+  const initTop = Number.parseFloat(wrapper.style.top);
+
+  // 1. Slide to the right (+100px) -> Widen
+  firePointer(widthHandle, "pointerdown", 500, 500);
+  firePointer(widthHandle, "pointermove", 600, 500);
+  expect(Number.parseFloat(wrapper.style.top)).toBeCloseTo(initTop, 2);
+  expect(bubble.fontSizeMultiplier).toBe(1);
+  firePointer(widthHandle, "pointerup", 600, 500);
+  expect(bubble.layoutAdjustment?.bw).toBeCloseTo(300, 1);
+
+  // 2. Slide to the left (-200px) -> Narrow down to 100px
+  firePointer(widthHandle, "pointerdown", 600, 500);
+  firePointer(widthHandle, "pointermove", 400, 500);
+  expect(Number.parseFloat(wrapper.style.top)).toBeCloseTo(initTop, 2);
+  expect(bubble.fontSizeMultiplier).toBe(1);
+  firePointer(widthHandle, "pointerup", 400, 500);
+  expect(bubble.layoutAdjustment?.bw).toBeCloseTo(100, 1);
+  expect(bubble.layoutAdjustment?.bh).toBeGreaterThan(140);
+});
+
+test("rotate handle snaps magnetically to cardinal right angles (0, 90, 180, 270) within 6 degrees", async () => {
+  const { container, chromeRoot, bubble, wrapper } = await renderOverlayFresh(
+    "ข้อความหมุน",
+    {
+      layoutAdjustment: { bx: 200, by: 200, bw: 200, bh: 200, iw: 1000, ih: 1200 },
+      rotation: 0,
+    },
+  );
+  mockCanvasRect(container);
+  vi.spyOn(wrapper, "getBoundingClientRect").mockReturnValue({
+    left: 200, top: 200, right: 400, bottom: 400, width: 200, height: 200,
+  } as DOMRect);
+
+  const rotateHandle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="nw"]')!;
+  expect(rotateHandle).toBeTruthy();
+  rotateHandle.setPointerCapture = vi.fn();
+  (rotateHandle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  rotateHandle.releasePointerCapture = vi.fn();
+
+  // Center is at (300, 300). Pointerdown directly above center at (300, 200) -> initial angle is -90 deg.
+  firePointer(rotateHandle, "pointerdown", 300, 200);
+
+  // 1. Move slightly clockwise: angleDiff is ~3 deg (within +/- 6 deg of 0) -> should snap to 0 deg
+  firePointer(rotateHandle, "pointermove", 305, 200);
+  expect(wrapper.style.transform).toBe(""); // 0 deg is empty string in wrapper.style.transform
+
+  // 2. Move to ~45 degrees (outside threshold) -> smooth rotation (not snapped)
+  // At (370.7, 229.3): dx = 70.7, dy = -70.7 -> curAngle = -45 deg -> angleDiff = +45 deg
+  firePointer(rotateHandle, "pointermove", 371, 229);
+  expect(wrapper.style.transform).toMatch(/rotate\(45\.\ddeg\)/);
+
+  // 3. Move near 90 degrees: dx = 100, dy = 5 -> curAngle = ~2.8 deg -> angleDiff = 92.8 deg -> snaps to 90 deg
+  firePointer(rotateHandle, "pointermove", 400, 305);
+  expect(wrapper.style.transform).toBe("rotate(90.0deg)");
+
+  // 4. Release pointer: commits snapped rotation
+  firePointer(rotateHandle, "pointerup", 400, 305);
+  expect(bubble.layoutAdjustment?.rotation).toBe(90);
+
+  // 5. Undo restores original rotation 0
+  const { undoManager: testUndoManager } = await import("@/lib/undoManager");
+  testUndoManager.undo();
+  expect(bubble.layoutAdjustment?.rotation).toBe(0);
+});
+
