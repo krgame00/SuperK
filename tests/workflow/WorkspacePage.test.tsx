@@ -13,6 +13,7 @@ import { MaskEditor } from "@/components/cleaning/MaskEditor";
 import { useCleaning } from "@/hooks/useCleaning";
 import { useTranslation } from "@/hooks/useTranslation";
 import WorkspacePage from "@/src/app/page";
+import { scanPageGeometry } from "@/lib/export/readabilityScan";
 
 vi.mock("@/hooks/useCleaning");
 vi.mock("@/hooks/useTranslation");
@@ -24,6 +25,7 @@ vi.mock("@/lib/translationOverlay", () => ({
   applyTranslationOverlay: vi.fn(),
   downloadTranslatedImage: vi.fn(),
 }));
+vi.mock("@/lib/export/readabilityScan", () => ({ scanPageGeometry: vi.fn() }));
 vi.mock("@/components/cleaning/MaskLegend", () => ({
   MaskLegend: () => null,
 }));
@@ -220,6 +222,7 @@ beforeEach(() => {
     getPageRevision: vi.fn(() => 0),
   };
   vi.mocked(useTranslation).mockReturnValue(translationMockState as never);
+  vi.mocked(scanPageGeometry).mockResolvedValue({ findings: [] });
   vi.stubGlobal(
     "fetch",
     vi.fn().mockResolvedValue({
@@ -337,6 +340,31 @@ describe("workspace clean-then-translate integration", () => {
         screen.queryByRole("dialog", { name: "รายงานก่อนส่งออก" }),
       ).toBeNull(),
     );
+  });
+
+  test("export report names an overflowing text item and selects its overlay", async () => {
+    const bubble = { id: "bubble-1", t: "ข้อความยาว", box: [100, 100, 200, 300] };
+    vi.mocked(useTranslation).mockReturnValue({
+      ...translationMockState,
+      bubbleCacheRef: { current: new Map([[ORIGINAL_URL, [bubble]]]) },
+      inspectTranslatedPages: vi.fn(() => [
+        { pageUrl: ORIGINAL_URL, pageIndex: 0, total: 1, contaminated: 0, invalidBoxes: 0 },
+      ]),
+    } as never);
+    vi.mocked(scanPageGeometry).mockResolvedValue({ findings: [
+      { pageUrl: ORIGINAL_URL, pageIndex: 0, bubbleId: "id-bubble-1", text: "ข้อความยาว", kind: "overflow" },
+    ] });
+    await renderRestoredWorkspace();
+    const overlay = document.createElement("button");
+    overlay.setAttribute("data-bubble-id", "id-bubble-1");
+    document.querySelector("#pageContainer")?.appendChild(overlay);
+    fireEvent.click(screen.getAllByRole("button", { name: "เครื่องมือ" })[0]);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "รายงานก่อนส่งออก" }));
+
+    const finding = await screen.findByRole("button", { name: /หน้า 1.*ข้อความล้น.*ข้อความยาว/ });
+    fireEvent.click(finding);
+    await waitFor(() => expect(overlay).toHaveAttribute("data-readability-target", "true"));
+    expect(screen.queryByRole("dialog", { name: "รายงานก่อนส่งออก" })).toBeNull();
   });
 
   test("whole-book scan flags contaminated pages and retranslates only those", async () => {

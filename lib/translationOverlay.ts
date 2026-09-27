@@ -173,6 +173,11 @@ const compactOverlayPageKey = (pageKey: string): string => {
   return `page-${(hash >>> 0).toString(36)}-${pageKey.length}`;
 };
 
+export const readPageOverlayAdjustments = (pageKey: string): Record<string, OverlayAdjustment> => {
+  const all = readOverlayAdjustments();
+  return all[compactOverlayPageKey(pageKey)] ?? all[pageKey] ?? {};
+};
+
 export const clearPageAdjustments = (pageIndex: number): void => {
   if (typeof window === "undefined" || !window.localStorage) return;
   try {
@@ -279,6 +284,29 @@ export const getReadableMinimumFontSize = (pageWidth: number): number => {
   if (!pageWidth || pageWidth <= 0) return 14;
   return Math.max(14, Math.round(pageWidth * 0.0225));
 };
+
+export function measureBubbleRenderFit(
+  text: string,
+  width: number,
+  height: number,
+  pageWidth: number,
+  fontFamily: string,
+  globalMultiplier: number,
+  bubbleMultiplier: number,
+  isOval: boolean,
+): BubbleTextFit {
+  const targetMinimum = Math.max(14, Math.round(getReadableMinimumFontSize(pageWidth) * 0.75));
+  const allowedMinimum = Math.max(8, Math.round(targetMinimum * Math.min(1, bubbleMultiplier)));
+  return fitTextForBubble(
+    text,
+    width * 0.92,
+    height * 0.92,
+    fontFamily,
+    isOval,
+    globalMultiplier * bubbleMultiplier,
+    allowedMinimum,
+  );
+}
 
 export const wrapTextForBubble = (
   text: string,
@@ -586,11 +614,7 @@ export const applyTranslationOverlay = async (
     // every saved position whenever pages were reordered or deleted.
     const pageKey = pageKeyOverride ?? `page-${currentPage}`;
     const storagePageKey = compactOverlayPageKey(pageKey);
-    const allSavedAdjustments = readOverlayAdjustments();
-    const savedAdj =
-      allSavedAdjustments[storagePageKey]
-      ?? allSavedAdjustments[pageKey]
-      ?? {};
+    const savedAdj = readPageOverlayAdjustments(pageKey);
 
     const tlContainer = document.createElement("div");
     tlContainer.className = "tl-canvas";
@@ -785,22 +809,20 @@ export const applyTranslationOverlay = async (
         if (!text) return;
         const currentFontFam = resolveCanvasFontFamily(currentStyle.fontFamily);
         const bubbleMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
-        const currentFontMult = (currentStyle.fontSizeMultiplier || 1.0) * bubbleMult;
         const resolvedStyle = resolveBubbleTextStyle(b, currentStyle);
         const textColor = resolvedStyle.textColor;
         const outlineColor = resolvedStyle.textOutline;
         const opacity = resolvedStyle.opacity ?? 1.0;
 
-        const targetMinFs = Math.max(14, Math.round(getReadableMinimumFontSize(iw) * 0.75));
-        const minFsAllowed = Math.max(8, Math.round(targetMinFs * Math.min(1.0, bubbleMult)));
-        const fit = fitTextForBubble(
+        const fit = measureBubbleRenderFit(
           text,
-          currentBw * 0.92,
-          currentBh * 0.92,
+          currentBw,
+          currentBh,
+          iw,
           currentFontFam,
+          currentStyle.fontSizeMultiplier || 1.0,
+          bubbleMult,
           !b.isInvalidBox,
-          currentFontMult,
-          minFsAllowed
         );
         const fontSize = fit.fontSize;
         const lines = fit.lines;

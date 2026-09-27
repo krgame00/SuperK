@@ -2,6 +2,7 @@
 
 import { useEffect, type ReactElement } from "react";
 import { AlertTriangle, CheckCircle2, X } from "lucide-react";
+import type { ReadabilityFinding } from "@/lib/export/readabilityScan";
 
 export interface ExportReportRow {
   pageIndex: number;
@@ -10,12 +11,15 @@ export interface ExportReportRow {
   contaminated: number;
   invalidBoxes: number;
   pendingCleaning: number;
+  readabilityFindings?: ReadabilityFinding[];
+  readabilityUnavailable?: string;
 }
 
 export interface ExportReportModalProps {
   isOpen: boolean;
   rows: ExportReportRow[];
   onClose: () => void;
+  onSelectFinding?: (finding: ReadabilityFinding) => void;
 }
 
 /**
@@ -28,6 +32,7 @@ export function ExportReportModal({
   isOpen,
   rows,
   onClose,
+  onSelectFinding,
 }: ExportReportModalProps): ReactElement | null {
   useEffect(() => {
     if (!isOpen) return;
@@ -44,7 +49,8 @@ export function ExportReportModal({
   const flagged = rows.filter(
     (row) =>
       row.translated &&
-      (row.contaminated > 0 || row.invalidBoxes > 0 || row.pendingCleaning > 0),
+      (row.contaminated > 0 || row.invalidBoxes > 0 || row.pendingCleaning > 0
+        || (row.readabilityFindings?.length ?? 0) > 0 || Boolean(row.readabilityUnavailable)),
   ).length;
 
   return (
@@ -86,6 +92,7 @@ export function ExportReportModal({
                   <th scope="col" className="py-1.5 pr-3 font-medium">ตัวอักษรปน</th>
                   <th scope="col" className="py-1.5 pr-3 font-medium">กรอบผิดปกติ</th>
                   <th scope="col" className="py-1.5 font-medium">ค้างคลีน</th>
+                  <th scope="col" className="py-1.5 font-medium">ความอ่านง่าย</th>
                 </tr>
               </thead>
               <tbody className="text-foreground">
@@ -126,10 +133,43 @@ export function ExportReportModal({
                         <span className="text-muted">–</span>
                       )}
                     </td>
+                    <td className="py-1.5">
+                      {row.readabilityUnavailable ? (
+                        <span className="text-amber-400">ตรวจการจัดข้อความไม่ได้</span>
+                      ) : (row.readabilityFindings?.length ?? 0) > 0 ? (
+                        <span className="text-amber-400">{row.readabilityFindings?.length} จุด</span>
+                      ) : <span className="text-muted">–</span>}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          )}
+          {rows.some((row) => (row.readabilityFindings?.length ?? 0) > 0 || row.readabilityUnavailable) && (
+            <div className="mt-4 border-t border-border/60 pt-3">
+              <h3 className="mb-2 text-xs font-semibold text-foreground">จุดที่ควรตรวจความอ่านง่าย</h3>
+              {rows.flatMap((row) => row.readabilityFindings ?? []).map((finding) => {
+                const reason = finding.kind === "overflow" ? "ข้อความล้น" : "ตัวอักษรเล็ก";
+                return (
+                  <button
+                    key={`${finding.pageUrl}:${finding.bubbleId}:${finding.kind}`}
+                    type="button"
+                    className="mb-1 block w-full rounded-md px-2 py-1.5 text-left text-xs text-amber-300 hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    onClick={() => onSelectFinding?.(finding)}
+                    aria-label={`หน้า ${finding.pageIndex + 1} ${reason} ${finding.text}`}
+                  >
+                    หน้า {finding.pageIndex + 1} · {reason} · {finding.text}
+                    {finding.kind === "small-text" && finding.fontSize != null && finding.threshold != null
+                      ? ` (${finding.fontSize}px ต่ำกว่า ${finding.threshold}px)` : ""}
+                  </button>
+                );
+              })}
+              {rows.filter((row) => row.readabilityUnavailable).map((row) => (
+                <p key={`unavailable-${row.pageIndex}`} className="px-2 py-1 text-xs text-amber-300">
+                  หน้า {row.pageIndex + 1} · ตรวจการจัดข้อความไม่ได้: {row.readabilityUnavailable}
+                </p>
+              ))}
+            </div>
           )}
         </div>
 

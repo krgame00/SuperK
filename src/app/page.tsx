@@ -34,7 +34,8 @@ import { SettingsModal } from "@/components/workspace/SettingsModal";
 import { WorkspaceExportMenu } from "@/components/workspace/WorkspaceExportMenu";
 import { WorkspacePrimaryAction } from "@/components/workspace/WorkspacePrimaryAction";
 import { WorkspaceAdvancedTools } from "@/components/workspace/WorkspaceAdvancedTools";
-import { ExportReportModal } from "@/components/workspace/ExportReportModal";
+import { ExportReportModal, type ExportReportRow } from "@/components/workspace/ExportReportModal";
+import { scanPageGeometry, type ReadabilityFinding } from "@/lib/export/readabilityScan";
 import {
   generateArchiveFilename,
   generateComicInfoXml,
@@ -672,21 +673,14 @@ export default function WorkspacePage() {
   }, [contaminatedScan, handleTranslateAll, operationBusy, scanTranslatedPages]);
 
   const [isExportReportOpen, setIsExportReportOpen] = useState(false);
-  const [exportReportRows, setExportReportRows] = useState<
-    Array<{
-      pageIndex: number;
-      translated: boolean;
-      totalBubbles: number;
-      contaminated: number;
-      invalidBoxes: number;
-      pendingCleaning: number;
-    }>
-  >([]);
+  const [exportReportRows, setExportReportRows] = useState<ExportReportRow[]>([]);
+  const reportScanGenerationRef = useRef(0);
+  const [pendingReadabilityTarget, setPendingReadabilityTarget] = useState<ReadabilityFinding | null>(null);
 
   const handleOpenExportReport = useCallback(() => {
+    const generation = ++reportScanGenerationRef.current;
     const inspected = inspectTranslatedPages();
-    setExportReportRows(
-      pages.map((page, pageIndex) => {
+    const rows: ExportReportRow[] = pages.map((page, pageIndex) => {
         const pageUrl = page.url;
         const info = inspected.find((item) => item.pageIndex === pageIndex);
         const cleaning = cleaningResultsByPage.get(pageUrl);
@@ -701,10 +695,77 @@ export default function WorkspacePage() {
                 .length
             : 0,
         };
-      }),
-    );
+      });
+    setExportReportRows(rows);
     setIsExportReportOpen(true);
-  }, [pages, inspectTranslatedPages, cleaningResultsByPage]);
+    void (async () => {
+      for (const row of rows) {
+        const page = pages[row.pageIndex];
+        const bubbles = bubbleCacheRef.current.get(page.url) ?? [];
+        if (bubbles.length === 0) continue;
+        let result;
+        try {
+          result = await scanPageGeometry({
+            pageUrl: page.url,
+            pageIndex: row.pageIndex,
+            bubbles,
+            textStyle: textStyleRef.current,
+          });
+        } catch {
+          result = { findings: [], unavailableReason: "ประเมินหน้านี้ไม่สำเร็จ" };
+        }
+        if (generation !== reportScanGenerationRef.current) return;
+        setExportReportRows((current) => current.map((item) => item.pageIndex === row.pageIndex
+          ? { ...item, readabilityFindings: result.findings, readabilityUnavailable: result.unavailableReason }
+          : item));
+      }
+    })();
+  }, [pages, inspectTranslatedPages, cleaningResultsByPage, bubbleCacheRef, textStyleRef]);
+
+  const closeExportReport = useCallback(() => {
+    reportScanGenerationRef.current += 1;
+    setIsExportReportOpen(false);
+  }, []);
+
+  const selectReadabilityFinding = useCallback((finding: ReadabilityFinding) => {
+    closeExportReport();
+    setViewLayout("single");
+    setWorkspaceLayer("translated");
+    setCurrentPage(finding.pageIndex);
+    setPendingReadabilityTarget(finding);
+  }, [closeExportReport]);
+
+  useEffect(() => {
+    if (!pendingReadabilityTarget || currentPage !== pendingReadabilityTarget.pageIndex || workspaceLayer !== "translated") return;
+    const host = document.getElementById("pageContainer");
+    if (!host) return;
+    const findTarget = () => {
+      const target = [...host.querySelectorAll<HTMLElement>("[data-bubble-id]")]
+        .find((item) => item.dataset.bubbleId === pendingReadabilityTarget.bubbleId);
+      if (!target) return false;
+      target.dataset.readabilityTarget = "true";
+      target.style.outline = "3px solid #f59e0b";
+      target.focus();
+      target.scrollIntoView?.({ block: "center", inline: "center" });
+      window.setTimeout(() => {
+        if (target.dataset.readabilityTarget === "true") {
+          delete target.dataset.readabilityTarget;
+          target.style.outline = "";
+        }
+      }, 3000);
+      setPendingReadabilityTarget(null);
+      return true;
+    };
+    if (findTarget()) return;
+    const observer = new MutationObserver(() => { if (findTarget()) observer.disconnect(); });
+    observer.observe(host, { childList: true, subtree: true });
+    const timeout = window.setTimeout(() => {
+      observer.disconnect();
+      setPendingReadabilityTarget(null);
+      import("react-hot-toast").then((module) => module.default("ไปยังหน้าแล้ว แต่ไม่พบจุดข้อความเดิม"));
+    }, 3000);
+    return () => { observer.disconnect(); window.clearTimeout(timeout); };
+  }, [pendingReadabilityTarget, currentPage, workspaceLayer]);
 
   const [reviewedPageUrls, setReviewedPageUrls] = useState<Set<string>>(
     () => new Set(),
@@ -1906,7 +1967,8 @@ export default function WorkspacePage() {
                 <ExportReportModal
                   isOpen={isExportReportOpen}
                   rows={exportReportRows}
-                  onClose={() => setIsExportReportOpen(false)}
+                  onClose={closeExportReport}
+                  onSelectFinding={selectReadabilityFinding}
                 />
 
                 {/* Settings button (always accessible in desktop header) */}
