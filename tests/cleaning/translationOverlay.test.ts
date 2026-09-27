@@ -989,7 +989,7 @@ const SMALL_MANUAL_BOX = {
   layoutAdjustment: { bx: 300, by: 300, bw: 90, bh: 70, iw: 1000, ih: 1200 },
 };
 
-async function renderOverlayFresh(text: string) {
+async function renderOverlayFresh(text: string, overrides: Partial<TranslatedBubble> = {}) {
   vi.resetModules();
   mockFontAwareMeasureCtx();
   const container = document.createElement("div");
@@ -1009,8 +1009,14 @@ async function renderOverlayFresh(text: string) {
   // created under the font-aware mock above (the singleton otherwise
   // persists across tests with the fixed-width mock).
   const { applyTranslationOverlay } = await import("@/lib/translationOverlay");
+  const bubble: TranslatedBubble = {
+    box: [100, 100, 300, 400],
+    t: text,
+    ...SMALL_MANUAL_BOX,
+    ...overrides,
+  };
   await applyTranslationOverlay(
-    [{ box: [100, 100, 300, 400], t: text, ...SMALL_MANUAL_BOX }],
+    [bubble],
     "single",
     0,
     vi.fn(),
@@ -1028,7 +1034,7 @@ async function renderOverlayFresh(text: string) {
   await vi.runAllTimersAsync();
   const wrapper = container.querySelector<HTMLElement>(".translation-bubble-wrapper")!;
   const canvas = wrapper.querySelector<HTMLCanvasElement>("canvas")!;
-  return { wrapper, canvas };
+  return { wrapper, canvas, container, chromeRoot, bubble };
 }
 
 test("grows a manually adjusted frame until its text fits inside", async () => {
@@ -1085,8 +1091,8 @@ test("scales the text with the corner resize handle", async () => {
   expect(bubble.fontSizeMultiplier).toBeCloseTo(1.25, 5);
 });
 
-test("keeps the text size when stretching the width handle", async () => {
-  const { container, chromeRoot, bubble } = await renderOverlay("ปรับกว้าง", {
+test("scales the text with the width handle too", async () => {
+  const { container, chromeRoot, bubble } = await renderOverlayFresh("ปรับกว้าง", {
     layoutAdjustment: { bx: 100, by: 100, bw: 200, bh: 360, iw: 1000, ih: 1200 },
     fontSizeMultiplier: 1,
   });
@@ -1097,7 +1103,53 @@ test("keeps the text size when stretching the width handle", async () => {
   handle.releasePointerCapture = vi.fn();
 
   firePointer(handle, "pointerdown", 500, 500);
+  // Stretching +60 source px on a 200px frame is x1.3 — the text must
+  // follow the frame exactly like the corner handle does.
   firePointer(handle, "pointermove", 560, 500);
+  expect(bubble.fontSizeMultiplier).toBeCloseTo(1.3, 5);
   firePointer(handle, "pointerup", 560, 500);
-  expect(bubble.fontSizeMultiplier).toBe(1);
+  expect(bubble.fontSizeMultiplier).toBeCloseTo(1.3, 5);
+});
+
+test("holds the dragged frame during a resize and never rockets the floor", async () => {
+  const { container, chromeRoot, wrapper } = await renderOverlayFresh(
+    "ชื่อนี้ต้องเป็นชื่อที่ถูกใจที่สุดของฉันจริงๆ",
+    { fontSizeMultiplier: 3 },
+  );
+  mockCanvasRect(container);
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  handle.setPointerCapture = vi.fn();
+  (handle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  handle.releasePointerCapture = vi.fn();
+
+  const before = Number.parseFloat(wrapper.style.width);
+  firePointer(handle, "pointerdown", 500, 500);
+  // Each move re-renders; the frame floor must stay paused so the frame
+  // tracks the cursor instead of fighting it (and never compounds).
+  firePointer(handle, "pointermove", 470, 500);
+  const midDrag1 = Number.parseFloat(wrapper.style.width);
+  expect(midDrag1).toBeCloseTo(before - 3, 1);
+  firePointer(handle, "pointermove", 440, 500);
+  const midDrag2 = Number.parseFloat(wrapper.style.width);
+  expect(midDrag2).toBeCloseTo(before - 6, 1);
+  firePointer(handle, "pointerup", 440, 500);
+  await vi.runAllTimersAsync();
+  const after = Number.parseFloat(wrapper.style.width);
+  // On release the floor may re-fit once, but it stays bounded by 2.5x of
+  // the dragged size — never the compounding balloon.
+  expect(after).toBeGreaterThanOrEqual(midDrag2 - 0.5);
+  expect(after).toBeLessThanOrEqual(midDrag2 * 2.5 + 1);
+});
+
+test("repairs inflated legacy adjustments left by the old floor bug", async () => {
+  const { canvas, wrapper } = await renderOverlay("บั๊กกรอบบวม", {
+    layoutAdjustment: { bx: -500, by: 100, bw: 4000, bh: 900, iw: 1000, ih: 1200 },
+  });
+  // The detection box is 300x240 source px (box is [ymin,xmin,ymax,xmax]);
+  // a saved 4000px-wide frame is rocket damage and must clamp back to 4x
+  // per dimension, re-centered inside the page.
+  const wPct = Number.parseFloat(wrapper.style.width);
+  expect(wPct).toBeLessThanOrEqual(120.1);
+  expect(Number(canvas.width)).toBeLessThanOrEqual(1201);
+  expect(Number.parseFloat(wrapper.style.left)).toBeGreaterThanOrEqual(0);
 });
