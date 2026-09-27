@@ -65,6 +65,14 @@ RETRY_CLEANER_ALIASES: dict[str, str] = {
 }
 
 
+def _feather_radius_for_route(route: CleanerRoute | str) -> int:
+    route_val = route.value if isinstance(route, CleanerRoute) else str(route)
+    if route_val == CleanerRoute.FLAT.value:
+        return 0
+    return 2
+
+
+
 @dataclass(frozen=True)
 class PipelineOutput:
     source_image: RgbImage
@@ -234,7 +242,8 @@ class CleaningPipeline:
             before = clean_image.copy()
             stage_started = perf_counter()
             repaired = cleaner.clean(before, region_mask, region)
-            candidate, support = compose(before, repaired, region_mask)
+            feather = _feather_radius_for_route(route.route)
+            candidate, support = compose(before, repaired, region_mask, feather_radius=feather)
             _restore_protected(
                 image_rgb,
                 candidate,
@@ -268,7 +277,7 @@ class CleaningPipeline:
                 # Use LAMA Large for second pass if available (ensemble effect)
                 fallback_cleaner = self.cleaners.get("lama-large") or cleaner
                 retry_repaired = fallback_cleaner.clean(before, retry_mask, region)
-                candidate, support = compose(before, retry_repaired, retry_mask)
+                candidate, support = compose(before, retry_repaired, retry_mask, feather_radius=feather)
                 _restore_protected(
                     image_rgb,
                     candidate,
@@ -463,7 +472,8 @@ class CleaningPipeline:
                 repaired = scoped_clean
             else:
                 repaired = cleaner.clean(clean_image, region_mask, region)
-            candidate, support = compose(clean_image, repaired, region_mask)
+            feather = _feather_radius_for_route(route.route)
+            candidate, support = compose(clean_image, repaired, region_mask, feather_radius=feather)
             _restore_protected(
                 image_rgb,
                 candidate,
@@ -567,10 +577,12 @@ class CleaningPipeline:
                         retry_mask,
                         item.region,
                     )
+                feather = _feather_radius_for_route(item.route)
                 candidate, retry_support = compose(
                     retry_base,
                     repaired,
                     retry_mask,
+                    feather_radius=feather,
                 )
                 _restore_protected(
                     image_rgb,
@@ -608,10 +620,12 @@ class CleaningPipeline:
                         lama_inference_count += 1
                         stage_started = perf_counter()
                         full_repaired = full_lama.clean_full_image(retry_base, retry_mask)
+                        feather = _feather_radius_for_route(item.route)
                         full_candidate, full_support = compose(
                             retry_base,
                             full_repaired,
                             retry_mask,
+                            feather_radius=feather,
                         )
                         _restore_protected(
                             image_rgb,
@@ -894,11 +908,12 @@ class CleaningPipeline:
 
         started = perf_counter()
         repaired = selected.clean(working_image, binary_mask, region)
+        feather = _feather_radius_for_route(record.route)
         candidate, support = compose(
             working_image,
             repaired,
             binary_mask,
-            feather_radius=0,
+            feather_radius=feather,
         )
         if action is ManualRegionAction.AUTOMATIC:
             _restore_protected(

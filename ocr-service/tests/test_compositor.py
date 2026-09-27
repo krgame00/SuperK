@@ -34,3 +34,22 @@ def test_compositor_returns_original_for_empty_mask() -> None:
     )
     assert np.array_equal(result, original)
     assert support.sum() == 0
+
+
+def test_compositor_feather_produces_smooth_alpha_transition() -> None:
+    original = np.zeros((32, 32, 3), np.uint8)
+    repaired = np.full((32, 32, 3), 100, np.uint8)
+    mask = np.zeros((32, 32), np.uint8)
+    mask[10:22, 10:22] = 255
+
+    # feather_radius=2 should produce intermediate gradient values along the border
+    result, support = compose(original, repaired, mask, feather_radius=2)
+
+    # Pixels deep inside mask should be fully repaired
+    assert np.all(result[12:20, 12:20] == 100)
+    # Pixels outside support should be strictly 0
+    assert np.all(result[support == 0] == 0)
+    # Border pixels between mask and support boundary should have intermediate values (0 < val < 100)
+    border_pixels = result[(support > 0) & (mask == 0)]
+    assert np.any((border_pixels > 0) & (border_pixels < 100)), "Expected smooth feather gradient at border"
+

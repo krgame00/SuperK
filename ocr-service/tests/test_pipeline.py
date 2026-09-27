@@ -521,3 +521,13 @@ def test_ui_page_story_region_is_sent_to_cleaner() -> None:
     assert np.any(output.mask)
     assert output.regions[0].text_role is TextRole.NARRATION
     assert output.regions[0].automatic_action is AutomaticAction.CLEAN
+
+
+def test_pipeline_uses_feathering_for_artwork_route_and_none_for_flat() -> None:
+    from app.pipeline import _feather_radius_for_route
+    from app.schemas import CleanerRoute
+
+    assert _feather_radius_for_route(CleanerRoute.FLAT) == 0
+    assert _feather_radius_for_route(CleanerRoute.GRADIENT) == 2
+    assert _feather_radius_for_route(CleanerRoute.ARTWORK) == 2
+
