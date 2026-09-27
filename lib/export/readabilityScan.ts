@@ -2,6 +2,7 @@ import {
   bubbleKeyOf,
   fitTextInAdaptiveBubble,
   getReadableMinimumFontSize,
+  growBubbleFrameToFit,
   measureBubbleRenderFit,
   readPageOverlayAdjustments,
   resolveCanvasFontFamily,
@@ -108,6 +109,16 @@ export function assessPageGeometry(input: PageGeometryInput): PageGeometryResult
     }
     const bubbleMultiplier = typeof bubble.fontSizeMultiplier === "number" ? bubble.fontSizeMultiplier
       : legacyAdjustment?.fontSizeMultiplier ?? 1;
+    const grown = growBubbleFrameToFit(
+      text, drawingWidth, drawingHeight, width, height, fontFamily,
+      globalMultiplier, bubbleMultiplier, !bubble.isInvalidBox && !invalidBox,
+    );
+    const growthCenterX = left + drawingWidth / 2;
+    const growthCenterY = top + drawingHeight / 2;
+    drawingWidth = grown.width;
+    drawingHeight = grown.height;
+    left = Math.max(0, Math.min(width - drawingWidth, growthCenterX - drawingWidth / 2));
+    top = Math.max(0, Math.min(height - drawingHeight, growthCenterY - drawingHeight / 2));
     const fit = measureBubbleRenderFit(
       text, drawingWidth, drawingHeight, width, fontFamily,
       globalMultiplier, bubbleMultiplier, !bubble.isInvalidBox && !invalidBox,

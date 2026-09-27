@@ -955,3 +955,201 @@ test("a stale overlay paint bails once a newer generation painted", async () => 
   expect(painted).toContain("จากหน้าใหม่");
   expect(painted).not.toContain("จากหน้าเก่า");
 });
+
+function mockFontAwareMeasureCtx(): void {
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
+    new Proxy(
+      {
+        measureText: function (this: { font?: string }, str: string) {
+          const match = /(\d+(?:\.\d+)?)px/.exec(this.font ?? "");
+          const fs = match ? parseFloat(match[1]) : 16;
+          return { width: str.length * fs * 0.62 };
+        },
+        fillText: fillTextSpy,
+        strokeText: strokeTextSpy,
+        clearRect: vi.fn(),
+        createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+      },
+      {
+        get(target, property) {
+          if (property in target) {
+            return target[property as keyof typeof target];
+          }
+          return vi.fn();
+        },
+        set(target, property, value) {
+          return Reflect.set(target as Record<PropertyKey, unknown>, property, value);
+        },
+      },
+    ) as unknown as CanvasRenderingContext2D,
+  );
+}
+
+const SMALL_MANUAL_BOX = {
+  layoutAdjustment: { bx: 300, by: 300, bw: 90, bh: 70, iw: 1000, ih: 1200 },
+};
+
+async function renderOverlayFresh(text: string, overrides: Partial<TranslatedBubble> = {}) {
+  vi.resetModules();
+  mockFontAwareMeasureCtx();
+  const container = document.createElement("div");
+  const chromeRoot = document.createElement("div");
+  chromeRoot.setAttribute("data-overlay-chrome-layer", "true");
+  const image = document.createElement("img");
+  Object.defineProperties(image, {
+    complete: { configurable: true, value: true },
+    naturalWidth: { configurable: true, value: 1000 },
+    naturalHeight: { configurable: true, value: 1200 },
+  });
+  container.appendChild(image);
+  document.body.appendChild(container);
+  document.body.appendChild(chromeRoot);
+
+  // Fresh module import so the fit engine's shared measuring context is
+  // created under the font-aware mock above (the singleton otherwise
+  // persists across tests with the fixed-width mock).
+  const { applyTranslationOverlay } = await import("@/lib/translationOverlay");
+  const bubble: TranslatedBubble = {
+    box: [100, 100, 300, 400],
+    t: text,
+    ...SMALL_MANUAL_BOX,
+    ...overrides,
+  };
+  await applyTranslationOverlay(
+    [bubble],
+    "single",
+    0,
+    vi.fn(),
+    undefined,
+    {
+      current: {
+        fontFamily: "Itim, sans-serif",
+        textColor: "#000000",
+        textOutline: "#ffffff",
+        fontSizeMultiplier: 1,
+      },
+    },
+    container,
+  );
+  await vi.runAllTimersAsync();
+  const wrapper = container.querySelector<HTMLElement>(".translation-bubble-wrapper")!;
+  const canvas = wrapper.querySelector<HTMLCanvasElement>("canvas")!;
+  return { wrapper, canvas, container, chromeRoot, bubble };
+}
+
+test("grows a manually adjusted frame until its text fits inside", async () => {
+  const { canvas, wrapper } = await renderOverlayFresh(
+    "ชื่อนี้ต้องเป็นชื่อที่ถูกใจที่สุดของฉันจริงๆ",
+  );
+  // The 90x70 frame is too small for this text once the font has reached
+  // its floor, so the frame itself must grow (capped at 2.5x) instead of
+  // letting the text overflow the bubble.
+  const grownW = (Number.parseFloat(wrapper.style.width) / 100) * 1000;
+  expect(grownW).toBeGreaterThan(90 * 1.3);
+  expect(grownW).toBeLessThanOrEqual(90 * 2.5 + 1);
+  expect(Number(canvas.width)).toBeCloseTo(grownW, 0);
+  expect(fillTextSpy).toHaveBeenCalled();
+});
+
+test("keeps a manually adjusted frame untouched when the text already fits", async () => {
+  const { canvas } = await renderOverlayFresh("สวัสดี");
+  expect(Number(canvas.width)).toBe(90);
+});
+
+function firePointer(handle: HTMLElement, type: string, x: number, y: number): void {
+  const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: y });
+  Object.defineProperty(event, "pointerId", { value: 1 });
+  handle.dispatchEvent(event);
+}
+
+// The resize handles convert client deltas to source pixels via the
+// inner .tl-canvas rect, so that is the rect the tests must pin.
+function mockCanvasRect(container: HTMLElement): void {
+  const tlCanvas = container.querySelector<HTMLElement>(".tl-canvas")!;
+  vi.spyOn(tlCanvas, "getBoundingClientRect").mockReturnValue({
+    left: 0, top: 0, right: 1000, bottom: 1200, width: 1000, height: 1200,
+  } as DOMRect);
+}
+
+test("scales the text with the corner resize handle", async () => {
+  const { container, chromeRoot, bubble } = await renderOverlay("ปรับขนาด", {
+    layoutAdjustment: { bx: 100, by: 100, bw: 200, bh: 360, iw: 1000, ih: 1200 },
+    fontSizeMultiplier: 1,
+  });
+  mockCanvasRect(container);
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="ne"]')!;
+  handle.setPointerCapture = vi.fn();
+  (handle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  handle.releasePointerCapture = vi.fn();
+
+  firePointer(handle, "pointerdown", 500, 500);
+  // Dragging down 90 source px grows the frame height 360 -> 450 (x1.25),
+  // and the text must scale with the frame exactly like the fit preview.
+  firePointer(handle, "pointermove", 500, 410);
+  expect(bubble.fontSizeMultiplier).toBeCloseTo(1.25, 5);
+  firePointer(handle, "pointerup", 500, 410);
+  expect(bubble.fontSizeMultiplier).toBeCloseTo(1.25, 5);
+});
+
+test("scales the text with the width handle too", async () => {
+  const { container, chromeRoot, bubble } = await renderOverlayFresh("ปรับกว้าง", {
+    layoutAdjustment: { bx: 100, by: 100, bw: 200, bh: 360, iw: 1000, ih: 1200 },
+    fontSizeMultiplier: 1,
+  });
+  mockCanvasRect(container);
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  handle.setPointerCapture = vi.fn();
+  (handle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  handle.releasePointerCapture = vi.fn();
+
+  firePointer(handle, "pointerdown", 500, 500);
+  // Stretching +60 source px on a 200px frame is x1.3 — the text must
+  // follow the frame exactly like the corner handle does.
+  firePointer(handle, "pointermove", 560, 500);
+  expect(bubble.fontSizeMultiplier).toBeCloseTo(1.3, 5);
+  firePointer(handle, "pointerup", 560, 500);
+  expect(bubble.fontSizeMultiplier).toBeCloseTo(1.3, 5);
+});
+
+test("holds the dragged frame during a resize and never rockets the floor", async () => {
+  const { container, chromeRoot, wrapper } = await renderOverlayFresh(
+    "ชื่อนี้ต้องเป็นชื่อที่ถูกใจที่สุดของฉันจริงๆ",
+    { fontSizeMultiplier: 3 },
+  );
+  mockCanvasRect(container);
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  handle.setPointerCapture = vi.fn();
+  (handle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  handle.releasePointerCapture = vi.fn();
+
+  const before = Number.parseFloat(wrapper.style.width);
+  firePointer(handle, "pointerdown", 500, 500);
+  // Each move re-renders; the frame floor must stay paused so the frame
+  // tracks the cursor instead of fighting it (and never compounds).
+  firePointer(handle, "pointermove", 470, 500);
+  const midDrag1 = Number.parseFloat(wrapper.style.width);
+  expect(midDrag1).toBeCloseTo(before - 3, 1);
+  firePointer(handle, "pointermove", 440, 500);
+  const midDrag2 = Number.parseFloat(wrapper.style.width);
+  expect(midDrag2).toBeCloseTo(before - 6, 1);
+  firePointer(handle, "pointerup", 440, 500);
+  await vi.runAllTimersAsync();
+  const after = Number.parseFloat(wrapper.style.width);
+  // On release the floor may re-fit once, but it stays bounded by 2.5x of
+  // the dragged size — never the compounding balloon.
+  expect(after).toBeGreaterThanOrEqual(midDrag2 - 0.5);
+  expect(after).toBeLessThanOrEqual(midDrag2 * 2.5 + 1);
+});
+
+test("repairs inflated legacy adjustments left by the old floor bug", async () => {
+  const { canvas, wrapper } = await renderOverlay("บั๊กกรอบบวม", {
+    layoutAdjustment: { bx: -500, by: 100, bw: 4000, bh: 900, iw: 1000, ih: 1200 },
+  });
+  // The detection box is 300x240 source px (box is [ymin,xmin,ymax,xmax]);
+  // a saved 4000px-wide frame is rocket damage and must clamp back to 4x
+  // per dimension, re-centered inside the page.
+  const wPct = Number.parseFloat(wrapper.style.width);
+  expect(wPct).toBeLessThanOrEqual(120.1);
+  expect(Number(canvas.width)).toBeLessThanOrEqual(1201);
+  expect(Number.parseFloat(wrapper.style.left)).toBeGreaterThanOrEqual(0);
+});

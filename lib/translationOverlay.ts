@@ -308,6 +308,36 @@ export function measureBubbleRenderFit(
   );
 }
 
+/** The export overlay may grow a non-fitting frame up to 2.5x before drawing. */
+export function growBubbleFrameToFit(
+  text: string,
+  baseWidth: number,
+  baseHeight: number,
+  pageWidth: number,
+  pageHeight: number,
+  fontFamily: string,
+  globalMultiplier: number,
+  bubbleMultiplier: number,
+  isOval: boolean,
+): { width: number; height: number } {
+  const maxWidth = Math.min(pageWidth, baseWidth * 2.5);
+  const maxHeight = Math.min(pageHeight, baseHeight * 2.5);
+  let width = baseWidth;
+  let height = baseHeight;
+  if (measureBubbleRenderFit(text, width, height, pageWidth, fontFamily, globalMultiplier, bubbleMultiplier, isOval).fits) {
+    return { width, height };
+  }
+  for (let guard = 0; guard < 30; guard++) {
+    const nextWidth = Math.min(maxWidth, width * 1.12);
+    const nextHeight = Math.min(maxHeight, height * 1.12);
+    if (nextWidth <= width + 0.5 && nextHeight <= height + 0.5) break;
+    width = nextWidth;
+    height = nextHeight;
+    if (measureBubbleRenderFit(text, width, height, pageWidth, fontFamily, globalMultiplier, bubbleMultiplier, isOval).fits) break;
+  }
+  return { width, height };
+}
+
 export const wrapTextForBubble = (
   text: string,
   maxW: number,
@@ -707,7 +737,28 @@ export const applyTranslationOverlay = async (
         ? `id-${b.id}`
         : `text-${(b.t || b.translated || "").slice(0, 10)}-${rawX.toFixed(1)}-${rawY.toFixed(1)}`;
       const legacyAdj = savedAdj[bubbleId] ?? savedAdj[legacyBubbleId];
-      const adj = b.layoutAdjustment ?? legacyAdj;
+      let adj = b.layoutAdjustment ?? legacyAdj;
+
+      // Repair layout adjustments inflated by the old frame-floor bug: a
+      // saved frame far larger than the detected bubble box balloons the
+      // whole wrapper, so clamp each dimension back to 4x the detection.
+      if (adj && !b.isInvalidBox) {
+        const rawPxW = (rawW / 100) * iw;
+        const rawPxH = (rawH / 100) * ih;
+        if (adj.bw > rawPxW * 4 || adj.bh > rawPxH * 4) {
+          const cx = Math.max(0, Math.min(iw, adj.bx + adj.bw / 2));
+          const cy = Math.max(0, Math.min(ih, adj.by + adj.bh / 2));
+          const repairedW = adj.bw > rawPxW * 4 ? rawPxW * 4 : adj.bw;
+          const repairedH = adj.bh > rawPxH * 4 ? rawPxH * 4 : adj.bh;
+          adj = {
+            ...adj,
+            bw: repairedW,
+            bh: repairedH,
+            bx: Math.max(0, Math.min(iw - repairedW, cx - repairedW / 2)),
+            by: Math.max(0, Math.min(ih - repairedH, cy - repairedH / 2)),
+          };
+        }
+      }
 
       if (legacyAdj?.fontSizeMultiplier !== undefined && b.fontSizeMultiplier === undefined) {
         b.fontSizeMultiplier = legacyAdj.fontSizeMultiplier;
@@ -718,8 +769,13 @@ export const applyTranslationOverlay = async (
       let currentBw = adj ? adj.bw : (rawW / 100) * iw;
       let currentBh = adj ? adj.bh : (rawH / 100) * ih;
       let currentRotation = adj?.rotation !== undefined ? adj.rotation : ((b.rotation as number) || 0);
+      // Frame-floor bookkeeping: the size the floor grows from (so repeated
+      // re-renders cannot compound it) and whether a resize drag is live.
+      let resizeDragActive = false;
+      let floorBase: { w: number; h: number } | null = null;
 
       const saveAdjustment = () => {
+        floorBase = { w: currentBw, h: currentBh };
         const persistedLayout: OverlayAdjustment = {
           bx: currentBx,
           by: currentBy,
@@ -794,6 +850,38 @@ export const applyTranslationOverlay = async (
       }
 
       const renderBubble = () => {
+        const currentStyle = textStyleRef?.current || ts;
+        const text = (b.t || b.translated || "").trim();
+        const currentFontFam = resolveCanvasFontFamily(currentStyle.fontFamily);
+        const bubbleMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
+
+        // Frame floor: when the font has already reached its floor and the
+        // text still cannot fit, grow the frame around its center instead of
+        // letting the text overflow the bubble. Growth is anchored to the
+        // last committed/fitting size (floorBase) so re-renders never
+        // compound it, and it pauses entirely while a resize drag is live —
+        // otherwise dragging smaller made the frame snap back and balloon.
+        if (text && !resizeDragActive) {
+          if (measureBubbleRenderFit(
+            text, currentBw, currentBh, iw, currentFontFam,
+            currentStyle.fontSizeMultiplier || 1.0, bubbleMult, !b.isInvalidBox,
+          ).fits) {
+            floorBase = { w: currentBw, h: currentBh };
+          } else {
+            if (!floorBase) floorBase = { w: currentBw, h: currentBh };
+            const cx = currentBx + currentBw / 2;
+            const cy = currentBy + currentBh / 2;
+            const grown = growBubbleFrameToFit(
+              text, floorBase.w, floorBase.h, iw, ih, currentFontFam,
+              currentStyle.fontSizeMultiplier || 1.0, bubbleMult, !b.isInvalidBox,
+            );
+            currentBw = grown.width;
+            currentBh = grown.height;
+            currentBx = Math.max(0, Math.min(iw - currentBw, cx - currentBw / 2));
+            currentBy = Math.max(0, Math.min(ih - currentBh, cy - currentBh / 2));
+          }
+        }
+
         wrapper.style.left = `${(currentBx / iw) * 100}%`;
         wrapper.style.top = `${(currentBy / ih) * 100}%`;
         wrapper.style.width = `${(currentBw / iw) * 100}%`;
@@ -804,16 +892,11 @@ export const applyTranslationOverlay = async (
         const ctx = bCanvas.getContext("2d");
         if (!ctx) return;
         ctx.clearRect(0, 0, currentBw, currentBh);
-        const currentStyle = textStyleRef?.current || ts;
-        const text = (b.t || b.translated || "").trim();
         if (!text) return;
-        const currentFontFam = resolveCanvasFontFamily(currentStyle.fontFamily);
-        const bubbleMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
         const resolvedStyle = resolveBubbleTextStyle(b, currentStyle);
         const textColor = resolvedStyle.textColor;
         const outlineColor = resolvedStyle.textOutline;
         const opacity = resolvedStyle.opacity ?? 1.0;
-
         const fit = measureBubbleRenderFit(
           text,
           currentBw,
@@ -1315,12 +1398,15 @@ export const applyTranslationOverlay = async (
         let rCenterX = 0, rCenterY = 0;
         let rStartAngle = 0;
         let rInitRot = 0;
+        let rInitFontMult = 1;
 
         handle.addEventListener('pointerdown', (e) => {
           rStartX = e.clientX; rStartY = e.clientY;
           rInitBx = currentBx; rInitBy = currentBy;
           rInitBw = currentBw; rInitBh = currentBh;
           rInitRot = currentRotation;
+          rInitFontMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1;
+          resizeDragActive = id === 'width' || id === 'scale';
 
           const bRect = wrapper.getBoundingClientRect();
           rCenterX = bRect.left + bRect.width / 2;
@@ -1343,11 +1429,19 @@ export const applyTranslationOverlay = async (
             currentRotation = (rInitRot + angleDiff + 360) % 360;
           } else if (id === 'width') {
             currentBw = Math.max(20, rInitBw + dx);
+            // Side-drag scales the text with the frame width as well, so
+            // both handles work as text-size controls (0.4-3.0 clamp).
+            const widthRatio = currentBw / rInitBw;
+            b.fontSizeMultiplier = Math.max(0.4, Math.min(3.0, rInitFontMult * widthRatio));
           } else if (id === 'scale') {
             currentBw = Math.max(20, rInitBw + dx);
             const newBh = Math.max(20, rInitBh - dy);
             currentBy = rInitBy + (rInitBh - newBh);
             currentBh = newBh;
+            // Corner-drag scales the text with the frame (same 0.4-3.0 clamp
+            // as the A+/A- buttons), so the whole bubble zooms as one unit.
+            const heightRatio = newBh / rInitBh;
+            b.fontSizeMultiplier = Math.max(0.4, Math.min(3.0, rInitFontMult * heightRatio));
           } else if (id === 'move') {
             currentBx = rInitBx + dx;
             currentBy = rInitBy + dy;
@@ -1362,7 +1456,11 @@ export const applyTranslationOverlay = async (
           } catch {
             // ignore
           }
+          const wasResizing = resizeDragActive;
+          resizeDragActive = false;
           saveAdjustment();
+          // Re-apply the frame floor once, now that the drag has ended.
+          if (wasResizing) renderBubble();
         });
 
         handle.addEventListener('pointercancel', (e) => {
@@ -1371,7 +1469,10 @@ export const applyTranslationOverlay = async (
           } catch {
             // ignore
           }
+          const wasResizing = resizeDragActive;
+          resizeDragActive = false;
           saveAdjustment();
+          if (wasResizing) renderBubble();
         });
 
         chromeHandles.push(handle);
