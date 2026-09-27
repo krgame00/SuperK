@@ -1,5 +1,77 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Adaptive Stroke Dilation, Paragraph Notch Closing, and Compositor Feathering — 2026-09-27
+
+Status: **VERIFIED WORKING (Automated backend mask generation covers strokes/drop-shadows, bridges multi-line stepped paragraph notches, and outward Hermite smoothstep eliminates inpainting boundary seams; 193/193 Pytest passed, 959/959 Vitest passed, 0 TypeScript errors)**.
+
+- **User Context & Symptom**:
+  - User reported: Stylized artwork text with thick drop-shadows and strokes was leaving dark jagged seams/residue after cleaning ("เราจะแก้ขอมันลบไม่หมดได้นังไงบ้าง", "มันก็เลือกหมดแล้วนะ").
+  - Previous behavior: Users had to manually paint extra mask or use "เติมเต็มกรอบ" to expand coverage, but manually painted masks lacked smooth boundary blending.
+- **Root Cause & Technical Solutions**:
+  1. **Stroke & Drop-Shadow Under-dilation in Mask Refiner**:
+     - `_refine_seed_mask` capped dilation radius to 1px (`min(1, radius)`), leaving dark shadows and multi-pixel stroke outlines unmasked.
+     - Solution: Replaced with adaptive dilation radius `dilation_radius = max(2, min(5, radius))` derived from `_estimate_stroke_radius(component)`, while strictly honoring `protected_edges` (preserving comic art lines and faces).
+  2. **Multi-line Stepped Paragraph Gaps**:
+     - When multi-line text has indented or irregular line lengths, the union mask formed jagged notch steps between lines, causing inpainters to produce harsh stepped boundaries.
+     - Solution: Added `close_paragraph_notches()` using `cv2.morphologyEx(..., cv2.MORPH_CLOSE, kernel=(7, 9))` constrained by envelope bounding box and protected artwork edges.
+  3. **Inpainting Boundary Seams & Feathering Leak**:
+     - Hard mask compositing produced noticeable boundary seams against photographic or gradient artwork backgrounds.
+     - Early blur attempts softened alpha inward into the text area (`binary > 0` alpha dropped to 0.47), leaking original text pixels back into the cleaned image.
+     - Solution: Implemented outward Hermite smoothstep fade in `ocr-service/app/compositor.py` (`alpha[binary > 0] = 1.0` clamped strictly to 1.0, with graceful fade outside `binary` based on distance transform: `t = dist / (r + 0.5); alpha = 1.0 - (3*t^2 - 2*t^3)`).
+     - Route-aware blending in `pipeline.py`: `feather_radius = 0` for `FLAT` white speech balloons to preserve crisp black contours; `feather_radius = 2` for `GRADIENT` and `ARTWORK`.
+- **Verification Evidence**:
+  - Pytest: **193 passed, 3 deselected, 0 failures** (`ocr-service/tests`).
+  - Vitest: **146 files passed, 959 passed, 1 skipped, 0 failures** (`npm test`).
+  - TypeScript: **0 errors** (`npx tsc --noEmit`).
+  - Dedicated regression tests:
+    - `test_adaptive_dilation_covers_stroke_and_shadow_without_breaching_protection`
+    - `test_paragraph_gap_closing_smoothes_notched_step`
+    - `test_feathered_compositor_smooths_seam_without_leaking_source`
+    - `test_pipeline_applies_route_aware_feathering_to_cleaner_passes`
+
+## Full System Review Fix Program Implemented (All 16 Tickets) — 2026-09-26
+
+Status: **VERIFIED WORKING / ALL WEB-CORE FIX TICKETS LANDED (grill-with-docs → spec → 16 tickets → TDD implementation; 5 commits on `main`: `1688c17`, `bcddfa7`, `ed479e2`, `6737175`, `a502d04`; vitest 957 passed (+28 vs 929 baseline), pytest 189 passed (+3), tsc 0 errors, ESLint 0 errors / 46 warnings (baseline held))**.
+
+- **Process (user-approved via grill-with-docs session, 2 rounds, all recommendations accepted)**:
+  - Report → fix plan (`docs/2026-09-26-review-fix-plan.md`) → spec (`.scratch/web-core-review-fixes/spec.md`, `Status: ready-for-agent`) → 16 vertical-slice tickets (`.scratch/web-core-review-fixes/issues/01–16`, all resolved with per-ticket Answers).
+  - Agreed testing seams: 5 existing (RTL page, MaskEditor component, lib/hook tests, pytest TestClient + golden cleaner tests, extension jsdom) + **one new seam** — a real-Next-server HTTP integration harness — because the clean-proxy traversal and pairing rebinding live in the router's own behavior (path-segment decoding, Host/Origin), which direct handler invocation cannot prove.
+  - Rule honored throughout: every 🔍 finding started with a failing test reproducing the symptom before the fix; two-axis code-review (Standards + Spec sub-agents) ran per set and findings were applied in-change.
+- **Commits & What Landed**:
+  1. `1688c17` — docs: full system review report, review fix plan, and new CONTEXT.md glossary term **"Deleted bubble"** (deleted = shown nowhere, exported nowhere, until undo).
+  2. `bcddfa7` (tickets 02–05, quick wins): export compositing skips Deleted bubbles (`data-deleted` marker + `display:none` filter); sidecar retry mapping moved to `RETRY_CLEANER_ALIASES` (single source; `RETRY_CLEANERS` derives from it; `lama-large` retry works; unavailable-cleaner path tested); global keyboard guards via shared `isShortcutTargetBlocked()` (shortcuts no longer fire inside dialogs / content-editables; Space activates focused buttons); Mask Editor Space = pan only — keyboard never paints the Removal authorization mask, dead `commitBrushAt` removed; Thai word-safety (B7) stays queued.
+  3. `ed479e2` (tickets 01, 06–08, security): **HTTP integration harness** — real Next dev server in a CHILD process (`tests/api/nextServerChild.mjs` + `nextServerHarness.ts`; in-process Next loading segfaults Node on Windows teardown, exit 139 — child + IPC graceful close fixes it) with a recording sidecar stub and a raw-Host/Origin request helper; pairing endpoint requires exact listener host + loopback hostname (kills DNS-rebinding token read; self-hosted exception removed per agreement); clean proxy rejects dot-segments and non-`v1` scopes before building the upstream URL plus a post-normalization `basePath/v1/` check; **publish-back and workspace/append now require the pairing token (401) on all methods** — all four callers attach `Authorization: Bearer` (extension sync + OPEN_EDITOR from stored pairing token; app page fetches token via `/pair` for handoff pull and publish-back), shared `requirePairingAuth`/`extractPairingToken` in `lib/server/pairing.ts`; workspace handoffs expire after 24h (`_setHandoffTtlForTest`).
+  4. `6737175` (tickets 09–10): overlay paint generations (per-container generation token; stale paints bail at entry and after the font await — a slow previous-page paint can never repaint over the current page); offline restore fast path requires positive persisted image dimensions, otherwise the guarded hydration path runs (no more silent clean-only pages via NaN translation scope).
+  5. `a502d04` (tickets 11–16, resources): Mask Editor undo = one base snapshot + compact stroke-op replay (`renderReplayedOps`) instead of 2 full-page clones per stroke (5 strokes: 21 full-page allocations → 7; ops window re-snapshots on fill/clear/undo/redo of non-stroke actions); text fitting reuses one shared measuring canvas (3 creation sites removed); GradientCleaner inpaints the region crop (+32px context via `_context_bounds`) instead of six full-page passes per region when Big-LaMa is unavailable; reading overlay no longer self-destructs after 2 minutes — SPA navigation watcher (1.5s href check) cleans and restores; overlay observes only its target image (ResizeObserver + `attributeFilter: ['src']`) instead of the whole document, with scroll repositioning added; loading scrim removes its resize listener on every removal path.
+- **Runtime Behavior Changes Worth Knowing**:
+  1. Extension must hold a paired token for publish-back / open-editor (401 otherwise) — existing pairing flow still works.
+  2. Pairing endpoint (`/api/extension/pair`) only serves the app page's own loopback origin — remote/self-hosted same-host exceptions are gone.
+  3. Mask Editor Space pans; painting is mouse-only; undo memory is bounded.
+  4. Reading-view overlays persist for the whole page visit and restore from saved translations.
+- **Verification Evidence**:
+  - Vitest: **146 files passed, 957 tests passed / 1 skipped** (baseline 929 → +28 new tests).
+  - Pytest: **189 passed / 3 skipped** (baseline 186 → +3: retry contract, unavailable cleaner, region-crop).
+  - `npx tsc --noEmit`: **0 errors**; `npm run lint`: **0 errors / 46 warnings** (pre-existing baseline untouched).
+  - Real-HTTP integration suite: `tests/api/nextServer.integration.test.ts` (4 tests over the child-process Next server: harness smoke, rebinding refusal, scoped forwarding, token gate end-to-end).
+- **Follow-up fix (same day, user-reported UX)**: bubble quick-toolbar/handles dwarfed small bubbles and covered their text ("เครื่องมือพอข้อความเล็กแล้วใช้งานยาก มันไปบังกัน"). Fix: `positionChromeControls` now scales the whole chrome (toolbar + 38px handles) via `zoom` — `clamp(0.6, bubbleWidth/220, bubbleHeight/100, 1)` — keeping translate anchors intact and placement math on scaled dimensions; TDD test `chrome toolbar scales down for small bubbles and restores for large ones`. Harness hardening in the same change: `startNextTestServer` reuses an already-running dev server (port 3000 or `SUPERK_TEST_SERVER_URL`) instead of fighting Next 16's one-dev-server-per-directory lock, and stub-dependent assertions are skipped in reuse mode.
+- **Follow-up fix 2 (same day, user-reported: chrome ลอยไม่ตรง bubble — "ทำไมมันไม่ขึ้นตรงข้อความ")**: the `zoom` scaling above regressed anchoring — CSS `zoom` also multiplies a zoomed element's own `left/top` lengths by the zoom factor, so the chrome rendered at 0.6× its intended offset from the chrome-layer origin (floated up-left off the bubble). Fix (commit `6c93226`): `positionChromeControls` pre-divides every written `left/top` (toolbar + all handles) by `chromeScale`, and normalizes `toolbar.offsetWidth/offsetHeight` by the previous sync's applied zoom (they already include it) so the base measurement stays stable across re-syncs. Tests: new `zoomed-down chrome stays anchored on the bubble` (zoom-aware offsetWidth emulation + re-sync stability + zoom-1 passthrough) and `anchors toolbar and handles to the bubble screen rect` updated to Chrome's zoom semantics. Gates: tsc 0 errors, touched-file eslint clean, vitest **959 passed / 1 skipped**.
+- **Follow-up fix 3 (same day, user-reported: manual cleaning blocked — "Image cleaning failed: mask must stay within the selected region")**: live-reproduced the whole editor flow in a real browser (fetch instrumentation captured every retry payload; sent-mask bounding boxes compared against the target job's `record.rect`). Findings: the editor always ships a rect-clipped mask, the stored rect never shrinks on retry (the `MaskRegion` bbox in `retry_region` is classifier-internal only), and every in-session retry was accepted — the hard error only fires once the client's region rect lags the stored one (stale result after a re-clean with detection drift, region remap, or a raced retry), which then blocks ALL manual cleaning for that region. Fix (commit `f98f03d`): `retry_region` now clips every submitted mask to the authorized region rect unconditionally and fails only when nothing survives the clip ("authorized mask is empty") — the planned "backend clips to selected rectangle and refuses empty" behavior; nothing outside the region is ever cleaned. The editor's >2px client-side hard blocks ("Mask เกินพื้นที่…") were removed for the same reason; overflow still routes to the "adjusted" notice. Tests: `test_force_clean_clips_mask_pixels_outside_selected_region` (reverses the old rejection test; asserts untouched pixels outside the rect and the clipped-mask approval revision), rewritten `material brush overflow` vitest case. Gates: pytest **189 passed / 3 skipped**, vitest **959 passed / 1 skipped**, tsc 0 errors, touched-file eslint clean. NOTE: the sidecar runs without `--reload`, so a sidecar restart is required for the fix to take effect.
+- **Deferred (unchanged, per plan)**: Experimental Gemini Catalog (A1, A2, A9, A10), Paused Electron Desktop Backlog (D1–D15), later P2/P3 sweep (53 items incl. B7 Thai word-boundary fix and E11 storage.sync→local migration), Studio stack kept de-scoped.
+
+## System Review Plan Alignment & Working State Scrutiny — 2026-09-26
+
+Status: **VERIFIED WORKING / PLAN UPDATED (Realigned 2026-09-26 Full System Review with active Web App targets; Electron D1-D15 marked PAUSED; Dynamic Gemini Catalog A1/A2 marked EXPERIMENTAL deferred)**.
+
+- **User Direction & Clarification**:
+  - User requested reviewing `docs/2026-09-26-full-system-review.md` and explicitly clarified:
+    1. **Electron Shell (D1 - D15)**: Confirmed **PAUSED**. The app runs in standard browser tabs (Brave/Chrome) via `SuperK-Launcher.vbs`. Desktop packaging & Electron shell development remain suspended to avoid wasting effort on unused code.
+    2. **Gemini Translation Routing (A1, A2)**: Live translation is strictly locked to the **Fixed Route (`requestGemini`)** baseline. Dynamic catalog (`executeGeminiTranslation`) remains **EXPERIMENTAL** and deferred from active production P1 queues.
+- **Action Taken in Plan**:
+  - Updated `docs/2026-09-26-full-system-review.md`:
+    - Part A: Added production live baseline note to A1/A2, classifying them as Experimental Backlog.
+    - Part D: Added explicit `PAUSED / DESKTOP BACKLOG` callout banner to D1-D15.
+    - Queue & Priority: Realigned active execution queues to focus on **Web Core Safety, Masking/Editor Stability, and Memory Consumption** (B1, C1, U1-U3, B7, A3-A4, U4, B10, C12), while cleanly separating Electron and Dynamic Catalog into paused/deferred backlogs.
+
 ## Mask Cleaning Hang & Unpainted Region Inpainting Fix — 2026-09-25
 
 Status: **VERIFIED WORKING (Fixed UI freeze on cleaning failure / retry; auto-fills empty mask with balloon bbox on 1-click clean; 917/917 executed Vitest tests pass; 182/182 CI-scope Pytest tests pass; 0 TypeScript errors)**.
