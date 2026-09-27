@@ -770,6 +770,47 @@ export const applyTranslationOverlay = async (
       }
 
       const renderBubble = () => {
+        const currentStyle = textStyleRef?.current || ts;
+        const text = (b.t || b.translated || "").trim();
+        const currentFontFam = resolveCanvasFontFamily(currentStyle.fontFamily);
+        const bubbleMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
+        const currentFontMult = (currentStyle.fontSizeMultiplier || 1.0) * bubbleMult;
+        const targetMinFs = Math.max(14, Math.round(getReadableMinimumFontSize(iw) * 0.75));
+        const minFsAllowed = Math.max(8, Math.round(targetMinFs * Math.min(1.0, bubbleMult)));
+
+        // Frame floor: when the font has already reached its floor and the
+        // text still cannot fit, grow the frame around its center instead of
+        // letting the text overflow the bubble. Runs on every re-render, so
+        // manual resizes, font bumps and text edits all keep frame == text.
+        if (text) {
+          const fitsAt = (w: number, h: number) =>
+            fitTextForBubble(
+              text,
+              w * 0.92,
+              h * 0.92,
+              currentFontFam,
+              !b.isInvalidBox,
+              currentFontMult,
+              minFsAllowed
+            ).fits;
+          if (!fitsAt(currentBw, currentBh)) {
+            const cx = currentBx + currentBw / 2;
+            const cy = currentBy + currentBh / 2;
+            const maxGrowW = Math.min(iw, currentBw * 2.5);
+            const maxGrowH = Math.min(ih, currentBh * 2.5);
+            for (let guard = 0; guard < 30; guard++) {
+              const nextW = Math.min(maxGrowW, currentBw * 1.12);
+              const nextH = Math.min(maxGrowH, currentBh * 1.12);
+              if (nextW <= currentBw + 0.5 && nextH <= currentBh + 0.5) break;
+              currentBw = nextW;
+              currentBh = nextH;
+              currentBx = Math.max(0, Math.min(iw - currentBw, cx - currentBw / 2));
+              currentBy = Math.max(0, Math.min(ih - currentBh, cy - currentBh / 2));
+              if (fitsAt(currentBw, currentBh)) break;
+            }
+          }
+        }
+
         wrapper.style.left = `${(currentBx / iw) * 100}%`;
         wrapper.style.top = `${(currentBy / ih) * 100}%`;
         wrapper.style.width = `${(currentBw / iw) * 100}%`;
@@ -780,19 +821,11 @@ export const applyTranslationOverlay = async (
         const ctx = bCanvas.getContext("2d");
         if (!ctx) return;
         ctx.clearRect(0, 0, currentBw, currentBh);
-        const currentStyle = textStyleRef?.current || ts;
-        const text = (b.t || b.translated || "").trim();
         if (!text) return;
-        const currentFontFam = resolveCanvasFontFamily(currentStyle.fontFamily);
-        const bubbleMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
-        const currentFontMult = (currentStyle.fontSizeMultiplier || 1.0) * bubbleMult;
         const resolvedStyle = resolveBubbleTextStyle(b, currentStyle);
         const textColor = resolvedStyle.textColor;
         const outlineColor = resolvedStyle.textOutline;
         const opacity = resolvedStyle.opacity ?? 1.0;
-
-        const targetMinFs = Math.max(14, Math.round(getReadableMinimumFontSize(iw) * 0.75));
-        const minFsAllowed = Math.max(8, Math.round(targetMinFs * Math.min(1.0, bubbleMult)));
         const fit = fitTextForBubble(
           text,
           currentBw * 0.92,
