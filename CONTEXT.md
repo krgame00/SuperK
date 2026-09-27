@@ -124,6 +124,14 @@ _Avoid_: Average crop brightness, source confidence score, Manual style enforcem
 A user-owned text style that automation may warn about but must not modify until the user explicitly returns the region to Auto or Readable behavior.
 _Avoid_: Temporary auto style, gate-corrected manual style
 
+**Typesetting readability warning**:
+A nonblocking finding that a rendered translation may overflow its text area, be too small to read comfortably, or lack sufficient separation from its local background. It asks for human inspection and never changes a Manual style override or counts as Page awaiting review.
+_Avoid_: Export failure, automatic correction, Page awaiting review
+
+**Readability warning acknowledgment**:
+A session-scoped record that a person saw and continued past a specific set of Typesetting readability warnings for an unchanged page revision. It suppresses a repeated export prompt for that same set, but never marks the page confirmed or prevents a fresh scan.
+_Avoid_: Confirmed page revision, permanent dismissal, skipped scan
+
 **Source-faithful rendering**:
 Rendering translated text from a validated Source text style profile while preserving the admitted source fill, outline presence, outline color/relative thickness, opacity, and other supported non-shadow styling. Detected source shadow or glow does not bypass the Uniform translated text shadow, so automatic rendering remains visually consistent across regions; a validated no-outline source may still remain no-outline.
 _Avoid_: Binary fallback styling presented as source, unvalidated source fidelity, per-region source shadow preservation
