@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   fitTextForBubble,
+  measureBubbleRenderFit,
   wrapTextForBubble,
 } from "../../lib/translationOverlay";
 
@@ -34,5 +35,20 @@ describe("Text Fitting Narrow-Width & Word-Break (Ticket 01)", () => {
     
     expect(lines.length).toBeGreaterThanOrEqual(2);
     expect(lines.join("")).toContain("Hello");
+  });
+
+  it("keeps font size strictly locked when targetFontSize is specified, reflowing lines only", () => {
+    const text = "ทั้งที่ข้าอุตส่าห์แต่งตัวในแบบที่เจ้าชอบแท้ๆ";
+    const lockedFs = 16;
+    
+    // Narrow box: reflows into more lines
+    const narrowFit = measureBubbleRenderFit(text, 80, 400, 1000, "sans-serif", 1, 1, false, lockedFs);
+    expect(narrowFit.fontSize).toBe(lockedFs);
+    expect(narrowFit.lines.length).toBeGreaterThanOrEqual(4);
+
+    // Wide box: reflows into fewer lines without ballooning font size
+    const wideFit = measureBubbleRenderFit(text, 300, 400, 1000, "sans-serif", 1, 1, false, lockedFs);
+    expect(wideFit.fontSize).toBe(lockedFs);
+    expect(wideFit.lines.length).toBeLessThan(narrowFit.lines.length);
   });
 });

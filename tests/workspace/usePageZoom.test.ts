@@ -124,6 +124,35 @@ describe("usePageZoom", () => {
     expect(pixelY).toBeCloseTo(300, 1);
   });
 
+  test("pans the zoomed image vertically with ordinary wheel scrolling", () => {
+    const container = createMockContainer(800, 1000);
+    const containerRef = { current: container };
+
+    const { result } = renderHook(() =>
+      usePageZoom({
+        currentPage: 0,
+        workspaceLayer: "original",
+        viewLayout: "single",
+        containerRef,
+        imageNaturalWidth: 1600,
+        imageNaturalHeight: 2000,
+      }),
+    );
+
+    act(() => {
+      result.current.zoomTo(2.0);
+    });
+    const initialPanY = result.current.pan.y;
+    const wheelEvent = new WheelEvent("wheel", { deltaY: 120, cancelable: true });
+
+    act(() => {
+      result.current.handleWheel(wheelEvent);
+    });
+
+    expect(wheelEvent.defaultPrevented).toBe(true);
+    expect(result.current.pan.y).toBe(initialPanY - 120);
+  });
+
   test("resets scale to Fit when currentPage changes", () => {
     const container = createMockContainer(1000, 1000);
     const containerRef = { current: container };

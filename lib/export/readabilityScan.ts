@@ -109,11 +109,13 @@ export function assessPageGeometry(input: PageGeometryInput): PageGeometryResult
     }
     const bubbleMultiplier = typeof bubble.fontSizeMultiplier === "number" ? bubble.fontSizeMultiplier
       : legacyAdjustment?.fontSizeMultiplier ?? 1;
-    const lockWidth = Boolean(adjustment);
+    const targetFs = bubble.targetFontSize ?? adjustment?.targetFontSize;
+    const lockWidth = Boolean(adjustment || targetFs);
     const grown = growBubbleFrameToFit(
       text, drawingWidth, drawingHeight, width, height, fontFamily,
       globalMultiplier, bubbleMultiplier, !bubble.isInvalidBox && !invalidBox,
       lockWidth,
+      targetFs,
     );
     if (!lockWidth) {
       const growthCenterX = left + drawingWidth / 2;
@@ -126,6 +128,7 @@ export function assessPageGeometry(input: PageGeometryInput): PageGeometryResult
     const fit = measureBubbleRenderFit(
       text, drawingWidth, drawingHeight, width, fontFamily,
       globalMultiplier, bubbleMultiplier, !bubble.isInvalidBox && !invalidBox,
+      targetFs,
     );
     const base = { pageUrl: input.pageUrl, pageIndex: input.pageIndex, bubbleId, text };
     measurements.push({ bubble, bubbleId, text, left, top, width: drawingWidth, height: drawingHeight,

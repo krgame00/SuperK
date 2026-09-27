@@ -268,7 +268,7 @@ export function usePageZoom({
     setScrollZoomMode((prev) => (prev === "fit-width" ? "actual-size" : "fit-width"));
   }, []);
 
-  // Wheel handling: Ctrl/Cmd + wheel for zoom
+  // Ctrl/Cmd + wheel zooms; ordinary wheel input pans the zoomed image.
   const handleWheel = useCallback(
     (e: React.WheelEvent | WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
@@ -280,9 +280,21 @@ export function usePageZoom({
 
         const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
         zoomTo(zoomState.scale * factor, { x: focalX, y: focalY });
+        return;
       }
+
+      if (zoomState.scale <= fitScale + 0.05 || (!e.deltaX && !e.deltaY)) return;
+
+      e.preventDefault();
+      setZoomState((prev) => ({
+        ...prev,
+        pan: clampPan(
+          { x: prev.pan.x - e.deltaX, y: prev.pan.y - e.deltaY },
+          prev.scale,
+        ),
+      }));
     },
-    [containerRef, zoomState.scale, zoomTo],
+    [clampPan, containerRef, fitScale, zoomState.scale, zoomTo],
   );
 
   // Pointer drag panning

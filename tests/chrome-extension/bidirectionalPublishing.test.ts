@@ -63,8 +63,8 @@ describe("Bidirectional Publishing Integration (Ticket 05)", () => {
     await import("../../chrome-extension/content.js");
 
     // Load background script
-    // @ts-ignore - chrome extension script without module exports
     window.eval(readFileSync("chrome-extension/server.js", "utf8"));
+    // @ts-ignore - chrome extension script without module exports
     await import("../../chrome-extension/background.js");
 
     // Mock fetch for /api/extension/publish-back
