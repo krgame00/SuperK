@@ -72,6 +72,9 @@ describe("WorkspaceControls", () => {
         onTranslateBook={vi.fn()}
         onTranslateCurrent={onTranslateCurrent}
         onRetryFailedPages={vi.fn()}
+        contaminatedPageCount={0}
+        onScanTranslations={vi.fn()}
+        onRetranslateContaminated={vi.fn()}
       />,
     );
     const trigger = screen.getByRole("button", { name: "เครื่องมือ" });
@@ -93,6 +96,9 @@ describe("WorkspaceControls", () => {
         onEditMask={vi.fn()}
         onTranslateBook={vi.fn()}
         onRetryFailedPages={vi.fn()}
+        contaminatedPageCount={0}
+        onScanTranslations={vi.fn()}
+        onRetranslateContaminated={vi.fn()}
       />,
     );
     const trigger = screen.getByRole("button", { name: "เครื่องมือ" });

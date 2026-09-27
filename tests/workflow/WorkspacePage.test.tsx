@@ -214,6 +214,7 @@ beforeEach(() => {
     batchFailures: [],
     invalidatePageTranslation,
     refreshPageTranslation,
+    scanTranslatedPages: vi.fn(() => []),
     getPageSignature: vi.fn(() => "rev-0"),
     getPageRevision: vi.fn(() => 0),
   };
@@ -310,6 +311,31 @@ describe("workspace clean-then-translate integration", () => {
     await waitFor(() => expect(retryRegion).toHaveBeenCalledTimes(1));
     expect(invalidatePageTranslation).not.toHaveBeenCalled();
     expect(toolbar().getAttribute("data-layer")).not.toBe("clean");
+  });
+
+  test("whole-book scan flags contaminated pages and retranslates only those", async () => {
+    const translateAll = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(useTranslation).mockReturnValue({
+      ...translationMockState,
+      handleTranslateAll: translateAll,
+      scanTranslatedPages: vi.fn(() => [
+        { pageUrl: ORIGINAL_URL, pageIndex: 0, contaminated: 2, total: 5 },
+      ]),
+    } as never);
+    await renderRestoredWorkspace();
+
+    const toolsTrigger = screen.getAllByRole("button", { name: "เครื่องมือ" })[0];
+    fireEvent.click(toolsTrigger);
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "ตรวจคำแปลทั้งเล่ม" }),
+    );
+
+    // The scan result flips the menu item into a targeted re-translate.
+    fireEvent.click(screen.getAllByRole("button", { name: "เครื่องมือ" })[0]);
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: /แปลใหม่ 1 หน้า/ }),
+    );
+    await waitFor(() => expect(translateAll).toHaveBeenCalledWith([0]));
   });
 
   test("mask retry preserves translations and re-renders over the new clean", async () => {

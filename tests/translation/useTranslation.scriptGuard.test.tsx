@@ -190,3 +190,19 @@ test("a dirtier retry does not replace the original translation", async () => {
   );
   expect(JSON.stringify(rendered)).not.toContain("Привет");
 });
+
+test("scanTranslatedPages reports only pages with contaminated bubbles", () => {
+  const { result } = renderTranslationHook(["blob:clean", "blob:dirty"]);
+  act(() => {
+    result.current.bubbleCacheRef.current.set("blob:clean", [
+      { box: [0, 0, 10, 10], t: "สวัสดี" },
+    ]);
+    result.current.bubbleCacheRef.current.set("blob:dirty", [
+      { box: [0, 0, 10, 10], t: "สวัสดี" },
+      { box: [0, 0, 10, 10], t: "こんにちは" },
+    ]);
+  });
+  expect(result.current.scanTranslatedPages()).toEqual([
+    { pageUrl: "blob:dirty", pageIndex: 1, contaminated: 1, total: 2 },
+  ]);
+});

@@ -2078,6 +2078,28 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     [invalidatePageTranslation, renderAndCacheTranslation],
   );
 
+  // Whole-book scan: count bubbles whose translation still carries
+  // foreign-script characters. The script guard only protects pages
+  // translated after it landed — older pages keep their contamination until
+  // they are re-translated, so the review flow needs this report.
+  const scanTranslatedPages = useCallback(() => {
+    const results: Array<{
+      pageUrl: string;
+      pageIndex: number;
+      contaminated: number;
+      total: number;
+    }> = [];
+    pagesRef.current.forEach((pageUrl, pageIndex) => {
+      const bubbles = bubbleCacheRef.current.get(pageUrl);
+      if (!bubbles || bubbles.length === 0) return;
+      const contaminated = countContaminatedBubbles(bubbles);
+      if (contaminated > 0) {
+        results.push({ pageUrl, pageIndex, contaminated, total: bubbles.length });
+      }
+    });
+    return results;
+  }, []);
+
   // Find & Replace support: rewrite bubble text in place so the bubble cache
   // survives (invalidating it would wipe the translations being edited).
   // Rendered images are re-rendered afterwards so they carry the new text.
@@ -2202,6 +2224,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     reviewFlaggedPages,
     invalidatePageTranslation,
     refreshPageTranslation,
+    scanTranslatedPages,
     replaceBubbleText,
     markPageDirty,
     getPageRevision,

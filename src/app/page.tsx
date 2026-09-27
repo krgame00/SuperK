@@ -404,6 +404,7 @@ export default function WorkspacePage() {
     reviewFlaggedPages,
     invalidatePageTranslation,
     refreshPageTranslation,
+    scanTranslatedPages,
     replaceBubbleText,
     markPageDirty,
     getPageSignature,
@@ -623,6 +624,50 @@ export default function WorkspacePage() {
       setIsUiOperationBusy(false);
     }
   }, [handleTranslateAll, operationBusy, pages.length]);
+
+  // Whole-book foreign-script scan: the translation script guard only covers
+  // pages translated after it landed, so the review flow gets an explicit
+  // scan + targeted re-translate.
+  const [contaminatedScan, setContaminatedScan] = useState<
+    Array<{ pageIndex: number; contaminated: number }>
+  >([]);
+
+  const handleScanTranslations = useCallback(() => {
+    const found = scanTranslatedPages();
+    setContaminatedScan(found);
+    void import("react-hot-toast").then((m) => {
+      if (found.length === 0) {
+        m.default("✅ ไม่พบตัวอักษรภาษาอื่นปนในคำแปลทั้งเล่ม", { duration: 3500 });
+      } else {
+        const detail = found
+          .map((f) => `หน้า ${f.pageIndex + 1} (${f.contaminated}/${f.total} จุด)`)
+          .join(", ");
+        m.default(
+          `⚠️ พบตัวอักษรภาษาอื่นปนในคำแปล: ${detail} — แปลใหม่ได้จากเมนูเครื่องมือ`,
+          { duration: 7000 },
+        );
+      }
+    });
+  }, [scanTranslatedPages]);
+
+  const handleRetranslateContaminated = useCallback(async (): Promise<void> => {
+    if (
+      uiOperationLockRef.current ||
+      operationBusy ||
+      contaminatedScan.length === 0
+    ) return;
+    uiOperationLockRef.current = true;
+    setIsUiOperationBusy(true);
+    const indices = contaminatedScan.map((f) => f.pageIndex);
+    try {
+      setWorkspaceLayer("translated");
+      await handleTranslateAll(indices);
+      setContaminatedScan(scanTranslatedPages());
+    } finally {
+      uiOperationLockRef.current = false;
+      setIsUiOperationBusy(false);
+    }
+  }, [contaminatedScan, handleTranslateAll, operationBusy, scanTranslatedPages]);
 
   const [reviewedPageUrls, setReviewedPageUrls] = useState<Set<string>>(
     () => new Set(),
@@ -1809,11 +1854,14 @@ export default function WorkspacePage() {
                   canEditMask={Boolean(currentCleaningResult)}
                   busy={operationBusy}
                   batchFailureCount={batchFailures.length}
+                  contaminatedPageCount={contaminatedScan.length}
                   onClean={() => void handleCleanCurrentPage()}
                   onEditMask={() => setIsMaskEditorOpen(true)}
                   onTranslateBook={() => void handleTranslateBook()}
                   onTranslateCurrent={() => void handleTranslateCurrent()}
                   onRetryFailedPages={() => void retryFailedPages()}
+                  onScanTranslations={handleScanTranslations}
+                  onRetranslateContaminated={() => void handleRetranslateContaminated()}
                   triggerRef={advancedToolsTriggerRef}
                 />
 
@@ -1921,11 +1969,14 @@ export default function WorkspacePage() {
               canEditMask={Boolean(currentCleaningResult)}
               busy={operationBusy}
               batchFailureCount={batchFailures.length}
+              contaminatedPageCount={contaminatedScan.length}
               onClean={() => void handleCleanCurrentPage()}
               onEditMask={() => setIsMaskEditorOpen(true)}
               onTranslateBook={() => void handleTranslateBook()}
               onTranslateCurrent={() => void handleTranslateCurrent()}
               onRetryFailedPages={() => void retryFailedPages()}
+              onScanTranslations={handleScanTranslations}
+              onRetranslateContaminated={() => void handleRetranslateContaminated()}
             />
           )}
           {pages.length > 0 && (

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 describe("Publish-Back Sync Resiliency & Epoch Recovery (Ticket PR-2)", () => {
@@ -72,6 +73,9 @@ describe("Publish-Back Sync Resiliency & Epoch Recovery (Ticket PR-2)", () => {
     };
 
     // Load background.js
+    // The service worker importScripts server.js (loadExtensionSettings);
+    // the ESM import below does not, so load it first.
+    window.eval(readFileSync("chrome-extension/server.js", "utf8"));
     // @ts-ignore - chrome extension script without module exports
     await import("../../chrome-extension/background.js");
   });

@@ -5,6 +5,7 @@ import {
   Eraser,
   Paintbrush,
   RotateCcw,
+  ScanSearch,
   Sparkles,
   Wrench,
 } from "lucide-react";
@@ -16,11 +17,14 @@ export interface WorkspaceAdvancedToolsProps {
   canEditMask: boolean;
   busy: boolean;
   batchFailureCount: number;
+  contaminatedPageCount: number;
   onClean: () => void;
   onEditMask: () => void;
   onTranslateBook: () => void;
   onTranslateCurrent?: () => void;
   onRetryFailedPages: () => void;
+  onScanTranslations: () => void;
+  onRetranslateContaminated: () => void;
   triggerRef?: RefObject<HTMLButtonElement | null>;
 }
 
@@ -29,11 +33,14 @@ export function WorkspaceAdvancedTools({
   canEditMask,
   busy,
   batchFailureCount,
+  contaminatedPageCount,
   onClean,
   onEditMask,
   onTranslateBook,
   onTranslateCurrent,
   onRetryFailedPages,
+  onScanTranslations,
+  onRetranslateContaminated,
   triggerRef,
 }: WorkspaceAdvancedToolsProps): ReactElement {
   const items: WorkspaceMenuItem[] = [
@@ -62,6 +69,25 @@ export function WorkspaceAdvancedTools({
       disabled: !canClean || busy,
       onSelect: onClean,
     },
+    ...(contaminatedPageCount > 0
+      ? [
+          {
+            id: "retranslate-contaminated",
+            label: `แปลใหม่ ${contaminatedPageCount} หน้า (ตัวอักษรปน)`,
+            icon: <RotateCcw className="h-4 w-4 text-amber-400" />,
+            disabled: busy,
+            onSelect: onRetranslateContaminated,
+          },
+        ]
+      : [
+          {
+            id: "scan-translations",
+            label: "ตรวจคำแปลทั้งเล่ม",
+            icon: <ScanSearch className="h-4 w-4 text-primary" />,
+            disabled: busy,
+            onSelect: onScanTranslations,
+          },
+        ]),
     {
       id: "edit-mask",
       label: "แก้ Mask",
