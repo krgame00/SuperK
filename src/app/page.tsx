@@ -36,6 +36,7 @@ import { WorkspacePrimaryAction } from "@/components/workspace/WorkspacePrimaryA
 import { WorkspaceAdvancedTools } from "@/components/workspace/WorkspaceAdvancedTools";
 import { ExportReportModal, type ExportReportRow } from "@/components/workspace/ExportReportModal";
 import { scanPageGeometry, type ReadabilityFinding } from "@/lib/export/readabilityScan";
+import { readabilityAcknowledgmentKey, type ReadabilityPageSnapshot } from "@/lib/export/readabilityAcknowledgment";
 import {
   generateArchiveFilename,
   generateComicInfoXml,
@@ -674,35 +675,46 @@ export default function WorkspacePage() {
 
   const [isExportReportOpen, setIsExportReportOpen] = useState(false);
   const [exportReportRows, setExportReportRows] = useState<ExportReportRow[]>([]);
+  const [pendingReadabilityExport, setPendingReadabilityExport] = useState<(() => void) | null>(null);
+  const [pendingReadabilityAck, setPendingReadabilityAck] = useState<string | null>(null);
+  const acknowledgedReadabilityRef = useRef(new Set<string>());
+  const [exportScanProgress, setExportScanProgress] = useState<{ completed: number; total: number } | null>(null);
   const reportScanGenerationRef = useRef(0);
   const [pendingReadabilityTarget, setPendingReadabilityTarget] = useState<ReadabilityFinding | null>(null);
 
+  const buildExportReportRows = useCallback((): ExportReportRow[] => {
+    const inspected = inspectTranslatedPages();
+    return pages.map((page, pageIndex) => {
+      const info = inspected.find((item) => item.pageIndex === pageIndex);
+      const cleaning = cleaningResultsByPage.get(page.url);
+      return {
+        pageIndex,
+        translated: Boolean(info),
+        totalBubbles: info?.total ?? 0,
+        contaminated: info?.contaminated ?? 0,
+        invalidBoxes: info?.invalidBoxes ?? 0,
+        pendingCleaning: cleaning?.regions.filter((region) => region.status === "needs_review").length ?? 0,
+      };
+    });
+  }, [pages, inspectTranslatedPages, cleaningResultsByPage]);
+
   const handleOpenExportReport = useCallback(() => {
     const generation = ++reportScanGenerationRef.current;
-    const inspected = inspectTranslatedPages();
-    const rows: ExportReportRow[] = pages.map((page, pageIndex) => {
-        const pageUrl = page.url;
-        const info = inspected.find((item) => item.pageIndex === pageIndex);
-        const cleaning = cleaningResultsByPage.get(pageUrl);
-        return {
-          pageIndex,
-          translated: Boolean(info),
-          totalBubbles: info?.total ?? 0,
-          contaminated: info?.contaminated ?? 0,
-          invalidBoxes: info?.invalidBoxes ?? 0,
-          pendingCleaning: cleaning
-            ? cleaning.regions.filter((region) => region.status === "needs_review")
-                .length
-            : 0,
-        };
-      });
+    setPendingReadabilityAck(null);
+    setPendingReadabilityExport(null);
+    const rows = buildExportReportRows();
     setExportReportRows(rows);
     setIsExportReportOpen(true);
     void (async () => {
       for (const row of rows) {
         const page = pages[row.pageIndex];
         const bubbles = bubbleCacheRef.current.get(page.url) ?? [];
-        if (bubbles.length === 0) continue;
+        if (bubbles.length === 0) {
+          setExportReportRows((current) => current.map((item) => item.pageIndex === row.pageIndex
+            ? { ...item, readabilityFindings: [] }
+            : item));
+          continue;
+        }
         let result;
         try {
           result = await scanPageGeometry({
@@ -721,12 +733,22 @@ export default function WorkspacePage() {
           : item));
       }
     })();
-  }, [pages, inspectTranslatedPages, cleaningResultsByPage, bubbleCacheRef, textStyleRef]);
+  }, [pages, buildExportReportRows, cleaningResultsByPage, bubbleCacheRef, textStyleRef]);
 
   const closeExportReport = useCallback(() => {
     reportScanGenerationRef.current += 1;
     setIsExportReportOpen(false);
+    setPendingReadabilityExport(null);
+    setPendingReadabilityAck(null);
+    setExportScanProgress(null);
   }, []);
+
+  const continueReadabilityExport = useCallback(() => {
+    const action = pendingReadabilityExport;
+    if (!exportScanProgress && pendingReadabilityAck) acknowledgedReadabilityRef.current.add(pendingReadabilityAck);
+    closeExportReport();
+    action?.();
+  }, [pendingReadabilityExport, pendingReadabilityAck, exportScanProgress, closeExportReport]);
 
   const selectReadabilityFinding = useCallback((finding: ReadabilityFinding) => {
     closeExportReport();
@@ -1601,6 +1623,106 @@ export default function WorkspacePage() {
     downloadTranslatedImage("single", currentPage, filename);
   };
 
+  const requestSinglePageExport = async () => {
+    const page = pages[currentPage];
+    if (!page) return;
+    const generation = ++reportScanGenerationRef.current;
+    const bubbles = bubbleCacheRef.current.get(page.url) ?? [];
+    let result;
+    try {
+      result = await scanPageGeometry({
+        pageUrl: page.url,
+        backgroundUrl: cleaningResultsByPage.get(page.url)?.cleanUrl ?? page.url,
+        pageIndex: currentPage,
+        bubbles,
+        textStyle: textStyleRef.current,
+      });
+    } catch {
+      result = { findings: [], unavailableReason: "ประเมินหน้านี้ไม่สำเร็จ" };
+    }
+    if (generation !== reportScanGenerationRef.current) return;
+    if (result.findings.length === 0 && !result.unavailableReason) {
+      await saveCurrentPageImage();
+      return;
+    }
+    const ackKey = readabilityAcknowledgmentKey([{
+      pageUrl: page.url,
+      revision: getPageSignature?.(page.url) ?? "rev-0",
+      findings: result.findings,
+      unavailable: result.unavailableReason,
+    }]);
+    if (ackKey && acknowledgedReadabilityRef.current.has(ackKey)) {
+      await saveCurrentPageImage();
+      return;
+    }
+    const info = inspectTranslatedPages().find((item) => item.pageIndex === currentPage);
+    const cleaning = cleaningResultsByPage.get(page.url);
+    setExportReportRows([{
+      pageIndex: currentPage,
+      translated: Boolean(info),
+      totalBubbles: info?.total ?? 0,
+      contaminated: info?.contaminated ?? 0,
+      invalidBoxes: info?.invalidBoxes ?? 0,
+      pendingCleaning: cleaning?.regions.filter((region) => region.status === "needs_review").length ?? 0,
+      readabilityFindings: result.findings,
+      readabilityUnavailable: result.unavailableReason,
+    }]);
+    setPendingReadabilityExport(() => () => { void saveCurrentPageImage(); });
+    setPendingReadabilityAck(ackKey);
+    setIsExportReportOpen(true);
+  };
+
+  const requestBookExport = async (format: "zip" | "cbz" | "pdf" | "strip") => {
+    if (pages.length === 0) return;
+    const generation = ++reportScanGenerationRef.current;
+    const rows = buildExportReportRows();
+    setExportReportRows(rows);
+    setExportScanProgress({ completed: 0, total: rows.length });
+    setPendingReadabilityAck(null);
+    setPendingReadabilityExport(() => () => { void handleDownloadAll(format); });
+    setIsExportReportOpen(true);
+
+    let needsReview = false;
+    const snapshots: ReadabilityPageSnapshot[] = [];
+    for (const row of rows) {
+      const page = pages[row.pageIndex];
+      const bubbles = bubbleCacheRef.current.get(page.url) ?? [];
+      let result;
+      try {
+        result = await scanPageGeometry({
+          pageUrl: page.url,
+          backgroundUrl: cleaningResultsByPage.get(page.url)?.cleanUrl ?? page.url,
+          pageIndex: row.pageIndex,
+          bubbles,
+          textStyle: textStyleRef.current,
+        });
+      } catch {
+        result = { findings: [], unavailableReason: "ประเมินหน้านี้ไม่สำเร็จ" };
+      }
+      if (generation !== reportScanGenerationRef.current) return;
+      needsReview ||= result.findings.length > 0 || Boolean(result.unavailableReason);
+      snapshots.push({
+        pageUrl: page.url,
+        revision: getPageSignature?.(page.url) ?? "rev-0",
+        findings: result.findings,
+        unavailable: result.unavailableReason,
+      });
+      setExportReportRows((current) => current.map((item) => item.pageIndex === row.pageIndex
+        ? { ...item, readabilityFindings: result.findings, readabilityUnavailable: result.unavailableReason }
+        : item));
+      setExportScanProgress({ completed: row.pageIndex + 1, total: rows.length });
+    }
+    if (generation !== reportScanGenerationRef.current) return;
+    setExportScanProgress(null);
+    const ackKey = readabilityAcknowledgmentKey(snapshots);
+    if (!needsReview || (ackKey && acknowledgedReadabilityRef.current.has(ackKey))) {
+      closeExportReport();
+      await handleDownloadAll(format);
+    } else {
+      setPendingReadabilityAck(ackKey);
+    }
+  };
+
   const processFiles = async (files: File[]) => {
     if (files.length === 0 || isImporting) return;
 
@@ -1965,13 +2087,6 @@ export default function WorkspacePage() {
                   triggerRef={advancedToolsTriggerRef}
                 />
 
-                <ExportReportModal
-                  isOpen={isExportReportOpen}
-                  rows={exportReportRows}
-                  onClose={closeExportReport}
-                  onSelectFinding={selectReadabilityFinding}
-                />
-
                 {/* Settings button (always accessible in desktop header) */}
                 <button
                   type="button"
@@ -2023,9 +2138,9 @@ export default function WorkspacePage() {
                   }}
                   onExport={(kind) => {
                     if (kind === "image") {
-                      void saveCurrentPageImage();
+                      void requestSinglePageExport();
                     } else {
-                      handleDownloadAll(kind);
+                      void requestBookExport(kind);
                     }
                   }}
                 />
@@ -2285,7 +2400,7 @@ export default function WorkspacePage() {
               <div className="text-[10px] font-bold text-muted uppercase tracking-wider px-1 mb-2 flex items-center gap-1.5">📥 ดาวน์โหลด</div>
               <button
                 onClick={() => {
-                  void saveCurrentPageImage();
+                  void requestSinglePageExport();
                   setIsMobileMenuOpen(false);
                 }}
                 disabled={activeBubbles.length === 0 || workspaceLayer !== "translated"}
@@ -2295,28 +2410,28 @@ export default function WorkspacePage() {
               </button>
               <div className="grid grid-cols-4 gap-2">
                 <button
-                  onClick={() => { handleDownloadAll("strip"); setIsMobileMenuOpen(false); }}
+                  onClick={() => { void requestBookExport("strip"); setIsMobileMenuOpen(false); }}
                   disabled={isZipping || pages.length === 0}
                   className="bg-surface text-foreground disabled:opacity-40 p-2 rounded-lg text-xs font-bold flex flex-col items-center justify-center gap-1 border border-transparent"
                 >
                   {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <><GalleryVertical className="w-5 h-5 text-muted" /><span>Strip</span></>}
                 </button>
                 <button
-                  onClick={() => { handleDownloadAll("zip"); setIsMobileMenuOpen(false); }}
+                  onClick={() => { void requestBookExport("zip"); setIsMobileMenuOpen(false); }}
                   disabled={isZipping || pages.length === 0}
                   className="bg-surface text-foreground disabled:opacity-40 p-2 rounded-lg text-xs font-bold flex flex-col items-center justify-center gap-1 border border-transparent"
                 >
                   {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <><FileArchive className="w-5 h-5 text-muted" /><span>ZIP</span></>}
                 </button>
                 <button
-                  onClick={() => { handleDownloadAll("cbz"); setIsMobileMenuOpen(false); }}
+                  onClick={() => { void requestBookExport("cbz"); setIsMobileMenuOpen(false); }}
                   disabled={isZipping || pages.length === 0}
                   className="bg-surface text-foreground disabled:opacity-40 p-2 rounded-lg text-xs font-bold flex flex-col items-center justify-center gap-1 border border-transparent"
                 >
                   {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <><BookOpen className="w-5 h-5 text-muted" /><span>CBZ</span></>}
                 </button>
                 <button
-                  onClick={() => { handleDownloadAll("pdf"); setIsMobileMenuOpen(false); }}
+                  onClick={() => { void requestBookExport("pdf"); setIsMobileMenuOpen(false); }}
                   disabled={isZipping || pages.length === 0}
                   className="bg-surface text-foreground disabled:opacity-40 p-2 rounded-lg text-xs font-bold flex flex-col items-center justify-center gap-1 border border-transparent"
                 >
@@ -2917,6 +3032,15 @@ export default function WorkspacePage() {
           </div>
         </div>
       )}
+
+      <ExportReportModal
+        isOpen={isExportReportOpen}
+        rows={exportReportRows}
+        onClose={closeExportReport}
+        onSelectFinding={selectReadabilityFinding}
+        onContinueExport={pendingReadabilityExport ? continueReadabilityExport : undefined}
+        scanProgress={exportScanProgress}
+      />
 
       {/* Diagnostic Taxonomy Modal for Batch Failures */}
       <TranslationDiagnosticModal

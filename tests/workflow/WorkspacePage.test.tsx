@@ -14,6 +14,7 @@ import { useCleaning } from "@/hooks/useCleaning";
 import { useTranslation } from "@/hooks/useTranslation";
 import WorkspacePage from "@/src/app/page";
 import { scanPageGeometry } from "@/lib/export/readabilityScan";
+import { downloadTranslatedImage } from "@/lib/translationOverlay";
 
 vi.mock("@/hooks/useCleaning");
 vi.mock("@/hooks/useTranslation");
@@ -367,6 +368,76 @@ describe("workspace clean-then-translate integration", () => {
     fireEvent.click(finding);
     await waitFor(() => expect(overlay).toHaveAttribute("data-readability-target", "true"));
     expect(screen.queryByRole("dialog", { name: "รายงานก่อนส่งออก" })).toBeNull();
+  });
+
+  test("single-page export waits for a readability choice and can continue", async () => {
+    const bubble = { id: "bubble-1", t: "ข้อความยาว", box: [100, 100, 200, 300] };
+    vi.mocked(useTranslation).mockReturnValue({
+      ...translationMockState,
+      bubbleCacheRef: { current: new Map([[ORIGINAL_URL, [bubble]]]) },
+    } as never);
+    vi.mocked(scanPageGeometry).mockResolvedValue({ findings: [
+      { pageUrl: ORIGINAL_URL, pageIndex: 0, bubbleId: "id-bubble-1", text: "ข้อความยาว", kind: "overflow" },
+    ] });
+    await renderRestoredWorkspace();
+    fireEvent.click(screen.getByRole("button", { name: "Layer translated" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "ส่งออก" })[0]);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "รูปภาพหน้านี้" }));
+    const report = await screen.findByRole("dialog", { name: "รายงานก่อนส่งออก" });
+    expect(vi.mocked(scanPageGeometry)).toHaveBeenCalledWith(expect.objectContaining({ pageIndex: 0 }));
+    expect(downloadTranslatedImage).not.toHaveBeenCalled();
+    fireEvent.click(within(report).getByRole("button", { name: "ส่งออกต่อ" }));
+    await waitFor(() => expect(downloadTranslatedImage).toHaveBeenCalled());
+  });
+
+  test("book export offers progress and early continuation without a late popup", async () => {
+    let finishScan!: (value: { findings: [] }) => void;
+    vi.mocked(scanPageGeometry).mockReturnValue(new Promise((resolve) => { finishScan = resolve; }));
+    vi.mocked(useTranslation).mockReturnValue({
+      ...translationMockState,
+      bubbleCacheRef: { current: new Map([[ORIGINAL_URL, [
+        { id: "bubble-1", t: "สวัสดี", box: [100, 100, 200, 300] },
+      ]]]) },
+    } as never);
+    await renderRestoredWorkspace();
+    fireEvent.click(screen.getAllByRole("button", { name: "ส่งออก" })[0]);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "ZIP" }));
+    const report = await screen.findByRole("dialog", { name: "รายงานก่อนส่งออก" });
+    expect(report).toHaveTextContent("กำลังตรวจ");
+    fireEvent.click(within(report).getByRole("button", { name: "ส่งออกต่อโดยไม่รอผลตรวจ" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "รายงานก่อนส่งออก" })).toBeNull());
+    finishScan({ findings: [] });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "รายงานก่อนส่งออก" })).toBeNull());
+  });
+
+  test("acknowledged warning does not interrupt a second export until page revision changes", async () => {
+    let revision = "rev-0";
+    vi.mocked(useTranslation).mockReturnValue({
+      ...translationMockState,
+      getPageSignature: vi.fn(() => revision),
+      bubbleCacheRef: { current: new Map([[ORIGINAL_URL, [
+        { id: "bubble-1", t: "สวัสดี", box: [100, 100, 200, 300] },
+      ]]]) },
+    } as never);
+    vi.mocked(scanPageGeometry).mockResolvedValue({ findings: [
+      { pageUrl: ORIGINAL_URL, pageIndex: 0, bubbleId: "id-bubble-1", text: "สวัสดี", kind: "overflow" },
+    ] });
+    await renderRestoredWorkspace();
+    fireEvent.click(screen.getByRole("button", { name: "Layer translated" }));
+    const requestImage = async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: "ส่งออก" })[0]);
+      fireEvent.click(await screen.findByRole("menuitem", { name: "รูปภาพหน้านี้" }));
+    };
+    await requestImage();
+    const report = await screen.findByRole("dialog", { name: "รายงานก่อนส่งออก" });
+    fireEvent.click(within(report).getByRole("button", { name: "ส่งออกต่อ" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "รายงานก่อนส่งออก" })).toBeNull());
+    await requestImage();
+    await waitFor(() => expect(vi.mocked(scanPageGeometry)).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("dialog", { name: "รายงานก่อนส่งออก" })).toBeNull();
+    revision = "rev-1";
+    await requestImage();
+    expect(await screen.findByRole("dialog", { name: "รายงานก่อนส่งออก" })).toBeTruthy();
   });
 
   test("whole-book scan flags contaminated pages and retranslates only those", async () => {

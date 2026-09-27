@@ -20,6 +20,8 @@ export interface ExportReportModalProps {
   rows: ExportReportRow[];
   onClose: () => void;
   onSelectFinding?: (finding: ReadabilityFinding) => void;
+  onContinueExport?: () => void;
+  scanProgress?: { completed: number; total: number } | null;
 }
 
 /**
@@ -33,6 +35,8 @@ export function ExportReportModal({
   rows,
   onClose,
   onSelectFinding,
+  onContinueExport,
+  scanProgress,
 }: ExportReportModalProps): ReactElement | null {
   useEffect(() => {
     if (!isOpen) return;
@@ -134,7 +138,9 @@ export function ExportReportModal({
                       )}
                     </td>
                     <td className="py-1.5">
-                      {row.readabilityUnavailable ? (
+                      {row.readabilityFindings === undefined && !row.readabilityUnavailable ? (
+                        <span className="text-muted">ยังไม่ได้ตรวจ</span>
+                      ) : row.readabilityUnavailable ? (
                         <span className="text-amber-400">ตรวจไม่ได้</span>
                       ) : (row.readabilityFindings?.length ?? 0) > 0 ? (
                         <span className="text-amber-400">{row.readabilityFindings?.length} จุด</span>
@@ -177,20 +183,29 @@ export function ExportReportModal({
 
         <div className="flex items-center justify-between gap-3 border-t border-border/60 px-4 py-3 text-xs">
           <span className="text-muted">
+            {scanProgress && `กำลังตรวจ ${scanProgress.completed}/${scanProgress.total} หน้า · `}
             {untranslated > 0 && `ยังไม่แปล ${untranslated} หน้า · `}
             {flagged > 0
               ? `มีจุดที่ควรตรวจ ${flagged} หน้า`
-              : untranslated === 0
+              : untranslated === 0 && !scanProgress && rows.every((row) => row.readabilityFindings !== undefined || row.readabilityUnavailable)
                 ? "ทุกหน้าพร้อมส่งออก"
                 : ""}
           </span>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg border border-border bg-surface px-3 py-1.5 font-medium text-foreground transition-colors hover:bg-surface-hover"
-          >
-            กลับไปตรวจ
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-border bg-surface px-3 py-1.5 font-medium text-foreground transition-colors hover:bg-surface-hover"
+            >
+              {onContinueExport ? "กลับไปแก้" : "กลับไปตรวจ"}
+            </button>
+            {onContinueExport && (
+              <button type="button" onClick={onContinueExport}
+                className="rounded-lg bg-primary px-3 py-1.5 font-medium text-white hover:opacity-90">
+                {scanProgress ? "ส่งออกต่อโดยไม่รอผลตรวจ" : "ส่งออกต่อ"}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
