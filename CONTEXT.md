@@ -311,3 +311,8 @@ _Avoid_: White-core-only outline detection, unidirectional contour sampling
 **Thematic subtitle pattern**:
 The typesetting practice of rendering floating dialogue and sound effects over artwork with pure white fill (#FFFFFF) and a contrasting contour in the character's thematic color, maximizing readability across any illustrated background while preserving character visual identity.
 _Avoid_: Solid-colored borderless text, uncontrasted floating text
+
+**Content-driven bubble reflow**:
+The dynamic wrapping of translated text into narrower or wider columns based on user-adjusted width, while automatically adapting frame height to fit line count without mutating the target font size multiplier. Dragging the width handle reshapes the text column, whereas dragging the corner scale handle performs proportional zoom of both frame dimensions and text size.
+_Avoid_: Proportional side scaling, font-shrunk narrow bubbles, manual multi-edge height adjustment
+
