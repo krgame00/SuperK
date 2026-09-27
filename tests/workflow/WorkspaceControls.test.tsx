@@ -75,6 +75,7 @@ describe("WorkspaceControls", () => {
         contaminatedPageCount={0}
         onScanTranslations={vi.fn()}
         onRetranslateContaminated={vi.fn()}
+        onOpenExportReport={vi.fn()}
       />,
     );
     const trigger = screen.getByRole("button", { name: "เครื่องมือ" });
@@ -99,6 +100,7 @@ describe("WorkspaceControls", () => {
         contaminatedPageCount={0}
         onScanTranslations={vi.fn()}
         onRetranslateContaminated={vi.fn()}
+        onOpenExportReport={vi.fn()}
       />,
     );
     const trigger = screen.getByRole("button", { name: "เครื่องมือ" });

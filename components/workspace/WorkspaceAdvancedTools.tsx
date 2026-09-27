@@ -8,6 +8,7 @@ import {
   ScanSearch,
   Sparkles,
   Wrench,
+  ClipboardCheck,
 } from "lucide-react";
 
 import { WorkspaceMenu, type WorkspaceMenuItem } from "@/components/workspace/WorkspaceMenu";
@@ -25,6 +26,7 @@ export interface WorkspaceAdvancedToolsProps {
   onRetryFailedPages: () => void;
   onScanTranslations: () => void;
   onRetranslateContaminated: () => void;
+  onOpenExportReport: () => void;
   triggerRef?: RefObject<HTMLButtonElement | null>;
 }
 
@@ -41,6 +43,7 @@ export function WorkspaceAdvancedTools({
   onRetryFailedPages,
   onScanTranslations,
   onRetranslateContaminated,
+  onOpenExportReport,
   triggerRef,
 }: WorkspaceAdvancedToolsProps): ReactElement {
   const items: WorkspaceMenuItem[] = [
@@ -68,6 +71,13 @@ export function WorkspaceAdvancedTools({
       icon: <Eraser className="h-4 w-4 text-primary" />,
       disabled: !canClean || busy,
       onSelect: onClean,
+    },
+    {
+      id: "export-report",
+      label: "รายงานก่อนส่งออก",
+      icon: <ClipboardCheck className="h-4 w-4 text-primary" />,
+      disabled: busy,
+      onSelect: onOpenExportReport,
     },
     ...(contaminatedPageCount > 0
       ? [

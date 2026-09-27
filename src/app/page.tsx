@@ -34,6 +34,7 @@ import { SettingsModal } from "@/components/workspace/SettingsModal";
 import { WorkspaceExportMenu } from "@/components/workspace/WorkspaceExportMenu";
 import { WorkspacePrimaryAction } from "@/components/workspace/WorkspacePrimaryAction";
 import { WorkspaceAdvancedTools } from "@/components/workspace/WorkspaceAdvancedTools";
+import { ExportReportModal } from "@/components/workspace/ExportReportModal";
 import {
   generateArchiveFilename,
   generateComicInfoXml,
@@ -405,6 +406,7 @@ export default function WorkspacePage() {
     invalidatePageTranslation,
     refreshPageTranslation,
     scanTranslatedPages,
+    inspectTranslatedPages,
     replaceBubbleText,
     markPageDirty,
     getPageSignature,
@@ -668,6 +670,41 @@ export default function WorkspacePage() {
       setIsUiOperationBusy(false);
     }
   }, [contaminatedScan, handleTranslateAll, operationBusy, scanTranslatedPages]);
+
+  const [isExportReportOpen, setIsExportReportOpen] = useState(false);
+  const [exportReportRows, setExportReportRows] = useState<
+    Array<{
+      pageIndex: number;
+      translated: boolean;
+      totalBubbles: number;
+      contaminated: number;
+      invalidBoxes: number;
+      pendingCleaning: number;
+    }>
+  >([]);
+
+  const handleOpenExportReport = useCallback(() => {
+    const inspected = inspectTranslatedPages();
+    setExportReportRows(
+      pages.map((page, pageIndex) => {
+        const pageUrl = page.url;
+        const info = inspected.find((item) => item.pageIndex === pageIndex);
+        const cleaning = cleaningResultsByPage.get(pageUrl);
+        return {
+          pageIndex,
+          translated: Boolean(info),
+          totalBubbles: info?.total ?? 0,
+          contaminated: info?.contaminated ?? 0,
+          invalidBoxes: info?.invalidBoxes ?? 0,
+          pendingCleaning: cleaning
+            ? cleaning.regions.filter((region) => region.status === "needs_review")
+                .length
+            : 0,
+        };
+      }),
+    );
+    setIsExportReportOpen(true);
+  }, [pages, inspectTranslatedPages, cleaningResultsByPage]);
 
   const [reviewedPageUrls, setReviewedPageUrls] = useState<Set<string>>(
     () => new Set(),
@@ -1862,7 +1899,14 @@ export default function WorkspacePage() {
                   onRetryFailedPages={() => void retryFailedPages()}
                   onScanTranslations={handleScanTranslations}
                   onRetranslateContaminated={() => void handleRetranslateContaminated()}
+                  onOpenExportReport={handleOpenExportReport}
                   triggerRef={advancedToolsTriggerRef}
+                />
+
+                <ExportReportModal
+                  isOpen={isExportReportOpen}
+                  rows={exportReportRows}
+                  onClose={() => setIsExportReportOpen(false)}
                 />
 
                 {/* Settings button (always accessible in desktop header) */}
@@ -1977,6 +2021,7 @@ export default function WorkspacePage() {
               onRetryFailedPages={() => void retryFailedPages()}
               onScanTranslations={handleScanTranslations}
               onRetranslateContaminated={() => void handleRetranslateContaminated()}
+              onOpenExportReport={handleOpenExportReport}
             />
           )}
           {pages.length > 0 && (

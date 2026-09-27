@@ -2078,27 +2078,44 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     [invalidatePageTranslation, renderAndCacheTranslation],
   );
 
-  // Whole-book scan: count bubbles whose translation still carries
-  // foreign-script characters. The script guard only protects pages
-  // translated after it landed — older pages keep their contamination until
-  // they are re-translated, so the review flow needs this report.
-  const scanTranslatedPages = useCallback(() => {
+  // Whole-book inspection: per-page bubble stats for every translated page.
+  // The script guard only protects pages translated after it landed — older
+  // pages keep their contamination until they are re-translated, so the
+  // review flow needs this report.
+  const inspectTranslatedPages = useCallback(() => {
     const results: Array<{
       pageUrl: string;
       pageIndex: number;
-      contaminated: number;
       total: number;
+      contaminated: number;
+      invalidBoxes: number;
     }> = [];
     pagesRef.current.forEach((pageUrl, pageIndex) => {
       const bubbles = bubbleCacheRef.current.get(pageUrl);
       if (!bubbles || bubbles.length === 0) return;
-      const contaminated = countContaminatedBubbles(bubbles);
-      if (contaminated > 0) {
-        results.push({ pageUrl, pageIndex, contaminated, total: bubbles.length });
-      }
+      results.push({
+        pageUrl,
+        pageIndex,
+        total: bubbles.length,
+        contaminated: countContaminatedBubbles(bubbles),
+        invalidBoxes: bubbles.filter(
+          (b) => (b as { isInvalidBox?: boolean }).isInvalidBox === true,
+        ).length,
+      });
     });
     return results;
   }, []);
+
+  const scanTranslatedPages = useCallback(() => {
+    return inspectTranslatedPages()
+      .filter((page) => page.contaminated > 0)
+      .map(({ pageUrl, pageIndex, contaminated, total }) => ({
+        pageUrl,
+        pageIndex,
+        contaminated,
+        total,
+      }));
+  }, [inspectTranslatedPages]);
 
   // Find & Replace support: rewrite bubble text in place so the bubble cache
   // survives (invalidating it would wipe the translations being edited).
@@ -2225,6 +2242,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     invalidatePageTranslation,
     refreshPageTranslation,
     scanTranslatedPages,
+    inspectTranslatedPages,
     replaceBubbleText,
     markPageDirty,
     getPageRevision,

@@ -215,6 +215,7 @@ beforeEach(() => {
     invalidatePageTranslation,
     refreshPageTranslation,
     scanTranslatedPages: vi.fn(() => []),
+    inspectTranslatedPages: vi.fn(() => []),
     getPageSignature: vi.fn(() => "rev-0"),
     getPageRevision: vi.fn(() => 0),
   };
@@ -311,6 +312,31 @@ describe("workspace clean-then-translate integration", () => {
     await waitFor(() => expect(retryRegion).toHaveBeenCalledTimes(1));
     expect(invalidatePageTranslation).not.toHaveBeenCalled();
     expect(toolbar().getAttribute("data-layer")).not.toBe("clean");
+  });
+
+  test("export report lists per-page translation and cleaning state", async () => {
+    vi.mocked(useTranslation).mockReturnValue({
+      ...translationMockState,
+      inspectTranslatedPages: vi.fn(() => [
+        { pageUrl: ORIGINAL_URL, pageIndex: 0, total: 5, contaminated: 1, invalidBoxes: 1 },
+      ]),
+    } as never);
+    await renderRestoredWorkspace();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "เครื่องมือ" })[0]);
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "รายงานก่อนส่งออก" }),
+    );
+
+    const report = await screen.findByRole("dialog", { name: "รายงานก่อนส่งออก" });
+    expect(within(report).getAllByRole("row")).toHaveLength(2); // header + one page
+    expect(report).toHaveTextContent("1 จุด"); // contaminated + invalid box cells
+    fireEvent.click(within(report).getByRole("button", { name: "ปิดรายงานก่อนส่งออก" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "รายงานก่อนส่งออก" }),
+      ).toBeNull(),
+    );
   });
 
   test("whole-book scan flags contaminated pages and retranslates only those", async () => {
