@@ -1326,12 +1326,14 @@ export const applyTranslationOverlay = async (
         let rCenterX = 0, rCenterY = 0;
         let rStartAngle = 0;
         let rInitRot = 0;
+        let rInitFontMult = 1;
 
         handle.addEventListener('pointerdown', (e) => {
           rStartX = e.clientX; rStartY = e.clientY;
           rInitBx = currentBx; rInitBy = currentBy;
           rInitBw = currentBw; rInitBh = currentBh;
           rInitRot = currentRotation;
+          rInitFontMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1;
 
           const bRect = wrapper.getBoundingClientRect();
           rCenterX = bRect.left + bRect.width / 2;
@@ -1359,6 +1361,10 @@ export const applyTranslationOverlay = async (
             const newBh = Math.max(20, rInitBh - dy);
             currentBy = rInitBy + (rInitBh - newBh);
             currentBh = newBh;
+            // Corner-drag scales the text with the frame (same 0.4-3.0 clamp
+            // as the A+/A- buttons), so the whole bubble zooms as one unit.
+            const heightRatio = newBh / rInitBh;
+            b.fontSizeMultiplier = Math.max(0.4, Math.min(3.0, rInitFontMult * heightRatio));
           } else if (id === 'move') {
             currentBx = rInitBx + dx;
             currentBy = rInitBy + dy;

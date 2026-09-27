@@ -1049,3 +1049,55 @@ test("keeps a manually adjusted frame untouched when the text already fits", asy
   const { canvas } = await renderOverlayFresh("สวัสดี");
   expect(Number(canvas.width)).toBe(90);
 });
+
+function firePointer(handle: HTMLElement, type: string, x: number, y: number): void {
+  const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: y });
+  Object.defineProperty(event, "pointerId", { value: 1 });
+  handle.dispatchEvent(event);
+}
+
+// The resize handles convert client deltas to source pixels via the
+// inner .tl-canvas rect, so that is the rect the tests must pin.
+function mockCanvasRect(container: HTMLElement): void {
+  const tlCanvas = container.querySelector<HTMLElement>(".tl-canvas")!;
+  vi.spyOn(tlCanvas, "getBoundingClientRect").mockReturnValue({
+    left: 0, top: 0, right: 1000, bottom: 1200, width: 1000, height: 1200,
+  } as DOMRect);
+}
+
+test("scales the text with the corner resize handle", async () => {
+  const { container, chromeRoot, bubble } = await renderOverlay("ปรับขนาด", {
+    layoutAdjustment: { bx: 100, by: 100, bw: 200, bh: 360, iw: 1000, ih: 1200 },
+    fontSizeMultiplier: 1,
+  });
+  mockCanvasRect(container);
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="ne"]')!;
+  handle.setPointerCapture = vi.fn();
+  (handle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  handle.releasePointerCapture = vi.fn();
+
+  firePointer(handle, "pointerdown", 500, 500);
+  // Dragging down 90 source px grows the frame height 360 -> 450 (x1.25),
+  // and the text must scale with the frame exactly like the fit preview.
+  firePointer(handle, "pointermove", 500, 410);
+  expect(bubble.fontSizeMultiplier).toBeCloseTo(1.25, 5);
+  firePointer(handle, "pointerup", 500, 410);
+  expect(bubble.fontSizeMultiplier).toBeCloseTo(1.25, 5);
+});
+
+test("keeps the text size when stretching the width handle", async () => {
+  const { container, chromeRoot, bubble } = await renderOverlay("ปรับกว้าง", {
+    layoutAdjustment: { bx: 100, by: 100, bw: 200, bh: 360, iw: 1000, ih: 1200 },
+    fontSizeMultiplier: 1,
+  });
+  mockCanvasRect(container);
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  handle.setPointerCapture = vi.fn();
+  (handle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  handle.releasePointerCapture = vi.fn();
+
+  firePointer(handle, "pointerdown", 500, 500);
+  firePointer(handle, "pointermove", 560, 500);
+  firePointer(handle, "pointerup", 560, 500);
+  expect(bubble.fontSizeMultiplier).toBe(1);
+});
