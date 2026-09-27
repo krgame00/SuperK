@@ -2,7 +2,8 @@
 
 ## Torii-Aligned Interactive Handles with Magnetic 90° Snapping — 2026-09-28
 
-Status: **VERIFIED WORKING (4-handle system fully aligned with Torii Translate scanlation ergonomics: magnetic right-angle snapping `snapRotationToRightAngle` for Rotate Handle `nw` within ±6°, font-driven corner scale `ne`, top-anchored width reflow `e`, direct move `sw`, standardized 36px white circular pills with blue border `#3b82f6` and hover glow; Vitest 157 files / 1,026 tests passed, TypeScript 0 errors)**.
+Status: **PAUSED by user ("ยังไม่พอใจนะ แต่พักไว้ก่อน" — Core 4-handle logic & magnetic snap landed with 1,026 tests passing, but user wants to pause further ergonomic fine-tuning for now)**.
+
 
 - **User Context & Direction**:
   - User requested: `"2. ชุด Interactive Handles (ปุ่มจับปรับรูปทรงรอบกรอบ) ในโค้ด Schema เค้าเตรียมไว้หลายแกนมาก... อยากดูพวกนี้"`, `"เราเอามาลองทั้งหมดได้ไหม แบบเอาตามเขาหมดเลย"`.
