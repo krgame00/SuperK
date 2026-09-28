@@ -19,14 +19,13 @@ describe("Text Fitting Narrow-Width & Word-Break (Ticket 01)", () => {
     expect(narrowFit.lines.join("")).toBe(text);
   });
 
-  it("breaks an individual long word when line width is narrower than the word", () => {
+  it("keeps an individual long word intact when line width is narrower than the word", () => {
     // Single long Thai token
     const longWord = "มหาวิทยาลัย";
     // Narrow width (e.g. 35px) where full word cannot fit on a single line at 14px font
     const lines = wrapTextForBubble(longWord, 35, 200, 14, "sans-serif", false);
     
-    expect(lines.length).toBeGreaterThan(1);
-    expect(lines.join("")).toBe(longWord);
+    expect(lines).toEqual([longWord]);
   });
 
   it("handles mixed English and Thai text in narrow vertical balloons", () => {

@@ -517,13 +517,14 @@ export function useTranslation({
           undefined,
           currentKey,
           () => markPageDirty(currentKey),
+          targetLang,
         );
       }, 100);
       return () => clearTimeout(timer);
     } else {
       setActiveBubbles((prev) => (prev.length === 0 ? prev : []));
     }
-  }, [currentPage, pages, viewMode, markPageDirty]);
+  }, [currentPage, pages, viewMode, markPageDirty, targetLang]);
 
   // Save status and revision management for session reliability
   const saveRevisionRef = useRef(0);
@@ -791,7 +792,7 @@ export function useTranslation({
           translatedImageCacheRef.current.set(pages[currentPage], dataUrl);
           markPageDirty(pages[currentPage], false);
           setTranslatedImages(new Map(translatedImageCacheRef.current));
-        }, textStyleRef, undefined, pages[currentPage], () => markPageDirty(pages[currentPage]));
+        }, textStyleRef, undefined, pages[currentPage], () => markPageDirty(pages[currentPage]), targetLang);
         setTranslationResult("✅ แปลเฉพาะจุดสำเร็จ!");
       }
       completedPagesRef.current.add(pages[currentPage]);
@@ -855,6 +856,8 @@ export function useTranslation({
                 textStyleRef,
                 offscreenContainer,
                 pageUrl,
+                undefined,
+                targetLang,
               ),
             )
             .catch(rejectOnce);
@@ -878,10 +881,11 @@ export function useTranslation({
           undefined,
           pageUrl,
           () => markPageDirty(pageUrl),
+          targetLang,
         );
       }
     },
-    [viewMode, markPageDirty],
+    [viewMode, markPageDirty, targetLang],
   );
 
 async function readBlobAsDataUrl(blob: Blob): Promise<string> {

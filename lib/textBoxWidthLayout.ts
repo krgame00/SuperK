@@ -3,6 +3,7 @@ export interface FixedFontWidthInput {
   widthPx: number;
   fontSizePx: number;
   fontFamily: string;
+  locale?: string;
   manualMinHeightPx: number;
   availableHeightPx: number;
   isOval: boolean;
@@ -47,11 +48,35 @@ const graphemesOf = (value: string): string[] => {
   return Array.from(value);
 };
 
-const wordSegmentsOf = (value: string): string[] => {
+export const segmentTextIntoWords = (value: string, locale = "th"): string[] => {
   if (typeof Intl !== "undefined" && "Segmenter" in Intl) {
     try {
-      const segmenter = new Intl.Segmenter("th", { granularity: "word" });
-      return Array.from(segmenter.segment(value), (part) => part.segment);
+      const segmenter = new Intl.Segmenter(locale, { granularity: "word" });
+      const segments: string[] = [];
+      const rawParts = Array.from(segmenter.segment(value));
+      for (let index = 0; index < rawParts.length; index += 1) {
+        const part = rawParts[index];
+        const segment = part.segment;
+        const nextPart = rawParts[index + 1];
+        const isInternalConnector = /^[\p{Pd}\p{Pc}'’]+$/u.test(segment);
+        if (
+          isInternalConnector
+          && nextPart?.isWordLike
+          && segments.length > 0
+          && !/^\s+$/u.test(segments[segments.length - 1])
+        ) {
+          segments[segments.length - 1] += segment + nextPart.segment;
+          index += 1;
+          continue;
+        }
+        const isTrailingPunctuation = /^[\p{Pd}\p{Pe}\p{Pf}\p{Po}]+$/u.test(segment);
+        if (isTrailingPunctuation && segments.length > 0 && !/^\s+$/u.test(segments[segments.length - 1])) {
+          segments[segments.length - 1] += segment;
+        } else {
+          segments.push(segment);
+        }
+      }
+      return segments;
     } catch {
       // Fall back to whitespace boundaries in older runtimes.
     }
@@ -65,17 +90,18 @@ function wrapForCandidate(
   safeWidthPx: number,
   fontSizePx: number,
   isOval: boolean,
+  locale: string,
   measureText: (value: string) => number,
-): { lines: string[]; glyphOverflow: boolean } {
+): { lines: string[]; wordOverflow: boolean } {
   const lines: string[] = [];
   let current = "";
-  let glyphOverflow = false;
+  let wordOverflow = false;
 
   const candidateWidthAt = (lineIndex: number): number =>
     allowedWidthAt(lineIndex, candidateLineCount, safeWidthPx, fontSizePx, isOval);
 
   const pushLine = (): void => {
-    lines.push(current);
+    lines.push(current.trimEnd());
     current = "";
   };
 
@@ -89,17 +115,8 @@ function wrapForCandidate(
     }
 
     if (!remaining) return;
-    if (measureText(remaining) <= candidateWidthAt(lines.length)) {
-      current += remaining;
-      return;
-    }
-
-    for (const grapheme of graphemesOf(remaining)) {
-      const allowedWidth = candidateWidthAt(lines.length);
-      if (current && measureText(current + grapheme) > allowedWidth) pushLine();
-      if (measureText(grapheme) > candidateWidthAt(lines.length)) glyphOverflow = true;
-      current += grapheme;
-    }
+    if (measureText(remaining) > candidateWidthAt(lines.length)) wordOverflow = true;
+    current += remaining;
   };
 
   for (const part of text.split(/(\n)/)) {
@@ -108,7 +125,7 @@ function wrapForCandidate(
       continue;
     }
 
-    for (const token of wordSegmentsOf(part)) {
+    for (const token of segmentTextIntoWords(part, locale)) {
       if (/^\s+$/.test(token)) {
         if (!current) continue;
         if (measureText(current + token) > candidateWidthAt(lines.length)) {
@@ -123,7 +140,75 @@ function wrapForCandidate(
   }
 
   if (current || lines.length === 0 || text.endsWith("\n")) pushLine();
-  return { lines, glyphOverflow };
+  return { lines, wordOverflow };
+}
+
+type MinimumWordWidthInput = Pick<FixedFontWidthInput, "text" | "fontSizePx" | "locale" | "isOval" | "measureText">;
+
+function linesFitTheirChords(
+  lines: string[],
+  widthPx: number,
+  fontSizePx: number,
+  isOval: boolean,
+  measureText: (value: string) => number,
+): boolean {
+  const safeWidthPx = Math.max(1, widthPx * 0.88);
+  return lines.every((line, lineIndex) => {
+    if (!isOval || lines.length <= 1) return measureText(line) <= safeWidthPx * 1.05;
+    const chordWidth = allowedWidthAt(lineIndex, lines.length, safeWidthPx, fontSizePx, isOval);
+    return measureText(line) <= chordWidth * 1.05;
+  });
+}
+
+/** Smallest frame width whose complete words can fit with the selected bubble shape. */
+export function minimumWidthForWholeWords(input: MinimumWordWidthInput): number {
+  const locale = input.locale || "th";
+  const words = segmentTextIntoWords(input.text, locale).filter((segment) => !/^\s+$/u.test(segment));
+  if (words.length === 0) return 30;
+
+  const widestWordPx = words.reduce((widest, word) => Math.max(widest, input.measureText(word)), 0);
+  const rectWidthPx = Math.max(1, Math.ceil(widestWordPx / 0.88));
+  if (!input.isOval) return rectWidthPx;
+
+  const maxCandidates = Math.min(
+    MAX_OVAL_LINE_CANDIDATES,
+    Math.max(1, words.length + (input.text.match(/\n/g)?.length ?? 0)),
+  );
+  const fitsAtWidth = (widthPx: number): boolean => {
+    const safeWidthPx = Math.max(1, widthPx * 0.88);
+    for (let candidateLineCount = 1; candidateLineCount <= maxCandidates; candidateLineCount += 1) {
+      const attempt = wrapForCandidate(
+        input.text,
+        candidateLineCount,
+        safeWidthPx,
+        input.fontSizePx,
+        true,
+        locale,
+        input.measureText,
+      );
+      if (
+        !attempt.wordOverflow
+        && attempt.lines.length <= candidateLineCount
+        && linesFitTheirChords(attempt.lines, widthPx, input.fontSizePx, true, input.measureText)
+      ) return true;
+    }
+    return false;
+  };
+
+  let low = rectWidthPx;
+  let high = Math.max(
+    low,
+    Math.ceil(words.reduce((total, word) => total + input.measureText(word), 0) / 0.88) + 1,
+  );
+  for (let attempt = 0; attempt < 12 && !fitsAtWidth(high); attempt += 1) high *= 2;
+  if (!fitsAtWidth(high)) return high;
+
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const middle = (low + high) / 2;
+    if (fitsAtWidth(middle)) high = middle;
+    else low = middle;
+  }
+  return Math.ceil(high);
 }
 
 /** Wrap content at a fixed visible font size, with bounded oval fitting. */
@@ -152,7 +237,7 @@ export function layoutTextAtFixedFont(input: FixedFontWidthInput): FixedFontWidt
     : 1;
 
   let chosenLines: string[] = [];
-  let glyphOverflow = false;
+  let wordOverflow = false;
   let settled = false;
 
   for (let candidateLineCount = 1; candidateLineCount <= maxCandidates; candidateLineCount += 1) {
@@ -162,26 +247,21 @@ export function layoutTextAtFixedFont(input: FixedFontWidthInput): FixedFontWidt
       safeWidthPx,
       finiteFontSize,
       input.isOval,
+      input.locale || "th",
       input.measureText,
     );
     chosenLines = attempt.lines;
-    glyphOverflow = attempt.glyphOverflow;
+    wordOverflow = attempt.wordOverflow;
 
-    const actualChordsFit = chosenLines.every((line, lineIndex) => {
-      if (!input.isOval || chosenLines.length <= 1) {
-        return input.measureText(line) <= safeWidthPx * 1.05;
-      }
-      const chordWidth = allowedWidthAt(
-        lineIndex,
-        chosenLines.length,
-        safeWidthPx,
-        finiteFontSize,
-        input.isOval,
-      );
-      return input.measureText(line) <= chordWidth * 1.05;
-    });
+    const actualChordsFit = linesFitTheirChords(
+      chosenLines,
+      finiteWidth,
+      finiteFontSize,
+      input.isOval,
+      input.measureText,
+    );
 
-    if ((!input.isOval || chosenLines.length <= candidateLineCount) && actualChordsFit) {
+    if ((!input.isOval || chosenLines.length <= candidateLineCount) && actualChordsFit && !wordOverflow) {
       settled = true;
       break;
     }
@@ -199,7 +279,7 @@ export function layoutTextAtFixedFont(input: FixedFontWidthInput): FixedFontWidt
     requiredHeightPx,
     heightPx,
     overflow: !settled
-      || glyphOverflow
+      || wordOverflow
       || requiredHeightPx > finiteAvailableHeight
       || manualMinHeight > finiteAvailableHeight,
   };

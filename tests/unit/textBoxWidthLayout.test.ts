@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { layoutTextAtFixedFont } from "@/lib/textBoxWidthLayout";
+import {
+  layoutTextAtFixedFont,
+  minimumWidthForWholeWords,
+} from "@/lib/textBoxWidthLayout";
 
 const measureByGrapheme = (value: string) => [...value].length * 10;
 
@@ -27,13 +30,63 @@ describe("layoutTextAtFixedFont", () => {
     expect(narrow.overflow).toBe(false);
   });
 
-  it("breaks an overlong token into graphemes without losing text", () => {
+  it("keeps an overlong token intact and reports overflow", () => {
     const text = "supercalifragilistic";
     const layout = layoutTextAtFixedFont({ ...base, text, fontSizePx: 10, widthPx: 45 });
 
-    expect(layout.lines.length).toBeGreaterThan(1);
-    expect(layout.lines.join("")).toBe(text);
+    expect(layout.lines).toEqual([text]);
+    expect(layout.overflow).toBe(true);
+  });
+
+  it("wraps at language-aware word boundaries and keeps trailing punctuation attached", () => {
+    const layout = layoutTextAtFixedFont({
+      ...base,
+      text: "one, two three",
+      fontSizePx: 10,
+      widthPx: 65,
+      locale: "en",
+    });
+
+    expect(layout.lines).toEqual(["one,", "two", "three"]);
     expect(layout.overflow).toBe(false);
+  });
+
+  it("measures the minimum rectangular width from the widest complete word", () => {
+    const minimumWidth = minimumWidthForWholeWords({
+      text: "tiny longest",
+      fontSizePx: 10,
+      isOval: false,
+      locale: "en",
+      measureText: measureByGrapheme,
+    });
+
+    expect(minimumWidth).toBe(80);
+  });
+
+  it("accounts for the oval chord when measuring the word-width floor", () => {
+    const input = {
+      text: "abc def",
+      fontSizePx: 10,
+      locale: "en",
+      measureText: measureByGrapheme,
+    };
+    const rectangularFloor = minimumWidthForWholeWords({ ...input, isOval: false });
+    const ovalFloor = minimumWidthForWholeWords({ ...input, isOval: true });
+
+    expect(ovalFloor).toBeGreaterThan(rectangularFloor);
+  });
+
+  it("keeps whitespace tokens whole when language segmentation is unavailable", () => {
+    const layout = layoutTextAtFixedFont({
+      ...base,
+      text: "alpha,beta gamma",
+      fontSizePx: 10,
+      widthPx: 45,
+      locale: "not_a_locale",
+    });
+
+    expect(layout.lines).toEqual(["alpha,beta", "gamma"]);
+    expect(layout.overflow).toBe(true);
   });
 
   it("uses a bounded oval chord calculation for each resulting line", () => {
@@ -50,7 +103,7 @@ describe("layoutTextAtFixedFont", () => {
   });
 
   it("preserves a manual minimum height and reports page-bottom overflow", () => {
-    const text = "abcdefghij";
+    const text = "abc def ghi";
     const manualHeight = layoutTextAtFixedFont({
       ...base, text, fontSizePx: 10, widthPx: 40, manualMinHeightPx: 120,
     });

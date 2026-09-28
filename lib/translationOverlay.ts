@@ -10,9 +10,28 @@ import {
   inferTextStyleCategory,
 } from "./colorMatching/nearbyStyleFallback";
 import type { TextStyleProfile } from "./colorMatching/types";
-import { layoutTextAtFixedFont, type FixedFontWidthResult } from "./textBoxWidthLayout";
+import {
+  layoutTextAtFixedFont,
+  minimumWidthForWholeWords,
+  segmentTextIntoWords,
+  type FixedFontWidthResult,
+} from "./textBoxWidthLayout";
 
 const ADJ_KEY = "superk:overlay-adjustments";
+const WORD_WRAP_LOCALES: Record<string, string> = {
+  thai: "th",
+  ไทย: "th",
+  english: "en",
+  japanese: "ja",
+  korean: "ko",
+  chinese: "zh",
+};
+
+const wordWrapLocaleOf = (language?: string): string => {
+  const normalized = language?.trim().toLowerCase();
+  if (!normalized) return "th";
+  return WORD_WRAP_LOCALES[normalized] ?? normalized;
+};
 
 // next/font registers its families under build-hashed names, so canvas
 // `ctx.font = "16px Itim"` silently falls back to generic sans-serif.
@@ -318,11 +337,12 @@ export function measureBubbleRenderFit(
   bubbleMultiplier: number,
   isOval: boolean,
   targetFontSize?: number,
+  locale = "th",
 ): BubbleTextFit {
   if (typeof targetFontSize === "number" && targetFontSize > 0) {
     const effectiveFs = Math.max(8, Math.round(targetFontSize * globalMultiplier * bubbleMultiplier));
     const layout = layoutBubbleAtFixedFont(
-      text, width, effectiveFs, fontFamily, isOval, 0, height,
+      text, width, effectiveFs, fontFamily, isOval, 0, height, locale,
     );
     return {
       fontSize: effectiveFs,
@@ -341,6 +361,7 @@ export function measureBubbleRenderFit(
     isOval,
     globalMultiplier * bubbleMultiplier,
     allowedMinimum,
+    locale,
   );
 }
 
@@ -357,12 +378,13 @@ export function growBubbleFrameToFit(
   isOval: boolean,
   lockWidth = false,
   targetFontSize?: number,
+  locale = "th",
 ): { width: number; height: number } {
   const maxWidth = lockWidth ? baseWidth : Math.min(pageWidth, baseWidth * 2.5);
   const maxHeight = Math.min(pageHeight, baseHeight * 2.5);
   let width = baseWidth;
   let height = baseHeight;
-  if (measureBubbleRenderFit(text, width, height, pageWidth, fontFamily, globalMultiplier, bubbleMultiplier, isOval, targetFontSize).fits) {
+  if (measureBubbleRenderFit(text, width, height, pageWidth, fontFamily, globalMultiplier, bubbleMultiplier, isOval, targetFontSize, locale).fits) {
     return { width, height };
   }
   for (let guard = 0; guard < 30; guard++) {
@@ -371,37 +393,9 @@ export function growBubbleFrameToFit(
     if (nextWidth <= width + 0.5 && nextHeight <= height + 0.5) break;
     width = nextWidth;
     height = nextHeight;
-    if (measureBubbleRenderFit(text, width, height, pageWidth, fontFamily, globalMultiplier, bubbleMultiplier, isOval, targetFontSize).fits) break;
+    if (measureBubbleRenderFit(text, width, height, pageWidth, fontFamily, globalMultiplier, bubbleMultiplier, isOval, targetFontSize, locale).fits) break;
   }
   return { width, height };
-}
-
-function splitLongTokenIntoLines(
-  token: string,
-  allowedW: number,
-  measureFn: (str: string) => number,
-  locale = "th",
-): string[] {
-  const graphemes =
-    typeof Intl !== "undefined" && Intl.Segmenter
-      ? Array.from(
-          new Intl.Segmenter(locale, { granularity: "grapheme" }).segment(token),
-        ).map((s) => s.segment)
-      : Array.from(token);
-
-  const tokenLines: string[] = [];
-  let current = "";
-  for (const g of graphemes) {
-    const next = current + g;
-    if (measureFn(next) > allowedW && current) {
-      tokenLines.push(current);
-      current = g;
-    } else {
-      current = next;
-    }
-  }
-  if (current) tokenLines.push(current);
-  return tokenLines.length > 0 ? tokenLines : [token];
 }
 
 export const wrapTextForBubble = (
@@ -412,28 +406,10 @@ export const wrapTextForBubble = (
   fontFamily: string = "sans-serif",
   isOval: boolean = true,
   locale: string = "th",
-  allowWordBreak: boolean = !isOval,
 ): string[] => {
   if (!text || !text.trim()) return [];
-  
-  let wds: string[] = [];
-  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
-    try {
-      const segmenter = new Intl.Segmenter(locale, { granularity: 'word' });
-      const rawSegments = Array.from(segmenter.segment(text)).map(s => s.segment);
-      for (const seg of rawSegments) {
-        if (/^[.,!?:;...]+$/.test(seg) && wds.length > 0) {
-          wds[wds.length - 1] += seg;
-        } else {
-          wds.push(seg);
-        }
-      }
-    } catch {
-      wds = text.split(/\s+/);
-    }
-  } else {
-    wds = text.split(/\s+/);
-  }
+
+  const wds = segmentTextIntoWords(text, locale);
 
   let measureFn: (str: string) => number;
   const tempCtx = getSharedMeasureCtx();
@@ -464,26 +440,30 @@ export const wrapTextForBubble = (
 
     for (const w of wds) {
       let allowedW = getLineMaxW(lineIdx, tryLines);
+      if (/^\s+$/u.test(w)) {
+        if (!cur) continue;
+        if (measureFn(cur + w) > allowedW) {
+          lines.push(cur.trimEnd());
+          cur = "";
+          lineIdx++;
+          allowedW = getLineMaxW(lineIdx, tryLines);
+        } else {
+          cur += w;
+        }
+        continue;
+      }
+
       const test = cur ? (cur + w) : w;
       if (measureFn(test) > allowedW && cur) {
-        lines.push(cur);
+        lines.push(cur.trimEnd());
         cur = "";
         lineIdx++;
         allowedW = getLineMaxW(lineIdx, tryLines);
       }
 
-      if (allowWordBreak && measureFn(w) > allowedW && maxW >= 25) {
-        const subLines = splitLongTokenIntoLines(w, allowedW, measureFn, locale);
-        for (let i = 0; i < subLines.length - 1; i++) {
-          lines.push(subLines[i]);
-          lineIdx++;
-        }
-        cur = subLines[subLines.length - 1];
-      } else {
-        cur = cur ? (cur + w) : w;
-      }
+      cur = cur ? (cur + w) : w;
     }
-    if (cur) lines.push(cur);
+    if (cur) lines.push(cur.trimEnd());
 
     bestLines = lines;
     if (lines.length * lineH <= maxH * 1.15) {
@@ -520,6 +500,7 @@ export function layoutBubbleAtFixedFont(
   isOval: boolean,
   manualMinHeightPx: number,
   availableHeightPx: number,
+  locale = "th",
 ): FixedFontWidthResult {
   const measureContext = getSharedMeasureCtx();
   if (measureContext) measureContext.font = `bold ${fontSizePx}px ${fontFamily}`;
@@ -528,9 +509,30 @@ export function layoutBubbleAtFixedFont(
     widthPx,
     fontSizePx,
     fontFamily,
+    locale,
     manualMinHeightPx,
     availableHeightPx,
     isOval,
+    measureText: measureContext
+      ? (value) => measureContext.measureText(value).width
+      : (value) => value.length * (fontSizePx * 0.6),
+  });
+}
+
+function minimumBubbleWidthAtFixedFont(
+  text: string,
+  fontSizePx: number,
+  fontFamily: string,
+  isOval: boolean,
+  locale: string,
+): number {
+  const measureContext = getSharedMeasureCtx();
+  if (measureContext) measureContext.font = `bold ${fontSizePx}px ${fontFamily}`;
+  return minimumWidthForWholeWords({
+    text,
+    fontSizePx,
+    isOval,
+    locale,
     measureText: measureContext
       ? (value) => measureContext.measureText(value).width
       : (value) => value.length * (fontSizePx * 0.6),
@@ -545,6 +547,7 @@ export function fitTextForBubble(
   isOval: boolean = true,
   fontSizeMultiplier = 1,
   minFontSize = 14,
+  locale = "th",
 ): BubbleTextFit {
   const safeW = width * 0.88;
   const safeH = height * 0.88;
@@ -552,14 +555,14 @@ export function fitTextForBubble(
   
   let bestFit: BubbleTextFit = {
     fontSize: minFontSize,
-    lines: wrapTextForBubble(text, safeW, safeH, minFontSize, fontFamily, isOval),
+    lines: wrapTextForBubble(text, safeW, safeH, minFontSize, fontFamily, isOval, locale),
     lineHeight: minFontSize * 1.30,
     fits: false,
   };
 
   for (let fs = maxFs; fs >= minFontSize; fs--) {
     const lineH = fs * 1.30;
-    const lines = wrapTextForBubble(text, safeW, safeH, fs, fontFamily, isOval);
+    const lines = wrapTextForBubble(text, safeW, safeH, fs, fontFamily, isOval, locale);
     const totalH = lines.length * lineH;
     
     let maxWidthOk = true;
@@ -640,18 +643,19 @@ export function fitTextInAdaptiveBubble(
   fontSizeMultiplier = 1,
   minFontSize = 14,
   maxScale = 3.0,
+  locale = "th",
 ): AdaptiveBubbleLayout {
   let curW = width;
   let curH = height;
   const maxW = width * maxScale;
   const maxH = height * maxScale;
 
-  let fit = fitTextForBubble(text, curW, curH, fontFamily, isOval, fontSizeMultiplier, minFontSize);
+  let fit = fitTextForBubble(text, curW, curH, fontFamily, isOval, fontSizeMultiplier, minFontSize, locale);
 
   while ((curW < maxW || curH < maxH) && !fit.fits) {
     curW = Math.min(maxW, curW * 1.25);
     curH = Math.min(maxH, curH * 1.25);
-    fit = fitTextForBubble(text, curW, curH, fontFamily, isOval, fontSizeMultiplier, minFontSize);
+    fit = fitTextForBubble(text, curW, curH, fontFamily, isOval, fontSizeMultiplier, minFontSize, locale);
     if (fit.fits) break;
   }
 
@@ -680,7 +684,9 @@ export const applyTranslationOverlay = async (
   containerOverride?: Element,
   pageKeyOverride?: string,
   onBubblesMutated?: () => void,
+  targetLanguage?: string,
 ) => {
+  const wordWrapLocale = wordWrapLocaleOf(targetLanguage);
   let container: Element | null | undefined = containerOverride;
   if (!container && viewMode === "offscreen") {
     container = document.getElementById("offscreen-container");
@@ -967,7 +973,8 @@ export const applyTranslationOverlay = async (
             !b.isInvalidBox,
             fontMult,
             minReadableFs,
-            3.0
+            3.0,
+            wordWrapLocale,
           );
           const origCx = currentBx + currentBw / 2;
           const origCy = currentBy + currentBh / 2;
@@ -989,6 +996,7 @@ export const applyTranslationOverlay = async (
             ? adj.targetFontSize
             : undefined);
         let fixedLayout: FixedFontWidthResult | null = null;
+        let legacyFit: BubbleTextFit | null = null;
 
         if (text && typeof lockedFs === "number") {
           const effectiveFs = Math.max(8, Math.round(
@@ -1005,24 +1013,12 @@ export const applyTranslationOverlay = async (
             !b.isInvalidBox,
             savedManualMinimum,
             Math.max(0, ih - currentBy),
+            wordWrapLocale,
           );
           currentBh = fixedLayout.heightPx;
-          layoutOverflow = fixedLayout.overflow
-            || currentBx < 0
-            || currentBx + currentBw > iw
-            || currentBy < 0
-            || currentBy + currentBh > ih;
         } else {
-          layoutOverflow = false;
+          legacyFit = null;
         }
-
-        wrapper.dataset.layoutOverflow = layoutOverflow ? "true" : "false";
-        overflowNotice.hidden = !layoutOverflow;
-        wrapper.title = layoutOverflow ? "ข้อความล้นพื้นที่หน้า กรุณาขยายพื้นที่หรือแก้ข้อความ" : "";
-        wrapper.setAttribute(
-          "aria-label",
-          layoutOverflow ? `${baseAriaLabel}; ข้อความล้นพื้นที่หน้า` : baseAriaLabel,
-        );
 
         // Frame floor: when the font has already reached its floor and the
         // text still cannot fit, grow the frame around its center instead of
@@ -1031,11 +1027,13 @@ export const applyTranslationOverlay = async (
         // compound it, and it pauses entirely while a resize drag is live —
         // otherwise dragging smaller made the frame snap back and balloon.
         if (text && !resizeDragActive && !fixedLayout) {
-          if (measureBubbleRenderFit(
+          legacyFit = measureBubbleRenderFit(
             text, currentBw, currentBh, iw, currentFontFam,
             currentStyle.fontSizeMultiplier || 1.0, bubbleMult, !b.isInvalidBox,
             lockedFs,
-          ).fits) {
+            wordWrapLocale,
+          );
+          if (legacyFit.fits) {
             floorBase = { w: currentBw, h: currentBh };
           } else {
             if (!floorBase) floorBase = { w: currentBw, h: currentBh };
@@ -1046,6 +1044,7 @@ export const applyTranslationOverlay = async (
               currentStyle.fontSizeMultiplier || 1.0, bubbleMult, !b.isInvalidBox,
               lockWidth,
               lockedFs,
+              wordWrapLocale,
             );
             currentBw = grown.width;
             currentBh = grown.height;
@@ -1056,8 +1055,39 @@ export const applyTranslationOverlay = async (
               currentBx = Math.max(0, Math.min(iw - currentBw, cx - currentBw / 2));
               currentBy = Math.max(0, Math.min(ih - currentBh, cy - currentBh / 2));
             }
+            legacyFit = measureBubbleRenderFit(
+              text, currentBw, currentBh, iw, currentFontFam,
+              currentStyle.fontSizeMultiplier || 1.0, bubbleMult, !b.isInvalidBox,
+              lockedFs, wordWrapLocale,
+            );
           }
         }
+
+        if (text && !fixedLayout && !legacyFit) {
+          legacyFit = measureBubbleRenderFit(
+            text, currentBw, currentBh, iw, currentFontFam,
+            currentStyle.fontSizeMultiplier || 1.0, bubbleMult, !b.isInvalidBox,
+            lockedFs, wordWrapLocale,
+          );
+        }
+        layoutOverflow = fixedLayout
+          ? fixedLayout.overflow
+            || currentBx < 0
+            || currentBx + currentBw > iw
+            || currentBy < 0
+            || currentBy + currentBh > ih
+          : Boolean(text && !legacyFit?.fits)
+            || currentBx < 0
+            || currentBx + currentBw > iw
+            || currentBy < 0
+            || currentBy + currentBh > ih;
+        wrapper.dataset.layoutOverflow = layoutOverflow ? "true" : "false";
+        overflowNotice.hidden = !layoutOverflow;
+        wrapper.title = layoutOverflow ? "ข้อความล้นพื้นที่หน้า กรุณาขยายพื้นที่หรือแก้ข้อความ" : "";
+        wrapper.setAttribute(
+          "aria-label",
+          layoutOverflow ? `${baseAriaLabel}; ข้อความล้นพื้นที่หน้า` : baseAriaLabel,
+        );
 
         wrapper.style.left = `${(currentBx / iw) * 100}%`;
         wrapper.style.top = `${(currentBy / ih) * 100}%`;
@@ -1081,7 +1111,7 @@ export const applyTranslationOverlay = async (
               lineHeight: fixedLayout.fontSizePx * 1.30,
               fits: !layoutOverflow,
             }
-          : measureBubbleRenderFit(
+          : legacyFit ?? measureBubbleRenderFit(
               text,
               currentBw,
               currentBh,
@@ -1091,6 +1121,7 @@ export const applyTranslationOverlay = async (
               bubbleMult,
               !b.isInvalidBox,
               lockedFs,
+              wordWrapLocale,
             );
         const fontSize = fit.fontSize;
         const lines = fit.lines;
@@ -1608,7 +1639,27 @@ export const applyTranslationOverlay = async (
         let rInitTargetFs: number | undefined = undefined;
         let rDragTargetFs: number | undefined = undefined;
         let rInitManualMinHeightPx: number | undefined = undefined;
+        let rMinimumWordWidth = 30;
         let widthDragDidMove = false;
+
+        const widthGeometryForDrag = (dx: number): { width: number; left: number } => {
+          const requestedWidth = Math.max(30, rInitBw + dx);
+          const minimumWidth = Math.max(30, rMinimumWordWidth);
+          if (dx < 0 && minimumWidth > iw) {
+            return { width: rInitBw, left: rInitBx };
+          }
+          if (dx < 0 && rInitBw < minimumWidth) {
+            return { width: rInitBw, left: rInitBx };
+          }
+          if (dx < 0 && requestedWidth <= minimumWidth) {
+            const width = Math.min(minimumWidth, iw);
+            return {
+              width,
+              left: Math.max(0, Math.min(rInitBx, iw - width)),
+            };
+          }
+          return { width: requestedWidth, left: rInitBx };
+        };
 
         handle.addEventListener('pointerdown', (e) => {
           widthDragDidMove = false;
@@ -1640,24 +1691,36 @@ export const applyTranslationOverlay = async (
                 : 25;
             }
             const text = (b.t || b.translated || "").trim();
-            if (text && typeof rInitTargetFs !== "number") {
+            if (text) {
               const currentStyle = textStyleRef?.current || ts;
               const currentFontFam = resolveCanvasFontFamily(currentStyle.fontFamily);
               const bubbleMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
               const globalMult = currentStyle.fontSizeMultiplier || 1.0;
-              const prevFit = measureBubbleRenderFit(
-                text,
-                currentBw,
-                currentBh,
-                iw,
-                currentFontFam,
-                globalMult,
-                bubbleMult,
-                !b.isInvalidBox,
+              if (typeof rInitTargetFs !== "number") {
+                const prevFit = measureBubbleRenderFit(
+                  text,
+                  currentBw,
+                  currentBh,
+                  iw,
+                  currentFontFam,
+                  globalMult,
+                  bubbleMult,
+                  !b.isInvalidBox,
+                  undefined,
+                  wordWrapLocale,
+                );
+                const multiplier = bubbleMult * globalMult;
+                rDragTargetFs = multiplier > 0 ? prevFit.fontSize / multiplier : prevFit.fontSize;
+                b.targetFontSize = rDragTargetFs;
+              }
+              const targetFs = typeof b.targetFontSize === "number" ? b.targetFontSize : (rDragTargetFs || 16);
+              const effectiveFs = Math.max(8, Math.round(targetFs * globalMult * bubbleMult));
+              rMinimumWordWidth = Math.max(
+                30,
+                minimumBubbleWidthAtFixedFont(
+                  text, effectiveFs, currentFontFam, !b.isInvalidBox, wordWrapLocale,
+                ),
               );
-              const multiplier = bubbleMult * globalMult;
-              rDragTargetFs = multiplier > 0 ? prevFit.fontSize / multiplier : prevFit.fontSize;
-              b.targetFontSize = rDragTargetFs;
             }
           }
 
@@ -1685,8 +1748,9 @@ export const applyTranslationOverlay = async (
             currentRotation = snapRotationToRightAngle(rawRotation);
           } else if (id === 'width') {
             // Drag right (dx > 0) widens, drag left (dx < 0) narrows
-            currentBw = Math.max(30, rInitBw + dx);
-            currentBx = rInitBx;
+            const widthGeometry = widthGeometryForDrag(dx);
+            currentBw = widthGeometry.width;
+            currentBx = widthGeometry.left;
             // Ticket 02: Keep b.fontSizeMultiplier locked.
             // Ticket 03: Top-anchored dynamic auto-height:
             const text = (b.t || b.translated || "").trim();
@@ -1708,6 +1772,7 @@ export const applyTranslationOverlay = async (
                 isOvalBox,
                 manualMinHeightPx ?? 25,
                 Math.max(0, ih - rDragInitBy),
+                wordWrapLocale,
               );
               currentBh = layout.heightPx;
               currentBy = rDragInitBy;
@@ -1758,7 +1823,8 @@ export const applyTranslationOverlay = async (
 
           const rect = tlContainer.getBoundingClientRect();
           const dx = (e.clientX - rStartX) * (iw / rect.width);
-          if (Math.abs(Math.max(30, rInitBw + dx) - rInitBw) < 0.001) return;
+          const widthGeometry = widthGeometryForDrag(dx);
+          if (Math.abs(widthGeometry.width - rInitBw) < 0.001 && Math.abs(widthGeometry.left - rInitBx) < 0.001) return;
           widthDragDidMove = true;
           pendingWidthPointer = { pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY };
           if (pendingWidthPreviewFrame === null) {

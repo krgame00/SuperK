@@ -1308,6 +1308,8 @@ export default function WorkspacePage() {
                 textStyleRef,
                 undefined,
                 pageUrl,
+                undefined,
+                targetLang,
               );
             };
             offscreenImg.onerror = () => fail("โหลดภาพไม่สำเร็จ");

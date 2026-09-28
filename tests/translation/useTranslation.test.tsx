@@ -673,6 +673,8 @@ test("background batch renders final images by original URL and skips them later
     expect.any(Object),
     expect.any(HTMLElement),
     expect.any(String),
+    undefined,
+    "Thai",
   );
 
   let secondBatch!: Promise<void>;
@@ -1365,4 +1367,3 @@ test("allows retrying a review failure group concurrently while batch translatio
   expect(apiCalls).toBe(2);
   expect(result.current.batchFailures).toHaveLength(0);
 });
-

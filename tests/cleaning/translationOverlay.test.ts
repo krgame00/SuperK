@@ -1274,7 +1274,10 @@ test("coalesces rapid width pointer moves into the latest animation frame", asyn
 test("holds the dragged frame during a resize and never rockets the floor", async () => {
   const { container, chromeRoot, wrapper } = await renderOverlayFresh(
     "ชื่อนี้ต้องเป็นชื่อที่ถูกใจที่สุดของฉันจริงๆ",
-    { fontSizeMultiplier: 3 },
+    {
+      fontSizeMultiplier: 3,
+      layoutAdjustment: { bx: 300, by: 300, bw: 400, bh: 200, iw: 1000, ih: 1200 },
+    },
   );
   mockCanvasRect(container);
   const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
@@ -1344,7 +1347,8 @@ test("narrowing width handle reflows text, expands height downward top-anchored,
   expect(bubble.fontSizeMultiplier).toBe(1);
 
   firePointer(handle, "pointerup", 340, 500);
-  expect(bubble.layoutAdjustment?.bw).toBeCloseTo(80, 1);
+  expect(bubble.layoutAdjustment?.bw).toBeGreaterThan(80);
+  expect(bubble.layoutAdjustment?.bw).toBeLessThan(240);
   expect(bubble.layoutAdjustment?.bh).toBeGreaterThan(120);
 
   const { undoManager: freshUndoManager } = await import("@/lib/undoManager");
@@ -1498,6 +1502,87 @@ test("reports text overflow when fixed-font reflow reaches the bottom of the pag
   expect(wrapper.title).toContain("ข้อความล้นพื้นที่หน้า");
 });
 
+test("width drag stops at the whole-word floor and shifts left only to keep it on the page", async () => {
+  const { container, chromeRoot, wrapper } = await renderOverlayFresh(
+    "supercalifragilistic",
+    {
+      isInvalidBox: true,
+      targetFontSize: 10,
+      layoutAdjustment: { bx: 900, by: 200, bw: 200, bh: 100, iw: 1000, ih: 1200 },
+    },
+  );
+  mockCanvasRect(container);
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  handle.setPointerCapture = vi.fn();
+  (handle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  handle.releasePointerCapture = vi.fn();
+  const initialTop = Number.parseFloat(wrapper.style.top);
+
+  firePointer(handle, "pointerdown", 500, 500);
+  firePointer(handle, "pointermove", 100, 500);
+
+  const left = Number.parseFloat(wrapper.style.left) * 10;
+  const width = Number.parseFloat(wrapper.style.width) * 10;
+  expect(width).toBeGreaterThan(100);
+  expect(left).toBeLessThan(900);
+  expect(left + width).toBeCloseTo(1000, 0);
+  expect(Number.parseFloat(wrapper.style.top)).toBeCloseTo(initialTop, 2);
+  expect(wrapper.dataset.layoutOverflow).toBe("false");
+});
+
+test("does not expand or relocate a bubble when a whole word is wider than the page", async () => {
+  const text = "W".repeat(300);
+  const { container, chromeRoot, wrapper } = await renderOverlayFresh(text, {
+    isInvalidBox: true,
+    targetFontSize: 10,
+    layoutAdjustment: { bx: 200, by: 200, bw: 2500, bh: 100, iw: 1000, ih: 1200 },
+  });
+  mockCanvasRect(container);
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  handle.setPointerCapture = vi.fn();
+  (handle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  handle.releasePointerCapture = vi.fn();
+  const initialLeft = Number.parseFloat(wrapper.style.left);
+  const initialWidth = Number.parseFloat(wrapper.style.width);
+
+  firePointer(handle, "pointerdown", 500, 500);
+  firePointer(handle, "pointermove", 100, 500);
+
+  expect(Number.parseFloat(wrapper.style.left)).toBeCloseTo(initialLeft, 2);
+  expect(Number.parseFloat(wrapper.style.width)).toBeCloseTo(initialWidth, 2);
+  expect(wrapper.dataset.layoutOverflow).toBe("true");
+  expect(fillTextSpy.mock.calls.map((call) => String(call[0]))).toContain(text);
+});
+
+test("keeps an undersized saved frame, reports word overflow, and exports the intact text", async () => {
+  const text = "supercalifragilistic";
+  const { container, wrapper, canvas, chromeRoot, bubble } = await renderOverlayFresh(text, {
+    isInvalidBox: true,
+    targetFontSize: 10,
+    layoutAdjustment: { bx: 100, by: 200, bw: 40, bh: 60, iw: 1000, ih: 1200 },
+  });
+
+  expect(canvas.width).toBe(40);
+  expect(wrapper.dataset.layoutOverflow).toBe("true");
+  expect(wrapper.querySelector<HTMLElement>(".bubble-layout-overflow")?.hidden).toBe(false);
+  expect(fillTextSpy.mock.calls.map((call) => String(call[0]))).toContain(text);
+
+  const exportDataUrl = downloadTranslatedImage("single", 0, "", true, container);
+  expect(exportDataUrl).toBe("data:image/jpeg;base64,dHJhbnNsYXRlZA==");
+  expect(canvas.width).toBe(40);
+
+  chromeRoot.querySelector<HTMLButtonElement>('[aria-label="แก้ไขข้อความ"]')!.click();
+  const textarea = document.querySelector<HTMLTextAreaElement>("[data-translation-editor] textarea")!;
+  const editedText = "an-editedwordthatiswiderthanthesavedframe";
+  textarea.value = editedText;
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+
+  expect(bubble.t).toBe(editedText);
+  expect(canvas.width).toBe(40);
+  expect(wrapper.dataset.layoutOverflow).toBe("true");
+  expect(fillTextSpy.mock.calls.map((call) => String(call[0]))).toContain(editedText);
+});
+
 test("editing text via editor textarea expands height downward while keeping user-specified width intact", async () => {
   const { wrapper, chromeRoot } = await renderOverlayFresh("ข้อความสั้น", {
     layoutAdjustment: { bx: 100, by: 100, bw: 150, bh: 80, iw: 1000, ih: 1200 },
@@ -1545,14 +1630,15 @@ test("single width handle slides left and right smoothly: widening to right wrap
   firePointer(widthHandle, "pointerup", 600, 500);
   expect(bubble.layoutAdjustment?.bw).toBeCloseTo(300, 1);
 
-  // 2. Slide to the left (-200px) -> Narrow down to 100px
+  // 2. Slide left past the complete-word floor; the frame stops above 100px.
   firePointer(widthHandle, "pointerdown", 600, 500);
   firePointer(widthHandle, "pointermove", 400, 500);
   expect(Number.parseFloat(wrapper.style.top)).toBeCloseTo(initTop, 2);
   expect(bubble.fontSizeMultiplier).toBe(1);
   firePointer(widthHandle, "pointerup", 400, 500);
-  expect(bubble.layoutAdjustment?.bw).toBeCloseTo(100, 1);
-  expect(bubble.layoutAdjustment?.bh).toBeGreaterThan(140);
+  expect(bubble.layoutAdjustment?.bw).toBeGreaterThan(100);
+  expect(bubble.layoutAdjustment?.bw).toBeLessThan(300);
+  expect(bubble.layoutAdjustment?.bh).toBeGreaterThanOrEqual(140);
 });
 
 test("rotate handle snaps magnetically to cardinal right angles (0, 90, 180, 270) within 6 degrees", async () => {
