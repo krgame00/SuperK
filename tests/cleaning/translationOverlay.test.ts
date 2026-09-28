@@ -1060,18 +1060,21 @@ test("keeps a manually adjusted frame untouched when the text already fits", asy
   expect(Number(canvas.width)).toBe(90);
 });
 
-function firePointer(handle: HTMLElement, type: string, x: number, y: number): void {
+function firePointer(handle: HTMLElement, type: string, x: number, y: number, flushFrame = true): void {
   const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: y });
   Object.defineProperty(event, "pointerId", { value: 1 });
   handle.dispatchEvent(event);
+  if (type === "pointermove" && flushFrame) vi.advanceTimersByTime(16);
 }
 
 // The resize handles convert client deltas to source pixels via the
 // inner .tl-canvas rect, so that is the rect the tests must pin.
-function mockCanvasRect(container: HTMLElement): void {
+function mockCanvasRect(container: HTMLElement, zoom = 1): void {
   const tlCanvas = container.querySelector<HTMLElement>(".tl-canvas")!;
+  const width = 1000 * zoom;
+  const height = 1200 * zoom;
   vi.spyOn(tlCanvas, "getBoundingClientRect").mockReturnValue({
-    left: 0, top: 0, right: 1000, bottom: 1200, width: 1000, height: 1200,
+    left: 0, top: 0, right: width, bottom: height, width, height,
   } as DOMRect);
 }
 
@@ -1146,6 +1149,126 @@ test("widening width handle locks font size and does not expand or balloon the t
   expect(widenedFont).toBe(initialFont);
   expect(bubble.targetFontSize).toBeDefined();
   expect(bubble.layoutAdjustment?.targetFontSize).toBe(bubble.targetFontSize);
+});
+
+test("keeps a new bubble's visible font fixed through wide-narrow-wide drag at 44% zoom", async () => {
+  const { container, chromeRoot, bubble, wrapper } = await renderOverlayFresh(
+    "ทั้งที่ข้าอุตส่าห์แต่งตัวในแบบที่เจ้าชอบแท้ๆ",
+    { layoutAdjustment: undefined, fontSizeMultiplier: 3 },
+  );
+  mockCanvasRect(container, 0.44);
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  handle.setPointerCapture = vi.fn();
+  (handle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  handle.releasePointerCapture = vi.fn();
+
+  const context = wrapper.querySelector("canvas")!.getContext("2d")!;
+  const initialFont = context.font;
+  const initialWidth = Number(wrapper.querySelector("canvas")!.width);
+  const initialLeft = wrapper.style.left;
+  const initialTop = wrapper.style.top;
+  let fillCallStart = fillTextSpy.mock.calls.length;
+  firePointer(handle, "pointerdown", 220, 260);
+
+  firePointer(handle, "pointermove", 264, 260);
+  const wideFont = context.font;
+  const wideHeight = Number(wrapper.querySelector("canvas")!.height);
+  const wideLines = fillTextSpy.mock.calls.slice(fillCallStart).map((call) => String(call[0]));
+  fillCallStart = fillTextSpy.mock.calls.length;
+  firePointer(handle, "pointermove", 132, 260);
+  const narrowFont = context.font;
+  const narrowHeight = Number(wrapper.querySelector("canvas")!.height);
+  const narrowWidth = Number(wrapper.querySelector("canvas")!.width);
+  const narrowLines = fillTextSpy.mock.calls.slice(fillCallStart).map((call) => String(call[0]));
+  fillCallStart = fillTextSpy.mock.calls.length;
+  firePointer(handle, "pointermove", 264, 260);
+  const restoredWideFont = context.font;
+  const restoredWideLines = fillTextSpy.mock.calls.slice(fillCallStart).map((call) => String(call[0]));
+
+  expect(wideFont).toBe(initialFont);
+  expect(narrowFont).toBe(initialFont);
+  expect(restoredWideFont).toBe(initialFont);
+  expect(narrowWidth).toBeLessThan(initialWidth);
+  expect(narrowHeight).toBeGreaterThan(wideHeight);
+  expect(narrowLines.length).toBeGreaterThan(wideLines.length);
+  expect(restoredWideLines).toEqual(wideLines);
+  expect(wrapper.style.left).toBe(initialLeft);
+  expect(wrapper.style.top).toBe(initialTop);
+
+  firePointer(handle, "pointerup", 264, 260);
+  expect(context.font).toBe(initialFont);
+  expect(bubble.layoutAdjustment?.bw).toBeCloseTo(initialWidth + 100, 0);
+});
+
+test("clicking a legacy width handle without dragging leaves its saved layout unchanged", async () => {
+  const { container, chromeRoot, bubble } = await renderOverlayFresh("สวัสดี", {
+    layoutAdjustment: { bx: 100, by: 100, bw: 240, bh: 120, iw: 1000, ih: 1200 },
+  });
+  mockCanvasRect(container);
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  handle.setPointerCapture = vi.fn();
+  (handle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  handle.releasePointerCapture = vi.fn();
+  const originalAdjustment = JSON.stringify(bubble.layoutAdjustment);
+  const originalStorage = window.localStorage.getItem("superk:overlay-adjustments");
+
+  firePointer(handle, "pointerdown", 500, 500);
+  firePointer(handle, "pointermove", 500, 500);
+  firePointer(handle, "pointerup", 500, 500);
+
+  expect(bubble.targetFontSize).toBeUndefined();
+  expect(JSON.stringify(bubble.layoutAdjustment)).toBe(originalAdjustment);
+  expect(window.localStorage.getItem("superk:overlay-adjustments")).toBe(originalStorage);
+  expect(undoManager.undo()).toBeNull();
+});
+
+test("a real width drag establishes fixed-font mode even when it returns to its starting width", async () => {
+  const { container, chromeRoot, bubble, canvas } = await renderOverlayFresh("ข้อความทดสอบ", {
+    layoutAdjustment: { bx: 100, by: 100, bw: 240, bh: 120, iw: 1000, ih: 1200 },
+  });
+  mockCanvasRect(container);
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  handle.setPointerCapture = vi.fn();
+  (handle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  handle.releasePointerCapture = vi.fn();
+  const initialWidth = canvas.width;
+
+  firePointer(handle, "pointerdown", 500, 500);
+  firePointer(handle, "pointermove", 600, 500);
+  firePointer(handle, "pointermove", 500, 500);
+  firePointer(handle, "pointerup", 500, 500);
+
+  expect(canvas.width).toBe(initialWidth);
+  expect(bubble.targetFontSize).toBeDefined();
+  expect(bubble.layoutAdjustment?.targetFontSize).toBe(bubble.targetFontSize);
+  const { undoManager: activeUndoManager } = await import("@/lib/undoManager");
+  expect(activeUndoManager.undo()).toBe("ปรับความกว้างกล่องข้อความ");
+  expect(bubble.targetFontSize).toBeUndefined();
+});
+
+test("coalesces rapid width pointer moves into the latest animation frame", async () => {
+  const { container, chromeRoot, wrapper } = await renderOverlayFresh(
+    "ข้อความสำหรับตรวจการเคลื่อนไหว",
+    { layoutAdjustment: { bx: 100, by: 100, bw: 240, bh: 120, iw: 1000, ih: 1200 } },
+  );
+  mockCanvasRect(container, 0.44);
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  handle.setPointerCapture = vi.fn();
+  (handle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  handle.releasePointerCapture = vi.fn();
+  const canvas = wrapper.querySelector("canvas")!;
+  const initialWidth = canvas.width;
+  const callsBefore = fillTextSpy.mock.calls.length;
+
+  firePointer(handle, "pointerdown", 220, 260);
+  firePointer(handle, "pointermove", 264, 260, false);
+  firePointer(handle, "pointermove", 308, 260, false);
+  expect(fillTextSpy.mock.calls.length).toBe(callsBefore);
+
+  await vi.advanceTimersByTimeAsync(16);
+  expect(canvas.width).toBe(initialWidth + 200);
+  expect(fillTextSpy.mock.calls.length).toBeGreaterThan(callsBefore);
+  firePointer(handle, "pointerup", 308, 260);
 });
 
 test("holds the dragged frame during a resize and never rockets the floor", async () => {
@@ -1229,6 +1352,150 @@ test("narrowing width handle reflows text, expands height downward top-anchored,
   freshUndoManager.undo();
   expect(bubble.layoutAdjustment?.bw).toBeCloseTo(240, 1);
   expect(bubble.layoutAdjustment?.bh).toBeCloseTo(120, 1);
+});
+
+test("pointercancel restores the complete width-drag snapshot without saving", async () => {
+  const { container, chromeRoot, bubble, wrapper } = await renderOverlayFresh(
+    "ทั้งที่ข้าอุตส่าห์แต่งตัวในแบบที่เจ้าชอบแท้ๆ",
+    {
+      layoutAdjustment: { bx: 100, by: 100, bw: 240, bh: 120, iw: 1000, ih: 1200 },
+      fontSizeMultiplier: 1,
+    },
+  );
+  mockCanvasRect(container);
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  handle.setPointerCapture = vi.fn();
+  (handle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  handle.releasePointerCapture = vi.fn();
+  const originalStyle = {
+    left: wrapper.style.left,
+    top: wrapper.style.top,
+    width: wrapper.style.width,
+    height: wrapper.style.height,
+  };
+  const originalAdjustment = JSON.stringify(bubble.layoutAdjustment);
+  const originalStorage = window.localStorage.getItem("superk:overlay-adjustments");
+
+  firePointer(handle, "pointerdown", 500, 500);
+  firePointer(handle, "pointermove", 340, 500);
+  expect(wrapper.style.height).not.toBe(originalStyle.height);
+  firePointer(handle, "pointercancel", 340, 500);
+
+  expect({
+    left: wrapper.style.left,
+    top: wrapper.style.top,
+    width: wrapper.style.width,
+    height: wrapper.style.height,
+  }).toEqual(originalStyle);
+  expect(bubble.targetFontSize).toBeUndefined();
+  expect(JSON.stringify(bubble.layoutAdjustment)).toBe(originalAdjustment);
+  expect(window.localStorage.getItem("superk:overlay-adjustments")).toBe(originalStorage);
+  expect(undoManager.undo()).toBeNull();
+});
+
+test("pointercancel restores the original top of an out-of-page frame", async () => {
+  const { container, chromeRoot, wrapper } = await renderOverlayFresh("ข้อความทดสอบ", {
+    layoutAdjustment: { bx: 100, by: 1150, bw: 240, bh: 120, iw: 1000, ih: 1200 },
+  });
+  mockCanvasRect(container);
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  handle.setPointerCapture = vi.fn();
+  (handle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  handle.releasePointerCapture = vi.fn();
+  const initialTop = wrapper.style.top;
+
+  firePointer(handle, "pointerdown", 500, 500);
+  firePointer(handle, "pointermove", 340, 500);
+  expect(Number.parseFloat(wrapper.style.top) * 12).toBeCloseTo(1080, 1);
+  firePointer(handle, "pointercancel", 340, 500);
+
+  expect(wrapper.style.top).toBe(initialTop);
+});
+
+test("width reflow shrinks back only to its saved manual minimum height", async () => {
+  const { container, chromeRoot, bubble, wrapper } = await renderOverlayFresh(
+    "ทั้งที่ข้าอุตส่าห์แต่งตัวในแบบที่เจ้าชอบแท้ๆ",
+    {
+      layoutAdjustment: {
+        bx: 100, by: 300, bw: 240, bh: 130, iw: 1000, ih: 1200,
+        manualMinHeightPx: 100,
+      },
+      fontSizeMultiplier: 1,
+    },
+  );
+  mockCanvasRect(container);
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  handle.setPointerCapture = vi.fn();
+  (handle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  handle.releasePointerCapture = vi.fn();
+
+  firePointer(handle, "pointerdown", 500, 500);
+  firePointer(handle, "pointermove", 600, 500);
+  expect(Number(wrapper.querySelector("canvas")!.height)).toBe(100);
+  firePointer(handle, "pointermove", 340, 500);
+  expect(Number(wrapper.querySelector("canvas")!.height)).toBeGreaterThan(100);
+  firePointer(handle, "pointermove", 600, 500);
+  expect(Number(wrapper.querySelector("canvas")!.height)).toBe(100);
+  firePointer(handle, "pointerup", 600, 500);
+
+  expect(bubble.layoutAdjustment?.manualMinHeightPx).toBe(100);
+});
+
+test("first width drag uses saved height instead of legacy automatic growth as its minimum", async () => {
+  const { container, chromeRoot, wrapper, bubble } = await renderOverlayFresh(
+    "ชื่อนี้ต้องเป็นชื่อที่ถูกใจที่สุดของฉันจริงๆ",
+    { layoutAdjustment: { bx: 300, by: 300, bw: 90, bh: 70, iw: 1000, ih: 1200 } },
+  );
+  mockCanvasRect(container);
+  const grownLegacyHeight = Number(wrapper.querySelector("canvas")!.height);
+  expect(grownLegacyHeight).toBeGreaterThan(70);
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  handle.setPointerCapture = vi.fn();
+  (handle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  handle.releasePointerCapture = vi.fn();
+
+  firePointer(handle, "pointerdown", 500, 500);
+  firePointer(handle, "pointermove", 700, 500);
+
+  expect(Number(wrapper.querySelector("canvas")!.height)).toBeGreaterThanOrEqual(70);
+  expect(Number(wrapper.querySelector("canvas")!.height)).toBeLessThan(grownLegacyHeight);
+  firePointer(handle, "pointerup", 700, 500);
+  expect(bubble.layoutAdjustment?.manualMinHeightPx).toBe(70);
+});
+
+test("restores tall fixed-font layouts without legacy recentering", async () => {
+  const { wrapper, canvas } = await renderOverlayFresh("สวัสดี", {
+    targetFontSize: 16,
+    layoutAdjustment: {
+      bx: 100, by: 100, bw: 100, bh: 2000, iw: 1000, ih: 1200,
+      targetFontSize: 16, manualMinHeightPx: 1000,
+    },
+  });
+
+  expect(Number.parseFloat(wrapper.style.top) * 12).toBeCloseTo(100, 1);
+  expect(canvas.height).toBe(1000);
+});
+
+test("reports text overflow when fixed-font reflow reaches the bottom of the page", async () => {
+  const { container, chromeRoot, wrapper } = await renderOverlayFresh(
+    "ทั้งที่ข้าอุตส่าห์แต่งตัวในแบบที่เจ้าชอบแท้ๆ",
+    {
+      layoutAdjustment: { bx: 100, by: 1150, bw: 240, bh: 25, iw: 1000, ih: 1200 },
+      fontSizeMultiplier: 1,
+    },
+  );
+  mockCanvasRect(container);
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  handle.setPointerCapture = vi.fn();
+  (handle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  handle.releasePointerCapture = vi.fn();
+
+  firePointer(handle, "pointerdown", 500, 500);
+  firePointer(handle, "pointermove", 340, 500);
+
+  expect(wrapper.dataset.layoutOverflow).toBe("true");
+  expect(wrapper.querySelector<HTMLElement>(".bubble-layout-overflow")?.hidden).toBe(false);
+  expect(wrapper.title).toContain("ข้อความล้นพื้นที่หน้า");
 });
 
 test("editing text via editor textarea expands height downward while keeping user-specified width intact", async () => {

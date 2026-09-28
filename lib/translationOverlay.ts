@@ -10,6 +10,7 @@ import {
   inferTextStyleCategory,
 } from "./colorMatching/nearbyStyleFallback";
 import type { TextStyleProfile } from "./colorMatching/types";
+import { layoutTextAtFixedFont, type FixedFontWidthResult } from "./textBoxWidthLayout";
 
 const ADJ_KEY = "superk:overlay-adjustments";
 
@@ -75,6 +76,8 @@ export interface TranslatedBubble {
   fontSizeMultiplier?: number;
   /** locked base font size for width reflow and editing */
   targetFontSize?: number;
+  /** minimum frame height preserved by content-driven width reflow */
+  manualMinHeightPx?: number;
   /** persisted interactive layout; source of truth for move/resize/rotation */
   layoutAdjustment?: OverlayAdjustment;
   /** redraw callback attached to overlay bubbles */
@@ -102,6 +105,7 @@ export interface OverlayAdjustment {
   rotation?: number;
   fontSizeMultiplier?: number;
   targetFontSize?: number;
+  manualMinHeightPx?: number;
 }
 
 /**
@@ -317,16 +321,14 @@ export function measureBubbleRenderFit(
 ): BubbleTextFit {
   if (typeof targetFontSize === "number" && targetFontSize > 0) {
     const effectiveFs = Math.max(8, Math.round(targetFontSize * globalMultiplier * bubbleMultiplier));
-    const safeW = width * 0.88;
-    const safeH = height * 0.88;
-    const lines = wrapTextForBubble(text, safeW, safeH, effectiveFs, fontFamily, isOval, "th", true);
-    const lineH = effectiveFs * 1.30;
-    const totalH = lines.length * lineH;
+    const layout = layoutBubbleAtFixedFont(
+      text, width, effectiveFs, fontFamily, isOval, 0, height,
+    );
     return {
       fontSize: effectiveFs,
-      lines,
-      lineHeight: lineH,
-      fits: totalH <= safeH,
+      lines: layout.lines,
+      lineHeight: effectiveFs * 1.30,
+      fits: !layout.overflow,
     };
   }
   const targetMinimum = Math.max(14, Math.round(getReadableMinimumFontSize(pageWidth) * 0.75));
@@ -509,6 +511,31 @@ const getSharedMeasureCtx = (): CanvasRenderingContext2D | null => {
   }
   return sharedMeasureCtx;
 };
+
+export function layoutBubbleAtFixedFont(
+  text: string,
+  widthPx: number,
+  fontSizePx: number,
+  fontFamily: string,
+  isOval: boolean,
+  manualMinHeightPx: number,
+  availableHeightPx: number,
+): FixedFontWidthResult {
+  const measureContext = getSharedMeasureCtx();
+  if (measureContext) measureContext.font = `bold ${fontSizePx}px ${fontFamily}`;
+  return layoutTextAtFixedFont({
+    text,
+    widthPx,
+    fontSizePx,
+    fontFamily,
+    manualMinHeightPx,
+    availableHeightPx,
+    isOval,
+    measureText: measureContext
+      ? (value) => measureContext.measureText(value).width
+      : (value) => value.length * (fontSizePx * 0.6),
+  });
+}
 
 export function fitTextForBubble(
   text: string,
@@ -813,11 +840,17 @@ export const applyTranslationOverlay = async (
         : `text-${(b.t || b.translated || "").slice(0, 10)}-${rawX.toFixed(1)}-${rawY.toFixed(1)}`;
       const legacyAdj = savedAdj[bubbleId] ?? savedAdj[legacyBubbleId];
       let adj = b.layoutAdjustment ?? legacyAdj;
+      const hasSavedWidthFont = [b.targetFontSize, adj?.targetFontSize, legacyAdj?.targetFontSize].some(
+        (targetFontSize) => typeof targetFontSize === "number"
+          && Number.isFinite(targetFontSize)
+          && targetFontSize > 0,
+      );
 
       // Repair layout adjustments inflated by the old frame-floor bug: a
-      // saved frame far larger than the detected bubble box balloons the
-      // whole wrapper, so clamp each dimension back to 4x the detection.
-      if (adj && !b.isInvalidBox) {
+      // saved legacy frame far larger than the detected bubble box balloons
+      // the whole wrapper. Width-managed frames can grow legitimately with
+      // wrapped content, so preserve those saved source-pixel dimensions.
+      if (adj && !b.isInvalidBox && !hasSavedWidthFont) {
         const rawPxW = (rawW / 100) * iw;
         const rawPxH = (rawH / 100) * ih;
         if (adj.bw > rawPxW * 4 || adj.bh > rawPxH * 4) {
@@ -850,6 +883,11 @@ export const applyTranslationOverlay = async (
       let currentBw = adj ? adj.bw : (rawW / 100) * iw;
       let currentBh = adj ? adj.bh : (rawH / 100) * ih;
       let currentRotation = adj?.rotation !== undefined ? adj.rotation : ((b.rotation as number) || 0);
+      let manualMinHeightPx = typeof adj?.manualMinHeightPx === "number"
+        && Number.isFinite(adj.manualMinHeightPx)
+        ? Math.max(0, adj.manualMinHeightPx)
+        : undefined;
+      let layoutOverflow = false;
       // Frame-floor bookkeeping: the size the floor grows from (so repeated
       // re-renders cannot compound it) and whether a resize drag is live.
       let resizeDragActive = false;
@@ -867,6 +905,7 @@ export const applyTranslationOverlay = async (
           rotation: currentRotation,
           ...(typeof b.fontSizeMultiplier === "number" ? { fontSizeMultiplier: b.fontSizeMultiplier } : {}),
           ...(typeof b.targetFontSize === "number" ? { targetFontSize: b.targetFontSize } : {}),
+          ...(typeof manualMinHeightPx === "number" ? { manualMinHeightPx } : {}),
         };
         b.layoutAdjustment = persistedLayout;
 
@@ -896,13 +935,21 @@ export const applyTranslationOverlay = async (
       wrapper.className = "translation-bubble translation-bubble-wrapper";
       wrapper.tabIndex = 0;
       const shortText = (b.t || b.translated || "").replace(/\s+/g, " ").trim().slice(0, 60);
-      wrapper.setAttribute("aria-label", `กล่องข้อความ: ${shortText}`);
+      const baseAriaLabel = `กล่องข้อความ: ${shortText}`;
+      wrapper.setAttribute("aria-label", baseAriaLabel);
       wrapper.setAttribute("data-bubble-id", bubbleId);
       wrapper.style.cssText = `position:absolute; box-sizing:border-box; cursor:grab; pointer-events:auto; touch-action:none; border-radius:4px; z-index:10; transform-origin:center center;`;
       
       const bCanvas = document.createElement("canvas");
       bCanvas.style.cssText = `display:block; width:100%; height:100%; pointer-events:none;`;
       wrapper.appendChild(bCanvas);
+      const overflowNotice = document.createElement("span");
+      overflowNotice.className = "bubble-layout-overflow";
+      overflowNotice.setAttribute("role", "status");
+      overflowNotice.style.cssText = `position:absolute; right:2px; bottom:2px; z-index:20; max-width:calc(100% - 4px); padding:2px 5px; border-radius:4px; background:rgba(180,83,9,0.96); color:#fff; font:600 11px/1.3 sans-serif; pointer-events:none;`;
+      overflowNotice.textContent = "ข้อความล้นพื้นที่หน้า";
+      overflowNotice.hidden = true;
+      wrapper.appendChild(overflowNotice);
       let activeEditorPosition: (() => void) | null = null;
       const ts = textStyleRef?.current || { fontFamily: "Itim, sans-serif", textColor: "#000000", textOutline: "#FFFFFF", fontSizeMultiplier: 1.0 };
       const fontFam = resolvedFontFam;
@@ -936,7 +983,46 @@ export const applyTranslationOverlay = async (
         const text = (b.t || b.translated || "").trim();
         const currentFontFam = resolveCanvasFontFamily(currentStyle.fontFamily);
         const bubbleMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
-        const lockedFs = typeof b.targetFontSize === "number" ? b.targetFontSize : (adj?.targetFontSize);
+        const lockedFs = typeof b.targetFontSize === "number" && Number.isFinite(b.targetFontSize) && b.targetFontSize > 0
+          ? b.targetFontSize
+          : (typeof adj?.targetFontSize === "number" && Number.isFinite(adj.targetFontSize) && adj.targetFontSize > 0
+            ? adj.targetFontSize
+            : undefined);
+        let fixedLayout: FixedFontWidthResult | null = null;
+
+        if (text && typeof lockedFs === "number") {
+          const effectiveFs = Math.max(8, Math.round(
+            lockedFs * (currentStyle.fontSizeMultiplier || 1.0) * bubbleMult,
+          ));
+          const savedManualMinimum = manualMinHeightPx
+            ?? adj?.manualMinHeightPx
+            ?? (adj ? currentBh : 25);
+          fixedLayout = layoutBubbleAtFixedFont(
+            text,
+            currentBw,
+            effectiveFs,
+            currentFontFam,
+            !b.isInvalidBox,
+            savedManualMinimum,
+            Math.max(0, ih - currentBy),
+          );
+          currentBh = fixedLayout.heightPx;
+          layoutOverflow = fixedLayout.overflow
+            || currentBx < 0
+            || currentBx + currentBw > iw
+            || currentBy < 0
+            || currentBy + currentBh > ih;
+        } else {
+          layoutOverflow = false;
+        }
+
+        wrapper.dataset.layoutOverflow = layoutOverflow ? "true" : "false";
+        overflowNotice.hidden = !layoutOverflow;
+        wrapper.title = layoutOverflow ? "ข้อความล้นพื้นที่หน้า กรุณาขยายพื้นที่หรือแก้ข้อความ" : "";
+        wrapper.setAttribute(
+          "aria-label",
+          layoutOverflow ? `${baseAriaLabel}; ข้อความล้นพื้นที่หน้า` : baseAriaLabel,
+        );
 
         // Frame floor: when the font has already reached its floor and the
         // text still cannot fit, grow the frame around its center instead of
@@ -944,7 +1030,7 @@ export const applyTranslationOverlay = async (
         // last committed/fitting size (floorBase) so re-renders never
         // compound it, and it pauses entirely while a resize drag is live —
         // otherwise dragging smaller made the frame snap back and balloon.
-        if (text && !resizeDragActive) {
+        if (text && !resizeDragActive && !fixedLayout) {
           if (measureBubbleRenderFit(
             text, currentBw, currentBh, iw, currentFontFam,
             currentStyle.fontSizeMultiplier || 1.0, bubbleMult, !b.isInvalidBox,
@@ -988,17 +1074,24 @@ export const applyTranslationOverlay = async (
         const textColor = resolvedStyle.textColor;
         const outlineColor = resolvedStyle.textOutline;
         const opacity = resolvedStyle.opacity ?? 1.0;
-        const fit = measureBubbleRenderFit(
-          text,
-          currentBw,
-          currentBh,
-          iw,
-          currentFontFam,
-          currentStyle.fontSizeMultiplier || 1.0,
-          bubbleMult,
-          !b.isInvalidBox,
-          lockedFs,
-        );
+        const fit = fixedLayout
+          ? {
+              fontSize: fixedLayout.fontSizePx,
+              lines: fixedLayout.lines,
+              lineHeight: fixedLayout.fontSizePx * 1.30,
+              fits: !layoutOverflow,
+            }
+          : measureBubbleRenderFit(
+              text,
+              currentBw,
+              currentBh,
+              iw,
+              currentFontFam,
+              currentStyle.fontSizeMultiplier || 1.0,
+              bubbleMult,
+              !b.isInvalidBox,
+              lockedFs,
+            );
         const fontSize = fit.fontSize;
         const lines = fit.lines;
         const lineH = Math.min(fontSize * 1.30, currentBh / Math.max(1, lines.length));
@@ -1507,22 +1600,45 @@ export const applyTranslationOverlay = async (
 
         let rStartX = 0, rStartY = 0;
         let rInitBx = 0, rInitBy = 0, rInitBw = 0, rInitBh = 0;
+        let rDragInitBy = 0;
         let rCenterX = 0, rCenterY = 0;
         let rStartAngle = 0;
         let rInitRot = 0;
         let rInitFontMult = 1;
         let rInitTargetFs: number | undefined = undefined;
+        let rDragTargetFs: number | undefined = undefined;
+        let rInitManualMinHeightPx: number | undefined = undefined;
+        let widthDragDidMove = false;
 
         handle.addEventListener('pointerdown', (e) => {
+          widthDragDidMove = false;
           rStartX = e.clientX; rStartY = e.clientY;
           rInitBx = currentBx; rInitBy = currentBy;
+          rDragInitBy = currentBy;
           rInitBw = currentBw; rInitBh = currentBh;
           rInitRot = currentRotation;
           rInitFontMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1;
-          rInitTargetFs = typeof b.targetFontSize === "number" ? b.targetFontSize : (adj?.targetFontSize);
+          rInitTargetFs = typeof b.targetFontSize === "number" && Number.isFinite(b.targetFontSize) && b.targetFontSize > 0
+            ? b.targetFontSize
+            : (typeof adj?.targetFontSize === "number" && Number.isFinite(adj.targetFontSize) && adj.targetFontSize > 0
+              ? adj.targetFontSize
+              : undefined);
+          rDragTargetFs = rInitTargetFs;
+          rInitManualMinHeightPx = manualMinHeightPx;
           resizeDragActive = id === 'width' || id === 'scale';
 
           if (id === 'width') {
+            if (currentBy < 0 || currentBy + currentBh > ih) {
+              currentBy = Math.max(0, Math.min(Math.max(0, ih - Math.min(currentBh, ih)), currentBy));
+              rDragInitBy = currentBy;
+            }
+            if (manualMinHeightPx === undefined) {
+              manualMinHeightPx = adj
+                ? (typeof adj.manualMinHeightPx === "number" && Number.isFinite(adj.manualMinHeightPx)
+                  ? Math.max(0, adj.manualMinHeightPx)
+                  : adj.bh)
+                : 25;
+            }
             const text = (b.t || b.translated || "").trim();
             if (text && typeof rInitTargetFs !== "number") {
               const currentStyle = textStyleRef?.current || ts;
@@ -1539,8 +1655,9 @@ export const applyTranslationOverlay = async (
                 bubbleMult,
                 !b.isInvalidBox,
               );
-              rInitTargetFs = Math.max(8, Math.round(prevFit.fontSize / (bubbleMult * globalMult)));
-              b.targetFontSize = rInitTargetFs;
+              const multiplier = bubbleMult * globalMult;
+              rDragTargetFs = multiplier > 0 ? prevFit.fontSize / multiplier : prevFit.fontSize;
+              b.targetFontSize = rDragTargetFs;
             }
           }
 
@@ -1553,14 +1670,16 @@ export const applyTranslationOverlay = async (
           e.stopPropagation();
         });
 
-        handle.addEventListener('pointermove', (e) => {
-          if (!handle.hasPointerCapture(e.pointerId)) return;
+        let pendingWidthPreviewFrame: number | null = null;
+        let pendingWidthPointer: { pointerId: number; clientX: number; clientY: number } | null = null;
+
+        const applyPointerMove = (clientX: number, clientY: number): void => {
           const rect = tlContainer.getBoundingClientRect();
-          const dx = (e.clientX - rStartX) * (iw / rect.width);
-          const dy = (e.clientY - rStartY) * (ih / rect.height);
+          const dx = (clientX - rStartX) * (iw / rect.width);
+          const dy = (clientY - rStartY) * (ih / rect.height);
           
           if (id === 'rotate') {
-            const curAngle = Math.atan2(e.clientY - rCenterY, e.clientX - rCenterX) * (180 / Math.PI);
+            const curAngle = Math.atan2(clientY - rCenterY, clientX - rCenterX) * (180 / Math.PI);
             const angleDiff = curAngle - rStartAngle;
             const rawRotation = (rInitRot + angleDiff + 360) % 360;
             currentRotation = snapRotationToRightAngle(rawRotation);
@@ -1576,16 +1695,22 @@ export const applyTranslationOverlay = async (
               const currentFontFam = resolveCanvasFontFamily(currentStyle.fontFamily);
               const bubbleMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
               const globalMult = currentStyle.fontSizeMultiplier || 1.0;
-              const targetFs = typeof b.targetFontSize === "number" ? b.targetFontSize : (rInitTargetFs || 16);
+              const targetFs = typeof b.targetFontSize === "number" && Number.isFinite(b.targetFontSize) && b.targetFontSize > 0
+                ? b.targetFontSize
+                : (rDragTargetFs || 16);
               const effectiveFs = Math.max(8, Math.round(targetFs * globalMult * bubbleMult));
               const isOvalBox = !b.isInvalidBox;
-              const safeW = currentBw * 0.88;
-              const lines = wrapTextForBubble(text, safeW, Infinity, effectiveFs, currentFontFam, isOvalBox, "th", true);
-              const lineCount = Math.max(1, lines.length);
-              const lineH = effectiveFs * 1.30;
-              const totalH = lineCount * lineH;
-              currentBh = Math.max(25, Math.ceil(totalH / 0.86));
-              currentBy = rInitBy;
+              const layout = layoutBubbleAtFixedFont(
+                text,
+                currentBw,
+                effectiveFs,
+                currentFontFam,
+                isOvalBox,
+                manualMinHeightPx ?? 25,
+                Math.max(0, ih - rDragInitBy),
+              );
+              currentBh = layout.heightPx;
+              currentBy = rDragInitBy;
             }
           } else if (id === 'scale') {
             currentBw = Math.max(20, rInitBw + dx);
@@ -1596,22 +1721,83 @@ export const applyTranslationOverlay = async (
             // as the A+/A- buttons), so the whole bubble zooms as one unit.
             const heightRatio = newBh / rInitBh;
             b.fontSizeMultiplier = Math.max(0.4, Math.min(3.0, rInitFontMult * heightRatio));
+            manualMinHeightPx = currentBh;
           } else if (id === 'move') {
             currentBx = rInitBx + dx;
             currentBy = rInitBy + dy;
           }
           renderBubble();
+        };
+
+        const cancelPendingWidthPreview = (): void => {
+          if (pendingWidthPreviewFrame !== null) {
+            window.cancelAnimationFrame(pendingWidthPreviewFrame);
+            pendingWidthPreviewFrame = null;
+          }
+          pendingWidthPointer = null;
+        };
+
+        const flushPendingWidthPreview = (pointer?: { pointerId: number; clientX: number; clientY: number }): void => {
+          if (pendingWidthPreviewFrame !== null) {
+            window.cancelAnimationFrame(pendingWidthPreviewFrame);
+            pendingWidthPreviewFrame = null;
+          }
+          const latest = pointer ?? pendingWidthPointer;
+          pendingWidthPointer = null;
+          if (latest && handle.hasPointerCapture(latest.pointerId)) {
+            applyPointerMove(latest.clientX, latest.clientY);
+          }
+        };
+
+        handle.addEventListener('pointermove', (e) => {
+          if (!handle.hasPointerCapture(e.pointerId)) return;
+          if (id !== "width") {
+            applyPointerMove(e.clientX, e.clientY);
+            return;
+          }
+
+          const rect = tlContainer.getBoundingClientRect();
+          const dx = (e.clientX - rStartX) * (iw / rect.width);
+          if (Math.abs(Math.max(30, rInitBw + dx) - rInitBw) < 0.001) return;
+          widthDragDidMove = true;
+          pendingWidthPointer = { pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY };
+          if (pendingWidthPreviewFrame === null) {
+            pendingWidthPreviewFrame = window.requestAnimationFrame(() => {
+              pendingWidthPreviewFrame = null;
+              const latest = pendingWidthPointer;
+              pendingWidthPointer = null;
+              if (latest && handle.hasPointerCapture(latest.pointerId)) {
+                applyPointerMove(latest.clientX, latest.clientY);
+              }
+            });
+          }
         });
 
         handle.addEventListener('pointerup', (e) => {
           e.stopPropagation();
+          if (id === "width" && widthDragDidMove) {
+            flushPendingWidthPreview({ pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY });
+          }
           try {
             handle.releasePointerCapture(e.pointerId);
           } catch {
             // ignore
           }
+          if (id === "width" && !widthDragDidMove) {
+            resizeDragActive = false;
+            currentBx = rInitBx;
+            currentBy = rInitBy;
+            currentBw = rInitBw;
+            currentBh = rInitBh;
+            currentRotation = rInitRot;
+            b.targetFontSize = rInitTargetFs;
+            manualMinHeightPx = rInitManualMinHeightPx;
+            floorBase = { w: rInitBw, h: rInitBh };
+            return;
+          }
           const wasResizing = resizeDragActive;
           resizeDragActive = false;
+          if (id === "scale") manualMinHeightPx = currentBh;
           saveAdjustment();
           // Re-apply the frame floor once, now that the drag has ended.
           if (wasResizing) renderBubble();
@@ -1619,6 +1805,7 @@ export const applyTranslationOverlay = async (
           const finalBx = currentBx, finalBy = currentBy, finalBw = currentBw, finalBh = currentBh, finalRot = currentRotation;
           const finalFontMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
           const finalTargetFs = b.targetFontSize;
+          const finalManualMinHeight = manualMinHeightPx;
           if (
             finalBx !== rInitBx ||
             finalBy !== rInitBy ||
@@ -1626,7 +1813,8 @@ export const applyTranslationOverlay = async (
             finalBh !== rInitBh ||
             finalRot !== rInitRot ||
             finalFontMult !== rInitFontMult ||
-            finalTargetFs !== rInitTargetFs
+            finalTargetFs !== rInitTargetFs ||
+            finalManualMinHeight !== rInitManualMinHeightPx
           ) {
             undoManager.push({
               label:
@@ -1645,6 +1833,7 @@ export const applyTranslationOverlay = async (
                 currentRotation = rInitRot;
                 b.fontSizeMultiplier = rInitFontMult;
                 b.targetFontSize = rInitTargetFs;
+                manualMinHeightPx = rInitManualMinHeightPx;
                 floorBase = { w: rInitBw, h: rInitBh };
                 renderBubble();
                 saveAdjustment();
@@ -1657,6 +1846,7 @@ export const applyTranslationOverlay = async (
                 currentRotation = finalRot;
                 b.fontSizeMultiplier = finalFontMult;
                 b.targetFontSize = finalTargetFs;
+                manualMinHeightPx = finalManualMinHeight;
                 floorBase = { w: finalBw, h: finalBh };
                 renderBubble();
                 saveAdjustment();
@@ -1666,15 +1856,24 @@ export const applyTranslationOverlay = async (
         });
 
         handle.addEventListener('pointercancel', (e) => {
+          e.stopPropagation();
+          cancelPendingWidthPreview();
           try {
             handle.releasePointerCapture(e.pointerId);
           } catch {
             // ignore
           }
-          const wasResizing = resizeDragActive;
           resizeDragActive = false;
-          saveAdjustment();
-          if (wasResizing) renderBubble();
+          currentBx = rInitBx;
+          currentBy = rInitBy;
+          currentBw = rInitBw;
+          currentBh = rInitBh;
+          currentRotation = rInitRot;
+          b.fontSizeMultiplier = rInitFontMult;
+          b.targetFontSize = rInitTargetFs;
+          manualMinHeightPx = rInitManualMinHeightPx;
+          floorBase = { w: rInitBw, h: rInitBh };
+          renderBubble();
         });
 
         chromeHandles.push(handle);

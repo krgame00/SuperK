@@ -18,6 +18,7 @@ Currently, SuperK's text bubble editing exhibits two critical issues:
 ### User Target (Modeled from Torii Translate Reference Video `2026-09-27 21-17-08.mkv`):
 - Dragging the side `width` handle narrows the column width.
 - The font size remains locked at its intended size.
+- The user reconfirmed on 2026-09-28 that the **visible font size** must remain fixed during right-side drag even if glyphs in the reference recording appear to change size between sampled frames.
 - Text reflows dynamically into more lines.
 - The frame height automatically expands downward (Top-Anchored) to fit the reflowed line count.
 - The 4-handle layout (rotate, scale, width, move) is maintained without adding a bottom handle.
@@ -33,7 +34,7 @@ Currently, SuperK's text bubble editing exhibits two critical issues:
 2. **Side Width Handle (`e` / right-center):**
    - **Action:** **Content-Driven Bubble Reflow**.
    - **Behavior:** Updates `currentBw = Math.max(minBubbleWidth, rInitBw + dx)`.
-   - **Font Size:** Strictly preserves `b.fontSizeMultiplier` (no mutation).
+   - **Font Size:** Preserve the visible canvas font size in source-image pixels for the entire drag and after release. Keeping `b.fontSizeMultiplier` unchanged alone is insufficient; the renderer must not re-fit font size from frame geometry.
    - **Auto-Height:** Computes required height based on wrapped lines and expands downward.
 3. **Rotate Handle (`nw` / top-left):**
    - **Action:** Rotates the bubble around center.
@@ -43,17 +44,17 @@ Currently, SuperK's text bubble editing exhibits two critical issues:
 ### 2.2 Top-Anchored Dynamic Reflow Math
 
 While dragging the `width` handle or when text changes:
-1. **Line Wrapping:**
-   $$\text{fit} = \text{fitTextForBubble}(\text{text}, \text{currentBw} \times 0.92, \infty, \text{currentFontFam}, \text{fontMult}, \text{minFs})$$
+1. **Line Wrapping:** Capture the visible font size when the right-side drag starts. Wrap at that fixed source-image pixel size using a bounded, height-independent layout calculation. Never pass `Infinity` to the existing height-based `wrapTextForBubble` candidate loop.
 2. **Height Computation:**
    $$\text{lineH} = \text{fontSize} \times 1.30$$
-   $$\text{contentHeight} = \max(\text{minBubbleHeight}, \text{fit.lines.length} \times \text{lineH} + \text{verticalPadding})$$
+   $$\text{contentHeight} = \max(\text{manualMinHeight}, \text{minBubbleHeight}, \text{fit.lines.length} \times \text{lineH} + \text{verticalPadding})$$
 3. **Top-Anchoring:**
    - `currentBy` remains pinned at its top coordinate:
      $$\text{currentBy}_{\text{new}} = \text{currentBy}_{\text{anchor}}$$
    - `currentBh` becomes:
      $$\text{currentBh} = \text{contentHeight}$$
    - The top floating toolbar (`bubble-quick-toolbar`) remains stable above the bubble without jumpy repositioning.
+   - If the required height reaches the page bottom, keep the font size and the selected width, clamp the frame to the page, and report text overflow.
 
 ### 2.3 Word Breaking & Minimum Column Width
 - Minimum width floor: $\text{minBubbleWidth} = 30\text{px}$ (or $\approx 1$ character width).
@@ -80,7 +81,7 @@ User drags 'width' handle (pointermove)
    Keep b.fontSizeMultiplier intact
                │
                ▼
-   fitTextForBubble(text, currentBw * 0.92, ...)
+   Bounded fixed-font layout at currentBw
    Calculate required lines and contentHeight
                │
                ▼

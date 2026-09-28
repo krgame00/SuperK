@@ -3,6 +3,7 @@ import {
   fitTextInAdaptiveBubble,
   getReadableMinimumFontSize,
   growBubbleFrameToFit,
+  layoutBubbleAtFixedFont,
   measureBubbleRenderFit,
   readPageOverlayAdjustments,
   resolveCanvasFontFamily,
@@ -109,33 +110,65 @@ export function assessPageGeometry(input: PageGeometryInput): PageGeometryResult
     }
     const bubbleMultiplier = typeof bubble.fontSizeMultiplier === "number" ? bubble.fontSizeMultiplier
       : legacyAdjustment?.fontSizeMultiplier ?? 1;
-    const targetFs = bubble.targetFontSize ?? adjustment?.targetFontSize;
-    const lockWidth = Boolean(adjustment || targetFs);
-    const grown = growBubbleFrameToFit(
-      text, drawingWidth, drawingHeight, width, height, fontFamily,
-      globalMultiplier, bubbleMultiplier, !bubble.isInvalidBox && !invalidBox,
-      lockWidth,
-      targetFs,
-    );
-    if (!lockWidth) {
-      const growthCenterX = left + drawingWidth / 2;
-      const growthCenterY = top + drawingHeight / 2;
-      left = Math.max(0, Math.min(width - grown.width, growthCenterX - grown.width / 2));
-      top = Math.max(0, Math.min(height - grown.height, growthCenterY - grown.height / 2));
+    const candidateTargetFs = bubble.targetFontSize ?? adjustment?.targetFontSize;
+    const targetFs = typeof candidateTargetFs === "number"
+      && Number.isFinite(candidateTargetFs)
+      && candidateTargetFs > 0
+      ? candidateTargetFs
+      : undefined;
+    const isOval = !bubble.isInvalidBox && !invalidBox;
+    let layoutOverflow = false;
+    let fit: ReturnType<typeof measureBubbleRenderFit>;
+    if (targetFs !== undefined) {
+      const fixedFontSize = Math.max(8, Math.round(targetFs * globalMultiplier * bubbleMultiplier));
+      const manualMinHeight = adjustment?.manualMinHeightPx
+        ?? (adjustment ? adjustment.bh : 25);
+      const layout = layoutBubbleAtFixedFont(
+        text,
+        drawingWidth,
+        fixedFontSize,
+        fontFamily,
+        isOval,
+        manualMinHeight,
+        Math.max(0, height - top),
+      );
+      drawingHeight = layout.heightPx;
+      layoutOverflow = layout.overflow
+        || left < 0
+        || left + drawingWidth > width
+        || top < 0
+        || top + drawingHeight > height;
+      fit = {
+        fontSize: layout.fontSizePx,
+        lines: layout.lines,
+        lineHeight: layout.fontSizePx * 1.30,
+        fits: !layoutOverflow,
+      };
+    } else {
+      const lockWidth = Boolean(adjustment);
+      const grown = growBubbleFrameToFit(
+        text, drawingWidth, drawingHeight, width, height, fontFamily,
+        globalMultiplier, bubbleMultiplier, isOval, lockWidth,
+      );
+      if (!lockWidth) {
+        const growthCenterX = left + drawingWidth / 2;
+        const growthCenterY = top + drawingHeight / 2;
+        left = Math.max(0, Math.min(width - grown.width, growthCenterX - grown.width / 2));
+        top = Math.max(0, Math.min(height - grown.height, growthCenterY - grown.height / 2));
+      }
+      drawingWidth = grown.width;
+      drawingHeight = grown.height;
+      fit = measureBubbleRenderFit(
+        text, drawingWidth, drawingHeight, width, fontFamily,
+        globalMultiplier, bubbleMultiplier, isOval,
+      );
     }
-    drawingWidth = grown.width;
-    drawingHeight = grown.height;
-    const fit = measureBubbleRenderFit(
-      text, drawingWidth, drawingHeight, width, fontFamily,
-      globalMultiplier, bubbleMultiplier, !bubble.isInvalidBox && !invalidBox,
-      targetFs,
-    );
     const base = { pageUrl: input.pageUrl, pageIndex: input.pageIndex, bubbleId, text };
     measurements.push({ bubble, bubbleId, text, left, top, width: drawingWidth, height: drawingHeight,
       lines: fit.lines, fontSize: fit.fontSize,
       rotation: adjustment?.rotation ?? (bubble.rotation as number) ?? 0,
       lineHeight: Math.min(fit.fontSize * 1.30, drawingHeight / Math.max(1, fit.lines.length)) });
-    if (!fit.fits) findings.push({ ...base, kind: "overflow", fontSize: fit.fontSize });
+    if (layoutOverflow || !fit.fits) findings.push({ ...base, kind: "overflow", fontSize: fit.fontSize });
     if (fit.fontSize < threshold) findings.push({ ...base, kind: "small-text", fontSize: fit.fontSize, threshold });
   }
   return { findings, measurements };

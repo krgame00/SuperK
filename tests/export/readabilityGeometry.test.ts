@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assessPageGeometry } from "@/lib/export/readabilityScan";
+import { layoutBubbleAtFixedFont } from "@/lib/translationOverlay";
 
 describe("pre-export text geometry", () => {
   it("warns about text that cannot fit a manually sized drawing area", () => {
@@ -65,5 +66,70 @@ describe("pre-export text geometry", () => {
     expect(result.findings).toEqual(expect.arrayContaining([
       expect.objectContaining({ bubbleId: "id-second", kind: "small-text" }),
     ]));
+  });
+
+  it("honors saved fixed-font manual minimum height and reports bottom overflow", () => {
+    const expectedManual = layoutBubbleAtFixedFont("สวัสดี", 180, 16, "sans-serif", true, 120, 800);
+    const expectedBottom = layoutBubbleAtFixedFont("สวัสดี", 180, 16, "sans-serif", true, 120, 20);
+    const result = assessPageGeometry({
+      pageUrl: "page-a",
+      pageIndex: 0,
+      width: 1000,
+      height: 1000,
+      bubbles: [{
+        id: "fixed-font",
+        t: "สวัสดี",
+        box: [100, 100, 200, 300],
+        targetFontSize: 16,
+        layoutAdjustment: {
+          bx: 100, by: 200, bw: 180, bh: 40, iw: 1000, ih: 1000,
+          targetFontSize: 16, manualMinHeightPx: 120,
+        },
+      }, {
+        id: "bottom-overflow",
+        t: "สวัสดี",
+        box: [100, 100, 200, 300],
+        targetFontSize: 16,
+        layoutAdjustment: {
+          bx: 100, by: 980, bw: 180, bh: 40, iw: 1000, ih: 1000,
+          targetFontSize: 16, manualMinHeightPx: 120,
+        },
+      }],
+    });
+
+    const manual = result.measurements?.find((measurement) => measurement.bubble.id === "fixed-font");
+    const bottom = result.measurements?.find((measurement) => measurement.bubble.id === "bottom-overflow");
+    expect(manual?.height).toBe(expectedManual.heightPx);
+    expect(manual?.lines).toEqual(expectedManual.lines);
+    expect(manual?.fontSize).toBe(expectedManual.fontSizePx);
+    expect(bottom?.height).toBe(expectedBottom.heightPx);
+    expect(bottom?.lines).toEqual(expectedBottom.lines);
+    expect(result.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ bubbleId: "id-bottom-overflow", kind: "overflow" }),
+    ]));
+  });
+
+  it("preserves the top of legitimate tall fixed-font saved layouts", () => {
+    const result = assessPageGeometry({
+      pageUrl: "page-a",
+      pageIndex: 0,
+      width: 1000,
+      height: 1200,
+      bubbles: [{
+        id: "tall-fixed",
+        t: "สวัสดี",
+        box: [100, 100, 300, 400],
+        targetFontSize: 16,
+        layoutAdjustment: {
+          bx: 100, by: 100, bw: 100, bh: 2000, iw: 1000, ih: 1200,
+          targetFontSize: 16, manualMinHeightPx: 1000,
+        },
+      }],
+    });
+
+    expect(result.measurements?.[0]).toMatchObject({ left: 100, top: 100, width: 100, height: 1000 });
+    expect(result.findings).not.toContainEqual(
+      expect.objectContaining({ bubbleId: "id-tall-fixed", kind: "overflow" }),
+    );
   });
 });
