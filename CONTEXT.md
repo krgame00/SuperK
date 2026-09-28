@@ -313,6 +313,6 @@ The typesetting practice of rendering floating dialogue and sound effects over a
 _Avoid_: Solid-colored borderless text, uncontrasted floating text
 
 **Content-driven bubble reflow**:
-The dynamic wrapping of translated text into narrower or wider columns based on user-adjusted width, while automatically adapting frame height to fit line count and keeping the visible letter size unchanged. Dragging the width handle reshapes the text column, whereas dragging the corner scale handle performs proportional zoom of both frame dimensions and text size.
-_Avoid_: Proportional side scaling, font-shrunk narrow bubbles, manual multi-edge height adjustment
+The dynamic wrapping of translated text between complete words as a person adjusts the side width handle. Width-only reflow preserves visible letter size, keeps the frame's top edge fixed, and adapts frame height to the wrapped text. The minimum width fits the widest complete word; if that word cannot fit within the page or later text no longer fits the saved frame, preserve the word and report overflow. Dragging the corner scale handle remains proportional zoom of frame dimensions and text size.
+_Avoid_: Proportional side scaling, font-shrunk narrow bubbles, character-split words, manual multi-edge height adjustment
 

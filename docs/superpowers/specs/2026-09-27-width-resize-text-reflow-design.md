@@ -5,6 +5,8 @@
 - **Status:** Approved via `/grill-with-docs` (ADR 0018)
 - **Target Area:** `lib/translationOverlay.ts`, `lib/textFitting.ts`, `types/workspace.ts`
 
+> **Follow-up:** The word-breaking and minimum-width behavior in this 2026-09-27 design was amended by [the 2026-09-28 word-preserving width reflow design](2026-09-28-word-preserving-width-reflow-design.md). Fixed-font side resizing, top-anchored auto-height, and the handle responsibilities below remain in force; the 30px floor and grapheme-breaking fallback are superseded.
+
 ---
 
 ## 1. Problem Statement & User Experience Goals
@@ -102,7 +104,7 @@ Pointer Up -> saveAdjustment() -> Persist to IndexedDB & push to UndoManager
 1. **Unit Tests (`tests/unit/translationOverlayAdjust.test.ts` & `tests/unit/textFitting.test.ts`):**
    - Assert dragging `width` changes `bw` and `bh` without mutating `fontSizeMultiplier`.
    - Assert narrowing width increases line count and increases `bh` while keeping `by` top-anchored.
-   - Assert single long words break gracefully into multiple lines when width is smaller than the word.
+   - As amended on 2026-09-28, assert the side-width handle stops at the full-word width floor, never splits a word, and reports overflow for legacy frames that are narrower than a complete word.
    - Assert corner `scale` handle continues to scale `fontSizeMultiplier` and dimensions proportionally.
 2. **Regression Tests (`tests/workflow/` & `tests/export/`):**
    - Assert export compositing renders reflowed multi-line text identically to the preview canvas.

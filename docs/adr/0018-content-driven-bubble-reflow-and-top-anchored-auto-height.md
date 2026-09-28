@@ -4,7 +4,7 @@ Date: 2026-09-27
 
 ## Status
 
-Accepted — Shared Understanding confirmed on 2026-09-27 following `/grill-with-docs` session.
+Accepted — initially confirmed on 2026-09-27 and amended on 2026-09-28 following a follow-up `/grill-with-docs` session.
 
 ## Context
 
@@ -29,12 +29,15 @@ A user recording (`2026-09-27 21-17-08.mkv`) demonstrated the desired behavior m
      $$\text{currentBh} = \max(\text{minHeight}, \text{lineCount} \times \text{lineH} + \text{verticalPadding})$$
    - This ensures the floating quick toolbar anchored above the bubble does not jump or oscillate while dragging.
 
-3. **Word-Breaking Fallback and Minimum Width**:
-   - The bubble width allows narrowing down to a safe minimum width floor ($\approx 30\text{px}$).
-   - If the width is narrower than an unbroken Thai or English word, the text engine allows syllable / character break fallback, enabling slender vertical manga columns.
+3. **Whole-Word Reflow and Minimum Width**:
+   - During side-width-handle dragging, wrap only between complete words. Identify word boundaries using the translated text's language, keep trailing punctuation with its word, and use whitespace-delimited tokens if language-aware segmentation is unavailable. Never split a word into syllables, graphemes, or characters to satisfy a narrower frame.
+   - Calculate the width floor from the widest complete word at the current visible font size, including the bubble's safe text inset and shape-specific usable width. Remove the fixed 30px floor for this interaction.
+   - If that width floor would cross the page's right edge, shift the bubble left only as much as needed to keep it inside the page; preserve its vertical position. If even a page-width frame cannot fit one complete word, preserve the word and report text overflow.
+   - Apply the same whole-word line layout after pointer release and in reopened and exported output. If later text edits or an older saved frame cannot fit a word, preserve the saved width and report overflow instead of widening the frame automatically.
 
 4. **Frame Floor Modernization (Width-Locked Height Accommodation)**:
    - When text is edited, font size is changed via toolbar, or width is adjusted, the engine respects the user-specified width and only expands height downward to prevent clipping. Width is never ballooned outward automatically against user intent.
+   - If a complete word is wider than the user-specified or previously saved width, keep the width and show the existing overflow indication; do not break the word or silently resize the frame.
 
 5. **Persistence and Parity**:
    - The reflowed width and auto-computed height are persisted to `TranslatedBubble.layoutAdjustment` in IndexedDB.
