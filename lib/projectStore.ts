@@ -280,7 +280,18 @@ export const saveProjectSession = async (
         : `translated_${encodeURIComponent(pageUrl)}`;
       const isDirty = dirty ? dirty.has(pageUrl) : true;
       const imageValue = data.translatedImageCache.get(pageUrl);
-      const hasValidImage = typeof imageValue === "string" && imageValue.startsWith("data:");
+      let hasValidImage = typeof imageValue === "string" && imageValue.startsWith("data:");
+      let imageBytes: Uint8Array | undefined;
+      if (hasValidImage) {
+        try {
+          imageBytes = dataUrlToBytes(imageValue as string);
+        } catch {
+          // One corrupted cache entry must not kill the whole autosave —
+          // keep the previous persisted render linked (same as an evicted
+          // page) and let the rest of the book save.
+          hasValidImage = false;
+        }
+      }
 
       // If the page was explicitly dirtied (e.g. text changed) and has no rendered image in memory,
       // its previous persisted render is obsolete and must not be linked or preserved.
@@ -288,15 +299,15 @@ export const saveProjectSession = async (
         continue;
       }
 
-      if (hasValidImage) {
+      if (hasValidImage && imageBytes) {
         translatedAssetIds.push([pageId ?? pageUrl, assetId]);
         referencedAssetIds.add(assetId);
         if (isDirty) {
-          const mimeType = imageValue.match(/^data:([^;]+)/)?.[1] || "image/png";
+          const mimeType = (imageValue as string).match(/^data:([^;]+)/)?.[1] || "image/png";
           assetStore.put({
             id: assetId,
             mimeType,
-            bytes: dataUrlToBytes(imageValue),
+            bytes: imageBytes,
             createdAt: Date.now(),
           } satisfies StoredSourceAsset);
         }
@@ -772,7 +783,7 @@ export const appendPageToProjectSession = async (
   };
 };
 
-const transactionDone = (
+export const transactionDone = (
   tx: IDBTransaction,
   timeoutMs: number = 4000,
 ): Promise<void> =>
@@ -781,7 +792,10 @@ const transactionDone = (
     const timer = setTimeout(() => {
       if (!settled) {
         settled = true;
-        resolve();
+        // A transaction still running past the budget is reported as a
+        // failure: silently resolving here hid later aborts (e.g.
+        // QuotaExceeded on multi-MB manga blobs) behind a fake success.
+        reject(new Error(`IDBTransaction timed out after ${timeoutMs}ms`));
       }
     }, timeoutMs);
 

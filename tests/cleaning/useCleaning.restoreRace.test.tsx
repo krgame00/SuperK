@@ -127,3 +127,29 @@ test("metadata restore restarts after the page count changes", async () => {
   expect(loadCleaningResultsMetadata).toHaveBeenCalledTimes(2);
   expect(result.current.resultsByPage.get("blob:one")?.jobId).toBe("job-1");
 });
+
+test("a failing metadata store skips the clean restore instead of dying unhandled", async () => {
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    vi.mocked(loadCleaningResultsMetadata).mockRejectedValueOnce(
+      new Error("idb open failed"),
+    );
+    const { result, rerender } = renderHook(
+      ({ pages }) => useCleaning({ pages, currentPage: 0 }),
+      { initialProps: { pages: ["blob:one"] } },
+    );
+
+    rerender({ pages: ["blob:one", "blob:two"] });
+    await act(async () => {
+      for (let index = 0; index < 20; index += 1) await Promise.resolve();
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to load cleaning results metadata"),
+      expect.any(Error),
+    );
+    expect(result.current.resultsByPage.size).toBe(0);
+  } finally {
+    warnSpy.mockRestore();
+  }
+});

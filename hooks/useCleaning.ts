@@ -649,7 +649,15 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     let active = true;
     let completed = false;
     void (async () => {
-      const saved = await loadCleaningResultsMetadata();
+      let saved: Awaited<ReturnType<typeof loadCleaningResultsMetadata>>;
+      try {
+        saved = await loadCleaningResultsMetadata();
+      } catch (error) {
+        // A metadata store failure must not kill the whole session restore —
+        // the affected pages simply reclean.
+        console.warn("Failed to load cleaning results metadata; skipping clean restore", error);
+        return;
+      }
       for (const [pageUrl, metadata] of saved) {
         if (
           !active ||

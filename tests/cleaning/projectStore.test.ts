@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto";
 
-import { beforeEach, describe, expect, it, test } from "vitest";
+import { beforeEach, describe, expect, it, test, vi } from "vitest";
 
 import {
   appendPageToProjectSession,
@@ -16,6 +16,7 @@ import {
   saveCleaningAssets,
   saveCleaningResultMetadata,
   saveProjectSession,
+  transactionDone,
 } from "@/lib/projectStore";
 
 beforeEach(async () => {
@@ -497,4 +498,44 @@ test("uses a short stable asset key for cleaned CBZ pages", async () => {
 
   expect(ids.cleanAssetId).toBe("clean_cbz-page-42");
   expect(await loadAsset(ids.cleanAssetId!)).not.toBeNull();
+});
+
+test("a corrupted translated render does not kill the whole autosave", async () => {
+  const pages = [
+    { id: "page-ok", name: "ok.png", url: `data:image/jpeg;base64,${btoa("ok source")}` },
+    { id: "page-bad", name: "bad.png", url: `data:image/jpeg;base64,${btoa("bad source")}` },
+  ];
+  const translatedImageCache = new Map<string, string>([
+    [pages[0].url, `data:image/png;base64,${btoa("good render")}`],
+    [pages[1].url, "data:image/png;base64,!!!not-base64!!!"],
+  ]);
+
+  await expect(
+    saveProjectSession({
+      pages,
+      currentPage: 0,
+      bubbleCache: new Map(),
+      translatedImageCache,
+    }),
+  ).resolves.toBeUndefined();
+
+  const goodAsset = await loadAsset("translated_page-ok");
+  expect(goodAsset).toBeTruthy();
+  const badAsset = await loadAsset("translated_page-bad");
+  expect(badAsset).toBeNull();
+});
+
+test("transactionDone rejects instead of faking success when the transaction stalls", async () => {
+  vi.useFakeTimers();
+  try {
+    const stalled = {
+      addEventListener: vi.fn(),
+    } as unknown as IDBTransaction;
+    const done = transactionDone(stalled, 50);
+    const expectation = expect(done).rejects.toThrow(/timed out/);
+    vi.advanceTimersByTime(60);
+    await expectation;
+  } finally {
+    vi.useRealTimers();
+  }
 });
