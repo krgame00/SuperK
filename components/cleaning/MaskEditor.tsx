@@ -157,6 +157,9 @@ export function MaskEditor({
   const imageDataRef = useRef<ImageData | undefined>(undefined);
   const drawingRef = useRef(false);
   const loadedRegionRef = useRef("");
+  // Unsaved strokes per region: switching balloons must not wipe what the
+  // user painted, and coming back must restore their work in progress.
+  const regionSnapshotsRef = useRef<Map<string, ImageData>>(new Map());
   // Bounded undo memory: one base snapshot per edit window plus compact
   // stroke operations — never two full-page ImageData clones per stroke.
   const strokeOpsRef = useRef<Array<{ points: MaskPoint[]; radius: number; mode: BrushMode }>>([]);
@@ -226,6 +229,9 @@ export function MaskEditor({
   useEffect(() => {
     const key = `${sourceUrl}:${regionId}`;
     if (loadedRegionRef.current === key && imageDataRef.current) return;
+    if (loadedRegionRef.current && imageDataRef.current) {
+      regionSnapshotsRef.current.set(loadedRegionRef.current, imageDataRef.current);
+    }
     let active = true;
     const maskImage = new Image();
     maskImage.onload = () => {
@@ -255,7 +261,14 @@ export function MaskEditor({
         source.data[index + 2] = 80;
         source.data[index + 3] = activePixel ? 150 : 0;
       }
-      renderMask(source);
+      const snapshot = regionSnapshotsRef.current.get(key);
+      if (snapshot && snapshot.width === source.width && snapshot.height === source.height) {
+        // Returning to a region the user already edited: keep their strokes
+        // (undo history restarts from the restored state).
+        renderMask(snapshot);
+      } else {
+        renderMask(source);
+      }
       snapshotOpsBase();
       loadedRegionRef.current = key;
     };

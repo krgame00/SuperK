@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import { MaskEditor } from "@/components/cleaning/MaskEditor";
@@ -569,3 +569,41 @@ describe("MaskEditor", () => {
     expect(screen.getByText("100%")).toBeTruthy();
   });
 });
+
+
+test("keeps unsaved strokes when switching regions and back", async () => {
+  const region2: CleaningRegion = { ...preservedRegion, id: "region-2", rect: { x: 40, y: 40, width: 20, height: 12 } };
+  const { container } = renderMaskEditor({ regions: [preservedRegion, region2] });
+  const canvas = await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+  expect(container.querySelector("canvas")).toBeTruthy();
+  const flushLoads = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+
+  await flushLoads();
+  const sharedCtx = (canvas as HTMLCanvasElement).getContext("2d") as unknown as {
+    putImageData: ReturnType<typeof vi.fn>;
+  };
+  const lastImage = () => sharedCtx.putImageData.mock.calls.at(-1)?.[0] as ImageData;
+  const alphaAt = (img: ImageData, x: number, y: number) => img.data[(y * img.width + x) * 4 + 3];
+
+  // Paint one stroke on region-1 (brush paint alpha is 255)
+  await act(async () => {
+    fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 30, clientY: 40, button: 0 });
+    fireEvent.pointerUp(canvas, { pointerId: 1 });
+  });
+  expect(alphaAt(lastImage(), 30, 40)).toBe(255);
+
+  // Switch to region-2, then back to region-1
+  await act(async () => {
+    fireEvent.change(screen.getByLabelText("Region"), { target: { value: "region-2" } });
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  await act(async () => {
+    fireEvent.change(screen.getByLabelText("Region"), { target: { value: "region-1" } });
+    await new Promise((r) => setTimeout(r, 0));
+  });
+
+  const restored = lastImage();
+  expect(alphaAt(restored, 30, 40)).toBe(255);
+  expect(alphaAt(restored, 11, 11)).toBe(150);
+});
+
