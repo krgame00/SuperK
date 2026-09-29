@@ -138,6 +138,10 @@ export class ResourceBudgetManager<T = unknown> {
 
     for (const item of sorted) {
       if (this.currentSizeBytes <= targetBytes) break;
+      // Hard floor: warm entries back the currently visible/nearby pages —
+      // evicting them revokes live object URLs and blacks out the screen.
+      // Accept exceeding the budget instead.
+      if (isWarm && isWarm(item.key)) continue;
       if (onEvictItem) {
         onEvictItem(item);
       }

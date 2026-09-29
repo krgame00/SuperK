@@ -67,4 +67,26 @@ describe("Bounded Page Resource Residency (Ticket 03)", () => {
     expect(manager.has("page-old1")).toBe(false);
     expect(manager.has("page-old2")).toBe(false);
   });
+
+  test("never evicts warm entries even when the budget cannot be met", () => {
+    const manager = new ResourceBudgetManager<string>({ minCapMB: 10, maxCapMB: 10 });
+    const oneMB = 1024 * 1024;
+    const isWarm = (key: string) => key === "page-0" || key === "page-1";
+
+    manager.set("page-0", "data0", 6 * oneMB, "source", isWarm); // warm
+    manager.set("page-1", "data1", 6 * oneMB, "source", isWarm); // warm — 12 MB > 10 MB budget
+
+    // Warm floor: the visible pages survive even over budget instead of
+    // having their live object URLs revoked mid-display.
+    expect(manager.has("page-0")).toBe(true);
+    expect(manager.has("page-1")).toBe(true);
+    expect(manager.getCurrentUsageMB()).toBe(12);
+
+    // A later cold arrival cannot displace the warm floor: the cold item is
+    // the only evictable candidate and is refused instead.
+    manager.set("page-9", "data9", 1 * oneMB, "source", isWarm);
+    expect(manager.has("page-9")).toBe(false);
+    expect(manager.has("page-0")).toBe(true);
+    expect(manager.has("page-1")).toBe(true);
+  });
 });
