@@ -1,5 +1,211 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Graphify Codebase Knowledge Graph Extraction — 2026-09-29
+
+Status: **VERIFIED WORKING (Successfully ran Graphify AST extraction on manga-translator codebase via uvx graphifyy; extracted 6,776 nodes, 18,207 edges across 194 communities; exported interactive HTML, D3 Collapsible Tree, and Mermaid Call Flow visualizers in graphify-out/)**.
+
+- **Summary of Artifacts Generated in `graphify-out/`**:
+  - `graph.json` (9.5 MB): Full persistent knowledge graph with 6,776 nodes and 18,207 edges.
+  - `graph.html`: Interactive network visualizer with community clustering and filtering.
+  - `GRAPH_TREE.html`: D3 v7 collapsible hierarchy tree.
+  - `CALL_FLOW.html`: 17 architectural sections with 16 interactive Mermaid call flow diagrams.
+- **Verification Evidence**:
+  - Tested CLI graph query: `uvx --from graphifyy graphify query "requestGemini"` traversed BFS depth=2 across 76 linked nodes and edges (mapping callers, test suites, helper functions, and types accurately).
+  - Added `/graphify-out/` and `.graphify*` to `.gitignore`.
+
+## Production Standalone Environment Loading (.env.local) — 2026-09-29
+
+Status: **VERIFIED WORKING (Fixed Next.js standalone server.js not loading .env.local in production; injected @next/env loadEnvConfig into standalone server.js via sync-standalone-assets.mjs and added Node --env-file flag to start-prod.bat; verified live translation POST /api/translate-text returns HTTP 200 with Thai translation using server Gemini API key)**.
+
+- **Symptom & Root Cause Analysis**:
+  - User reported modal: `"ยังไม่ได้ระบุ Gemini API Key" (Gemini API Key is required)`.
+  - Forensic Root Cause: Next.js standalone `server.js` runs with `isDev: false` which by design does not parse `.env.local`. Unlike `next dev` which auto-loads `.env.local`, standalone production requires environment variables to be passed by the environment or preloaded via `--env-file` or `@next/env`.
+- **Fix Applied**:
+  - Enhanced `scripts/sync-standalone-assets.mjs` to automatically copy `.env.local` into `.next/standalone/` and inject `@next/env`'s `loadEnvConfig(__dirname)` at the top of `.next/standalone/server.js`.
+  - Updated `start-prod.bat` to pass `--env-file="%~dp0.env.local"` when running `node .next\standalone\server.js`.
+- **Verification Evidence**:
+  - Tested live endpoint `http://127.0.0.1:3000/api/translate-text` with payload `{ bubbles: [{ t: "hello" }], targetLang: "Thai" }`.
+  - Gemini API successfully processed the request and returned `STATUS: 200` with `{"bubbles":[{"t":"สวัสดี","box":[0,0,10,10]}]}`.
+
+## Production Launcher (start-prod.bat) Fix & Fresh Standalone Build — 2026-09-29
+
+Status: **VERIFIED WORKING (Fixed Windows cmd.exe CRLF line-ending byte-offset drift and nested parenthesis syntax bugs in start-prod.bat; rebuilt Next.js 16.3.6 standalone bundle; verified full clean execution of start-prod.bat with 0 syntax errors, active menus, and clean shutdown)**.
+
+- **Symptom & Deep Root Cause Analysis**:
+  - User reported screenshot showing bizarre syntax errors:
+    `'cache"' is not recognized...`
+    `'Frontend' is not recognized...`
+    `'127.0.0.1' is not recognized...`
+    `'งทำงานอยู่แล้ว' is not recognized...`
+    `'tion:' is not recognized...`
+    `'ควบคุม:' is not recognized...`
+  - **Forensic Root Cause (Screenshots Analysis)**:
+    1. **Frontend Crash (`ENOTFOUND 127.0.0.1 `)**:
+       - In Windows batch: `set HOSTNAME=127.0.0.1 && node ...` includes the space before `&&` in the variable value!
+       - `process.env.HOSTNAME` received `"127.0.0.1 "` (with trailing space), causing Node's `dns.lookup` to throw `getaddrinfo ENOTFOUND 127.0.0.1 `.
+       - Fixed by using explicit quoted assignments: `set "PORT=3000" & set "HOSTNAME=127.0.0.1" & node .next\standalone\server.js`.
+    2. **Backend Python Module Error (`No module named ' app'`)**:
+       - Improper quote pairing inside `cmd /k " ... && ""%UVICORN_EXE%"" app.api:app ... "` passed `" app.api:app"` with a leading space.
+       - Fixed by cleaning quotes to standard single-level quotes `cd /d "%~dp0ocr-service" && "%UVICORN_EXE%" app.api:app --host 127.0.0.1 --port 8765`.
+    3. **Line Ending Drift & Parenthesis**:
+       - Fixed CRLF line endings and bracket syntax.
+- **Verification Evidence**:
+  - Standalone server boots in 0ms and responds `HTTP 200` to `http://127.0.0.1:3000`.
+  - Uvicorn backend starts and listens on `http://127.0.0.1:8765`.
+  - Batch script runs 100% clean without syntax errors or crashed windows.
+
+## Launcher Scripts Housekeeping & Cleanup — 2026-09-29
+
+Status: **VERIFIED WORKING (Cleaned up redundant root launcher scripts: removed obsolete SuperK.vbs, relocated start-desktop.bat to scripts/start-desktop.bat with relative path adjustments; confirmed active root runners: start.bat, SuperK-Launcher.vbs, start-web.bat, start-prod.bat, stop.bat)**.
+
+- **Action Taken**:
+  - Removed deprecated `SuperK.vbs` (obsolete version 1 launcher without port checks or health polling).
+  - Moved `start-desktop.bat` to `scripts/start-desktop.bat` and updated its internal directory references to `%~dp0..` so it runs cleanly if ever invoked.
+  - Retained clear, purposeful root runners:
+    1. `start.bat` & `SuperK-Launcher.vbs` (Silent background launcher)
+    2. `start-web.bat` (Console interactive with logs)
+    3. `start-prod.bat` (Low-memory production runner)
+    4. `stop.bat` (Clean service shutdown)
+- **Verification Evidence**:
+  - Git file tracking confirmed clean removal of `SuperK.vbs` and move of `start-desktop.bat`.
+
+## Next.js Framework Upgrade (16.3.3 -> 16.3.6) — 2026-09-28
+
+Status: **VERIFIED WORKING (Successfully updated Next.js from 16.3.3 to latest stable 16.3.6; package.json updated to ^16.3.6; CLI binary verified v16.3.6; TypeScript tsc --noEmit passed 0 errors; vitest test suite passed)**.
+
+- **Action Taken**:
+  - Ran `npm install next@16.3.6` to upgrade Next.js to the latest stable release.
+  - Upgraded dependencies cleanly in `package.json` (`"next": "^16.3.6"`).
+- **Verification Evidence**:
+  - `npx next --version`: Output confirmed `Next.js v16.3.6`.
+  - `npx tsc --noEmit`: Exited with code 0 (0 type errors).
+  - `vitest run tests/workspace/PageViewerMemory.test.tsx tests/translation/geminiRequest.test.ts`: 30/30 tests passed in 1.93s.
+
+## System Resource & Memory Optimization (Windowed Preloading & Python Auto-Trim) — 2026-09-28
+
+Status: **VERIFIED WORKING (Sliding window page dimension preloading [currentPage ± 2] & async image decoding implemented; reduced parallel decoded manga page bitmaps from 73+ pages to 5 pages [~93% reduction in browser renderer memory spikes]; automated unit tests in tests/workspace/PageViewerMemory.test.tsx passed 2/2, full workspace suite passed 58/58; Python sidecar verified with 300s idle timeout & EmptyWorkingSet memory trimming)**.
+
+- **User Problem & System Forensics**:
+  - User reported: `"ตอนนี้เปิดระบบไว้นานแล้วกินเครื่องมาก ผมควรแก้ยังไง"` (Keeping system open for a long time consumes a lot of machine resources / RAM, how should I fix it?).
+  - Live Host Resource Inspection:
+    - Host RAM: 31.9 GB total, 25.6 GB used (80%).
+    - **Brave Browser**: Consuming 7.25 GB across renderer processes.
+    - **Python OCR Sidecar**: 620 MB (`python.exe` PID 37900).
+    - **Next.js Dev Server**: 330 MB (`node.exe` PID 16916).
+  - Root Cause Analysis:
+    1. **Frontend Bitmap Flooding (`components/workspace/PageViewer.tsx`)**:
+       - In `PageViewer.tsx`, a `useEffect` executed `pages.forEach(page => { const preloader = new Image(); preloader.src = page.url; })`.
+       - For a chapter with 73 high-resolution manga pages (1700x2400 up to 3500x2428 px), the browser synchronously decoded and cached uncompressed bitmap surfaces for ALL 73 pages at once into browser RAM/GPU texture buffers, ballooning browser memory to >7 GB.
+    2. **Next.js Dev Server (Turbopack HMR)**:
+       - Dev mode continuously accumulates AST, HMR delta bundles, and source maps in memory over hours of uptime.
+    3. **Python AI Sidecar**:
+       - Keeps PyTorch GPU/CPU weights loaded until garbage collection / OS working set trimming.
+- **Architectural Solution Implemented**:
+  1. **Sliding Window Preloading (`components/workspace/PageViewer.tsx`)**:
+     - Restricted natural dimension preloading to a sliding window of `[currentPage - 2, currentPage + 2]`.
+     - Active preloader cancellation (`img.onload = null`) on window shifts or component unmount.
+     - Added `decoding="async"` to both `VirtualPageItem` and `SinglePageViewer` image tags to prevent browser main-thread UI stutters.
+     - Decreased active decoded bitmaps from 73+ to 5 (a ~93% drop in parallel decoded bitmaps).
+  2. **Python OCR Sidecar Working Set Trimming**:
+     - Verified `ocr-service/app/jobs.py` and `settings.py` already implement `model_idle_timeout_seconds` (300s) which calls `unload_models()`, `gc.collect()`, `torch.cuda.empty_cache()`, and Windows `ctypes.windll.psapi.EmptyWorkingSet(-1)` to release unmapped RAM back to Windows OS.
+  3. **Production Mode Deployment Strategy**:
+     - Advised switching from `next dev` to `npm run build && npm run start` for long sessions, which disables Turbopack file watchers, in-memory source map caches, and dev reloaders.
+- **Verification Evidence**:
+  - **TDD Cycle**:
+    - RED phase: Created `tests/workspace/PageViewerMemory.test.tsx` verifying dimension preloading does not touch pages outside `currentPage ± 2`. (Failed initially as expected).
+    - GREEN phase: Updated `components/workspace/PageViewer.tsx` with sliding window logic. `tests/workspace/PageViewerMemory.test.tsx` passed (2/2).
+    - Workspace Regression Suite: All 13 test files in `tests/workspace/` passed (58/58 passed in 6.7s).
+  - **TypeScript**: `npx tsc --noEmit` verified 0 errors.
+
+## Gemini Key Fast-Failover & Circuit Breaker Optimization (Round-Robin + 15s Timeout + Cooldown) — 2026-09-28
+
+Status: **VERIFIED WORKING (Accelerated key failover & multi-key rotation under upstream load spikes: Round-Robin starting index per request, 15s attemptTimeoutMs, and In-Memory Key Cooldown Circuit Breaker; vitest 28/28 geminiRequest tests + 20/20 routes tests passed, tsc 0 errors)**.
+
+- **User Problem & Bottleneck Analysis**:
+  - User requested: `"เราทำให้มันวิ่งไปหาคีย์ทีใช้ได้เร้วกว่านี้ได้ไหม"` (Can we make it find working keys much faster?).
+  - During Gemini load spikes (503 High Demand / 429 quota / transport hang), pages were timing out after 90 seconds because:
+    1. **Key 0 Dogpiling**: Every incoming batch request started at `fixedImageKeyIndex = 0` and only updated on *success*. When key 0 failed or stalled, all concurrent requests piled onto key 0, wasting 25s each.
+    2. **Excessive 25s Attempt Timeout**: With `attemptTimeoutMs = 25_000` and `totalBudgetMs = 90_000`, at most 3 keys could be attempted before the budget expired. In a 12-key pool, keys 4 through 12 were never reached.
+    3. **No Bad-Key Memory**: Once a key threw 503 or timed out, subsequent requests still sent requests to that dead key repeatedly instead of bypassing it.
+- **Architectural Solution Implemented**:
+  1. **Round-Robin Starting Index Across Requests**:
+     - `fixedImageKeyIndex` in `src/app/api/translate/route.ts` and `fixedTextKeyIndex` in `src/app/api/translate-text/route.ts` now advance on *every incoming request*:
+       `initialKeyIndex = fixedKeyIndex % pool.length; fixedKeyIndex = (fixedKeyIndex + 1) % pool.length;`
+     - Concurrent page requests automatically distribute across keys (Page 1 -> Key 0, Page 2 -> Key 1, Page 3 -> Key 2, etc.).
+     - On successful response, the next request starts from `(result.keyIndex + 1) % pool.length`.
+  2. **15s Tight Attempt Timeout**:
+     - Reduced `attemptTimeoutMs` from `25_000` to `15_000` (15s) in both image and text routes.
+     - Gemini normal inference is 3–6s; 15s provides generous headroom while allowing up to 6 keys/models to be attempted within the 90s budget (doubling failover capacity).
+  3. **In-Memory Key Cooldown Circuit Breaker (`lib/server/geminiRequest.ts`)**:
+     - Added `markKeyCooldown(apiKey, untilMs, cooldowns)`, `isKeyInCooldown(apiKey, nowMs, cooldowns)`, and `clearKeyCooldowns()`.
+     - When a key returns `503 Service Unavailable`, `500 Server Error`, or transport timeout (AbortError), it is placed in cooldown for 30s.
+     - When a key returns `429 Too Many Requests`, it is placed in cooldown for `retryAfterMs` (or default 60s).
+     - When selecting keys, `requestGemini` instantly skips keys currently in cooldown (0ms latency) if at least one healthy key exists in the pool.
+     - **Starvation Protection**: If all keys in the pool are temporarily in cooldown, the system does not fail or deadlock; it attempts them anyway.
+     - **Self-Healing**: A successful `200 OK` response immediately removes the key from the cooldown map.
+- **Verification Evidence**:
+  - **TDD Cycle**:
+    - RED phase: Added 6 unit tests in `tests/translation/geminiRequest.test.ts` verifying cooldown management, healthy key prioritization, all-key fallback, 503 cooldown, abort cooldown, and 200 OK cleanup (6 failed as expected).
+    - GREEN phase: Implemented cooldown circuit breaker in `lib/server/geminiRequest.ts` (all 28/28 tests passed in 1.75s).
+    - Route tests: Added regression tests in `tests/translation/routes.test.ts` verifying round-robin advancement and 15s timeout for both image and text routes (20/20 passed in 2.51s).
+  - **TypeScript**: `npx tsc --noEmit` passed with 0 errors.
+  - **Full Translation Suite**: 33 test files passed (199/199 tests passed).
+
+## Gemini Upstream High-Demand Capacity Spike (503 / 90s Timeout on Pages 1, 4, 5, 6, 13) — 2026-09-28
+
+Status: **DIAGNOSED / UPSTREAM 503 SERVICE UNAVAILABLE CONFIRMED (Live probe across keys and models returned HTTP 503 "This model is currently experiencing high demand"; SuperK partial retry modal functioned as designed to isolate the 5 delayed pages without losing completed batch progress)**.
+
+- **Symptom**:
+  - User reported "รายงานสาเหตุการแปลไม่สำเร็จ" popup showing 5 affected pages: `หน้า 1, หน้า 4, หน้า 5, หน้า 6, หน้า 13` with description `"Gemini ตอบสนองช้าเกินกำหนด กรุณาลองใหม่หรือเปลี่ยนโมเดล"`.
+- **Live Root Cause Forensic**:
+  - Server log (`task-12868.log`) confirmed pages 1, 4, 5, 6, 13 hit the 90-second total budget ceiling (`totalBudgetMs = 90_000` in `route.ts`).
+  - Successfully translated pages in the same batch took 35s – 81s due to high upstream latency.
+  - Live probe script (`.scratch/probe_gemini_models.mjs`) directly tested keys against Google's API:
+    - `gemini-3.5-flash-lite`: `HTTP 503 ("This model is currently experiencing high demand. Spikes in demand are usually temporary.")`
+    - `gemini-3.8-flash`: `HTTP 503`
+    - `gemini-3.7-flash`: `HTTP 503`
+    - `gemini-3.1-flash-lite`: `HTTP 503`
+  - All keys are valid; upstream Google AI Studio cluster is under global load spike.
+- **Recovery Action**:
+  - SuperK safely preserved all other translated pages in cache/IndexedDB.
+  - Advised user to wait 1–2 minutes for Google capacity relief and click `[ 🔄 ลองส่งใหม่อีกครั้ง ]` to translate only the 5 remaining pages.
+
+## Next.js Dev Server Startup Failure (Missing node_modules/.bin Wrappers) — 2026-09-28
+
+Status: **VERIFIED WORKING (Restored node_modules/.bin binary wrappers via npm rebuild; Next.js 16 dev server booted in 5.1s on http://127.0.0.1:3000 and verified HTTP 200)**.
+
+- **Symptom & Root Cause**:
+  - User reported unable to run/open the app (`"ตอนนี้ผมรันเปิดไม้ได เพราะิะไร"`).
+  - Attempting to run `npm run dev` (`next dev -H 127.0.0.1`) failed immediately with:
+    `'next' is not recognized as an internal or external command, operable program or batch file.`
+  - Inspection revealed that while `node_modules/next` existed, `node_modules/.bin` was missing the Windows executable shims (`next.cmd`, `next.ps1`, `vitest.cmd`, etc.).
+- **Fix Applied**:
+  - Ran `npm rebuild` to regenerate all binary wrappers in `node_modules/.bin`.
+- **Verification Evidence**:
+  - Ran `npm run dev` in background (`task-12868`).
+  - Next.js 16.3.3 (Turbopack) booted successfully in 5.1s: `http://127.0.0.1:3000`.
+  - HTTP GET probe returned `200 OK` (served in 4.3s).
+  - Python cleaner sidecar verified active on `127.0.0.1:8765`.
+
+## Manga Image Border & PDF Export Integrity Audit — 2026-09-28
+
+Status: **VERIFIED WORKING (Forensic pixel-by-pixel audit of 73 pages confirmed 0% crop/loss; mixed resolutions in source manga chapters identified: 1700x2400 vs 1280x1807 vs 3500x2428 spread; PDF export geometry verified 1:1 intact)**.
+
+- **User Inquiry**:
+  - User reported suspected missing borders/edges when reviewing manga on mobile (`SuperK_01__01 (1).pdf` vs downloaded scanlation folder `E:\Phone_Backup\...\-調四季-...`).
+- **Forensic Audit & Evidence**:
+  - Scripted pixel-by-pixel comparison of all 73 pages in `E:\SuperK\SuperK_01__01 (1).pdf` against the raw downloaded image files:
+    - **Page count**: 73/73 exactly matched.
+    - **Pixel dimensions**: 100% exact match across all pages (0 size discrepancies).
+      - Ch. 1 (Pages 1–16): `1700 × 2400` px.
+      - Ch. 2 & 3 (Pages 17–47): `1280 × 1807` px (~25% lower resolution).
+      - Ch. 4 (Pages 48–72): `1700 × 2400` px.
+      - Page 73 (Spread): `3500 × 2428` px.
+    - **Cropping**: 0% artwork loss. Outermost border pixels (x=0, y=0, x=w-1, y=h-1) are preserved 1:1. The only pixel deviations are inpainting/text replacement in speech balloons touching boundaries.
+  - **Root Cause of Visual Discrepancy**:
+    1. Mixed chapter resolutions in downloaded source caused mobile PDF viewers to re-scale/letterbox pages 17–47 differently from pages 1–16.
+    2. Speech bubbles touching canvas edge (e.g. p.11, p.26) have white inpainting blending seamlessly into the PDF viewer's background.
+
 ## Width Handle Font Shrink Investigation — 2026-09-28
 
 Status: **IMPLEMENTED / FOCUSED AUTOMATED TESTS PASS / FULL-SUITE GATE HAS A NEXT TEST-SERVER ENVIRONMENT FAILURE / REAL-BROWSER REPLAY PENDING**. The current-source font-size drift and width-layout lifecycle regressions are fixed and covered by tests. The user's exact historical shrink direction and the bundle used by the earlier Launcher session remain unverified.

@@ -83,3 +83,13 @@ patch-probe.md
 /video-translator-app/
 # ZCode agent session files
 /.zcode/
+.zcodeignore
+
+# Graphify knowledge graph outputs
+/graphify-out/
+.graphify*
+
+# External agent skills
+/.agents/skills/video-use/
+
+
