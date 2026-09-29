@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 > nul
 setlocal
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 title SuperK Manga Translator - Desktop Launcher
 
@@ -10,7 +10,8 @@ echo          SuperK - Manga Translator (Desktop Application)
 echo =====================================================================
 echo.
 
-set "ELECTRON_EXE=%~dp0node_modules\electron\dist\electron.exe"
+set "PROJECT_ROOT=%~dp0.."
+set "ELECTRON_EXE=%PROJECT_ROOT%\node_modules\electron\dist\electron.exe"
 
 if not exist "%ELECTRON_EXE%" (
     echo [ERROR] ไม่พบ Electron ใน node_modules
@@ -19,7 +20,7 @@ if not exist "%ELECTRON_EXE%" (
     exit /b 1
 )
 
-if not exist "%~dp0ocr-service\venv\Scripts\python.exe" if not exist "%~dp0ocr-service\.venv\Scripts\python.exe" (
+if not exist "%PROJECT_ROOT%\ocr-service\venv\Scripts\python.exe" if not exist "%PROJECT_ROOT%\ocr-service\.venv\Scripts\python.exe" (
     echo [ERROR] ไม่พบ Python virtual environment ใน ocr-service\venv หรือ ocr-service\.venv
     pause
     exit /b 1

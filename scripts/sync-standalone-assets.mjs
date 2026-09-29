@@ -22,4 +22,25 @@ if (fs.existsSync(standaloneDir)) {
     fs.cpSync(staticSrc, staticDest, { recursive: true });
     console.log('[Assets] Synced .next/static -> .next/standalone/.next/static');
   }
+
+  const serverJsPath = path.join(standaloneDir, 'server.js');
+  if (fs.existsSync(serverJsPath)) {
+    for (const envFile of ['.env', '.env.local']) {
+      const srcEnv = path.join(projectRoot, envFile);
+      const destEnv = path.join(standaloneDir, envFile);
+      if (fs.existsSync(srcEnv)) {
+        fs.copyFileSync(srcEnv, destEnv);
+        console.log(`[Env] Synced ${envFile} -> .next/standalone/${envFile}`);
+      }
+    }
+    let serverContent = fs.readFileSync(serverJsPath, 'utf8');
+    if (!serverContent.includes('loadEnvConfig')) {
+      const envInject = "\nconst { loadEnvConfig } = require('@next/env');\ntry { loadEnvConfig(__dirname); } catch (e) { console.error('Failed to load env:', e); }\n";
+      serverContent = serverContent.replace("const path = require('path')", "const path = require('path')" + envInject);
+      fs.writeFileSync(serverJsPath, serverContent, 'utf8');
+      console.log('[Env] Injected loadEnvConfig into .next/standalone/server.js');
+    }
+  }
 }
+
+
