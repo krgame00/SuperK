@@ -87,6 +87,7 @@ function VirtualPageItem({
         src={imgSrc}
         alt={`Page ${index + 1}`}
         draggable={false}
+        decoding="async"
         onDragStart={(e) => e.preventDefault()}
         className={`${
           scrollZoomMode === "actual-size"
@@ -166,13 +167,21 @@ export function PageViewer({
     return () => clearTimeout(timer);
   }, [currentPage, naturalDimensions?.width, naturalDimensions?.height]);
 
-  // Preload natural dimensions for all pages in background so switching pages never flashes unmeasured scale
+  // Preload natural dimensions in a sliding window around currentPage (currentPage ± 2)
+  // so navigating adjacent pages is instantaneous without forcing browser to decode dozens of images at once.
   useEffect(() => {
     if (typeof window === "undefined" || !pages.length) return;
-    pages.forEach((page) => {
+
+    const windowStart = Math.max(0, currentPage - 2);
+    const windowEnd = Math.min(pages.length - 1, currentPage + 2);
+    const windowPages = pages.slice(windowStart, windowEnd + 1);
+
+    const activePreloaders: HTMLImageElement[] = [];
+
+    windowPages.forEach((page) => {
       if (naturalDimensionsMap[page.url]) return;
       const preloader = new Image();
-      preloader.src = page.url;
+      preloader.decoding = "async";
       const onPreload = () => {
         if (preloader.naturalWidth && preloader.naturalHeight) {
           setNaturalDimensionsMap((prev) => {
@@ -192,8 +201,16 @@ export function PageViewer({
       } else {
         preloader.onload = onPreload;
       }
+      preloader.src = page.url;
+      activePreloaders.push(preloader);
     });
-  }, [pages, naturalDimensionsMap]);
+
+    return () => {
+      activePreloaders.forEach((img) => {
+        img.onload = null;
+      });
+    };
+  }, [pages, currentPage, naturalDimensionsMap]);
 
   const zoom = usePageZoom({
     currentPage,
@@ -397,6 +414,7 @@ export function PageViewer({
                   alt={`หน้า ${currentPage + 1}: ${currentPageItem.name}`}
                   title={currentPageItem.name}
                   draggable={false}
+                  decoding="async"
                   onDragStart={(e) => e.preventDefault()}
                   onLoad={(e) => {
                     const img = e.currentTarget;
