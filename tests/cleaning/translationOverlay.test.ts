@@ -1686,3 +1686,97 @@ test("rotate handle snaps magnetically to cardinal right angles (0, 90, 180, 270
   expect(bubble.layoutAdjustment?.rotation).toBe(0);
 });
 
+
+test("renders the identical font and lines for workspace and offscreen export paths", async () => {
+  vi.resetModules();
+  // Per-canvas draw recorder so single-mode and offscreen renders can be
+  // compared without the shared jsdom ctx proxy merging their logs.
+  const recordings = new Map<HTMLCanvasElement, { fonts: string[]; lines: string[]; size: [number, number] }>();
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(function (this: HTMLCanvasElement) {
+    let rec = recordings.get(this);
+    if (!rec) {
+      rec = { fonts: [], lines: [], size: [this.width, this.height] };
+      recordings.set(this, rec);
+    }
+    let curFont = "bold 16px sans-serif";
+    const ctx = {
+      set font(v: string) { curFont = v; rec!.fonts.push(v); },
+      get font() { return curFont; },
+      measureText: (str: string) => {
+        const match = /(\d+(?:\.\d+)?)px/.exec(curFont);
+        const fs = match ? parseFloat(match[1]) : 16;
+        return { width: str.length * fs * 0.62 };
+      },
+      fillText: (text: string) => { rec!.lines.push(String(text)); },
+      strokeText: vi.fn(),
+      clearRect: vi.fn(),
+      createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+    };
+    return ctx as unknown as CanvasRenderingContext2D;
+  });
+
+  const makeContainer = (offscreen: boolean) => {
+    const container = document.createElement("div");
+    if (offscreen) container.id = "offscreen-container";
+    const image = document.createElement("img");
+    Object.defineProperties(image, {
+      complete: { configurable: true, value: true },
+      naturalWidth: { configurable: true, value: 1000 },
+      naturalHeight: { configurable: true, value: 1200 },
+    });
+    container.appendChild(image);
+    document.body.appendChild(container);
+    return container;
+  };
+
+  const { applyTranslationOverlay } = await import("@/lib/translationOverlay");
+  const styleRef = {
+    current: {
+      fontFamily: "Itim, sans-serif",
+      textColor: "#000000",
+      textOutline: "#ffffff",
+      fontSizeMultiplier: 1,
+    },
+  };
+  const bubble: TranslatedBubble = {
+    box: [100, 100, 300, 400],
+    t: "โอ้ ดูท่าทางจะใช้ได้แฮะ",
+    layoutAdjustment: { bx: 300, by: 300, bw: 200, bh: 360, iw: 1000, ih: 1200 },
+    targetFontSize: 24,
+  };
+
+  const liveContainer = makeContainer(false);
+  await applyTranslationOverlay(
+    [{ ...bubble }],
+    "single",
+    0,
+    vi.fn(),
+    undefined,
+    styleRef,
+    liveContainer,
+  );
+  await vi.runAllTimersAsync();
+
+  const exportContainer = makeContainer(true);
+  await applyTranslationOverlay(
+    [{ ...bubble }],
+    "offscreen",
+    -1,
+    vi.fn(),
+    undefined,
+    styleRef,
+  );
+  await vi.runAllTimersAsync();
+
+  const liveCanvas = liveContainer.querySelector("canvas")!;
+  const exportCanvas = exportContainer.querySelector("canvas")!;
+  const live = recordings.get(liveCanvas)!;
+  const exported = recordings.get(exportCanvas)!;
+
+  // The exported page must draw the exact same glyph size, line breaks and
+  // frame as the workspace bubble.
+  expect(live.fonts).toEqual(exported.fonts);
+  expect(live.lines).toEqual(exported.lines);
+  expect(exported.size).toEqual(live.size);
+  expect(live.lines.length).toBeGreaterThan(0);
+});
