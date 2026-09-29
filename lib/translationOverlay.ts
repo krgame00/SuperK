@@ -724,7 +724,7 @@ export const applyTranslationOverlay = async (
     return;
   }
 
-  const paint = async () => {
+  const paint = async (attempt = 0) => {
     // A newer apply on this container must win — bail without touching the DOM.
     if (isStaleOverlay()) return;
     // Repaints (duplicate bubble, style change) must replace the previous
@@ -746,7 +746,12 @@ export const applyTranslationOverlay = async (
     if (isStaleOverlay()) return;
     const iw = img.naturalWidth || img.offsetWidth;
     const ih = img.naturalHeight || img.offsetHeight;
-    if (!iw || !ih) { setTimeout(paint, 100); return; }
+    if (!iw || !ih) {
+      // Undecodable images never gain dimensions — retry briefly, then give
+      // up instead of looping forever (callers re-render on the next change).
+      if (attempt < 50) setTimeout(() => paint(attempt + 1), 100);
+      return;
+    }
 
     // Adjustments are keyed by page URL — keying by array index re-mapped
     // every saved position whenever pages were reordered or deleted.
@@ -2399,10 +2404,12 @@ export const applyTranslationOverlay = async (
     }
   };
 
+  const paintWhenReady = () => {
+    if (img.complete && img.naturalWidth) paint();
+    else img.onload = () => paint();
+  };
   document.fonts
     .load(`1em ${resolveCanvasFontFamily(textStyleRef?.current?.fontFamily)}`)
-    .then(() => {
-      if (img.complete && img.naturalWidth) paint();
-      else img.onload = paint;
-    });
+    .then(paintWhenReady)
+    .catch(paintWhenReady);
 };

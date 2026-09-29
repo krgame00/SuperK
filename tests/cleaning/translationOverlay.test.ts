@@ -1780,3 +1780,40 @@ test("renders the identical font and lines for workspace and offscreen export pa
   expect(exported.size).toEqual(live.size);
   expect(live.lines.length).toBeGreaterThan(0);
 });
+
+test("export compositing survives a font-load rejection", async () => {
+  const { container, canvas } = await renderOverlay("ฟอนต์พังก็ export ได้");
+  Object.defineProperty(document, "fonts", {
+    configurable: true,
+    value: { load: vi.fn().mockRejectedValue(new Error("invalid font-family")) },
+  });
+
+  const drawImageArgs: unknown[][] = [];
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
+    new Proxy(
+      {
+        measureText: () => ({ width: 20 }),
+        drawImage: (...args: unknown[]) => {
+          drawImageArgs.push(args);
+        },
+      },
+      {
+        get(target, property) {
+          if (property in target) {
+            return target[property as keyof typeof target];
+          }
+          return vi.fn();
+        },
+        set(target, property, value) {
+          return Reflect.set(target as Record<PropertyKey, unknown>, property, value);
+        },
+      },
+    ) as unknown as CanvasRenderingContext2D,
+  );
+
+  downloadTranslatedImage("single", 0, "export.png", true, container);
+  await Promise.resolve();
+  await Promise.resolve();
+
+  expect(drawImageArgs.some((args) => args[0] === canvas)).toBe(true);
+});
