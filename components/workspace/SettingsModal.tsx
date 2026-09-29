@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { type GlossaryEntry } from "@/lib/translation/glossary";
 import { MANUAL_IMAGE_MODEL_IDS } from "@/lib/translation/imageModelChoices";
+import { workspaceResourceManager } from "@/lib/lifecycle/workspaceResourceManager";
 import { Plus, Trash2, BookText, Flame, X, ChevronDown, Download, Folder, Search, Check, Sparkles, Power, AlertTriangle, Loader2 } from "lucide-react";
 import {
   getAskExportDirectory,
@@ -171,6 +172,7 @@ export function SettingsModal({
   });
   const [isPurging, setIsPurging] = useState(false);
   const isPurgingBrowserRef = useRef(false);
+  const [memoryUsage, setMemoryUsage] = useState<{ usedMB: number; budgetMB: number } | null>(null);
   const [askExportDirectory, setAskExportDirectoryState] = useState(
     () => getAskExportDirectory(),
   );
@@ -203,6 +205,27 @@ export function SettingsModal({
 
   const [pairingToken, setPairingToken] = useState<string>("");
   const [isCopiedToken, setIsCopiedToken] = useState(false);
+
+  // Live page-cache memory readout while the modal is open.
+  useEffect(() => {
+    if (!isOpen) {
+      setMemoryUsage(null);
+      return;
+    }
+    const read = () => {
+      try {
+        setMemoryUsage({
+          usedMB: Math.round(workspaceResourceManager.getCurrentUsageMB()),
+          budgetMB: Math.round(workspaceResourceManager.getBudgetMB()),
+        });
+      } catch {
+        // Manager not ready yet — the next tick retries.
+      }
+    };
+    read();
+    const timer = window.setInterval(read, 2000);
+    return () => window.clearInterval(timer);
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -985,6 +1008,36 @@ export function SettingsModal({
               </div>
             )}
           </div>
+
+          {memoryUsage && memoryUsage.budgetMB > 0 && (
+            <div className="rounded-xl border border-border/70 bg-background/45 p-3">
+              <span className="mb-1 block text-xs font-medium text-muted">
+                Memory (แรมแคชหน้าภาพในเบราว์เซอร์)
+              </span>
+              <div aria-label="การใช้หน่วยความจำแคชหน้าภาพ">
+                <div className="flex items-center justify-between text-[10px] text-muted">
+                  <span>
+                    {memoryUsage.usedMB} MB จาก {memoryUsage.budgetMB} MB
+                  </span>
+                  <span>
+                    {Math.round((memoryUsage.usedMB / memoryUsage.budgetMB) * 100)}%
+                  </span>
+                </div>
+                <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-surface-hover">
+                  <div
+                    className={`h-full rounded-full transition-all ${
+                      memoryUsage.usedMB / memoryUsage.budgetMB > 0.9
+                        ? "bg-red-500"
+                        : "bg-primary"
+                    }`}
+                    style={{
+                      width: `${Math.min(100, Math.round((memoryUsage.usedMB / memoryUsage.budgetMB) * 100))}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="rounded-xl border border-border/70 bg-background/45 p-3">
             <span className="mb-1 block text-xs font-medium text-muted">
