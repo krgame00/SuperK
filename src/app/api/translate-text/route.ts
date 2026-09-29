@@ -19,6 +19,8 @@ interface GeminiResponseData {
   }>;
 }
 
+let fixedTextKeyIndex = 0;
+
 export async function POST(req: Request) {
   try {
     const { bubbles, targetLang, modelPreference, policy } = await req.json();
@@ -95,13 +97,25 @@ export async function POST(req: Request) {
       MODELS = [modelPreference];
     }
 
+    let initialKeyIndex = 0;
+    if (apiKeys.length > 0) {
+      initialKeyIndex = fixedTextKeyIndex % apiKeys.length;
+      fixedTextKeyIndex = (fixedTextKeyIndex + 1) % apiKeys.length;
+    }
+
     let data: GeminiResponseData;
     try {
       const result = await requestGemini<GeminiResponseData>({
         apiKeys,
         models: MODELS,
         payload,
+        initialKeyIndex,
+        attemptTimeoutMs: 15_000,
+        totalBudgetMs: 60_000,
       });
+      if (apiKeys.length > 0) {
+        fixedTextKeyIndex = (result.keyIndex + 1) % apiKeys.length;
+      }
       data = result.data;
     } catch (error) {
       if (error instanceof GeminiRequestError) {

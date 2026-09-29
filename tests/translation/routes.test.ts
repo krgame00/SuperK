@@ -534,3 +534,72 @@ test("text route supports custom translation policy (sfx: ignore)", async () => 
   expect(prompt).toContain("IGNORE all Sound Effects (SFX). Do NOT translate them.");
   expect(prompt).not.toContain("Translate Sound Effects (SFX) and wrap them in asterisks");
 });
+
+test("fixed image route advances initialKeyIndex round-robin and uses 15s timeout", async () => {
+  process.env.SUPERK_GEMINI_IMAGE_ROUTER = "fixed";
+  process.env.GEMINI_API_KEY = "key-0,key-1,key-2";
+  requestGeminiMock.mockResolvedValue(imageSuccess());
+
+  const makeReq = () =>
+    translateImage(
+      new Request("http://localhost/api/translate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          imageBase64: "valid-base64",
+          mimeType: "image/png",
+          modelPreference: "auto",
+        }),
+      }),
+    );
+
+  await makeReq();
+  const firstCall = requestGeminiMock.mock.calls[0][0];
+  expect(firstCall.attemptTimeoutMs).toBe(15_000);
+  const firstKeyIndex = firstCall.initialKeyIndex ?? 0;
+
+  await makeReq();
+  const secondCall = requestGeminiMock.mock.calls[1][0];
+  expect(secondCall.attemptTimeoutMs).toBe(15_000);
+  expect(secondCall.initialKeyIndex).toBe((firstKeyIndex + 1) % 3);
+});
+
+test("text route advances initialKeyIndex round-robin and uses 15s timeout", async () => {
+  process.env.GEMINI_API_KEY = "key-0,key-1,key-2";
+  requestGeminiMock.mockResolvedValue({
+    data: {
+      candidates: [{ content: { parts: [{ text: '{"bubbles":[]}' }] } }],
+    },
+    keyIndex: 0,
+    model: "test-model",
+    meta: {
+      provider: "gemini",
+      model: "test-model",
+      attemptCount: 1,
+      elapsedMs: 100,
+      fallbackCount: 0,
+    },
+  });
+
+  const makeReq = () =>
+    translateText(
+      new Request("http://localhost/api/translate-text", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          bubbles: [{ t: "hello", box: [0, 0, 100, 100] }],
+          targetLang: "Thai",
+        }),
+      }),
+    );
+
+  await makeReq();
+  const firstCall = requestGeminiMock.mock.calls[0][0];
+  expect(firstCall.attemptTimeoutMs).toBe(15_000);
+  const firstKeyIndex = firstCall.initialKeyIndex ?? 0;
+
+  await makeReq();
+  const secondCall = requestGeminiMock.mock.calls[1][0];
+  expect(secondCall.attemptTimeoutMs).toBe(15_000);
+  expect(secondCall.initialKeyIndex).toBe((firstKeyIndex + 1) % 3);
+});

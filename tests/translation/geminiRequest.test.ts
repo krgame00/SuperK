@@ -1,10 +1,13 @@
-import { describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import {
   GeminiRequestError,
   requestGemini,
   requestGeminiRoutes,
   requestOpenAICompatible,
+  clearKeyCooldowns,
+  isKeyInCooldown,
+  markKeyCooldown,
 } from "@/lib/server/geminiRequest";
 
 const successBody = {
@@ -26,6 +29,9 @@ function abortError(): DOMException {
 }
 
 describe("requestGemini", () => {
+  beforeEach(() => {
+    clearKeyCooldowns();
+  });
   test("transport timeout moves to the next model", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
@@ -568,5 +574,131 @@ describe("requestOpenAICompatible", () => {
 
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(result.data).toEqual(openAiSuccessBody);
+  });
+});
+
+describe("key cooldown circuit breaker", () => {
+  test("isKeyInCooldown and markKeyCooldown manage cooldown expiry", () => {
+    const cooldowns = new Map<string, number>();
+    expect(isKeyInCooldown("key-1", 1000, cooldowns)).toBe(false);
+
+    markKeyCooldown("key-1", 5000, cooldowns);
+    expect(isKeyInCooldown("key-1", 1000, cooldowns)).toBe(true);
+    expect(isKeyInCooldown("key-1", 4999, cooldowns)).toBe(true);
+    expect(isKeyInCooldown("key-1", 5000, cooldowns)).toBe(false);
+    expect(isKeyInCooldown("key-1", 6000, cooldowns)).toBe(false);
+
+    markKeyCooldown("key-2", 10000, cooldowns);
+    clearKeyCooldowns(cooldowns);
+    expect(isKeyInCooldown("key-2", 1000, cooldowns)).toBe(false);
+  });
+
+  test("skips keys in cooldown when healthy keys are available", async () => {
+    const cooldowns = new Map<string, number>();
+    markKeyCooldown("key-a", 100_000, cooldowns);
+
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(successBody));
+
+    const result = await requestGemini({
+      apiKeys: ["key-a", "key-b"],
+      models: ["model-a"],
+      payload: { contents: [] },
+      fetchImpl,
+      keyCooldowns: cooldowns,
+      now: () => 1000,
+    });
+
+    expect(result.keyIndex).toBe(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const headers = fetchImpl.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(headers["x-goog-api-key"]).toBe("key-b");
+  });
+
+  test("falls back to cooldown keys if all keys are currently in cooldown (no deadlock)", async () => {
+    const cooldowns = new Map<string, number>();
+    markKeyCooldown("key-a", 100_000, cooldowns);
+    markKeyCooldown("key-b", 100_000, cooldowns);
+
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(successBody));
+
+    const result = await requestGemini({
+      apiKeys: ["key-a", "key-b"],
+      models: ["model-a"],
+      payload: { contents: [] },
+      fetchImpl,
+      keyCooldowns: cooldowns,
+      now: () => 1000,
+    });
+
+    expect(result.keyIndex).toBe(0);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const headers = fetchImpl.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(headers["x-goog-api-key"]).toBe("key-a");
+  });
+
+  test("marks key in cooldown on 503 error", async () => {
+    const cooldowns = new Map<string, number>();
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "high demand" } }, 503))
+      .mockResolvedValueOnce(jsonResponse(successBody));
+
+    const result = await requestGemini({
+      apiKeys: ["key-a", "key-b"],
+      models: ["model-a"],
+      payload: { contents: [] },
+      fetchImpl,
+      keyCooldowns: cooldowns,
+      now: () => 1000,
+    });
+
+    expect(result.keyIndex).toBe(1);
+    expect(isKeyInCooldown("key-a", 1500, cooldowns)).toBe(true);
+  });
+
+  test("marks key in cooldown on transport timeout", async () => {
+    const cooldowns = new Map<string, number>();
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(abortError())
+      .mockResolvedValueOnce(jsonResponse(successBody));
+
+    const result = await requestGemini({
+      apiKeys: ["key-a", "key-b"],
+      models: ["model-a"],
+      payload: { contents: [] },
+      fetchImpl,
+      keyCooldowns: cooldowns,
+      now: () => 1000,
+    });
+
+    expect(result.keyIndex).toBe(1);
+    expect(isKeyInCooldown("key-a", 1500, cooldowns)).toBe(true);
+  });
+
+  test("clears key cooldown on successful request", async () => {
+    const cooldowns = new Map<string, number>();
+    markKeyCooldown("key-a", 100_000, cooldowns);
+    markKeyCooldown("key-b", 100_000, cooldowns);
+
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(successBody));
+
+    const result = await requestGemini({
+      apiKeys: ["key-a"],
+      models: ["model-a"],
+      payload: { contents: [] },
+      fetchImpl,
+      keyCooldowns: cooldowns,
+      now: () => 1000,
+    });
+
+    expect(result.keyIndex).toBe(0);
+    expect(isKeyInCooldown("key-a", 1500, cooldowns)).toBe(false);
   });
 });

@@ -84,6 +84,38 @@ export interface OpenAICompatibleResult<T> {
   meta: TranslationObservabilityMeta;
 }
 
+export const defaultKeyCooldowns = new Map<string, number>();
+
+export function markKeyCooldown(
+  apiKey: string,
+  cooldownUntilMs: number,
+  cooldowns: Map<string, number> = defaultKeyCooldowns,
+): void {
+  if (!apiKey) return;
+  cooldowns.set(apiKey, Math.max(cooldowns.get(apiKey) ?? 0, cooldownUntilMs));
+}
+
+export function isKeyInCooldown(
+  apiKey: string,
+  nowMs: number = Date.now(),
+  cooldowns: Map<string, number> = defaultKeyCooldowns,
+): boolean {
+  if (!apiKey) return false;
+  const expiry = cooldowns.get(apiKey);
+  if (!expiry) return false;
+  if (nowMs >= expiry) {
+    cooldowns.delete(apiKey);
+    return false;
+  }
+  return true;
+}
+
+export function clearKeyCooldowns(
+  cooldowns: Map<string, number> = defaultKeyCooldowns,
+): void {
+  cooldowns.clear();
+}
+
 export interface GeminiRequestOptions {
   apiKeys: string[];
   models: string[];
@@ -95,6 +127,8 @@ export interface GeminiRequestOptions {
   fetchImpl?: typeof fetch;
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
+  keyCooldowns?: Map<string, number> | false;
+  defaultCooldownMs?: number;
 }
 
 interface GeminiErrorBody {
@@ -180,7 +214,12 @@ export async function requestGemini<T = unknown>(
     fetchImpl = globalThis.fetch,
     now = Date.now,
     sleep = defaultSleep,
+    keyCooldowns,
+    defaultCooldownMs,
   } = options;
+  const cooldownMap =
+    keyCooldowns === false ? undefined : (keyCooldowns ?? defaultKeyCooldowns);
+  const defaultCooldownDuration = defaultCooldownMs ?? 30_000;
   const startedAt = now();
   let firstHttpError: GeminiRequestError | undefined;
   let sawTransportFailure = false;
@@ -196,6 +235,17 @@ export async function requestGemini<T = unknown>(
         ((initialKeyIndex + keyOffset) % apiKeys.length + apiKeys.length) %
         apiKeys.length;
       const apiKey = apiKeys[keyIndex];
+
+      if (cooldownMap && isKeyInCooldown(apiKey, now(), cooldownMap)) {
+        const hasHealthyKey = apiKeys.some(
+          (k) => !isKeyInCooldown(k, now(), cooldownMap),
+        );
+        if (hasHealthyKey) {
+          keyOffset += 1;
+          continue keyLoop;
+        }
+      }
+
       let serverRetry = 0;
 
       while (serverRetry <= 1) {
@@ -235,6 +285,13 @@ export async function requestGemini<T = unknown>(
           );
         } catch {
           sawTransportFailure = true;
+          if (cooldownMap) {
+            markKeyCooldown(
+              apiKey,
+              now() + defaultCooldownDuration,
+              cooldownMap,
+            );
+          }
           keyOffset += 1;
           fallbackCount++;
           continue keyLoop;
@@ -254,6 +311,9 @@ export async function requestGemini<T = unknown>(
         }
 
         if (response.ok) {
+          if (cooldownMap) {
+            cooldownMap.delete(apiKey);
+          }
           return {
             data: data as T,
             keyIndex,
@@ -292,6 +352,21 @@ export async function requestGemini<T = unknown>(
           response.status === 500 ||
           response.status === 503
         ) {
+          if (cooldownMap) {
+            if (response.status === 429) {
+              markKeyCooldown(
+                apiKey,
+                now() + (error.retryAfterMs ?? 60_000),
+                cooldownMap,
+              );
+            } else if (response.status === 500 || response.status === 503) {
+              markKeyCooldown(
+                apiKey,
+                now() + (error.retryAfterMs ?? defaultCooldownDuration),
+                cooldownMap,
+              );
+            }
+          }
           keyOffset += 1;
           fallbackCount++;
           continue keyLoop;

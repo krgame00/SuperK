@@ -295,13 +295,18 @@ async function handleTranslationRequest(
       const models = modelPreference && modelPreference !== "auto"
         ? [modelPreference]
         : [...FIXED_IMAGE_MODELS];
+      let initialKeyIndex = 0;
+      if (useFixedRouter && keyPool.length > 0) {
+        initialKeyIndex = fixedImageKeyIndex % keyPool.length;
+        fixedImageKeyIndex = (fixedImageKeyIndex + 1) % keyPool.length;
+      }
       const result = useFixedRouter
         ? await requestGemini<GeminiResponseData>({
             apiKeys: keyPool,
             models,
             payload,
-            initialKeyIndex: fixedImageKeyIndex,
-            attemptTimeoutMs: 25_000,
+            initialKeyIndex,
+            attemptTimeoutMs: 15_000,
             totalBudgetMs: 90_000,
           })
         : await executeGeminiTranslation<GeminiResponseData>({
@@ -331,7 +336,7 @@ async function handleTranslationRequest(
           }
         },
       });
-      if (useFixedRouter) fixedImageKeyIndex = result.keyIndex;
+      if (useFixedRouter && keyPool.length > 0) fixedImageKeyIndex = (result.keyIndex + 1) % keyPool.length;
       data = result.data;
       translationMeta = result.meta;
     } catch (error) {
