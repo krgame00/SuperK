@@ -34,3 +34,16 @@ describe("buildGlossaryDirectives", () => {
     expect(result).toContain('- "Ore" MUST ALWAYS be translated as "ฉัน"');
   });
 });
+
+it("a non-string note cannot crash prompt building", () => {
+  const directives = buildGlossaryDirectives([
+    { source: "Luffy", target: "ลูฟี่", note: 42 as unknown as string },
+    { source: "Zoro", target: "โซโร", note: { bad: "object" } as unknown as string },
+    { source: "Nami", target: "นามิ", note: "สมจริง" },
+  ]);
+
+  expect(directives).toContain('- "Luffy" MUST ALWAYS be translated as "ลูฟี่"');
+  expect(directives).toContain('- "Zoro" MUST ALWAYS be translated as "โซโร"');
+  expect(directives).toContain('- "Nami" MUST ALWAYS be translated as "นามิ" (สมจริง)');
+  expect(directives).not.toContain("42");
+});

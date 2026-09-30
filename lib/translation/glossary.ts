@@ -23,7 +23,10 @@ export function buildGlossaryDirectives(glossary?: GlossaryEntry[] | null): stri
   const lines = validEntries.map((entry) => {
     const src = entry.source.trim();
     const tgt = entry.target.trim();
-    const note = entry.note?.trim();
+    // Notes arrive from user-edited storage — a non-string (number, object)
+    // must be dropped, not crash the whole translation request.
+    const note =
+      typeof entry.note === "string" ? entry.note.trim() || undefined : undefined;
     return `- "${src}" MUST ALWAYS be translated as "${tgt}"${note ? ` (${note})` : ""}`;
   });
 
