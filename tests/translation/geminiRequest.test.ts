@@ -702,3 +702,51 @@ describe("key cooldown circuit breaker", () => {
     expect(isKeyInCooldown("key-a", 1500, cooldowns)).toBe(false);
   });
 });
+
+test("a pre-aborted signal stops requestGemini before any upstream call", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const fetchImpl = vi.fn();
+
+  await expect(
+    requestGemini({
+      apiKeys: ["key-a"],
+      models: ["gemini-test"],
+      payload: {},
+      signal: controller.signal,
+      fetchImpl,
+    }),
+  ).rejects.toMatchObject({ code: "REQUEST_ABORTED", status: 499 });
+  expect(fetchImpl).not.toHaveBeenCalled();
+});
+
+test("a mid-flight abort stops requestOpenAICompatible with REQUEST_ABORTED", async () => {
+  const controller = new AbortController();
+  const hungFetch = vi.fn(
+    (_url: string, init: RequestInit): Promise<unknown> =>
+      new Promise((_resolve, reject) => {
+        (init.signal as AbortSignal).addEventListener("abort", () =>
+          reject(new DOMException("aborted", "AbortError")),
+        );
+      }),
+  ) as unknown as typeof fetch;
+
+  const pending = requestOpenAICompatible({
+    baseUrl: "https://proxy.test",
+    apiKey: "key-a",
+    model: "test-model",
+    payload: {},
+    signal: controller.signal,
+    fetchImpl: hungFetch,
+    sleep: vi.fn().mockResolvedValue(undefined),
+  });
+  await Promise.resolve();
+  controller.abort();
+
+  await expect(pending).rejects.toMatchObject({
+    code: "REQUEST_ABORTED",
+    status: 499,
+  });
+  // Only the first attempt ran — the abort stopped the retry loop.
+  expect(hungFetch).toHaveBeenCalledTimes(1);
+});

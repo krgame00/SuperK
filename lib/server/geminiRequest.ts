@@ -9,7 +9,8 @@ import type { GeminiRoute } from "@/lib/server/geminiCatalog";
 export type GeminiErrorCode =
   | "GEMINI_TIMEOUT"
   | "GEMINI_QUOTA"
-  | "GEMINI_UPSTREAM";
+  | "GEMINI_UPSTREAM"
+  | "REQUEST_ABORTED";
 
 export class GeminiRequestError extends Error {
   readonly code: GeminiErrorCode;
@@ -68,6 +69,8 @@ export interface GeminiRouteRequestOptions {
   fetchImpl?: typeof fetch;
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
+  /** Aborts the in-flight upstream attempt and stops further routes. */
+  signal?: AbortSignal;
   beforeRoute?: (
     route: GeminiRoute,
   ) => GeminiRouteFailureDirective | void | Promise<GeminiRouteFailureDirective | void>;
@@ -85,6 +88,29 @@ export interface OpenAICompatibleResult<T> {
 }
 
 export const defaultKeyCooldowns = new Map<string, number>();
+
+export const throwIfRequestAborted = (signal?: AbortSignal): void => {
+  if (signal?.aborted) {
+    throw new GeminiRequestError(
+      "Translation request was aborted",
+      "REQUEST_ABORTED",
+      499,
+      false,
+    );
+  }
+};
+
+const linkExternalAbort = (
+  controller: AbortController,
+  signal?: AbortSignal,
+): void => {
+  if (!signal) return;
+  if (signal.aborted) {
+    controller.abort();
+    return;
+  }
+  signal.addEventListener("abort", () => controller.abort(), { once: true });
+};
 
 export function markKeyCooldown(
   apiKey: string,
@@ -129,6 +155,8 @@ export interface GeminiRequestOptions {
   sleep?: (milliseconds: number) => Promise<void>;
   keyCooldowns?: Map<string, number> | false;
   defaultCooldownMs?: number;
+  /** Aborts the in-flight upstream attempt and stops further attempts. */
+  signal?: AbortSignal;
 }
 
 interface GeminiErrorBody {
@@ -216,6 +244,7 @@ export async function requestGemini<T = unknown>(
     sleep = defaultSleep,
     keyCooldowns,
     defaultCooldownMs,
+    signal,
   } = options;
   const cooldownMap =
     keyCooldowns === false ? undefined : (keyCooldowns ?? defaultKeyCooldowns);
@@ -258,9 +287,11 @@ export async function requestGemini<T = unknown>(
             true,
           );
         }
+        throwIfRequestAborted(signal);
 
         attemptCount++;
         const controller = new AbortController();
+        linkExternalAbort(controller, signal);
         const timer = setTimeout(
           () => controller.abort(),
           Math.min(attemptTimeoutMs, remaining),
@@ -406,6 +437,7 @@ export async function requestGeminiRoutes<T = unknown>(
     beforeRoute,
     onRouteFailure,
     onModelSwitch,
+    signal,
   } = options;
   const startedAt = options.startedAt ?? now();
   let lastError: GeminiRequestError | undefined;
@@ -460,9 +492,11 @@ export async function requestGeminiRoutes<T = unknown>(
         onModelSwitch?.({ model: route.model, fallbackCount });
       }
       lastAttemptedModel = route.model;
+      throwIfRequestAborted(signal);
       attemptCount++;
       const routeAttemptStartedAt = now();
       const controller = new AbortController();
+      linkExternalAbort(controller, signal);
       let timeoutFired = false;
       let timer: ReturnType<typeof setTimeout>;
       const deadline = new Promise<never>((_, reject) => {
@@ -507,6 +541,9 @@ export async function requestGeminiRoutes<T = unknown>(
           deadline,
         ]));
       } catch (fetchOrBodyErr: unknown) {
+        // An external (client) abort must surface as REQUEST_ABORTED, not be
+        // misclassified as an upstream timeout and retried.
+        throwIfRequestAborted(signal);
         const isTimeout =
           timeoutFired ||
           controller.signal.aborted ||
@@ -658,6 +695,8 @@ export interface OpenAICompatibleOptions {
   fetchImpl?: typeof fetch;
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
+  /** Aborts the in-flight upstream attempt and stops further attempts. */
+  signal?: AbortSignal;
 }
 
 export async function requestOpenAICompatible<T = unknown>(
@@ -673,6 +712,7 @@ export async function requestOpenAICompatible<T = unknown>(
     fetchImpl = globalThis.fetch,
     now = Date.now,
     sleep = defaultSleep,
+    signal,
   } = options;
 
   const startedAt = now();
@@ -701,9 +741,11 @@ export async function requestOpenAICompatible<T = unknown>(
         true,
       );
     }
+    throwIfRequestAborted(signal);
 
     attemptCount++;
     const controller = new AbortController();
+    linkExternalAbort(controller, signal);
     let timeoutFired = false;
     const timer = setTimeout(
       () => {
@@ -738,6 +780,9 @@ export async function requestOpenAICompatible<T = unknown>(
       }
     } catch (fetchOrBodyErr: unknown) {
       sawTransportFailure = true;
+      // An external (client) abort must surface as REQUEST_ABORTED, not be
+      // misclassified as an upstream timeout and retried.
+      throwIfRequestAborted(signal);
       const isTimeout =
         timeoutFired ||
         controller.signal.aborted ||

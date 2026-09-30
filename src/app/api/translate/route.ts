@@ -101,21 +101,39 @@ export async function POST(req: Request) {
   if (req.headers.get("accept")?.includes("application/x-ndjson")) {
     return streamTranslationResponse(req);
   }
-  return handleTranslationRequest(req);
+  // req.signal aborts when the client disconnects — Gemini calls stop too.
+  return handleTranslationRequest(req, undefined, req.signal);
 }
 
 function streamTranslationResponse(req: Request): Response {
   const encoder = new TextEncoder();
   let closed = false;
+  const upstreamAbort = new AbortController();
+  // The stream's cancel() fires when the client disconnects mid-read.
+  if (req.signal) {
+    req.signal.addEventListener(
+      "abort",
+      () => upstreamAbort.abort(),
+      { once: true },
+    );
+  }
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       const send = (event: unknown) => {
-        if (!closed) controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
+        } catch {
+          // Reader went away between the check and the enqueue.
+          closed = true;
+        }
       };
       void (async () => {
         try {
-          const response = await handleTranslationRequest(req, (event) =>
-            send({ type: "model-switch", ...event }),
+          const response = await handleTranslationRequest(
+            req,
+            (event) => send({ type: "model-switch", ...event }),
+            upstreamAbort.signal,
           );
           send({
             type: "result",
@@ -136,6 +154,8 @@ function streamTranslationResponse(req: Request): Response {
     },
     cancel() {
       closed = true;
+      // Stop the upstream Gemini work — the caller is gone.
+      upstreamAbort.abort();
     },
   });
   return new Response(stream, {
@@ -150,6 +170,7 @@ function streamTranslationResponse(req: Request): Response {
 async function handleTranslationRequest(
   req: Request,
   onModelSwitch?: (event: { model: string; fallbackCount: number }) => void,
+  signal?: AbortSignal,
 ) {
   try {
     const declaredLength = Number(req.headers.get("content-length") ?? "0");
@@ -213,6 +234,7 @@ async function handleTranslationRequest(
           glossary,
           translateBaseUrl,
           translateApiKey,
+          signal,
         });
         if (openAiResponse.ok) {
           return openAiResponse;
@@ -308,6 +330,7 @@ async function handleTranslationRequest(
             initialKeyIndex,
             attemptTimeoutMs: 15_000,
             totalBudgetMs: 90_000,
+            signal,
           })
         : await executeGeminiTranslation<GeminiResponseData>({
         workflow: "image",
@@ -433,6 +456,7 @@ async function handleOpenAICompatible({
   glossary,
   translateBaseUrl,
   translateApiKey,
+  signal,
 }: {
   imageBase64: string;
   mimeType: string;
@@ -444,6 +468,7 @@ async function handleOpenAICompatible({
   glossary?: GlossaryEntry[];
   translateBaseUrl: string;
   translateApiKey: string;
+  signal?: AbortSignal;
 }) {
   const promptText = buildTranslationPrompt({
     targetLang,
@@ -493,6 +518,7 @@ async function handleOpenAICompatible({
       payload,
       attemptTimeoutMs: 60_000,
       totalBudgetMs: 180_000,
+      signal,
     });
 
     const choice = result.data.choices?.[0];
