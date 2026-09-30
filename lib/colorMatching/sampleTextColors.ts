@@ -368,9 +368,15 @@ export function extractTextColors(
   const bgG = dominantPerim.g;
   const bgB = dominantPerim.b;
   const bgLum = 0.299 * bgR + 0.587 * bgG + 0.114 * bgB;
-  const bgLuminanceSamples: number[] = sortedPerim.map((b) =>
-    Math.round(0.299 * b.r + 0.587 * b.g + 0.114 * b.b),
-  );
+  const bgLuminanceSamples: number[] = [];
+  for (const bucket of sortedPerim) {
+    const lum = Math.round(0.299 * bucket.r + 0.587 * bucket.g + 0.114 * bucket.b);
+    // Pixel-weighted: each bucket contributes one sample per pixel it
+    // covers, so percentiles (p15/p85) reflect real area instead of
+    // letting a tiny wrong-color bucket count as much as the dominant
+    // background.
+    for (let i = 0; i < bucket.count; i++) bgLuminanceSamples.push(lum);
+  }
 
   // 2. Identify Non-Background (Foreground Candidate) pixels & Color Distributions
   const isFg = new Uint8Array(totalPixels);
@@ -672,6 +678,7 @@ export function extractTextColors(
           fillGradient,
           evidenceState: "admitted",
           backgroundLuminance: Math.round(bgLum),
+          backgroundLuminanceSamples: bgLuminanceSamples.length > 0 ? bgLuminanceSamples : undefined,
           backgroundColor: rgbToHex(bgR, bgG, bgB),
         },
         autoConfidence,
@@ -750,6 +757,7 @@ export function extractTextColors(
         shadow: shadowEffect,
         evidenceState: "admitted",
         backgroundLuminance: Math.round(bgLum),
+        backgroundLuminanceSamples: bgLuminanceSamples.length > 0 ? bgLuminanceSamples : undefined,
         backgroundColor: rgbToHex(bgR, bgG, bgB),
       },
       autoConfidence,
@@ -830,6 +838,7 @@ export function extractTextColors(
           outlineConfidence: autoConfidence,
           evidenceState: "admitted",
           backgroundLuminance: Math.round(bgLum),
+          backgroundLuminanceSamples: bgLuminanceSamples.length > 0 ? bgLuminanceSamples : undefined,
           backgroundColor: rgbToHex(bgR, bgG, bgB),
         },
         autoConfidence,
@@ -864,6 +873,7 @@ export function extractTextColors(
           outlineConfidence: autoConfidence,
           evidenceState: "admitted",
           backgroundLuminance: Math.round(bgLum),
+          backgroundLuminanceSamples: bgLuminanceSamples.length > 0 ? bgLuminanceSamples : undefined,
           backgroundColor: rgbToHex(bgR, bgG, bgB),
         },
         autoConfidence,

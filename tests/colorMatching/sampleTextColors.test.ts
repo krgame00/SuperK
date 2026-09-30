@@ -292,3 +292,23 @@ describe("sampleTextColors color extraction engine", () => {
     expect(profile.shadow).toBeUndefined();
   });
 });
+
+it("weights background luminance samples by pixel count, not bucket order", () => {
+  // Dark ring with ONE bright sticker pixel: the sticker must count as one
+  // pixel in the luminance distribution, not one whole bucket.
+  const sample = createSyntheticRegion(30, 30, (x, y) => {
+    if (x < 4 || x > 26 || y < 4 || y > 26) {
+      if (x === 0 && y === 0) return [250, 250, 250, 255];
+      return [40, 40, 40, 255];
+    }
+    if (x < 8 || x > 22 || y < 8 || y > 22) return [255, 30, 130, 255];
+    return [255, 255, 255, 255];
+  });
+
+  const profile = extractTextColors(sample);
+  const samples = profile.backgroundLuminanceSamples ?? [];
+  // Analyzer border band (5px on a 30px region) = 500 sampled pixels.
+  expect(samples.length).toBe(500);
+  expect(samples.filter((s) => s > 200).length).toBe(1);
+  expect(samples.filter((s) => s <= 200).length).toBe(499);
+});
