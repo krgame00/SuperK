@@ -9,6 +9,7 @@ import {
   type TextShadowStyle,
   type TextStyleProfile,
 } from "./types";
+import { recoverSourceOutline } from "./sourceOutlineEvidence";
 
 export type { ColorSampleRegion };
 
@@ -41,7 +42,7 @@ function estimateOutlineWidthRatio(fillPixels: number, outlinePixels: number): n
   return Math.max(0.10, Math.min(0.25, (1 - innerLinearScale) / 2));
 }
 
-function finalizeRecoveredProfile(
+function finalizeColorProfile(
   profile: Omit<TextStyleProfile, "source" | "fillConfidence" | "confidenceBand"> & {
     source?: TextStyleProfile["source"];
     fillConfidence?: number;
@@ -319,6 +320,12 @@ export function extractTextColors(
 ): TextStyleProfile {
   const { width, height, rgba, glyphMask } = sample;
   const totalPixels = width * height;
+  const finalizeRecoveredProfile = (...args: Parameters<typeof finalizeColorProfile>): TextStyleProfile => {
+    const profile = finalizeColorProfile(...args);
+    const outline = recoverSourceOutline(sample, profile.fill, profile.outline);
+    return { ...profile, ...outline,
+      outlineConfidence: Math.min(outline.outlineConfidence ?? 0, profile.fillConfidence ?? 0) };
+  };
 
   if (!rgba || totalPixels === 0 || width === 0 || height === 0) {
     return createDefaultStyleProfile("global");
@@ -686,7 +693,7 @@ export function extractTextColors(
       );
     }
 
-    // Bidirectional Outline Detection for chromatic text (Universal Outline Default):
+    // Bidirectional candidate colors; finalization verifies local contour support.
     const hasDarkOutline = darkInkCount >= Math.max(4, totalFgCount * 0.03);
     const hasLightOutline =
       whiteCount >= Math.max(4, totalFgCount * 0.03) &&
@@ -734,7 +741,7 @@ export function extractTextColors(
       outlineCount = darkInkCount;
       outlineRatio = Math.max(0.12, estimateOutlineWidthRatio(chromaticCount, darkInkCount));
     } else {
-      // Universal Outline Default: synthesize high-contrast stroke
+      // A contrast color is only a candidate, not proof of a source stroke.
       if (bgLum < 140) {
         outlineColor = "#ffffff";
       } else {
@@ -1108,7 +1115,7 @@ export function extractTextColors(
     outlineWidth = 1.0;
     outlineWidthRatio = Math.max(0.12, estimateOutlineWidthRatio(topCore.count, topOutline.count));
   } else {
-    // Universal Outline Default: provide high-contrast stroke
+    // Propose a contrast color; finalization can report zero source stroke.
     const fillLum = 0.299 * fillR + 0.587 * fillG + 0.114 * fillB;
     if (bgLum < 140) {
       outlineHex = "#ffffff";

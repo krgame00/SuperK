@@ -120,7 +120,7 @@ describe("Universal Outline Default & Bidirectional Stroke Detection", () => {
       expect(profile.outlineWidthRatio).toBeGreaterThanOrEqual(0.08);
     });
 
-    it("assigns universal contrasting outline even when chromatic text has no visible contour in source", () => {
+    it("keeps chromatic source text borderless when no contour exists", () => {
       // Background: Dark blue (15, 25, 50)
       // Core: Solid Blue (30, 100, 240) - NO contour in sample
       const sample = makeCrop(32, 32, {
@@ -131,10 +131,8 @@ describe("Universal Outline Default & Bidirectional Stroke Detection", () => {
 
       const profile = extractTextColors(sample);
 
-      // Universal Outline Default requires outline to be true and contrasting
-      expect(profile.hasOutline).toBe(true);
-      expect(profile.outline).toBe("#ffffff"); // dark background -> white stroke
-      expect(profile.outlineWidthRatio).toBeGreaterThanOrEqual(0.10);
+      expect(profile.hasOutline).toBe(false);
+      expect(profile.outlineWidthRatio).toBe(0);
     });
   });
 

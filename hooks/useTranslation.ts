@@ -26,6 +26,7 @@ import {
 } from "@/lib/thaiSpellcheck";
 import { sampleBubbleRegion } from "@/lib/colorMatching/canvasSampler";
 import { extractTextColors } from "@/lib/colorMatching/sampleTextColors";
+import { needsSourceOutlineRefresh, refreshSourceOutline } from "@/lib/colorMatching/outlineMigration";
 import { analyzeImageElementMonochrome } from "@/lib/colorMatching/monochromePage";
 import {
   applyNearbyStyleFallbacks,
@@ -690,6 +691,27 @@ export function useTranslation({
   const restoreSavedSession = useCallback(async () => {
     const saved = await loadProjectSession();
     if (!saved) return null;
+    const outlineRefreshedPages = new Set<string>();
+    for (const page of saved.pages) {
+      if (page.unrecoverableSource) continue;
+      const bubbles = saved.bubbleCache.get(page.url);
+      if (!bubbles?.some(needsSourceOutlineRefresh)) continue;
+      try {
+        // Stored pages contain the original source, never the cleaned render or removal mask.
+        const original = await waitForImageReady(page.url);
+        const refreshed = bubbles.map((bubble) => {
+          if (!needsSourceOutlineRefresh(bubble) || !bubble.box || bubble.box.length < 4 || bubble.isInvalidBox) return bubble;
+          return refreshSourceOutline(bubble, sampleBubbleRegion(original, bubble.box));
+        });
+        if (refreshed.some((bubble, index) => bubble !== bubbles[index])) {
+          saved.bubbleCache.set(page.url, refreshed);
+          saved.translatedImageCache.delete(page.url);
+          outlineRefreshedPages.add(page.url);
+        }
+      } catch {
+        // Retain the only useful render when originals cannot decode or sampling fails.
+      }
+    }
     bubbleCacheRef.current = saved.bubbleCache;
     const restoredImages = new LRUMap<string, string>(
       TRANSLATED_IMAGE_CACHE_LIMIT,
@@ -712,8 +734,9 @@ export function useTranslation({
     lastSavedRevisionRef.current = saveRevisionRef.current;
     setSaveStatus("saved");
     setSaveError(null);
+    for (const pageUrl of outlineRefreshedPages) markPageDirty(pageUrl);
     return saved;
-  }, []);
+  }, [markPageDirty]);
 
   const retrySaveSession = useCallback(async (): Promise<boolean> => {
     if (pages.length === 0 || isSavingRef.current) return false;

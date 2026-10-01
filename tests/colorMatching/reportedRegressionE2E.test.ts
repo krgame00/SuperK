@@ -29,7 +29,7 @@ describe("Ticket 12: Reported-Regression E2E & Export Parity", () => {
     it("does not resolve floor/carpet colors as text fill or outline in a wide bottom crop", () => {
       // 100 wide x 30 high crop
       // 80% background floor: brown floorboards (#8c5028), orange trim lines (#ff7800), and dark shadows (#22150c)
-      // 20% central text: white text with black outline in the middle
+      // 20% central text: borderless white text in the middle
       const sample = createSyntheticRegion(100, 30, (x, y) => {
         // Floor trim at border
         if (y <= 3 || y >= 27 || x <= 4 || x >= 96) {
@@ -57,10 +57,11 @@ describe("Ticket 12: Reported-Regression E2E & Export Parity", () => {
       const resolved = resolveBubbleTextStyle(bubble);
       expect(resolved.textColor).not.toBe("#ff7800");
       expect(resolved.textColor).not.toBe("#8c5028");
-      // Must be readable over floor
-      expect(resolved.hasOutline).toBe(true);
+      // Auto preserves the borderless source; explicit Readable adds contrast.
+      expect(resolved.hasOutline).toBe(false);
       expect(resolved.textColor).toBe("#ffffff");
-      expect(resolved.textOutline).toBe("#000000");
+      expect(resolved.outlineWidthRatio).toBe(0);
+      expect(resolveBubbleTextStyle({ ...bubble, styleProfile: { ...profile, ownershipMode: "readable" } }).hasOutline).toBe(true);
     });
 
     it("resolves to Overlay Subtitle Readable Fallback when artwork completely dominates without glyph mask", () => {

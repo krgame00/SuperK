@@ -81,8 +81,8 @@ describe("sampleTextColors color extraction engine", () => {
     const profile = extractTextColors(sample);
     expect(profile.fill).toBe("#000000");
     expect(profile.outline).toBe("#ffffff");
-    expect(profile.hasOutline).toBe(true);
-    expect(profile.outlineWidthRatio).toBeGreaterThanOrEqual(0.12);
+    expect(profile.hasOutline).toBe(false);
+    expect(profile.outlineWidthRatio).toBe(0);
     expect(profile.fillConfidence).toBeGreaterThan(0.7);
     expect(profile.confidenceBand).toBe("high");
     expect(profile.source).toBe("auto");
@@ -98,8 +98,8 @@ describe("sampleTextColors color extraction engine", () => {
     const profile = extractTextColors(sample);
     expect(profile.fill).toBe("#ffffff");
     expect(profile.outline).toBe("#000000");
-    expect(profile.hasOutline).toBe(true);
-    expect(profile.outlineWidthRatio).toBeGreaterThanOrEqual(0.12);
+    expect(profile.hasOutline).toBe(false);
+    expect(profile.outlineWidthRatio).toBe(0);
     expect(profile.fillConfidence).toBeGreaterThan(0.7);
     expect(profile.source).toBe("auto");
   });
@@ -286,7 +286,7 @@ describe("sampleTextColors color extraction engine", () => {
     const profile = extractTextColors(sample);
     expect(profile.fill).toBe("#000000");
     expect(profile.outline).toBe("#ffffff");
-    expect(profile.hasOutline).toBe(true);
+    expect(profile.hasOutline).toBe(false);
     expect(profile.fillGradient).toBeUndefined();
     expect(profile.glow).toBeUndefined();
     expect(profile.shadow).toBeUndefined();

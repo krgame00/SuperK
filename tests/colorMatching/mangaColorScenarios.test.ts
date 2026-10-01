@@ -61,7 +61,7 @@ describe("Manga Real-World Color Scenarios", () => {
     const profile = extractTextColors(sample);
     expect(profile.fill).toBe("#e61e2d");
     expect(profile.outline).toBe("#ffffff");
-    expect(profile.hasOutline).toBe(true);
+    expect(profile.hasOutline).toBe(false);
     expect(profile.source).toBe("auto");
   });
 
@@ -83,7 +83,7 @@ describe("Manga Real-World Color Scenarios", () => {
     // Fill MUST be pure Black #000000, NOT skin tone!
     expect(profile.fill).toBe("#000000");
     expect(profile.outline).toBe("#ffffff");
-    expect(profile.hasOutline).toBe(true);
+    expect(profile.hasOutline).toBe(false);
     expect(profile.source).toBe("auto");
   });
 

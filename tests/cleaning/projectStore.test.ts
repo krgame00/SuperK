@@ -1,5 +1,6 @@
 import "fake-indexeddb/auto";
 import type { TranslatedBubble } from "@/lib/translationOverlay";
+import { SOURCE_OUTLINE_VERSION } from "@/lib/colorMatching/sourceOutlineEvidence";
 
 import { beforeEach, describe, expect, it, test, vi } from "vitest";
 
@@ -32,7 +33,8 @@ test.each(["incremental", "full"])("old Auto renders are invalidated without res
   const bubbleCache = new Map<string, TranslatedBubble[]>(pages.map((page) => [page.url, [{
     translated_text: "text",
     styleProfile: { source: page.id === "auto" ? "auto" : "manual",
-      fill: "#159f9d", outline: "#ffffff", evidenceState: "admitted", fillConfidence: .95 },
+      fill: "#159f9d", outline: "#ffffff", evidenceState: "admitted", fillConfidence: .95,
+      sourceOutlineVersion: SOURCE_OUTLINE_VERSION },
   }]]));
   await saveProjectSession({ pages, currentPage: 0, bubbleCache,
     translatedImageCache: new Map(pages.map((page) => [page.url, rendered])) });
@@ -63,6 +65,83 @@ test.each(["incremental", "full"])("old Auto renders are invalidated without res
   restored.translatedImageCache.set(pages[0].url, rendered);
   await saveProjectSession(restored, { dirtyPageUrls: new Set([pages[0].url]) });
   expect((await loadProjectSession())!.translatedImageCache.get(pages[0].url)).toBe(rendered);
+});
+
+test.each(["incremental", "full"])("successfully refreshed outlines drop persisted old renders on %s save", async (mode) => {
+  const source = "data:image/png;base64,c291cmNl";
+  const rendered = "data:image/png;base64,cmVuZGVyZWQ=";
+  const pages = [{ id: "outline-migration", url: source, name: "page.png" }];
+  const legacy: TranslatedBubble = { box: [0, 0, 1000, 1000], t: "text", styleProfile: {
+    source: "auto", evidenceState: "admitted", fillConfidence: .95, fill: "#159f9d",
+    outline: "#ffffff", hasOutline: true, outlineWidthRatio: .13,
+  } };
+  await saveProjectSession({ pages, currentPage: 0, bubbleCache: new Map([[source, [legacy]]]),
+    translatedImageCache: new Map([[source, rendered]]) });
+  const saved = (await loadProjectSession())!;
+  expect(saved.translatedImageCache.get(source)).toBe(rendered);
+  saved.bubbleCache.set(source, [{ ...legacy, styleProfile: { ...legacy.styleProfile!,
+    sourceOutlineVersion: SOURCE_OUTLINE_VERSION, hasOutline: false, outlineWidthRatio: 0 } }]);
+  saved.translatedImageCache.clear();
+  await saveProjectSession(saved, mode === "incremental" ? { dirtyPageUrls: new Set() } : undefined);
+  const restored = (await loadProjectSession())!;
+  expect(restored.translatedImageCache.has(source)).toBe(false);
+  expect(restored.bubbleCache.get(source)?.[0].styleProfile?.sourceOutlineVersion).toBe(SOURCE_OUTLINE_VERSION);
+  // A later full save must not manufacture a link to the removed render.
+  await saveProjectSession(restored);
+  const db = await new Promise<IDBDatabase>((resolve) => {
+    const request = indexedDB.open("SuperKMangaTranslatorDB", 3);
+    request.onsuccess = () => resolve(request.result);
+  });
+  const persisted = await new Promise<{ translatedAssetIds: [string, string][] }>((resolve) => {
+    const tx = db.transaction("project_session", "readonly");
+    tx.objectStore("project_session").get("latest_session").onsuccess = (event) => resolve((event.target as IDBRequest).result);
+  });
+  db.close();
+  expect(persisted.translatedAssetIds).toEqual([]);
+});
+
+test("loader retains legacy outline renders pending successful original analysis even under an old render policy", async () => {
+  const source = "data:image/png;base64,aW52YWxpZC1pbWFnZQ==";
+  const rendered = "data:image/png;base64,cmVuZGVyZWQ=";
+  const pages = [{ id: "undecodable-outline", url: source, name: "page.png" }];
+  const bubbleCache = new Map<string, TranslatedBubble[]>([[source, [{ styleProfile: {
+    source: "auto", evidenceState: "admitted", fillConfidence: .95, fill: "#159f9d", outline: "#ffffff",
+  } }]]]);
+  await saveProjectSession({ pages, currentPage: 0, bubbleCache, translatedImageCache: new Map([[source, rendered]]) });
+  const db = await new Promise<IDBDatabase>((resolve) => {
+    const request = indexedDB.open("SuperKMangaTranslatorDB", 3);
+    request.onsuccess = () => resolve(request.result);
+  });
+  const tx = db.transaction("project_session", "readwrite");
+  const done = transactionDone(tx);
+  const store = tx.objectStore("project_session");
+  store.get("latest_session").onsuccess = (event) => {
+    const session = (event.target as IDBRequest).result;
+    delete session.renderPolicyVersion;
+    store.put(session);
+  };
+  await done;
+  db.close();
+  const saved = (await loadProjectSession())!;
+  expect(saved.translatedImageCache.get(source)).toBe(rendered);
+  await saveProjectSession(saved, { dirtyPageUrls: new Set() });
+  expect((await loadProjectSession())!.translatedImageCache.get(source)).toBe(rendered);
+});
+
+test("mixed legacy/current outline pages retain evicted caches when no profile was refreshed", async () => {
+  const source = "data:image/png;base64,c291cmNl";
+  const rendered = "data:image/png;base64,cmVuZGVyZWQ=";
+  const pages = [{ id: "mixed-outline", url: source, name: "page.png" }];
+  const profile = { source: "auto" as const, evidenceState: "admitted" as const,
+    fillConfidence: .95, fill: "#159f9d", outline: "#ffffff" };
+  const bubbleCache = new Map<string, TranslatedBubble[]>([[source, [
+    { t: "legacy", styleProfile: profile },
+    { t: "current", styleProfile: { ...profile, sourceOutlineVersion: SOURCE_OUTLINE_VERSION } },
+  ]]]);
+  await saveProjectSession({ pages, currentPage: 0, bubbleCache, translatedImageCache: new Map([[source, rendered]]) });
+  await saveProjectSession({ pages, currentPage: 0, bubbleCache, translatedImageCache: new Map() },
+    { dirtyPageUrls: new Set() });
+  expect((await loadProjectSession())!.translatedImageCache.get(source)).toBe(rendered);
 });
 
 test("CBZ session stores short page references while restoring source images and bubbles", async () => {

@@ -4,6 +4,8 @@ import type { CleaningMode, CleaningRegion } from "./cleaning/types";
 import type { TranslatedBubble } from "./translationOverlay";
 import { pageBlobStore } from "./lifecycle/pageBlobStore";
 import { TEXT_RENDER_POLICY_VERSION, usesAutoSourceFill } from "./colorMatching/resolveTextStyle";
+import { needsSourceOutlineRefresh } from "./colorMatching/outlineMigration";
+import { SOURCE_OUTLINE_VERSION } from "./colorMatching/sourceOutlineEvidence";
 
 const DB_NAME = "SuperKMangaTranslatorDB";
 const DB_VERSION = 3;
@@ -265,6 +267,7 @@ export const saveProjectSession = async (
     }
 
     const previousAssetIds = new Map(previousSession?.translatedAssetIds ?? []);
+    const previousBubbles = new Map(previousSession?.bubbleCache ?? []);
 
     // Every page that still has bubbles is live even when its rendered image
     // was evicted from the in-memory LRU — its persisted asset must survive
@@ -284,11 +287,18 @@ export const saveProjectSession = async (
         : `translated_${encodeURIComponent(pageUrl)}`;
       // Old-policy renders dropped during restore must not come back through
       // the LRU preservation path on the next incremental autosave.
-      const needsPolicyRefresh = previousSession?.renderPolicyVersion !== TEXT_RENDER_POLICY_VERSION &&
-        (data.bubbleCache.get(pageUrl) ?? []).some((bubble) => usesAutoSourceFill(bubble)) &&
+      const currentBubbles = data.bubbleCache.get(pageUrl) ?? [];
+      // Legacy outline caches remain useful until original-source sampling succeeds.
+      const needsOutlineAnalysis = currentBubbles.some(needsSourceOutlineRefresh);
+      const oldBubbles = previousBubbles.get(pageId ?? pageUrl) ?? previousBubbles.get(pageUrl) ?? [];
+      const outlineRefreshed = currentBubbles.some((bubble, index) =>
+        oldBubbles[index] && needsSourceOutlineRefresh(oldBubbles[index]) &&
+        bubble.styleProfile?.sourceOutlineVersion === SOURCE_OUTLINE_VERSION);
+      const needsPolicyRefresh = !needsOutlineAnalysis && previousSession?.renderPolicyVersion !== TEXT_RENDER_POLICY_VERSION &&
+        currentBubbles.some((bubble) => usesAutoSourceFill(bubble)) &&
         ((!pageUrl.startsWith("blob:") && !pageUrl.startsWith("asset:")) ||
           (!!pageId && pageBlobStore.has(pageId)));
-      const isDirty = needsPolicyRefresh || (dirty ? dirty.has(pageUrl) : true);
+      const isDirty = outlineRefreshed || needsPolicyRefresh || (dirty ? dirty.has(pageUrl) : true);
       const imageValue = data.translatedImageCache.get(pageUrl);
       let hasValidImage = typeof imageValue === "string" && imageValue.startsWith("data:");
       let imageBytes: Uint8Array | undefined;
@@ -305,7 +315,7 @@ export const saveProjectSession = async (
 
       // If the page was explicitly dirtied (e.g. text changed) and has no rendered image in memory,
       // its previous persisted render is obsolete and must not be linked or preserved.
-      if ((needsPolicyRefresh || (dirty && isDirty)) && !hasValidImage) {
+      if ((outlineRefreshed || needsPolicyRefresh || (dirty && isDirty)) && !hasValidImage) {
         continue;
       }
 
@@ -325,8 +335,8 @@ export const saveProjectSession = async (
         // Page was not dirtied, but image was evicted from in-memory cache (LRU eviction).
         // Keep the existing link to the valid persisted asset.
         const previousAssetId = previousAssetIds.get(pageId ?? "")
-          ?? previousAssetIds.get(pageUrl)
-          ?? assetId;
+          ?? previousAssetIds.get(pageUrl);
+        if (!previousAssetId) continue;
         translatedAssetIds.push([pageId ?? pageUrl, previousAssetId]);
         referencedAssetIds.add(previousAssetId);
       }
@@ -538,6 +548,7 @@ export const loadProjectSession = async (): Promise<LoadedProjectSession | null>
       for (const page of processedPages) {
         // Keep the only available image when its original cannot be recovered.
         if (!page.unrecoverableSource &&
+            !(bubbleCache.get(page.url) ?? []).some(needsSourceOutlineRefresh) &&
             (bubbleCache.get(page.url) ?? []).some((bubble) => usesAutoSourceFill(bubble))) {
           translatedImageCache.delete(page.url);
         }

@@ -42,6 +42,8 @@ export interface TextShadowStyle {
 export type ManualShadowMode = "standard" | "off";
 
 export interface TextStyleProfile {
+  /** Version of original-pixel outline evidence; absent on older projects. */
+  sourceOutlineVersion?: string;
   fill: string;
   outline: string;
   /** Backward-compatible scale used by older saved projects. */
