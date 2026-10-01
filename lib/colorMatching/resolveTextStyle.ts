@@ -18,6 +18,20 @@ export interface ResolveStyleOptions {
   minConfidence?: number;
 }
 
+/** Derived render caches from earlier policies must be regenerated. */
+export const TEXT_RENDER_POLICY_VERSION = "auto-source-fill-v1";
+
+export function usesAutoSourceFill(bubble: TranslatedBubble, minConfidence = 0.80): boolean {
+  const profile = bubble.styleProfile;
+  return !!profile && !bubble.deleted &&
+    profile.source === "auto" &&
+    (!profile.ownershipMode || profile.ownershipMode === "auto") &&
+    profile.evidenceState === "admitted" &&
+    (profile.fillConfidence ?? 1) >= minConfidence &&
+    !shouldUseMonochromeMangaStyle(profile, inferTextStyleCategory(bubble)) &&
+    !["background-contamination", "insufficient-evidence", "low-readability"].includes(profile.fallbackReason ?? "");
+}
+
 export interface ResolvedTextStyle {
   textColor: string;
   textOutline: string;
@@ -611,6 +625,15 @@ export function resolveBubbleTextStyle(
     });
   }
 
+  // Confident source evidence owns the original fill in Auto. Explicit readable
+  // and rejected evidence were handled above; uncertain profiles still adapt.
+  if (
+    autoMatchEnabled &&
+    usesAutoSourceFill(bubble, minConfidence)
+  ) {
+    return resolvedFromProfile(profile, globalStyle);
+  }
+
   // Overlay Subtitle readability validation:
   // On variable artwork, overlay subtitles require explicit outline and adequate contrast
   if (category === "overlay_subtitle") {
@@ -909,4 +932,3 @@ export function recomputeAdaptiveReadableOnLayoutCommit(
 
   return bubble;
 }
-

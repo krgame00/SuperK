@@ -200,8 +200,8 @@ describe("White Fill + Source-Colored Outline Architecture", () => {
     });
   });
 
-  describe("Phase 7: Option A — Neon Glow Preservation with White Fill + Chromatic Outline in Auto Mode", () => {
-    it("resolves admitted purple dialogue to pure white fill (#ffffff) + strengthened purple outline", () => {
+  describe("Admitted source colors in Auto mode", () => {
+    it("preserves admitted purple dialogue fill and white outline", () => {
       const bubble: TranslatedBubble = {
         bubble_id: "purple_dialogue",
         page_num: 1,
@@ -221,13 +221,12 @@ describe("White Fill + Source-Colored Outline Architecture", () => {
       };
 
       const resolved = resolveBubbleTextStyle(bubble);
-      expect(resolved.textColor.toLowerCase()).toBe("#ffffff");
+      expect(resolved.textColor.toLowerCase()).toBe("#874384");
       expect(resolved.hasOutline).toBe(true);
-      expect(resolved.textOutline.toLowerCase()).not.toBe("#ffffff");
-      expect(resolved.textOutline.toLowerCase()).not.toBe("#000000");
+      expect(resolved.textOutline.toLowerCase()).toBe("#ffffff");
     });
 
-    it("resolves admitted yellow dialogue to pure white fill (#ffffff) + strengthened outline", () => {
+    it("preserves admitted yellow dialogue fill and black outline", () => {
       const bubble: TranslatedBubble = {
         bubble_id: "yellow_dialogue",
         page_num: 1,
@@ -246,11 +245,12 @@ describe("White Fill + Source-Colored Outline Architecture", () => {
       };
 
       const resolved = resolveBubbleTextStyle(bubble);
-      expect(resolved.textColor.toLowerCase()).toBe("#ffffff");
+      expect(resolved.textColor.toLowerCase()).toBe("#ffcc00");
       expect(resolved.hasOutline).toBe(true);
+      expect(resolved.textOutline.toLowerCase()).toBe("#000000");
     });
 
-    it("resolves admitted red dialogue to pure white fill (#ffffff) + red outline", () => {
+    it("preserves admitted red dialogue fill and white outline", () => {
       const bubble: TranslatedBubble = {
         bubble_id: "red_dialogue",
         page_num: 1,
@@ -269,12 +269,12 @@ describe("White Fill + Source-Colored Outline Architecture", () => {
       };
 
       const resolved = resolveBubbleTextStyle(bubble);
-      expect(resolved.textColor.toLowerCase()).toBe("#ffffff");
+      expect(resolved.textColor.toLowerCase()).toBe("#d32f2f");
       expect(resolved.hasOutline).toBe(true);
-      expect(resolved.textOutline.toLowerCase()).toBe("#d32f2f");
+      expect(resolved.textOutline.toLowerCase()).toBe("#ffffff");
     });
 
-    it("uses the exact detected source accent as outline when evidence confidence is high", () => {
+    it("keeps the detected accent in the original fill when confidence is high", () => {
       const bubble: TranslatedBubble = {
         bubble_id: "trusted_source_accent",
         page_num: 1,
@@ -295,8 +295,8 @@ describe("White Fill + Source-Colored Outline Architecture", () => {
       };
 
       const resolved = resolveBubbleTextStyle(bubble);
-      expect(resolved.textColor.toLowerCase()).toBe("#ffffff");
-      expect(resolved.textOutline.toLowerCase()).toBe("#7b3fa1");
+      expect(resolved.textColor.toLowerCase()).toBe("#7b3fa1");
+      expect(resolved.textOutline.toLowerCase()).toBe("#ffffff");
     });
 
     it("rejects contaminated detected color and falls back to a safe dark outline", () => {
@@ -325,7 +325,7 @@ describe("White Fill + Source-Colored Outline Architecture", () => {
       expect(resolved.textOutline.toLowerCase()).toBe("#000000");
     });
 
-    it("preserves neon diffuse glow (Option A) with white inner fill and cyan outline", () => {
+    it("preserves admitted cyan fill while keeping the uniform shadow policy", () => {
       const bubble: TranslatedBubble = {
         bubble_id: "neon_glow_bubble",
         page_num: 1,
@@ -351,11 +351,9 @@ describe("White Fill + Source-Colored Outline Architecture", () => {
       };
 
       const resolved = resolveBubbleTextStyle(bubble);
-      // Inner text fill must be pure white
-      expect(resolved.textColor.toLowerCase()).toBe("#ffffff");
+      expect(resolved.textColor.toLowerCase()).toBe("#00e5ff");
       expect(resolved.hasOutline).toBe(true);
-      // Outline should be strengthened cyan
-      expect(resolved.textOutline.toLowerCase()).not.toBe("#ffffff");
+      expect(resolved.textOutline.toLowerCase()).toBe("#00e5ff");
       // ADR 0015 keeps detected glow as source evidence but renders one uniform shadow.
       expect(resolved.glow).toBeUndefined();
       expect(resolved.shadow).toEqual(STANDARD_TRANSLATED_TEXT_SHADOW);

@@ -1,4 +1,5 @@
 import "fake-indexeddb/auto";
+import type { TranslatedBubble } from "@/lib/translationOverlay";
 
 import { beforeEach, describe, expect, it, test, vi } from "vitest";
 
@@ -21,6 +22,47 @@ import {
 
 beforeEach(async () => {
   await clearProjectSession();
+});
+
+test.each(["incremental", "full"])("old Auto renders are invalidated without resurrecting on a %s save", async (mode) => {
+  const pages = ["auto", "manual"].map((id) => ({
+    id, name: `${id}.png`, url: `data:image/png;base64,${btoa(id)}`,
+  }));
+  const rendered = "data:image/png;base64,cmVuZGVyZWQ=";
+  const bubbleCache = new Map<string, TranslatedBubble[]>(pages.map((page) => [page.url, [{
+    translated_text: "text",
+    styleProfile: { source: page.id === "auto" ? "auto" : "manual",
+      fill: "#159f9d", outline: "#ffffff", evidenceState: "admitted", fillConfidence: .95 },
+  }]]));
+  await saveProjectSession({ pages, currentPage: 0, bubbleCache,
+    translatedImageCache: new Map(pages.map((page) => [page.url, rendered])) });
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open("SuperKMangaTranslatorDB", 3);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  const tx = db.transaction("project_session", "readwrite");
+  const done = transactionDone(tx);
+  const store = tx.objectStore("project_session");
+  const request = store.get("latest_session");
+  request.onsuccess = () => {
+    const session = request.result;
+    delete session.renderPolicyVersion;
+    store.put(session);
+  };
+  await done;
+  db.close();
+
+  const restored = (await loadProjectSession())!;
+  expect(restored.translatedImageCache.has(pages[0].url)).toBe(false);
+  expect(restored.translatedImageCache.get(pages[1].url)).toBe(rendered);
+  expect(restored.bubbleCache.get(pages[0].url)).toEqual(bubbleCache.get(pages[0].url));
+  await saveProjectSession(restored, mode === "incremental" ? { dirtyPageUrls: new Set() } : undefined);
+  expect((await loadProjectSession())!.translatedImageCache.has(pages[0].url)).toBe(false);
+
+  restored.translatedImageCache.set(pages[0].url, rendered);
+  await saveProjectSession(restored, { dirtyPageUrls: new Set([pages[0].url]) });
+  expect((await loadProjectSession())!.translatedImageCache.get(pages[0].url)).toBe(rendered);
 });
 
 test("CBZ session stores short page references while restoring source images and bubbles", async () => {

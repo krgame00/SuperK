@@ -3,6 +3,7 @@
 import type { CleaningMode, CleaningRegion } from "./cleaning/types";
 import type { TranslatedBubble } from "./translationOverlay";
 import { pageBlobStore } from "./lifecycle/pageBlobStore";
+import { TEXT_RENDER_POLICY_VERSION, usesAutoSourceFill } from "./colorMatching/resolveTextStyle";
 
 const DB_NAME = "SuperKMangaTranslatorDB";
 const DB_VERSION = 3;
@@ -52,6 +53,7 @@ interface SessionData {
   bubbleCache: [string, TranslatedBubble[]][];
   translatedAssetIds?: [string, string][];
   translatedImageCache?: [string, string][];
+  renderPolicyVersion?: string;
   updatedAt: number;
 }
 
@@ -280,7 +282,13 @@ export const saveProjectSession = async (
       const assetId = pageId
         ? `translated_${pageId}`
         : `translated_${encodeURIComponent(pageUrl)}`;
-      const isDirty = dirty ? dirty.has(pageUrl) : true;
+      // Old-policy renders dropped during restore must not come back through
+      // the LRU preservation path on the next incremental autosave.
+      const needsPolicyRefresh = previousSession?.renderPolicyVersion !== TEXT_RENDER_POLICY_VERSION &&
+        (data.bubbleCache.get(pageUrl) ?? []).some((bubble) => usesAutoSourceFill(bubble)) &&
+        ((!pageUrl.startsWith("blob:") && !pageUrl.startsWith("asset:")) ||
+          (!!pageId && pageBlobStore.has(pageId)));
+      const isDirty = needsPolicyRefresh || (dirty ? dirty.has(pageUrl) : true);
       const imageValue = data.translatedImageCache.get(pageUrl);
       let hasValidImage = typeof imageValue === "string" && imageValue.startsWith("data:");
       let imageBytes: Uint8Array | undefined;
@@ -297,7 +305,7 @@ export const saveProjectSession = async (
 
       // If the page was explicitly dirtied (e.g. text changed) and has no rendered image in memory,
       // its previous persisted render is obsolete and must not be linked or preserved.
-      if (dirty && isDirty && !hasValidImage) {
+      if ((needsPolicyRefresh || (dirty && isDirty)) && !hasValidImage) {
         continue;
       }
 
@@ -346,6 +354,7 @@ export const saveProjectSession = async (
       currentPage: data.currentPage,
       bubbleCache,
       translatedAssetIds,
+      renderPolicyVersion: TEXT_RENDER_POLICY_VERSION,
       updatedAt: Date.now(),
     };
 
@@ -519,16 +528,26 @@ export const loadProjectSession = async (): Promise<LoadedProjectSession | null>
     }
 
     const hasUnrecoverableSources = processedPages.some((p) => p.unrecoverableSource);
+    const bubbleCache = new Map(
+      (data.bubbleCache || []).map(([pageKey, bubbles]) => [
+        pageUrlById.get(pageKey) ?? pageKey,
+        bubbles,
+      ]),
+    );
+    if (data.renderPolicyVersion !== TEXT_RENDER_POLICY_VERSION) {
+      for (const page of processedPages) {
+        // Keep the only available image when its original cannot be recovered.
+        if (!page.unrecoverableSource &&
+            (bubbleCache.get(page.url) ?? []).some((bubble) => usesAutoSourceFill(bubble))) {
+          translatedImageCache.delete(page.url);
+        }
+      }
+    }
 
     return {
       pages: processedPages,
       currentPage: data.currentPage || 0,
-      bubbleCache: new Map(
-        (data.bubbleCache || []).map(([pageKey, bubbles]) => [
-          pageUrlById.get(pageKey) ?? pageKey,
-          bubbles,
-        ]),
-      ),
+      bubbleCache,
       translatedImageCache,
       updatedAt: data.updatedAt,
       hasUnrecoverableSources,
