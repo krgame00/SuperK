@@ -15,6 +15,7 @@ import type {
   CleaningResult,
   CleaningRegion,
   ManualRegionAction,
+  CleaningMode,
 } from "@/lib/cleaning/types";
 import {
   loadCleaningResultAssets,
@@ -54,7 +55,8 @@ const buildPreparedIdentity = (
   maskFingerprint: string,
   pipelineVersion?: string,
   regions: CleaningResult["regions"] = [],
-) => `${sourceFingerprint}:${maskFingerprint}:${pipelineVersion ?? "unknown-pipeline"}:${authorizationIdentity(regions)}`;
+  cleaningMode: CleaningMode = "safe",
+) => `${sourceFingerprint}:${maskFingerprint}:${pipelineVersion ?? "unknown-pipeline"}:${authorizationIdentity(regions)}:${cleaningMode}`;
 
 const safeRestoredRegions = (regions: CleaningResult["regions"]): CleaningResult["regions"] =>
   regions.map((region) => region.maskApproved && !region.approvalRevision
@@ -351,6 +353,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
               hydrated.maskFingerprint ?? "unknown-mask",
               hydrated.pipelineVersion,
               hydrated.regions,
+              hydrated.cleaningMode,
             )
           : undefined,
       };
@@ -384,6 +387,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
           height: result.height,
           timingsMs: result.timingsMs,
           awaitingReview: result.awaitingReview,
+          cleaningMode: result.cleaningMode ?? "safe",
           ...assetIds,
         });
       } catch (saveErr) {
@@ -454,6 +458,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
           cached &&
           cached.sourceFingerprint &&
           cached.maskFingerprint &&
+          cached.cleaningMode === "all-text" &&
           cached.sourceFingerprint === sourceFingerprint &&
           cached.pipelineVersion === CURRENT_PIPELINE_VERSION
         ) {
@@ -721,6 +726,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
                 (region) => region.status === "needs_review" && region.automaticAction === "clean",
               ),
               pipelineVersion: metadata.pipelineVersion,
+              cleaningMode: metadata.cleaningMode ?? "safe",
               cleanUrl,
               maskUrl,
               reviewMaskUrl,
@@ -737,6 +743,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
                     metadata.maskFingerprint ?? "unknown-mask",
                     metadata.pipelineVersion,
                     safeRestoredRegions(metadata.regions),
+                    metadata.cleaningMode,
                   )
                 : undefined,
             };
@@ -772,6 +779,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
                   hydrated.maskFingerprint ?? "unknown-mask",
                   result.pipelineVersion,
                   result.regions,
+                  result.cleaningMode,
                 )
               : undefined,
           };

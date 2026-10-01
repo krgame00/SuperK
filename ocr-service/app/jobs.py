@@ -18,6 +18,7 @@ from PIL import Image
 
 from app.pipeline import PipelineOutput, ProgressCallback
 from app.schemas import (
+    CleaningMode,
     CleaningResult,
     JobProgress,
     JobStage,
@@ -33,6 +34,7 @@ class Pipeline(Protocol):
         self,
         image_rgb: np.ndarray,
         progress_callback: ProgressCallback | None = None,
+        cleaning_mode: CleaningMode = CleaningMode.SAFE,
     ) -> PipelineOutput: ...
 
 
@@ -93,6 +95,7 @@ class JobState:
     source_bytes: bytes
     parent_id: str | None = None
     project_id: str | None = None
+    cleaning_mode: CleaningMode = CleaningMode.SAFE
     status: JobStatus = JobStatus.QUEUED
     stage: JobStage = JobStage.QUEUED
     completed_regions: int = 0
@@ -119,6 +122,7 @@ class JobState:
                 "stage": self.stage.value,
                 "progress": progress.model_dump(mode="json"),
                 "error": self.error,
+                "cleaning_mode": self.cleaning_mode.value,
             }
 
     def _current_elapsed_ms(self) -> int:
@@ -161,6 +165,7 @@ class JobStore:
         source_bytes: bytes,
         filename: str,
         project_id: str | None = None,
+        cleaning_mode: CleaningMode = CleaningMode.SAFE,
     ) -> str:
         self._maybe_sweep()
         job_id = uuid.uuid4().hex
@@ -169,6 +174,7 @@ class JobStore:
             filename=filename,
             source_bytes=source_bytes,
             project_id=project_id,
+            cleaning_mode=CleaningMode(cleaning_mode),
         )
         with self._jobs_lock:
             if self._idle_timer is not None:
@@ -200,6 +206,7 @@ class JobStore:
             source_bytes=b"",
             parent_id=parent_id,
             project_id=parent.project_id,
+            cleaning_mode=parent.cleaning_mode,
         )
         with self._jobs_lock:
             if self._idle_timer is not None:
@@ -253,6 +260,7 @@ class JobStore:
                 result=result,
                 asset_dir=job_dir,
                 project_id=project_id,
+                cleaning_mode=result.cleaning_mode,
             )
             self._jobs[job_id] = job
             return job
@@ -516,6 +524,9 @@ class JobStore:
         watchdog = self._start_watchdog(job)
         try:
             image_rgb = _decode_rgb(job.source_bytes)
+            # Legacy injected pipelines may still implement the safe-only
+            # signature. All-text always requires explicit mode support.
+            mode_options = {"cleaning_mode": job.cleaning_mode} if job.cleaning_mode is CleaningMode.ALL_TEXT else {}
             output = self._pipeline().run(
                 image_rgb,
                 lambda stage, completed, total: self._update_progress(
@@ -524,6 +535,7 @@ class JobStore:
                     completed,
                     total,
                 ),
+                **mode_options,
             )
             self._update_progress(
                 job,
@@ -567,6 +579,7 @@ class JobStore:
                     protected_mask=_decode_mask((parent.asset_dir / "protected-mask.png").read_bytes()),
                     regions=parent.result.regions if parent.result else [],
                     timings_ms=parent.result.timings_ms if parent.result else {},
+                    cleaning_mode=parent.cleaning_mode,
                 )
             mask = _decode_mask(mask_bytes)
             if mask.shape != parent_output.mask.shape:
@@ -615,6 +628,12 @@ class JobStore:
             source_bytes = job.source_bytes
         if source_bytes:
             source_hash = hashlib.sha256(source_bytes).hexdigest()
+        elif (
+            job.parent_id is not None
+            and (parent := self.get(job.parent_id)) is not None
+            and parent.result is not None
+        ):
+            source_hash = parent.result.source_hash
         else:
             source_hash = hashlib.sha256(output.source_image.tobytes()).hexdigest()
 
@@ -634,6 +653,7 @@ class JobStore:
             regions=output.regions,
             timings_ms=output.timings_ms,
             awaiting_review=output.awaiting_review,
+            cleaning_mode=job.cleaning_mode,
         )
         try:
             (asset_dir / "result.json").write_text(result.model_dump_json(), encoding="utf-8")

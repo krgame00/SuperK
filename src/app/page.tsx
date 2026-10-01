@@ -357,6 +357,7 @@ export default function WorkspacePage() {
         maskUrl: result.maskUrl,
         preparedIdentity: result.preparedIdentity,
         awaitingReview: result.awaitingReview === true,
+        cleaningMode: result.cleaningMode,
       };
     },
     [cleanPage, pages],
@@ -2872,6 +2873,7 @@ export default function WorkspacePage() {
       {isMaskEditorOpen && currentCleaningResult && pages[currentPage] && (
         <MaskEditor
           sourceUrl={pages[currentPage].url}
+          cleanUrl={currentCleaningResult.cleanUrl}
           proposalMaskUrl={currentCleaningResult.reviewMaskUrl}
           maskUrl={currentCleaningResult.maskUrl}
           regions={currentCleaningResult.regions}

@@ -30,6 +30,7 @@ export type TextRole =
   | "review";
 
 export type AutomaticAction = "clean" | "preserve";
+export type CleaningMode = "safe" | "all-text";
 export type ManualRegionAction = "automatic" | "force-clean" | "protect" | "confirm-text";
 
 export type ProtectionReason =
@@ -81,6 +82,7 @@ export interface CleaningRegion {
 }
 
 export interface CleaningResult {
+  cleaningMode?: CleaningMode;
   jobId: string;
   sourceHash: string;
   width: number;

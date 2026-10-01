@@ -5,10 +5,10 @@ interface MaskLegendProps {
 }
 
 const pageLabels: Record<PageRole, string> = {
-  comic: "Comic page",
-  credits: "Credits page",
-  ui: "UI page",
-  unknown: "Unknown page",
+  comic: "หน้าการ์ตูน",
+  credits: "หน้าเครดิต",
+  ui: "หน้าเมนู",
+  unknown: "ประเภทหน้าไม่ระบุ",
 };
 
 export function MaskLegend({ regions }: MaskLegendProps) {
@@ -31,9 +31,9 @@ export function MaskLegend({ regions }: MaskLegendProps) {
     >
       <p className="mb-1.5 font-bold text-white tracking-wide">{pageLabels[pageRole]}</p>
       <div className="flex flex-wrap gap-x-3.5 gap-y-1">
-        <LegendItem shape="square" color="bg-[#ff3750]" label={`Clean ${clean}`} />
-        <LegendItem shape="diamond" color="bg-[#ffbe28]" label={`Review ${review}`} />
-        <LegendItem shape="circle" color="bg-[#2d91ff]" label={`Protect ${protect}`} />
+        <LegendItem shape="square" color="bg-[#ff3750]" label={`พื้นที่ที่จะลบ ${clean}`} />
+        <LegendItem shape="diamond" color="bg-[#ffbe28]" label={`ควรตรวจ ${review}`} />
+        <LegendItem shape="circle" color="bg-[#2d91ff]" label={`เก็บภาพเดิม ${protect}`} />
       </div>
     </div>
   );

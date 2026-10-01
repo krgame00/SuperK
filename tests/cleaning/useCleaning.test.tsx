@@ -64,6 +64,7 @@ const succeededJob = {
   stage: "complete" as const,
 };
 const cleaningResult = {
+  cleaningMode: "all-text" as const,
   jobId: "job-1",
   sourceHash: "a".repeat(64),
   width: 8,
@@ -255,6 +256,17 @@ test("cleanPage returns and reuses a result by original URL", async () => {
   expect(first.cleanUrl).toBe("blob:clean");
   expect(second).toBe(first);
   expect(createCleaningJob).toHaveBeenCalledOnce();
+});
+
+test("cleanPage does not reuse legacy safe cleaning for the clean-all workflow", async () => {
+  vi.mocked(createCleaningJob).mockResolvedValue(succeededJob);
+  vi.mocked(getCleaningResult).mockResolvedValue({ ...cleaningResult, cleaningMode: "safe" } as never);
+  const { result } = renderHook(() => useCleaning({ pages: ["blob:one"], currentPage: 0 }));
+  await act(async () => {
+    await result.current.cleanPage("blob:one", new Blob(["png"], { type: "image/png" }));
+    await result.current.cleanPage("blob:one", new Blob(["png"], { type: "image/png" }));
+  });
+  expect(createCleaningJob).toHaveBeenCalledTimes(2);
 });
 
 test("cleanPage recomputes when the source bytes change", async () => {
@@ -904,6 +916,7 @@ test.each([true, undefined])("fast restore preserves review state (stored flag: 
     pageUrl: "blob:one", sourceHash: "a".repeat(64),
     sourceFingerprint: "5:image/png", maskFingerprint: "4:image/png",
     pipelineVersion: "2.3.1-enclosed-backing", jobId: "offline-review",
+    cleaningMode: "all-text",
     width: 8, height: 8, regions: [staleMaskRegion], updatedAt: 1,
     awaitingReview,
   }]]));
@@ -914,8 +927,10 @@ test.each([true, undefined])("fast restore preserves review state (stored flag: 
   const { result } = renderHook(() => useCleaning({ pages: ["blob:one"], currentPage: 0 }));
   await act(async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); });
   expect(result.current.currentResult?.awaitingReview).toBe(true);
+  expect(result.current.currentResult?.cleaningMode).toBe("all-text");
   const reused = await result.current.cleanPage("blob:one", new Blob(["asset"], { type: "image/png" }));
   expect(reused.awaitingReview).toBe(true);
+  expect(reused.preparedIdentity).toContain(":all-text");
   expect(getCleaningResult).not.toHaveBeenCalled();
   expect(createCleaningJob).not.toHaveBeenCalled();
 });
@@ -931,7 +946,7 @@ test("cleaning persistence stores the awaiting-review flag", async () => {
     await vi.advanceTimersByTimeAsync(1000);
     await pending;
   });
-  expect(saveCleaningResultMetadata).toHaveBeenCalledWith(expect.objectContaining({ awaitingReview: true }));
+  expect(saveCleaningResultMetadata).toHaveBeenCalledWith(expect.objectContaining({ awaitingReview: true, cleaningMode: "all-text" }));
 });
 
 test("restore metadata without image dimensions falls back to guarded hydration", async () => {

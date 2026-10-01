@@ -78,6 +78,24 @@ class FailingProbe(PassingProbe):
         return {region.id: 0.3 for region, _mask in items}
 
 
+@adaptive_opt_in
+def test_all_text_keeps_bounded_final_candidate_after_adaptive_escalation():
+    image = np.zeros((800, 600, 3), np.uint8)
+    mask = np.zeros((800, 600), np.uint8)
+    mask[280:330, 200:270] = 255
+    regions = [region("one", 200, 280, 70, 50)]
+    lama = RecordingLama()
+    pipeline = make_pipeline(mask, regions, lama)
+    pipeline.residual_probe = FailingProbe()
+    output = pipeline.run(image, cleaning_mode="all-text")
+    assert len(lama.roi_calls) == 2
+    assert lama.full_calls == 1
+    assert np.all(output.clean_image[mask > 0] == 1)
+    assert np.array_equal(output.clean_image[mask == 0], image[mask == 0])
+    assert output.regions[0].status.value == "needs_review"
+    assert output.awaiting_review
+
+
 def region(region_id: str, x: int, y: int, width: int, height: int) -> MaskRegion:
     return MaskRegion(region_id, PixelRect(x=x, y=y, width=width, height=height), (), 1)
 

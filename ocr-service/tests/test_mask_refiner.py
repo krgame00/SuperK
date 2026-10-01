@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from app.detector import DetectionResult, LetterboxTransform
 from app.mask_refiner import (
@@ -109,7 +110,8 @@ def test_group_regions_caps_maximum_gap_to_prevent_giant_chaining() -> None:
     assert len(result.regions) == 2, f"Expected 2 regions, got {len(result.regions)}"
 
 
-def test_text_outline_and_shadow_are_not_blocked_by_protected_edges() -> None:
+@pytest.mark.parametrize("fill", [250, [220, 30, 40], [240, 210, 20]])
+def test_text_outline_and_shadow_are_not_blocked_by_protected_edges(fill) -> None:
     # Red curtain background [140, 40, 40]
     image = np.full((60, 60, 3), 40, dtype=np.uint8)
     image[:, :, 0] = 140
@@ -118,14 +120,21 @@ def test_text_outline_and_shadow_are_not_blocked_by_protected_edges() -> None:
     # Black outline at 23:37, 23:37
     image[23:37, 23:37] = 10
     # White core at 25:35, 25:35
-    image[25:35, 25:35] = 250
+    image[25:35, 25:35] = fill
 
     probability = np.zeros((60, 60), dtype=np.float32)
     probability[25:35, 25:35] = 0.95  # Model detected text core
 
     protected = build_protected_edges(image, probability)
     # The immediate 2px stroke outline of the letter should NOT be in protected edges
-    assert protected[23:37, 23:37].sum() == 0, "Text outline should not be marked as a protected artwork edge"
+    if isinstance(fill, int):
+        assert protected[23:37, 23:37].sum() == 0, "Text outline should not be marked as a protected artwork edge"
+    assert not np.any(protected[25:35, 25:35])
+    detection = DetectionResult(probability, [], LetterboxTransform(60, 60, 60, 1, 0, 0))
+    refined = refine_mask(image, detection)
+    assert np.all(refined.mask[25:35, 25:35] == 255)
+    assert not np.any(refined.mask[:15])
+    assert np.count_nonzero(refined.mask) < 60 * 60 / 4
 
 
 def test_non_text_artwork_and_body_marks_remain_fully_protected() -> None:

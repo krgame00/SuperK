@@ -9,6 +9,11 @@ class CleanerRoute(StrEnum):
     ARTWORK = "artwork"
 
 
+class CleaningMode(StrEnum):
+    SAFE = "safe"
+    ALL_TEXT = "all-text"
+
+
 class PageRole(StrEnum):
     COMIC = "comic"
     CREDITS = "credits"
@@ -129,4 +134,5 @@ class CleaningResult(BaseModel):
     regions: list[RegionRecord]
     timings_ms: dict[str, int | float | str]
     awaiting_review: bool = False
+    cleaning_mode: CleaningMode = CleaningMode.SAFE
     pipeline_version: str = "2.3.1-enclosed-backing"

@@ -27,6 +27,7 @@ from app.region_router import route_region
 from app.schemas import (
     AutomaticAction,
     CleanerRoute,
+    CleaningMode,
     JobStage,
     ManualRegionAction,
     RegionRecord,
@@ -83,6 +84,7 @@ class PipelineOutput:
     regions: list[RegionRecord]
     timings_ms: dict[str, int | float | str]
     awaiting_review: bool = False
+    cleaning_mode: CleaningMode = CleaningMode.SAFE
 
 
 BatchScore = Callable[
@@ -136,7 +138,9 @@ class CleaningPipeline:
         self,
         image_rgb: RgbImage,
         progress_callback: ProgressCallback | None = None,
+        cleaning_mode: CleaningMode = CleaningMode.SAFE,
     ) -> PipelineOutput:
+        cleaning_mode = CleaningMode(cleaning_mode)
         started = perf_counter()
         stage_started = started
         detection = self.detector.detect(image_rgb)
@@ -157,7 +161,14 @@ class CleaningPipeline:
             refined,
             page,
             protection,
+            cleaning_mode,
         )
+        if cleaning_mode is CleaningMode.ALL_TEXT:
+            # Automatic protection is advisory for detected text in this mode.
+            # Keep protection over other artwork and use only glyph-mask pixels.
+            protected = protection.protected_mask.copy()
+            protected[eligible > 0] = 0
+            protection = replace(protection, protected_mask=protected)
         if not refined.regions:
             return PipelineOutput(
                 source_image=image_rgb.copy(),
@@ -166,6 +177,7 @@ class CleaningPipeline:
                 review_mask=review,
                 protected_mask=protection.protected_mask.copy(),
                 regions=[],
+                cleaning_mode=cleaning_mode,
                 timings_ms=_with_safety_metrics(
                     {
                     "detect": detect_ms,
@@ -203,6 +215,7 @@ class CleaningPipeline:
                 started,
                 progress_callback,
                 score_many,
+                cleaning_mode,
             )
 
         clean_ms = 0
@@ -242,7 +255,7 @@ class CleaningPipeline:
             before = clean_image.copy()
             stage_started = perf_counter()
             repaired = cleaner.clean(before, region_mask, region)
-            feather = _feather_radius_for_route(route.route)
+            feather = 0 if cleaning_mode is CleaningMode.ALL_TEXT else _feather_radius_for_route(route.route)
             candidate, support = compose(before, repaired, region_mask, feather_radius=feather)
             _restore_protected(
                 image_rgb,
@@ -302,7 +315,7 @@ class CleaningPipeline:
                 clean_image = candidate
                 status = RegionStatus.REPAIRED
             else:
-                clean_image = before
+                clean_image = candidate if cleaning_mode is CleaningMode.ALL_TEXT else before
                 status = RegionStatus.NEEDS_REVIEW
             records.append(
                 _record(
@@ -345,6 +358,7 @@ class CleaningPipeline:
                 records,
             ),
             awaiting_review=_has_awaiting_review(records),
+            cleaning_mode=cleaning_mode,
         )
 
     def _build_eligibility(
@@ -353,6 +367,7 @@ class CleaningPipeline:
         refined: RefinedMask,
         page: PageContext,
         protection: ProtectionResult,
+        cleaning_mode: CleaningMode = CleaningMode.SAFE,
     ) -> tuple[BinaryMask, BinaryMask, dict[str, EligibilityDecision]]:
         eligible = np.zeros_like(refined.mask)
         review = protection.review_mask.copy()
@@ -371,13 +386,19 @@ class CleaningPipeline:
                     "text_role": TextRole.REVIEW,
                     "action": AutomaticAction.PRESERVE,
                 })
+            if cleaning_mode is CleaningMode.ALL_TEXT:
+                decision = decision.model_copy(update={
+                    "action": AutomaticAction.CLEAN,
+                    "text_role": TextRole.REVIEW if decision.text_role is TextRole.PROTECTED else decision.text_role,
+                })
             decisions[region.id] = decision
             if decision.action is AutomaticAction.CLEAN:
                 eligible = np.maximum(eligible, region_mask)
             elif decision.text_role is TextRole.REVIEW:
                 review = np.maximum(review, region_mask)
-        eligible[protection.protected_mask > 0] = 0
-        eligible[review > 0] = 0
+        if cleaning_mode is CleaningMode.SAFE:
+            eligible[protection.protected_mask > 0] = 0
+            eligible[review > 0] = 0
         return eligible, review, decisions
 
     def _run_batched(
@@ -394,6 +415,7 @@ class CleaningPipeline:
         started: float,
         progress_callback: ProgressCallback | None,
         score_many: BatchScore,
+        cleaning_mode: CleaningMode = CleaningMode.SAFE,
     ) -> PipelineOutput:
         clean_image = image_rgb.copy()
         clean_ms = 0
@@ -472,7 +494,7 @@ class CleaningPipeline:
                 repaired = scoped_clean
             else:
                 repaired = cleaner.clean(clean_image, region_mask, region)
-            feather = _feather_radius_for_route(route.route)
+            feather = 0 if cleaning_mode is CleaningMode.ALL_TEXT else _feather_radius_for_route(route.route)
             candidate, support = compose(clean_image, repaired, region_mask, feather_radius=feather)
             _restore_protected(
                 image_rgb,
@@ -484,7 +506,7 @@ class CleaningPipeline:
             stage_started = perf_counter()
             damage = verify_damage(clean_image, candidate, support)
             verify_ms += _elapsed_ms(stage_started)
-            if damage.accepted:
+            if damage.accepted or cleaning_mode is CleaningMode.ALL_TEXT:
                 clean_image = candidate
             items.append(
                 _BatchItem(
@@ -505,7 +527,7 @@ class CleaningPipeline:
         score_items = [
             (item.region, item.mask)
             for item in items
-            if item.damage_accepted
+            if item.damage_accepted or cleaning_mode is CleaningMode.ALL_TEXT
         ]
         residual_scores = score_many(clean_image, score_items)
         verify_ms += _elapsed_ms(stage_started)
@@ -533,7 +555,8 @@ class CleaningPipeline:
                 # Attempt 2 expands the selected cluster's context while
                 # retaining the original authorized mask support.
                 if quality_attempts >= 3:
-                    clean_image[item.support > 0] = image_rgb[item.support > 0]
+                    if cleaning_mode is CleaningMode.SAFE:
+                        clean_image[item.support > 0] = image_rgb[item.support > 0]
                     records.append(
                         _record(
                             item.region,
@@ -577,7 +600,7 @@ class CleaningPipeline:
                         retry_mask,
                         item.region,
                     )
-                feather = _feather_radius_for_route(item.route)
+                feather = 0 if cleaning_mode is CleaningMode.ALL_TEXT else _feather_radius_for_route(item.route)
                 candidate, retry_support = compose(
                     retry_base,
                     repaired,
@@ -606,6 +629,8 @@ class CleaningPipeline:
                 residual = report.residual_score
                 damage_score = report.damage_score
                 accepted = report.accepted
+                if cleaning_mode is CleaningMode.ALL_TEXT:
+                    clean_image = candidate
                 if accepted:
                     clean_image = candidate
                 else:
@@ -620,7 +645,7 @@ class CleaningPipeline:
                         lama_inference_count += 1
                         stage_started = perf_counter()
                         full_repaired = full_lama.clean_full_image(retry_base, retry_mask)
-                        feather = _feather_radius_for_route(item.route)
+                        feather = 0 if cleaning_mode is CleaningMode.ALL_TEXT else _feather_radius_for_route(item.route)
                         full_candidate, full_support = compose(
                             retry_base,
                             full_repaired,
@@ -649,6 +674,8 @@ class CleaningPipeline:
                         residual = full_report.residual_score
                         damage_score = full_report.damage_score
                         accepted = full_report.accepted
+                        if cleaning_mode is CleaningMode.ALL_TEXT:
+                            clean_image = full_candidate
                         if accepted:
                             clean_image = full_candidate
                             restore = None
@@ -656,9 +683,9 @@ class CleaningPipeline:
                             restore = (item.support > 0) | (retry_support > 0) | (full_support > 0)
                     else:
                         restore = (item.support > 0) | (retry_support > 0)
-                    if restore is not None:
+                    if restore is not None and cleaning_mode is CleaningMode.SAFE:
                         clean_image[restore] = image_rgb[restore]
-            elif not accepted and item.damage_accepted:
+            elif not accepted and item.damage_accepted and cleaning_mode is CleaningMode.SAFE:
                 clean_image[item.support > 0] = image_rgb[item.support > 0]
 
             records.append(
@@ -737,6 +764,7 @@ class CleaningPipeline:
                 and record.automatic_action is AutomaticAction.CLEAN
                 for record in records
             ),
+            cleaning_mode=cleaning_mode,
         )
 
     def retry_region(
@@ -832,13 +860,17 @@ class CleaningPipeline:
             review = output.review_mask.copy()
             review[binary_mask > 0] = 0
             protected = np.maximum(output.protected_mask, binary_mask)
+            partial_restore = (
+                output.cleaning_mode is CleaningMode.ALL_TEXT
+                and np.any(_region_mask(eligible, MaskRegion(region_id, record.rect, (), 2)))
+            )
             updated_records = list(output.regions)
             updated_records[record_index] = record.model_copy(
                 update={
-                    "status": RegionStatus.PRESERVED,
-                    "text_role": TextRole.PROTECTED,
-                    "automatic_action": AutomaticAction.PRESERVE,
-                    "text_confirmed": False,
+                    "status": record.status if partial_restore else RegionStatus.PRESERVED,
+                    "text_role": record.text_role if partial_restore else TextRole.PROTECTED,
+                    "automatic_action": record.automatic_action if partial_restore else AutomaticAction.PRESERVE,
+                    "text_confirmed": record.text_confirmed if partial_restore else False,
                     "mask_approved": False,
                     "approval_revision": None,
                 },
@@ -852,6 +884,7 @@ class CleaningPipeline:
                 regions=updated_records,
                 timings_ms=dict(output.timings_ms),
                 awaiting_review=_has_awaiting_review(updated_records),
+                cleaning_mode=output.cleaning_mode,
             )
 
         if action is ManualRegionAction.AUTOMATIC and not record.approval_revision:
@@ -895,6 +928,7 @@ class CleaningPipeline:
                     regions=updated_records,
                     timings_ms=dict(output.timings_ms),
                     awaiting_review=_has_awaiting_review(updated_records),
+                    cleaning_mode=output.cleaning_mode,
                 )
 
         cleaner_key = (
@@ -936,7 +970,7 @@ class CleaningPipeline:
             or action is ManualRegionAction.FORCE_CLEAN
         )
         accepted_image = (
-            candidate if accepted else working_image.copy()
+            candidate if accepted or output.cleaning_mode is CleaningMode.ALL_TEXT else working_image.copy()
         )
         updated_records[record_index] = record.model_copy(
             update={
@@ -952,7 +986,7 @@ class CleaningPipeline:
                 "damage_score": report.damage_score,
                 "automatic_action": (
                     AutomaticAction.CLEAN
-                    if accepted
+                    if accepted or output.cleaning_mode is CleaningMode.ALL_TEXT
                     else AutomaticAction.PRESERVE
                 ),
                 "text_role": (
@@ -980,6 +1014,7 @@ class CleaningPipeline:
             regions=updated_records,
             timings_ms=timings,
             awaiting_review=_has_awaiting_review(updated_records),
+            cleaning_mode=output.cleaning_mode,
         )
 
 

@@ -61,6 +61,55 @@ def _wait_for_job(store: JobStore, job_id: str, timeout: float = 5.0) -> JobStat
     raise TimeoutError(f"Job {job_id} did not complete in {timeout}s")
 
 
+def test_all_text_mode_persists_restores_and_retries(tmp_path):
+    seen = []
+
+    class ModePipeline(_TestPipeline):
+        def run(self, image_rgb, progress_callback=None, cleaning_mode="safe"):
+            seen.append(cleaning_mode)
+            return super().run(image_rgb, progress_callback)
+
+        def retry_region(self, output, *args):
+            seen.append(output.cleaning_mode)
+            return output
+
+    store = JobStore(pipeline_factory=ModePipeline, cache_dir=tmp_path)
+    try:
+        job_id = store.submit(_make_png(), "page.png", cleaning_mode="all-text")
+        job = _wait_for_job(store, job_id)
+        assert job.status is JobStatus.SUCCEEDED
+        assert job.result.cleaning_mode == "all-text"
+        assert job.snapshot()["cleaning_mode"] == "all-text"
+        store._jobs.clear()
+        restored = store.get(job_id)
+        assert restored.cleaning_mode == "all-text"
+        retry_id = store.submit_retry(job_id, "region", _make_png(), "flat", ManualRegionAction.PROTECT)
+        retry = _wait_for_job(store, retry_id)
+        assert retry.status is JobStatus.SUCCEEDED
+        assert retry.result.cleaning_mode == "all-text"
+        assert retry.result.source_hash == job.result.source_hash
+        assert seen == ["all-text", "all-text"]
+    finally:
+        store.shutdown()
+
+
+def test_legacy_disk_result_without_mode_restores_safe(tmp_path):
+    store = JobStore(pipeline_factory=_TestPipeline, cache_dir=tmp_path)
+    try:
+        job_id = store.submit(_make_png(), "legacy.png")
+        job = _wait_for_job(store, job_id)
+        result_path = job.asset_dir / "result.json"
+        payload = json.loads(result_path.read_text(encoding="utf-8"))
+        payload.pop("cleaning_mode", None)
+        result_path.write_text(json.dumps(payload), encoding="utf-8")
+        store._jobs.clear()
+        restored = store.get(job_id)
+        assert restored.snapshot()["cleaning_mode"] == "safe"
+        assert restored.result.cleaning_mode == "safe"
+    finally:
+        store.shutdown()
+
+
 def test_persistence_created_on_completion(tmp_path: Path) -> None:
     store = JobStore(pipeline_factory=lambda: _TestPipeline(), cache_dir=tmp_path)
     try:

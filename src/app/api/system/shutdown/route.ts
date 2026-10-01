@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
   if (process.env.NODE_ENV !== "test") {
     setTimeout(() => {
       try {
-        const rootDir = process.cwd();
+        const rootDir = process.env.SUPERK_PROJECT_ROOT || process.cwd();
         const stopBat = path.join(rootDir, "stop.bat");
 
         if (fs.existsSync(stopBat)) {

@@ -98,8 +98,131 @@ describe("MaskEditor", () => {
     HTMLCanvasElement.prototype.setPointerCapture = vi.fn();
   });
 
+  test("primary tools and comparison describe removal and source recovery", () => {
+    renderMaskEditor({ cleanUrl: "blob:cleaned" });
+    expect(screen.getByRole("button", { name: "ลบข้อความ" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "กู้ภาพเดิม" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "ไม่ลบตรงนี้" })).toBeVisible();
+    expect(screen.getByText("สีแดง = พื้นที่ที่จะลบ")).toBeVisible();
+    expect(screen.getByText("ตัวเลือกเพิ่มเติม").closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByRole("img", { name: "ภาพที่คลีนแล้ว" })).toHaveAttribute("src", "blob:cleaned");
+    fireEvent.click(screen.getByRole("button", { name: "ภาพเดิม" }));
+    expect(screen.getByRole("img", { name: "ภาพเดิม" })).toHaveAttribute("src", "blob:clean");
+  });
+
+  test("restore applies protection without force-clean and keeps the editor open", async () => {
+    HTMLCanvasElement.prototype.toBlob = vi.fn((callback) => callback(new Blob(["mask"], { type: "image/png" }))) as typeof HTMLCanvasElement.prototype.toBlob;
+    const onRetry = vi.fn().mockResolvedValue({ ok: true });
+    const onClose = vi.fn();
+    renderMaskEditor({ onRetry, onClose });
+    const canvas = await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+    await waitFor(() => expect(canvas).toHaveAttribute("width", "100"));
+    fireEvent.click(screen.getByRole("button", { name: "กู้ภาพเดิม" }));
+    fireEvent.pointerDown(canvas, { clientX: 15, clientY: 15, pointerId: 1, button: 0 });
+    fireEvent.pointerUp(canvas, { pointerId: 1 });
+    fireEvent.click(screen.getByRole("button", { name: "ใช้กับจุดนี้" }));
+    await waitFor(() => expect(onRetry).toHaveBeenCalledWith("region-1", expect.any(Blob), "auto", "protect"));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  test("fits and centers the next selected region", async () => {
+    const second = { ...preservedRegion, id: "region-2", rect: { x: 65, y: 50, width: 20, height: 12 } };
+    const { container } = renderMaskEditor({ regions: [preservedRegion, second] });
+    const canvas = await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+    await waitFor(() => expect(canvas).toHaveAttribute("width", "100"));
+    const image = container.querySelector("img")!;
+    const workspace = image.closest(".min-h-0")!;
+    Object.defineProperties(image, { clientWidth: { value: 100 }, clientHeight: { value: 80 } });
+    Object.defineProperties(workspace, { clientWidth: { value: 500 }, clientHeight: { value: 400 } });
+    fireEvent.load(image);
+    const wrapper = container.querySelector<HTMLElement>(".transition-transform.duration-75")!;
+    expect(wrapper.style.transform).toContain("translate(30px, 24px)");
+    fireEvent.click(screen.getByRole("button", { name: "จุดถัดไป" }));
+    await waitFor(() => expect(wrapper.style.transform).toContain("translate(-25px, -15.999999999999996px)"));
+  });
+
+  test("restoring then undoing leaves no protection selection to submit", async () => {
+    const onRetry = vi.fn().mockResolvedValue({ ok: true });
+    renderMaskEditor({ onRetry });
+    const canvas = await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+    await waitFor(() => expect(canvas).toHaveAttribute("width", "100"));
+    fireEvent.click(screen.getByRole("button", { name: "กู้ภาพเดิม" }));
+    fireEvent.pointerDown(canvas, { clientX: 15, clientY: 15, pointerId: 1, button: 0 });
+    fireEvent.pointerUp(canvas, { pointerId: 1 });
+    fireEvent.click(screen.getByRole("button", { name: "Undo Mask" }));
+    fireEvent.click(screen.getByRole("button", { name: "ใช้กับจุดนี้" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("ระบายจุดที่ต้องการกู้ภาพเดิมก่อน"));
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  test("excluding the entire removal mask restores only those source pixels without proposal recovery", async () => {
+    HTMLCanvasElement.prototype.toBlob = vi.fn(callback => callback(new Blob(["mask"], { type: "image/png" }))) as typeof HTMLCanvasElement.prototype.toBlob;
+    const onRefreshProposal = vi.fn();
+    const onRetry = vi.fn().mockResolvedValue({ ok: true });
+    const onClose = vi.fn();
+    renderMaskEditor({ onRetry, onRefreshProposal, onClose });
+    const canvas = await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+    await waitFor(() => expect(canvas).toHaveAttribute("width", "100"));
+    fireEvent.click(screen.getByRole("button", { name: "ไม่ลบตรงนี้" }));
+    fireEvent.pointerDown(canvas, { clientX: 15, clientY: 15, pointerId: 1, button: 0 });
+    fireEvent.pointerUp(canvas, { pointerId: 1 });
+    fireEvent.click(screen.getByRole("button", { name: "ใช้กับจุดนี้" }));
+    await waitFor(() => expect(onRetry).toHaveBeenCalledWith("region-1", expect.any(Blob), "auto", "protect"));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onRefreshProposal).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    const context = (canvas as HTMLCanvasElement).getContext("2d")!;
+    const encoded = vi.mocked(context.putImageData).mock.calls.at(-1)![0];
+    expect(Array.from(encoded.data).filter((_, index) => index % 4 === 0).filter(value => value === 255)).toHaveLength(4);
+  });
+
+  test("excluding some glyphs keeps remaining mask eligible for cleaning", async () => {
+    mockMaskPixels = [[11, 11], [25, 11]];
+    HTMLCanvasElement.prototype.toBlob = vi.fn(callback => callback(new Blob(["mask"], { type: "image/png" }))) as typeof HTMLCanvasElement.prototype.toBlob;
+    const onRetry = vi.fn().mockResolvedValue({ ok: true });
+    renderMaskEditor({ onRetry });
+    const canvas = await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+    await waitFor(() => expect(canvas).toHaveAttribute("width", "100"));
+    fireEvent.change(screen.getByRole("slider"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "ไม่ลบตรงนี้" }));
+    fireEvent.pointerDown(canvas, { clientX: 11, clientY: 11, pointerId: 1, button: 0 });
+    fireEvent.pointerUp(canvas, { pointerId: 1 });
+    fireEvent.click(screen.getByRole("button", { name: "ใช้กับจุดนี้" }));
+    await waitFor(() => expect(onRetry).toHaveBeenCalledWith("region-1", expect.any(Blob), "auto", "force-clean"));
+    expect(onRetry).not.toHaveBeenCalledWith("region-1", expect.any(Blob), "auto", "protect");
+    const context = (canvas as HTMLCanvasElement).getContext("2d")!;
+    const encoded = vi.mocked(context.putImageData).mock.calls.at(-1)![0];
+    expect(Array.from(encoded.data).filter((_, index) => index % 4 === 0).filter(value => value === 255)).toHaveLength(1);
+  });
+
+  test("proposal recovery submits positive removal pixels after loading a grayscale mask", async () => {
+    mockMaskHasPixels = false;
+    HTMLCanvasElement.prototype.toBlob = vi.fn((callback) => callback(new Blob(["mask"], { type: "image/png" }))) as typeof HTMLCanvasElement.prototype.toBlob;
+    const onRefreshProposal = vi.fn().mockImplementation(async () => {
+      mockMaskHasPixels = true;
+      return { region: preservedRegion, maskUrl: "blob:proposal" };
+    });
+    const onRetry = vi.fn().mockResolvedValue({ ok: true });
+    renderMaskEditor({ onRetry, onRefreshProposal });
+    const canvas = await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+    await waitFor(() => expect(canvas).toHaveAttribute("width", "100"));
+    const context = (canvas as HTMLCanvasElement).getContext("2d")!;
+    const originalRead = vi.mocked(context.getImageData).getMockImplementation()!;
+    vi.mocked(context.getImageData).mockImplementation((...args) => {
+      const data = originalRead(...args);
+      for (let i = 0; i < data.data.length; i += 4) { if (data.data[i]) { data.data[i + 1] = 255; data.data[i + 2] = 255; } }
+      return data;
+    });
+    fireEvent.click(screen.getByRole("button", { name: "ใช้กับจุดนี้" }));
+    await waitFor(() => expect(onRetry).toHaveBeenCalledTimes(2));
+    const encoded = vi.mocked(context.putImageData).mock.calls.at(-1)![0];
+    expect(Array.from(encoded.data).filter((_, index) => index % 4 === 0).filter(value => value === 255)).toHaveLength(4);
+  });
+
   test("preserved region offers force clean, protect, and automatic actions", () => {
     renderMaskEditor();
+    fireEvent.click(screen.getByText("ตัวเลือกเพิ่มเติม"));
 
     expect(
       (screen.getByRole("button", { name: "อนุมัติ Mask และลบ" }) as HTMLButtonElement).disabled,
@@ -140,9 +263,10 @@ describe("MaskEditor", () => {
     renderMaskEditor();
 
     const dialog = screen.getByRole("dialog", { name: "แก้ Mask" });
-    const focusable = dialog.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    const candidates = dialog.querySelectorAll<HTMLElement>(
+      'summary, button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
     );
+    const focusable = Array.from(candidates).filter(element => !element.closest("details") || element.tagName === "SUMMARY");
     expect(focusable.length).toBeGreaterThan(1);
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
@@ -298,7 +422,7 @@ describe("MaskEditor", () => {
 
     await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
 
-    const oneClickCleanBtn = screen.getByRole("button", { name: /คลีนจุดนี้ทันที/ });
+    const oneClickCleanBtn = screen.getByRole("button", { name: /ใช้กับจุดนี้/ });
     expect(oneClickCleanBtn).toBeTruthy();
 
     fireEvent.click(oneClickCleanBtn);
@@ -308,8 +432,8 @@ describe("MaskEditor", () => {
       expect(onRetry).toHaveBeenCalledWith("region-1", expect.any(Blob), "auto", "confirm-text");
       // Second call executes force-clean
       expect(onRetry).toHaveBeenCalledWith("region-1", expect.any(Blob), "auto", "force-clean");
-      // Closes dialog after completion
-      expect(onClose).toHaveBeenCalled();
+      // Applying keeps the editor open for the next correction
+      expect(onClose).not.toHaveBeenCalled();
     });
     const context = HTMLCanvasElement.prototype.getContext.call(document.createElement("canvas"), "2d") as CanvasRenderingContext2D;
     const grayscale = vi.mocked(context.putImageData).mock.calls.at(-1)?.[0];
@@ -329,7 +453,7 @@ describe("MaskEditor", () => {
     renderMaskEditor({ onRetry, onClose });
 
     await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
-    fireEvent.click(screen.getByRole("button", { name: /คลีนจุดนี้ทันที/ }));
+    fireEvent.click(screen.getByRole("button", { name: /ใช้กับจุดนี้/ }));
 
     await waitFor(() => {
       expect(screen.getByRole("status")).toHaveTextContent(
@@ -359,7 +483,7 @@ describe("MaskEditor", () => {
     renderMaskEditor({ onRetry, onClose });
 
     await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
-    fireEvent.click(screen.getByRole("button", { name: /คลีนจุดนี้ทันที/ }));
+    fireEvent.click(screen.getByRole("button", { name: /ใช้กับจุดนี้/ }));
 
     await waitFor(() => {
       expect(screen.getByRole("status")).toHaveTextContent(
@@ -381,7 +505,7 @@ describe("MaskEditor", () => {
       "force-clean",
     );
     expect(onClose).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: /คลีนจุดนี้ทันที/ }));
+    fireEvent.click(screen.getByRole("button", { name: /ใช้กับจุดนี้/ }));
     await waitFor(() => expect(onRetry).toHaveBeenCalledTimes(3));
     expect(onRetry.mock.calls.map((call) => call[3])).toEqual(["confirm-text", "force-clean", "force-clean"]);
   });
@@ -394,7 +518,7 @@ describe("MaskEditor", () => {
     renderMaskEditor({ onRetry, onClose, onRefreshProposal });
 
     await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
-    fireEvent.click(screen.getByRole("button", { name: /คลีนจุดนี้ทันที/ }));
+    fireEvent.click(screen.getByRole("button", { name: /ใช้กับจุดนี้/ }));
 
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("กรุณาวาด Mask หรือกดเติมเต็มกรอบเอง"));
     expect(onRefreshProposal).toHaveBeenCalledOnce();
@@ -411,7 +535,7 @@ describe("MaskEditor", () => {
     const onClose = vi.fn();
     renderMaskEditor({ onResolveRegion, onRetry, onClose });
     await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
-    fireEvent.click(screen.getByRole("button", { name: /คลีนจุดนี้ทันที/ }));
+    fireEvent.click(screen.getByRole("button", { name: /ใช้กับจุดนี้/ }));
 
     await waitFor(() => expect(onRetry).toHaveBeenCalledTimes(2));
     expect(onRetry.mock.calls.map((call) => call[0])).toEqual(["region-new", "region-new"]);
@@ -432,7 +556,7 @@ describe("MaskEditor", () => {
     const onClose = vi.fn();
     renderMaskEditor({ onResolveRegion, onRefreshProposal, onRetry, onClose });
     await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
-    fireEvent.click(screen.getByRole("button", { name: /คลีนจุดนี้ทันที/ }));
+    fireEvent.click(screen.getByRole("button", { name: /ใช้กับจุดนี้/ }));
 
     await waitFor(() => expect(onRetry).toHaveBeenCalledTimes(2));
     expect(onRefreshProposal).toHaveBeenCalledOnce();
@@ -449,7 +573,7 @@ describe("MaskEditor", () => {
     fireEvent.change(screen.getByRole("slider"), { target: { value: "2" } });
     fireEvent.pointerDown(canvas, { clientX: 11, clientY: 11, pointerId: 1, button: 0 });
     fireEvent.pointerUp(canvas, { pointerId: 1 });
-    fireEvent.click(screen.getByRole("button", { name: /คลีนจุดนี้ทันที/ }));
+    fireEvent.click(screen.getByRole("button", { name: /ใช้กับจุดนี้/ }));
     await waitFor(() => expect(onRetry).toHaveBeenCalledTimes(2));
     expect(screen.getByRole("status")).toHaveTextContent("ปรับ Mask");
     expect(onClose).not.toHaveBeenCalled();
@@ -464,7 +588,7 @@ describe("MaskEditor", () => {
     fireEvent.change(screen.getByRole("slider"), { target: { value: "2" } });
     fireEvent.pointerDown(canvas, { clientX: 5, clientY: 11, pointerId: 1, button: 0 });
     fireEvent.pointerUp(canvas, { pointerId: 1 });
-    fireEvent.click(screen.getByRole("button", { name: /คลีนจุดนี้ทันที/ }));
+    fireEvent.click(screen.getByRole("button", { name: /ใช้กับจุดนี้/ }));
     await waitFor(() => expect(onRetry).toHaveBeenCalledTimes(2));
     expect(screen.getByRole("status")).toHaveTextContent("ปรับ Mask");
     expect(onClose).not.toHaveBeenCalled();
@@ -480,6 +604,7 @@ describe("MaskEditor", () => {
     renderMaskEditor({ onRetry, onClose });
 
     await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+    fireEvent.click(screen.getByText("ตัวเลือกเพิ่มเติม"));
     fireEvent.click(screen.getByRole("button", { name: "Protect" }));
 
     await waitFor(() => {
@@ -512,12 +637,12 @@ describe("MaskEditor", () => {
     expect(screen.getByText("1 / 2")).toBeTruthy();
 
     // Click Next Balloon button
-    const nextBtn = screen.getByRole("button", { name: "บอลลูนถัดไป" });
+    const nextBtn = screen.getByRole("button", { name: "จุดถัดไป" });
     fireEvent.click(nextBtn);
     expect(screen.getByText("2 / 2")).toBeTruthy();
 
     // Click badge for #1 directly on the canvas overlay
-    const badge1 = await screen.findByRole("button", { name: "เลือกบอลลูนที่ 1: region-1" });
+    const badge1 = await screen.findByRole("button", { name: "เลือกจุดที่ 1" });
     fireEvent.click(badge1);
     expect(screen.getByText("1 / 2")).toBeTruthy();
   });
@@ -527,6 +652,7 @@ describe("MaskEditor", () => {
 
     await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
 
+    fireEvent.click(screen.getByText("ตัวเลือกเพิ่มเติม"));
     const fillBtn = screen.getByRole("button", { name: "เติมเต็มกรอบ" });
     fireEvent.click(fillBtn);
     expect(screen.getByRole("status")).toHaveTextContent("เติม Mask เต็มกรอบแล้ว");
@@ -594,11 +720,11 @@ test("keeps unsaved strokes when switching regions and back", async () => {
 
   // Switch to region-2, then back to region-1
   await act(async () => {
-    fireEvent.change(screen.getByLabelText("Region"), { target: { value: "region-2" } });
+    fireEvent.change(screen.getByLabelText("จุดที่แก้ไข"), { target: { value: "region-2" } });
     await new Promise((r) => setTimeout(r, 0));
   });
   await act(async () => {
-    fireEvent.change(screen.getByLabelText("Region"), { target: { value: "region-1" } });
+    fireEvent.change(screen.getByLabelText("จุดที่แก้ไข"), { target: { value: "region-1" } });
     await new Promise((r) => setTimeout(r, 0));
   });
 

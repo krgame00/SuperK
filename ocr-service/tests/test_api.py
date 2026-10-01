@@ -43,6 +43,40 @@ def test_create_job_returns_202(client: TestClient, png_bytes: bytes) -> None:
     assert response.json()["stage"] == "queued"
 
 
+def test_legacy_job_mode_defaults_safe(client: TestClient, png_bytes: bytes) -> None:
+    response = client.post("/v1/jobs", files={"image": ("page.png", png_bytes, "image/png")})
+    job = _wait_for_terminal(client, response.json()["job_id"])
+    assert job["cleaning_mode"] == "safe"
+
+
+def test_upload_rejects_invalid_cleaning_mode(client: TestClient, png_bytes: bytes) -> None:
+    response = client.post("/v1/jobs", data={"cleaning_mode": "unsafe"},
+                           files={"image": ("page.png", png_bytes, "image/png")})
+    assert response.status_code == 422
+
+
+def test_all_text_api_passes_mode_and_reports_result(tmp_path, png_bytes):
+    seen = []
+
+    class ModePipeline(_IdentityPipeline):
+        def run(self, image_rgb, progress_callback=None, cleaning_mode="safe"):
+            seen.append(cleaning_mode)
+            return super().run(image_rgb, progress_callback)
+
+    app = create_app(settings=Settings(cache_dir=tmp_path), pipeline_factory=ModePipeline)
+    with TestClient(app) as client:
+        response = client.post("/v1/jobs", data={"cleaning_mode": "all-text"},
+                               files={"image": ("page.png", png_bytes, "image/png")})
+        assert response.status_code == 202
+        assert response.json()["cleaning_mode"] == "all-text"
+        job_id = response.json()["job_id"]
+        job = _wait_for_terminal(client, job_id)
+        assert job["status"] == "succeeded"
+        assert job["cleaning_mode"] == "all-text"
+        assert client.get(f"/v1/jobs/{job_id}/result").json()["cleaning_mode"] == "all-text"
+        assert seen == ["all-text"]
+
+
 def test_upload_rejects_unsupported_media_type(client: TestClient) -> None:
     response = client.post(
         "/v1/jobs",

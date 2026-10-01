@@ -52,8 +52,8 @@ const regions: CleaningRegion[] = [
 test("summarizes clean, review, and protected regions", () => {
   render(<MaskLegend regions={regions} />);
 
-  expect(screen.getByText("Comic page")).toBeTruthy();
-  expect(screen.getByText("Clean 1")).toBeTruthy();
-  expect(screen.getByText("Review 1")).toBeTruthy();
-  expect(screen.getByText("Protect 1")).toBeTruthy();
+  expect(screen.getByText("หน้าการ์ตูน")).toBeTruthy();
+  expect(screen.getByText("พื้นที่ที่จะลบ 1")).toBeTruthy();
+  expect(screen.getByText("ควรตรวจ 1")).toBeTruthy();
+  expect(screen.getByText("เก็บภาพเดิม 1")).toBeTruthy();
 });

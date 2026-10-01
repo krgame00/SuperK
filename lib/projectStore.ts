@@ -1,6 +1,6 @@
 // IndexedDB helper for Manga Translator project state and blob asset persistence
 
-import type { CleaningRegion } from "./cleaning/types";
+import type { CleaningMode, CleaningRegion } from "./cleaning/types";
 import type { TranslatedBubble } from "./translationOverlay";
 import { pageBlobStore } from "./lifecycle/pageBlobStore";
 
@@ -28,6 +28,7 @@ export interface StoredCleaningResult {
   height?: number;
   timingsMs?: Record<string, number | string>;
   awaitingReview?: boolean;
+  cleaningMode?: CleaningMode;
 }
 
 export interface StoredAsset {

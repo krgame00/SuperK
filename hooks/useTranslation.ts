@@ -38,6 +38,7 @@ import {
   type DiagnosticDetail,
 } from "@/lib/translation/diagnostics";
 import { CleaningClientError } from "@/lib/cleaning/client";
+import type { CleaningMode } from "@/lib/cleaning/types";
 import {
   buildFailureGroups,
   extendFailureGroupCooldown,
@@ -67,6 +68,7 @@ export interface BatchPerformanceMetrics {
 }
 
 export interface PreparedTranslationPage {
+  cleaningMode?: CleaningMode;
   textScope?: TranslationScope;
   recognitionUrl: string;
   backgroundUrl: string;
@@ -1599,7 +1601,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           if (!preparation.ok) throw preparation.error;
           preparedPage = preparation.value;
           const isApprovedByUser = userApprovedReviewPagesRef.current.has(pageUrl);
-          if (preparedPage.awaitingReview && !isTargetedRetry && !isApprovedByUser && !autoProceedOnReview) {
+          if (preparedPage.awaitingReview && preparedPage.cleaningMode !== "all-text" && !isTargetedRetry && !isApprovedByUser && !autoProceedOnReview) {
             throw new CleaningClientError(
               422,
               "Page awaiting review after local cleaning verification.",

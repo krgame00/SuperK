@@ -22,6 +22,7 @@ from app.pipeline import RETRY_CLEANER_ALIASES, CleaningPipeline
 from app.residual_probe import CompositeResidualProbe
 from app.schemas import (
     CleanerRoute,
+    CleaningMode,
     JobStage,
     JobStatus,
     ManualRegionAction,
@@ -123,6 +124,7 @@ def create_app(
     async def create_job(
         image: Annotated[UploadFile, File()],
         project_id: Annotated[str | None, Form()] = None,
+        cleaning_mode: Annotated[CleaningMode, Form()] = CleaningMode.SAFE,
     ) -> dict[str, str]:
         source_bytes = await _validated_upload(
             image,
@@ -132,12 +134,13 @@ def create_app(
         # submit() may run the (disk-I/O heavy) retention sweep — keep it off
         # the event loop like the upload decode.
         job_id = await asyncio.to_thread(
-            store.submit, source_bytes, image.filename or "page", project_id
+            store.submit, source_bytes, image.filename or "page", project_id, cleaning_mode
         )
         return {
             "job_id": job_id,
             "status": JobStatus.QUEUED.value,
             "stage": JobStage.QUEUED.value,
+            "cleaning_mode": cleaning_mode.value,
         }
 
     @app.delete("/v1/projects/{project_id}")

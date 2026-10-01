@@ -56,6 +56,7 @@ export async function createCleaningJob(file: Blob): Promise<CleaningJob> {
   }
 
   form.append("image", resolvedFile, filename);
+  form.append("cleaning_mode", "all-text");
   return decodeJob(
     await requestJson(`${PROXY_BASE}/v1/jobs`, {
       method: "POST",
@@ -190,6 +191,7 @@ function decodeResult(payload: unknown): CleaningResult {
     pipelineVersion:
       typeof raw.pipeline_version === "string" ? raw.pipeline_version : undefined,
     awaitingReview: raw.awaiting_review === true,
+    cleaningMode: raw.cleaning_mode === "all-text" ? "all-text" : "safe",
   };
 }
 

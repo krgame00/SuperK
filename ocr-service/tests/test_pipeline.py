@@ -74,6 +74,129 @@ class SolidCleaner:
         return result
 
 
+@pytest.mark.parametrize("batched", [False, True])
+@pytest.mark.parametrize("role", [TextRole.REVIEW, TextRole.PROTECTED, TextRole.SFX])
+@pytest.mark.parametrize("trusted", [False, True])
+def test_all_text_cleans_bounded_candidates_despite_policy_and_failed_quality(batched, role, trusted):
+    source = np.full((32, 32, 3), 100, np.uint8)
+    source[10:13, 10:13] = [200, 10, 40]  # Colored text over a borderless backing.
+    mask = np.zeros((32, 32), np.uint8)
+    mask[10:13, 10:13] = 255
+    region = MaskRegion("candidate", PixelRect(x=8, y=8, width=12, height=12), (1,), 2,
+                        text_supported=trusted)
+
+    class Probe:
+        def score(self, *_args):
+            return 0.9
+
+    class BatchProbe(Probe):
+        def score_many(self, _image, items):
+            return {item.id: 0.9 for item, _mask in items}
+
+    def decision(*args):
+        return _clean_decision().model_copy(update={"text_role": role, "action": AutomaticAction.PRESERVE})
+
+    pipeline = CleaningPipeline(
+        detector=NoTextDetector(),
+        refiner=lambda *_args: RefinedMask(mask, [region], np.zeros_like(mask)),
+        cleaners={route: SolidCleaner(220) for route in ("flat", "gradient", "artwork")},
+        page_classifier=_comic_page,
+        protection_detector=lambda *_args: ProtectionResult(mask.copy(), mask.copy(), []),
+        eligibility_classifier=decision,
+        residual_probe=BatchProbe() if batched else Probe(),
+    )
+    safe = pipeline.run(source)
+    assert np.array_equal(safe.clean_image, source)
+    output = pipeline.run(source, cleaning_mode="all-text")
+    assert np.all(output.clean_image[mask > 0] == 220)
+    assert np.array_equal(output.clean_image[mask == 0], source[mask == 0])
+    assert np.array_equal(output.source_image, source)
+    assert np.array_equal(output.mask, mask)
+    assert output.regions[0].status is RegionStatus.NEEDS_REVIEW
+    assert output.regions[0].automatic_action is AutomaticAction.CLEAN
+    assert output.awaiting_review
+    assert output.cleaning_mode == "all-text"
+    assert output.regions[0].text_role is not TextRole.PROTECTED
+
+
+def test_all_text_manual_protect_restores_original_pixels_and_keeps_mode():
+    from dataclasses import replace
+
+    from app.schemas import CleaningMode
+
+    output = replace(_single_region_output(clean_value=220), cleaning_mode=CleaningMode.ALL_TEXT)
+    mask = np.zeros(output.mask.shape, np.uint8)
+    mask[10:13, 10:13] = 255
+    pipeline = CleaningPipeline(detector=NoTextDetector(), cleaners={})
+    restored = pipeline.retry_region(output, "region-1", mask, "flat", ManualRegionAction.PROTECT)
+    assert np.array_equal(restored.clean_image[mask > 0], output.source_image[mask > 0])
+    assert np.array_equal(restored.clean_image[mask == 0], output.clean_image[mask == 0])
+    assert restored.regions[0].text_role is TextRole.PROTECTED
+    assert restored.cleaning_mode is CleaningMode.ALL_TEXT
+
+
+def test_all_text_partial_restore_keeps_dialogue_eligible_until_whole_mask_is_protected():
+    from dataclasses import replace
+
+    from app.schemas import CleaningMode
+
+    output = _single_region_output(clean_value=220)
+    glyphs = np.zeros(output.mask.shape, np.uint8)
+    glyphs[10:16, 10:16] = 255
+    record = output.regions[0].model_copy(update={
+        "status": RegionStatus.REPAIRED, "text_role": TextRole.DIALOGUE,
+        "automatic_action": AutomaticAction.CLEAN, "text_confirmed": True, "mask_approved": True,
+    })
+    output = replace(output, mask=glyphs, regions=[record], cleaning_mode=CleaningMode.ALL_TEXT)
+    restore = np.zeros_like(glyphs)
+    restore[10:12, 10:16] = 255
+    pipeline = CleaningPipeline(detector=NoTextDetector(), cleaners={})
+    partial = pipeline.retry_region(output, "region-1", restore, "flat", ManualRegionAction.PROTECT)
+    assert partial.regions[0].text_role is TextRole.DIALOGUE
+    assert partial.regions[0].automatic_action is AutomaticAction.CLEAN
+    assert np.array_equal(partial.clean_image[restore > 0], output.source_image[restore > 0])
+    assert np.all(partial.mask[12:16, 10:16] == 255)
+    assert np.all(partial.protected_mask[restore > 0] == 255)
+    assert not partial.regions[0].mask_approved
+    full = pipeline.retry_region(partial, "region-1", glyphs, "flat", ManualRegionAction.PROTECT)
+    assert full.regions[0].text_role is TextRole.PROTECTED
+    assert full.regions[0].automatic_action is AutomaticAction.PRESERVE
+    assert not np.any(full.mask)
+
+
+def test_all_text_automatic_retry_keeps_failed_candidate_and_review_flag():
+    import hashlib
+    from dataclasses import replace
+
+    from app.schemas import CleaningMode
+
+    output = replace(_single_region_output(source_value=0, clean_value=0), cleaning_mode=CleaningMode.ALL_TEXT)
+    mask = np.zeros(output.mask.shape, np.uint8)
+    mask[10:13, 10:13] = 255
+    revision = hashlib.sha256(output.source_image.tobytes() + mask.tobytes()).hexdigest()
+    record = output.regions[0].model_copy(update={
+        "text_confirmed": True, "mask_approved": True, "approval_revision": revision,
+        "text_role": TextRole.DIALOGUE, "automatic_action": AutomaticAction.CLEAN,
+    })
+    output = replace(output, regions=[record])
+    pipeline = CleaningPipeline(detector=NoTextDetector(), cleaners={"flat": SolidCleaner(255)})
+    retried = pipeline.retry_region(output, "region-1", mask, "flat", ManualRegionAction.AUTOMATIC)
+    assert np.all(retried.clean_image[mask > 0] == 255)
+    assert np.array_equal(retried.clean_image[mask == 0], output.source_image[mask == 0])
+    assert retried.regions[0].status is RegionStatus.NEEDS_REVIEW
+    assert retried.regions[0].automatic_action is AutomaticAction.CLEAN
+    assert retried.awaiting_review
+
+
+def test_all_text_no_detection_retains_source_and_reports_empty_regions():
+    source = np.full((32, 32, 3), 100, np.uint8)
+    output = CleaningPipeline(detector=NoTextDetector(), cleaners={}).run(source, cleaning_mode="all-text")
+    assert np.array_equal(output.clean_image, source)
+    assert output.regions == []
+    assert not np.any(output.mask)
+    assert output.cleaning_mode == "all-text"
+
+
 def _single_region_output(
     *,
     source_value: int = 100,

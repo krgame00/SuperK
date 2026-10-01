@@ -27,6 +27,7 @@ import { undoManager } from "@/lib/undoManager";
 
 interface MaskEditorProps {
   sourceUrl: string;
+  cleanUrl?: string;
   maskUrl: string;
   proposalMaskUrl?: string;
   regions: CleaningRegion[];
@@ -60,7 +61,8 @@ const cleaners: { value: CleanerOverride; label: string }[] = [
 function maskHasPixels(mask: ImageData, rect: PixelRect): boolean {
   for (let y = Math.max(0, rect.y); y < Math.min(mask.height, rect.y + rect.height); y++) {
     for (let x = Math.max(0, rect.x); x < Math.min(mask.width, rect.x + rect.width); x++) {
-      if (mask.data[(y * mask.width + x) * 4 + 3] > 0) return true;
+      const offset = (y * mask.width + x) * 4;
+      if (mask.data[offset + 3] > 0 && mask.data[offset + 2] !== 255) return true;
     }
   }
   return false;
@@ -90,7 +92,7 @@ function normalizeDisplayMask(mask: ImageData, rect: PixelRect): ImageData {
   return normalized;
 }
 
-async function encodeAuthorizedMask(mask: ImageData, rect: PixelRect): Promise<Blob> {
+async function encodeAuthorizedMask(mask: ImageData, rect: PixelRect, restoreOnly = false, excludedOnly = false): Promise<Blob> {
   const canvas = document.createElement("canvas");
   canvas.width = mask.width;
   canvas.height = mask.height;
@@ -101,7 +103,8 @@ async function encodeAuthorizedMask(mask: ImageData, rect: PixelRect): Promise<B
     const x = (index / 4) % mask.width;
     const y = Math.floor(index / 4 / mask.width);
     const inside = x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
-    const value = inside && mask.data[index + 3] > 0 ? 255 : 0;
+    const selected = excludedOnly ? isExcludedPixel(mask, index) : restoreOnly ? mask.data[index + 2] === 255 : mask.data[index + 2] !== 255;
+    const value = inside && selected && (excludedOnly || mask.data[index + 3] > 0) ? 255 : 0;
     grayscale.data[index] = value;
     grayscale.data[index + 1] = value;
     grayscale.data[index + 2] = value;
@@ -130,7 +133,11 @@ function loadMaskImage(url: string): Promise<ImageData> {
       context.drawImage(image, 0, 0);
       const data = context.getImageData(0, 0, canvas.width, canvas.height);
       for (let i = 0; i < data.data.length; i += 4) {
-        data.data[i + 3] = data.data[i] > 16 ? 150 : 0;
+        const alpha = data.data[i] > 16 ? 150 : 0;
+        data.data[i] = 255;
+        data.data[i + 1] = 55;
+        data.data[i + 2] = 80;
+        data.data[i + 3] = alpha;
       }
       resolve(data);
     };
@@ -140,6 +147,7 @@ function loadMaskImage(url: string): Promise<ImageData> {
 
 export function MaskEditor({
   sourceUrl,
+  cleanUrl,
   maskUrl,
   proposalMaskUrl,
   regions,
@@ -153,6 +161,9 @@ export function MaskEditor({
   const instructionsId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const sourceImageRef = useRef<HTMLImageElement>(null);
+  const [comparison, setComparison] = useState<"original" | "cleaned">(cleanUrl ? "cleaned" : "original");
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageDataRef = useRef<ImageData | undefined>(undefined);
   const drawingRef = useRef(false);
@@ -179,7 +190,7 @@ export function MaskEditor({
   ) => {
     let current = cloneImageData(base);
     for (let index = 0; index < count && index < ops.length; index++) {
-      current = applyBrush(current, ops[index].points, ops[index].radius, ops[index].mode);
+      current = applyEditorBrush(current, ops[index].points, ops[index].radius, ops[index].mode);
     }
     renderMask(current);
   };
@@ -292,10 +303,11 @@ export function MaskEditor({
     };
     setBrushPoint(point);
     strokeOpsRef.current.push({ points: [point], radius, mode });
-    renderMask(applyBrush(current, [point], radius, mode));
+    renderMask(applyEditorBrush(current, [point], radius, mode));
   };
 
   const startStroke = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (isSubmitting) return;
     if (isSpacePressedRef.current || event.button === 1 || event.button === 2) {
       setIsPanning(true);
       panStartRef.current = { x: event.clientX - pan.x, y: event.clientY - pan.y };
@@ -414,9 +426,21 @@ export function MaskEditor({
   const goToRegion = (index: number) => {
     if (index >= 0 && index < regions.length) {
       setRegionId(regions[index].id);
-      setStatusMessage(`เลือกบอลลูน #${index + 1}`);
+      setStatusMessage(`เลือกจุดที่ ${index + 1}`);
     }
   };
+
+  const fitSelectedRegion = useCallback(() => {
+    const workspace = workspaceRef.current;
+    const image = sourceImageRef.current;
+    if (!workspace || !image || !selectedRegion || !canvasSize.width) return;
+    const imageWidth = image.clientWidth, imageHeight = image.clientHeight;
+    if (!imageWidth || !imageHeight || !workspace.clientWidth || !workspace.clientHeight) return;
+    const rect = selectedRegion.rect;
+    setZoom(Math.max(0.5, Math.min(4, workspace.clientWidth / (imageWidth * rect.width / canvasSize.width + 96), workspace.clientHeight / (imageHeight * rect.height / canvasSize.height + 96))));
+    setPan({ x: imageWidth * (0.5 - (rect.x + rect.width / 2) / canvasSize.width), y: imageHeight * (0.5 - (rect.y + rect.height / 2) / canvasSize.height) });
+  }, [selectedRegion, canvasSize.width, canvasSize.height]);
+  useEffect(() => { fitSelectedRegion(); }, [fitSelectedRegion]);
 
   const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -436,16 +460,17 @@ export function MaskEditor({
       closeAndRestoreFocus();
       return;
     }
-    if (event.key === " ") {
+    if (event.key === " " && event.target === canvasRef.current) {
       event.preventDefault();
       isSpacePressedRef.current = true;
     }
     if (event.key !== "Tab") return;
 
-    const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    const candidates = dialogRef.current?.querySelectorAll<HTMLElement>(
+      'summary, button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
     );
-    if (!focusable || focusable.length === 0) return;
+    const focusable = Array.from(candidates ?? []).filter(element => { const details = element.closest("details"); return !details || details.open || element.tagName === "SUMMARY"; });
+    if (focusable.length === 0) return;
 
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
@@ -522,7 +547,7 @@ export function MaskEditor({
     );
   };
 
-  const submit = async (action: ManualRegionAction) => {
+  const submit = async (action: ManualRegionAction, restoreOnly = false, excludedOnly = false) => {
     const imageData = imageDataRef.current;
     if (!imageData || !regionId) return;
     setIsSubmitting(true);
@@ -538,7 +563,11 @@ export function MaskEditor({
 
       let effectiveRegionId = regionId;
       let adjusted = false;
-      let blob = await encodeAuthorizedMask(imageData, r ?? { x: 0, y: 0, width: 0, height: 0 });
+      if (restoreOnly && r && !hasRestorePixels(imageData, r)) {
+        setStatusMessage("ระบายจุดที่ต้องการกู้ภาพเดิมก่อน แล้วกดใช้กับจุดนี้");
+        return;
+      }
+      let blob = await encodeAuthorizedMask(imageData, r ?? { x: 0, y: 0, width: 0, height: 0 }, restoreOnly, excludedOnly);
 
       if (action === "force-clean" && selectedRegion && selectedRegion.textConfirmed !== true &&
         !confirmedRegionRef.current.has(effectiveRegionId)) {
@@ -583,7 +612,7 @@ export function MaskEditor({
       } else if (isRecoveredResult(result) || adjusted || (r && maskOverflow(imageData, r) > 0)) {
         setStatusMessage("ปรับ Mask หรือจับคู่พื้นที่ใหม่แล้ว กรุณาตรวจบริเวณที่คลีนก่อนปิด");
       } else {
-        closeAndRestoreFocus();
+        setStatusMessage("ใช้กับจุดนี้แล้ว");
       }
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "บันทึกไม่สำเร็จ");
@@ -596,6 +625,14 @@ export function MaskEditor({
   const handleOneClickClean = async () => {
     const imageData = imageDataRef.current;
     if (!imageData || !regionId || !selectedRegion) return;
+    if (mode === "erase" && !maskHasPixels(imageData, selectedRegion.rect)) {
+      if (hasExcludedPixels(imageData, selectedRegion.rect)) {
+        await submit("protect", false, true);
+      } else {
+        setStatusMessage("ไม่มีพื้นที่สีแดงที่จะลบ จุดนี้ยังไม่ได้เปลี่ยนภาพ");
+      }
+      return;
+    }
     setIsSubmitting(true);
     setStatusMessage("กำลังคลีนข้อความจุดนี้...");
     try {
@@ -676,7 +713,7 @@ export function MaskEditor({
       if (adjusted) {
         setStatusMessage("ปรับ Mask หรือจับคู่พื้นที่ใหม่แล้ว กรุณาตรวจบริเวณที่คลีนก่อนปิด");
       } else {
-        closeAndRestoreFocus();
+        setStatusMessage("ใช้กับจุดนี้แล้ว");
       }
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "บันทึกไม่สำเร็จ");
@@ -713,8 +750,9 @@ export function MaskEditor({
               <button
                 type="button"
                 onClick={() => goToRegion(currentIndex > 0 ? currentIndex - 1 : regions.length - 1)}
-                title="บอลลูนก่อนหน้า (Alt + ←)"
-                aria-label="บอลลูนก่อนหน้า"
+                title="จุดก่อนหน้า"
+                aria-label="จุดก่อนหน้า"
+                disabled={isSubmitting || regions.length < 2}
                 className="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface hover:text-foreground active:scale-95"
               >
                 <ChevronLeft className="h-4 w-4" />
@@ -725,22 +763,24 @@ export function MaskEditor({
               <button
                 type="button"
                 onClick={() => goToRegion(currentIndex < regions.length - 1 ? currentIndex + 1 : 0)}
-                title="บอลลูนถัดไป (Alt + →)"
-                aria-label="บอลลูนถัดไป"
+                title="จุดถัดไป"
+                aria-label="จุดถัดไป"
+                disabled={isSubmitting || regions.length < 2}
                 className="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface hover:text-foreground active:scale-95"
               >
                 <ChevronRight className="h-4 w-4" />
               </button>
 
               <select
-                aria-label="Region"
+                aria-label="จุดที่แก้ไข"
+                disabled={isSubmitting}
                 value={regionId}
                 onChange={(event) => setRegionId(event.target.value)}
                 className="h-7 rounded-md border-0 bg-transparent px-2 text-xs font-medium text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
               >
                 {regions.map((region, idx) => (
                   <option key={region.id} value={region.id} className="bg-surface text-foreground">
-                    #{idx + 1} · {region.id} ({region.route})
+                    จุดที่ {idx + 1}
                   </option>
                 ))}
               </select>
@@ -800,8 +840,12 @@ export function MaskEditor({
           </div>
         </header>
 
+        {cleanUrl && <div className="flex items-center gap-2 border-b border-border px-4 py-2" aria-label="เปรียบเทียบภาพ">
+          {(["original", "cleaned"] as const).map(view => <button key={view} type="button" aria-pressed={comparison === view} onClick={() => setComparison(view)} className={comparison === view ? "rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-content" : "rounded-md px-3 py-1.5 text-xs text-muted hover:bg-surface-hover hover:text-foreground"}>{view === "original" ? "ภาพเดิม" : "ภาพที่คลีนแล้ว"}</button>)}
+        </div>}
         {/* Canvas & Image Workspace */}
         <div
+          ref={workspaceRef}
           onWheel={handleWheel}
           className="relative min-h-0 flex-1 overflow-hidden bg-neutral-950/90 select-none cursor-default"
         >
@@ -815,7 +859,7 @@ export function MaskEditor({
           >
             <div className="relative mx-auto w-fit max-w-full shadow-2xl">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={sourceUrl} alt="" className="block max-h-[72vh] max-w-full pointer-events-none" />
+              <img ref={sourceImageRef} onLoad={fitSelectedRegion} src={comparison === "cleaned" && cleanUrl ? cleanUrl : sourceUrl} alt={comparison === "cleaned" && cleanUrl ? "ภาพที่คลีนแล้ว" : "ภาพเดิม"} className="block max-h-[72vh] max-w-full pointer-events-none" />
 
               {/* Interactive Region Bounding Boxes Overlay */}
               {canvasSize.width > 0 && (
@@ -839,20 +883,21 @@ export function MaskEditor({
                         }}
                         className={`absolute transition-all ${
                           isSelected
-                            ? "border-2 border-cyan-400 bg-cyan-400/10 ring-2 ring-cyan-400/40 shadow-[0_0_15px_rgba(34,211,238,0.35)]"
+                            ? "border-2 border-cyan-400 bg-cyan-400/10"
                             : "border border-dashed border-white/35 bg-white/5 hover:border-cyan-300/80 hover:bg-cyan-300/10"
                         }`}
                       >
                         {/* Clickable Region Pill / Badge */}
                         <button
                           type="button"
-                          aria-label={`เลือกบอลลูนที่ ${idx + 1}: ${region.id}`}
+                          aria-label={`เลือกจุดที่ ${idx + 1}`}
+                          disabled={isSubmitting}
                           onClick={(e) => {
                             e.stopPropagation();
                             setRegionId(region.id);
-                            setStatusMessage(`เลือกบอลลูน #${idx + 1}`);
+                            setStatusMessage(`เลือกจุดที่ ${idx + 1}`);
                           }}
-                          title={`คลิกเพื่อเลือกบอลลูน #${idx + 1} (${region.route})`}
+                          title={`เลือกจุดที่ ${idx + 1}`}
                           className={`pointer-events-auto absolute -top-5 left-0 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold shadow-sm transition-transform active:scale-95 ${
                             isSelected
                               ? "bg-cyan-400 text-neutral-950"
@@ -860,7 +905,7 @@ export function MaskEditor({
                           }`}
                         >
                           <span>#{idx + 1}</span>
-                          <span className="hidden sm:inline font-medium opacity-80">{region.route}</span>
+
                         </button>
                       </div>
                     );
@@ -908,11 +953,11 @@ export function MaskEditor({
         <div className="border-t border-border/80 bg-surface/50 px-4 py-1.5">
           <p id={instructionsId} className="text-[11px] text-muted flex items-center justify-between flex-wrap gap-2">
             <span>
-              💡 <b>ทริก:</b> คลิกเลือกบอลลูนบนภาพได้ทันที · หมุนลูกกลิ้งเมาส์ซูมเข้า/ออก · กด <b>Spacebar + ลาก</b> เพื่อเลื่อนภาพ · <b>[ ]</b> ปรับขนาดแปรง · <b>Ctrl+Z</b> เลิกทำ
+              <b>สีแดง = พื้นที่ที่จะลบ</b> · สีฟ้า = จุดที่จะกู้ภาพเดิม · บันทึกเฉพาะในกรอบที่เลือก · <b>Space + ลาก</b> เลื่อนภาพ · <b>Ctrl+Z</b> เลิกทำ
             </span>
             {selectedRegion && (
               <span className="text-[11px] font-medium text-cyan-400">
-                เลือกอยู่: #{currentIndex + 1} ({selectedRegion.id})
+                เลือกอยู่: จุดที่ {currentIndex + 1}
               </span>
             )}
           </p>
@@ -928,45 +973,25 @@ export function MaskEditor({
           <div className="flex flex-wrap items-center gap-2">
             {/* Paint / Erase / Restore Mode Buttons */}
             <div className="flex items-center gap-1 rounded-lg border border-border/80 bg-background/80 p-0.5">
-              {(["paint", "erase", "restore"] as const).map((item) => (
+              {(["paint", "restore", "erase"] as const).map((item) => (
                 <button
                   key={item}
                   type="button"
                   onClick={() => handleModeChange(item)}
                   aria-pressed={mode === item}
-                  className={`flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-all ${
+                  disabled={isSubmitting}
+                  className={`flex min-h-9 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-primary ${
                     mode === item
-                      ? "bg-primary text-primary-content shadow-xs font-semibold"
-                      : "text-muted hover:bg-surface hover:text-foreground"
+                      ? "bg-primary text-primary-content font-semibold"
+                      : item === "erase" ? "text-muted hover:bg-surface hover:text-foreground" : "bg-surface text-foreground hover:bg-surface-hover"
                   }`}
                 >
                   {item === "paint" && <Paintbrush className="h-3.5 w-3.5" />}
                   {item === "erase" && <Eraser className="h-3.5 w-3.5" />}
-                  <span>{item === "paint" ? "เพิ่ม Mask" : item === "erase" ? "ลบ Mask" : "กู้ภาพเดิม (Restore)"}</span>
+                  {item === "restore" && <RotateCcw className="h-3.5 w-3.5" />}
+                  <span>{item === "paint" ? "ลบข้อความ" : item === "erase" ? "ไม่ลบตรงนี้" : "กู้ภาพเดิม"}</span>
                 </button>
               ))}
-            </div>
-
-            {/* Smart Fill & Clear Box Shortcuts */}
-            <div className="flex items-center gap-1 border-l border-border/80 pl-2">
-              <button
-                type="button"
-                onClick={handleFillRegion}
-                title="ระบายมาร์กสีแดงเต็มกรอบบอลลูนนี้ทันที"
-                className="flex h-7 items-center gap-1.5 rounded-md border border-red-500/30 bg-red-500/15 px-2.5 text-xs font-semibold text-red-300 transition-colors hover:bg-red-500/25 active:scale-95"
-              >
-                <Square className="h-3.5 w-3.5" />
-                <span>เติมเต็มกรอบ</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleClearRegion}
-                title="ล้างมาร์กเฉพาะในกรอบบอลลูนนี้"
-                className="flex h-7 items-center gap-1.5 rounded-md border border-border/80 bg-surface px-2.5 text-xs font-medium text-muted transition-colors hover:bg-surface-hover hover:text-foreground active:scale-95"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                <span>ล้างกรอบนี้</span>
-              </button>
             </div>
 
             {/* Radius Slider & Undo */}
@@ -1004,6 +1029,25 @@ export function MaskEditor({
           {/* Right: One-Click Clean, Fallback Buttons */}
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
             <div className="flex flex-wrap items-center gap-2">
+              {/* 🪄 Instant 1-Click Clean Button */}
+              <button
+                type="button"
+                disabled={isSubmitting || !regionId}
+                onClick={() => mode === "restore" ? submit("protect", true) : handleOneClickClean()}
+                title="ใช้การแก้ไขเฉพาะจุดที่เลือก"
+                className="flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-xs font-bold text-primary-content transition-all hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                <span>{isSubmitting ? "กำลังใช้…" : "ใช้กับจุดนี้"}</span>
+              </button>
+            </div>
+
+
+          </div>
+        </footer>
+        <details className="max-h-40 overflow-y-auto border-t border-border/80 bg-surface px-4 py-2 text-xs text-muted">
+          <summary className="w-fit cursor-pointer rounded py-1 focus-visible:outline-2 focus-visible:outline-primary">ตัวเลือกเพิ่มเติม</summary>
+          <div className="flex flex-wrap items-center gap-3 py-2">
               <select
                 aria-label="Cleaner"
                 value={cleaner}
@@ -1017,16 +1061,25 @@ export function MaskEditor({
                 ))}
               </select>
 
-              {/* 🪄 Instant 1-Click Clean Button */}
+            {/* Smart Fill & Clear Box Shortcuts */}
+            <div className="flex items-center gap-1 border-l border-border/80 pl-2">
               <button
                 type="button"
-                disabled={isSubmitting || !regionId}
-                onClick={handleOneClickClean}
-                title="ยืนยันและคลีนข้อความออกจากบอลลูนนี้ทันทีในคลิกเดียว"
-                className="flex h-8 items-center gap-1.5 rounded-lg bg-gradient-to-r from-primary to-indigo-500 px-3.5 text-xs font-bold text-white shadow-md shadow-primary/20 transition-all hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                onClick={handleFillRegion}
+                title="ระบายมาร์กสีแดงเต็มกรอบบอลลูนนี้ทันที"
+                className="flex h-7 items-center gap-1.5 rounded-md border border-red-500/30 bg-red-500/15 px-2.5 text-xs font-semibold text-red-300 transition-colors hover:bg-red-500/25 active:scale-95"
               >
-                <Sparkles className="h-3.5 w-3.5" />
-                <span>{isSubmitting ? "กำลังคลีน…" : "🪄 คลีนจุดนี้ทันที (Clean Now)"}</span>
+                <Square className="h-3.5 w-3.5" />
+                <span>เติมเต็มกรอบ</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleClearRegion}
+                title="ล้างมาร์กเฉพาะในกรอบบอลลูนนี้"
+                className="flex h-7 items-center gap-1.5 rounded-md border border-border/80 bg-surface px-2.5 text-xs font-medium text-muted transition-colors hover:bg-surface-hover hover:text-foreground active:scale-95"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>ล้างกรอบนี้</span>
               </button>
             </div>
 
@@ -1061,7 +1114,7 @@ export function MaskEditor({
               </button>
             </div>
           </div>
-        </footer>
+        </details>
       </div>
     </div>
   );
@@ -1082,4 +1135,47 @@ function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
       else reject(new Error("Unable to encode mask."));
     }, "image/png");
   });
+}
+
+function applyEditorBrush(mask: ImageData, points: MaskPoint[], radius: number, mode: BrushMode): ImageData {
+  if (mode === "paint") return applyBrush(mask, points, radius, mode);
+  const updated = applyBrush(mask, points, radius, mode === "restore" ? "paint" : "erase");
+  for (const point of points) {
+    for (let y = Math.max(0, Math.round(point.y) - radius); y < Math.min(mask.height, Math.round(point.y) + radius + 1); y++) {
+      for (let x = Math.max(0, Math.round(point.x) - radius); x < Math.min(mask.width, Math.round(point.x) + radius + 1); x++) {
+        if ((x - Math.round(point.x)) ** 2 + (y - Math.round(point.y)) ** 2 > radius ** 2) continue;
+        const offset = (y * mask.width + x) * 4;
+        if (mode === "restore") {
+          updated.data[offset] = 45; updated.data[offset + 1] = 145; updated.data[offset + 2] = 255; updated.data[offset + 3] = 150;
+        } else if ((mask.data[offset + 3] > 0 && mask.data[offset + 2] !== 255) || isExcludedPixel(mask, offset)) {
+          // Keep removed glyph support in transparent pixels so undo and region
+          // drafts carry the exact source selection to restore on erase-all.
+          updated.data[offset] = 255; updated.data[offset + 1] = 0; updated.data[offset + 2] = 1;
+        }
+      }
+    }
+  }
+  return updated;
+}
+function hasRestorePixels(mask: ImageData, rect: PixelRect): boolean {
+  for (let y = Math.max(0, rect.y); y < Math.min(mask.height, rect.y + rect.height); y++) {
+    for (let x = Math.max(0, rect.x); x < Math.min(mask.width, rect.x + rect.width); x++) {
+      const offset = (y * mask.width + x) * 4;
+      if (mask.data[offset + 2] === 255 && mask.data[offset + 3] > 0) return true;
+    }
+  }
+  return false;
+}
+
+function isExcludedPixel(mask: ImageData, offset: number): boolean {
+  return mask.data[offset] === 255 && mask.data[offset + 1] === 0 && mask.data[offset + 2] === 1 && mask.data[offset + 3] === 0;
+}
+
+function hasExcludedPixels(mask: ImageData, rect: PixelRect): boolean {
+  for (let y = Math.max(0, rect.y); y < Math.min(mask.height, rect.y + rect.height); y++) {
+    for (let x = Math.max(0, rect.x); x < Math.min(mask.width, rect.x + rect.width); x++) {
+      if (isExcludedPixel(mask, (y * mask.width + x) * 4)) return true;
+    }
+  }
+  return false;
 }

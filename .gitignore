@@ -22,6 +22,7 @@
 /dist/desktop/
 /.desktop-stage/
 /.desktop-runtime/
+/.superk-runtime/
 /.worktrees/
 
 # ocr-service venv & models

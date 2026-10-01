@@ -1245,13 +1245,14 @@ test("sendDesktopNotification uses Web Notification when permission is granted",
   globalThis.Notification = originalNotification;
 });
 
-test("autoProceedOnReview: true translates awaitingReview pages automatically without error", async () => {
+test.each(["auto-proceed", "all-text"] as const)("%s translates awaitingReview pages while retaining their review flags", async (workflow) => {
   vi.useFakeTimers();
   const pages = ["blob:one"];
   const preparePageForTranslation = vi.fn(async (url: string) => ({
     recognitionUrl: url,
     backgroundUrl: `${url}-clean`,
     awaitingReview: true,
+    cleaningMode: workflow === "all-text" ? "all-text" as const : undefined,
   }));
 
   let apiCalls = 0;
@@ -1274,9 +1275,9 @@ test("autoProceedOnReview: true translates awaitingReview pages automatically wi
     }),
   );
 
-  act(() => {
-    result.current.setAutoProceedOnReview(true);
-  });
+  if (workflow === "auto-proceed") {
+    act(() => { result.current.setAutoProceedOnReview(true); });
+  }
 
   let batch!: Promise<void>;
   act(() => {

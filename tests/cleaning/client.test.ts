@@ -23,6 +23,7 @@ test("createCleaningJob posts multipart to local proxy", async () => {
   expect(fetchMock.mock.calls[0][0]).toBe("/api/clean/v1/jobs");
   expect(fetchMock.mock.calls[0][1]?.body).toBeInstanceOf(FormData);
   expect(fetchMock.mock.calls[0][1]?.cache).toBe("no-store");
+  expect((fetchMock.mock.calls[0][1]?.body as FormData).get("cleaning_mode")).toBe("all-text");
 });
 
 test("getCleaningResult decodes snake case and proxies asset paths", async () => {
@@ -56,6 +57,7 @@ test("getCleaningResult decodes snake case and proxies asset paths", async () =>
       timings_ms: { total: 1234, adaptive_route: "roi", roi_cluster_count: 1 },
       pipeline_version: "2.2.0-adaptive-roi",
       awaiting_review: false,
+      cleaning_mode: "all-text",
     }),
   );
   const result = await getCleaningResult("job-1");
@@ -83,6 +85,7 @@ test("getCleaningResult decodes snake case and proxies asset paths", async () =>
   expect(result.timingsMs.total).toBe(1234);
   expect(result.timingsMs.adaptive_route).toBe("roi");
   expect(result.pipelineVersion).toBe("2.2.0-adaptive-roi");
+  expect(result).toMatchObject({ cleaningMode: "all-text" });
   expect(result.awaitingReview).toBe(false);
 });
 
