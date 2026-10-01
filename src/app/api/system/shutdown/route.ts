@@ -73,6 +73,6 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     success: true,
-    message: "กำลังปิดระบบ SuperK ทั้งหมดและคืนทรัพยากร RAM/CPU เรียบร้อยแล้ว",
+    message: "กำลังปิดระบบ SuperK โดยตรวจสอบเจ้าของโปรเซสก่อนปิด",
   });
 }

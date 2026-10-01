@@ -11,6 +11,31 @@ beforeEach(() => {
   delete process.env.SUPERK_CLEANER_URL;
 });
 
+test("rejects an external multipart request before invoking the cleaner", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ok: true }));
+  const response = await POST(new Request("http://localhost/api/clean/v1/jobs", {
+    method: "POST", headers: { origin: "https://external.invalid", "content-type": "multipart/form-data; boundary=audit" }, body: "--audit--",
+  }), { params: Promise.resolve({ path: ["v1", "jobs"] }) });
+  expect(response.status).toBe(403);
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+test.each(["http://localhost:3000", "http://127.0.0.1:3000", "chrome-extension://test-extension"])("accepts a local/extension cleaner origin: %s", async (origin) => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ok: true }));
+  const response = await POST(new Request("http://localhost/api/clean/v1/jobs", {
+    method: "POST", headers: { origin }, body: "test",
+  }), { params: Promise.resolve({ path: ["v1", "jobs"] }) });
+  expect(response.status).toBe(200);
+  expect(fetchMock).toHaveBeenCalledOnce();
+});
+
+test.each(["null", "file://localhost", "http://localhost.evil.invalid", "invalid-origin"])("rejects an untrusted cleaner origin: %s", async (origin) => {
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+  const response = await POST(new Request("http://localhost/api/clean/v1/jobs", { method: "POST", headers: { origin } }), { params: Promise.resolve({ path: ["v1", "jobs"] }) });
+  expect(response.status).toBe(403);
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
 test("GET forwards path and query to the local cleaner", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
     new Response("png", {

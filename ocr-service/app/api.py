@@ -18,7 +18,7 @@ from app.cleaners.lama_large import LamaLargeCleaner
 from app.detector import HybridTextDetector
 from app.jobs import JobStore, Pipeline, PipelineFactory
 from app.model_store import ModelStore
-from app.pipeline import CleaningPipeline, RETRY_CLEANER_ALIASES
+from app.pipeline import RETRY_CLEANER_ALIASES, CleaningPipeline
 from app.residual_probe import CompositeResidualProbe
 from app.schemas import (
     CleanerRoute,

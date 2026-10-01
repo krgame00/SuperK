@@ -898,6 +898,42 @@ test("restores cleaning result directly from IndexedDB assets without contacting
   expect(getCleaningResult).not.toHaveBeenCalled();
 });
 
+test.each([true, undefined])("fast restore preserves review state (stored flag: %s)", async (awaitingReview) => {
+  const maskBlob = new Blob(["mask"], { type: "image/png" });
+  vi.mocked(loadCleaningResultsMetadata).mockResolvedValue(new Map([["blob:one", {
+    pageUrl: "blob:one", sourceHash: "a".repeat(64),
+    sourceFingerprint: "5:image/png", maskFingerprint: "4:image/png",
+    pipelineVersion: "2.3.1-enclosed-backing", jobId: "offline-review",
+    width: 8, height: 8, regions: [staleMaskRegion], updatedAt: 1,
+    awaitingReview,
+  }]]));
+  vi.mocked(loadCleaningResultAssets).mockResolvedValue({
+    cleanBlob: new Blob(["clean"], { type: "image/png" }), maskBlob,
+    reviewMaskBlob: null, protectedMaskBlob: null,
+  });
+  const { result } = renderHook(() => useCleaning({ pages: ["blob:one"], currentPage: 0 }));
+  await act(async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); });
+  expect(result.current.currentResult?.awaitingReview).toBe(true);
+  const reused = await result.current.cleanPage("blob:one", new Blob(["asset"], { type: "image/png" }));
+  expect(reused.awaitingReview).toBe(true);
+  expect(getCleaningResult).not.toHaveBeenCalled();
+  expect(createCleaningJob).not.toHaveBeenCalled();
+});
+
+test("cleaning persistence stores the awaiting-review flag", async () => {
+  vi.mocked(createCleaningJob).mockResolvedValue(queuedJob);
+  vi.mocked(getCleaningJob).mockResolvedValue(succeededJob);
+  vi.mocked(getCleaningResult).mockResolvedValue({ ...cleaningResult, awaitingReview: true });
+  const { result } = renderHook(() => useCleaning({ pages: ["blob:one"], currentPage: 0 }));
+  let pending!: Promise<PageCleaningResult | undefined>;
+  act(() => { pending = result.current.cleanCurrentPage(new Blob(["png"], { type: "image/png" })); });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1000);
+    await pending;
+  });
+  expect(saveCleaningResultMetadata).toHaveBeenCalledWith(expect.objectContaining({ awaitingReview: true }));
+});
+
 test("restore metadata without image dimensions falls back to guarded hydration", async () => {
   const pageUrl = "blob:one";
   vi.mocked(loadCleaningResultsMetadata).mockResolvedValue(

@@ -103,14 +103,77 @@ export const throwIfRequestAborted = (signal?: AbortSignal): void => {
 const linkExternalAbort = (
   controller: AbortController,
   signal?: AbortSignal,
-): void => {
-  if (!signal) return;
-  if (signal.aborted) {
+  onAbort?: () => void,
+): (() => void) => {
+  if (!signal) return () => undefined;
+  const abort = () => {
     controller.abort();
-    return;
+    onAbort?.();
+  };
+  if (signal.aborted) {
+    abort();
+    return () => undefined;
   }
-  signal.addEventListener("abort", () => controller.abort(), { once: true });
+  signal.addEventListener("abort", abort, { once: true });
+  return () => signal.removeEventListener("abort", abort);
 };
+
+/** Bound the complete operation even if its implementation ignores abort. */
+export async function withGeminiDeadline<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<T> {
+  throwIfRequestAborted(signal);
+  const controller = new AbortController();
+  let detachAbort = () => undefined as void;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    detachAbort = linkExternalAbort(controller, signal, () => {
+      reject(new DOMException("Translation request was aborted", "AbortError"));
+    });
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new DOMException("Gemini deadline exceeded", "TimeoutError"));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([operation(controller.signal), deadline]);
+  } finally {
+    clearTimeout(timer);
+    detachAbort();
+  }
+}
+
+async function fetchGeminiAttempt(
+  fetchImpl: typeof fetch,
+  model: string,
+  apiKey: string,
+  payload: unknown,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<{ response: Response; data: unknown }> {
+  return withGeminiDeadline(async (attemptSignal) => {
+    const response = await fetchImpl(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+        body: JSON.stringify(payload),
+        signal: attemptSignal,
+        cache: "no-store",
+      },
+    );
+    let data: unknown;
+    try {
+      data = await response.json();
+    } catch (error) {
+      if (attemptSignal.aborted) throw error;
+      data = { error: { message: `Gemini returned invalid JSON (${response.status})` } };
+    }
+    return { response, data };
+  }, timeoutMs, signal);
+}
 
 export function markKeyCooldown(
   apiKey: string,
@@ -170,6 +233,28 @@ const TIMEOUT_MESSAGE =
 
 function defaultSleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function waitForGeminiRetry(
+  sleep: (milliseconds: number) => Promise<void>,
+  delayMs: number,
+  remainingMs: number,
+  signal?: AbortSignal,
+  route?: GeminiRoute,
+): Promise<void> {
+  throwIfRequestAborted(signal);
+  try {
+    if (remainingMs <= 0) throw new DOMException("Gemini deadline exceeded", "TimeoutError");
+    await withGeminiDeadline(
+      () => sleep(Math.min(delayMs, remainingMs)), remainingMs, signal,
+    );
+  } catch (error) {
+    throwIfRequestAborted(signal);
+    if (errorName(error) === "TimeoutError") {
+      throw new GeminiRequestError(TIMEOUT_MESSAGE, "GEMINI_TIMEOUT", 504, true, undefined, route);
+    }
+    throw error;
+  }
 }
 
 function errorName(error: unknown): string | undefined {
@@ -278,6 +363,7 @@ export async function requestGemini<T = unknown>(
       let serverRetry = 0;
 
       while (serverRetry <= 1) {
+        throwIfRequestAborted(signal);
         const remaining = totalBudgetMs - (now() - startedAt);
         if (remaining <= 0) {
           throw new GeminiRequestError(
@@ -287,34 +373,17 @@ export async function requestGemini<T = unknown>(
             true,
           );
         }
-        throwIfRequestAborted(signal);
-
         attemptCount++;
-        const controller = new AbortController();
-        linkExternalAbort(controller, signal);
-        const timer = setTimeout(
-          () => controller.abort(),
-          Math.min(attemptTimeoutMs, remaining),
-        );
         let response: Response;
+        let data: unknown;
 
         try {
-          // Key travels in a header, not the URL query string — query params
-          // end up in upstream/proxy access logs; the header does not.
-          response = await fetchImpl(
-            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "x-goog-api-key": apiKey,
-              },
-              body: JSON.stringify(payload),
-              signal: controller.signal,
-              cache: "no-store",
-            },
-          );
+          ({ response, data } = await fetchGeminiAttempt(
+            fetchImpl, model, apiKey, payload, Math.min(attemptTimeoutMs, remaining), signal,
+          ));
+          throwIfRequestAborted(signal);
         } catch {
+          throwIfRequestAborted(signal);
           sawTransportFailure = true;
           if (cooldownMap) {
             markKeyCooldown(
@@ -326,19 +395,6 @@ export async function requestGemini<T = unknown>(
           keyOffset += 1;
           fallbackCount++;
           continue keyLoop;
-        } finally {
-          clearTimeout(timer);
-        }
-
-        let data: unknown;
-        try {
-          data = await response.json();
-        } catch {
-          data = {
-            error: {
-              message: `Gemini returned invalid JSON (${response.status})`,
-            },
-          };
         }
 
         if (response.ok) {
@@ -372,7 +428,7 @@ export async function requestGemini<T = unknown>(
           apiKeys.length === 1
         ) {
           serverRetry += 1;
-          await sleep(1_000);
+          await waitForGeminiRetry(sleep, 1_000, totalBudgetMs - (now() - startedAt), signal);
           continue;
         }
 
@@ -447,8 +503,27 @@ export async function requestGeminiRoutes<T = unknown>(
   let lastCooldownReason: "quota" | "overload" | undefined;
   const skippedModels = new Set<string>();
   let lastAttemptedModel: string | undefined;
+  const reportFailure = async (route: GeminiRoute, error: GeminiRequestError) => {
+    throwIfRequestAborted(signal);
+    try {
+      const directive = await withGeminiDeadline(
+        async () => onRouteFailure?.(route, error),
+        Math.max(0, totalBudgetMs - (now() - startedAt)),
+        signal,
+      );
+      throwIfRequestAborted(signal);
+      return directive;
+    } catch (callbackError) {
+      throwIfRequestAborted(signal);
+      if (errorName(callbackError) === "TimeoutError") {
+        throw new GeminiRequestError(TIMEOUT_MESSAGE, "GEMINI_TIMEOUT", 504, true, undefined, route);
+      }
+      throw callbackError;
+    }
+  };
 
   for (let routeIndex = 0; routeIndex < routes.length; routeIndex++) {
+    throwIfRequestAborted(signal);
     const route = routes[routeIndex];
     if (skippedModels.has(route.model)) {
       skippedRouteCount++;
@@ -458,12 +533,13 @@ export async function requestGeminiRoutes<T = unknown>(
       throw new GeminiRequestError(TIMEOUT_MESSAGE, "GEMINI_TIMEOUT", 504, true, undefined, route);
     }
     const startDirective = await beforeRoute?.(route);
+    throwIfRequestAborted(signal);
     if (totalBudgetMs - (now() - startedAt) <= 0) {
       const timeout = new GeminiRequestError(
         TIMEOUT_MESSAGE, "GEMINI_TIMEOUT", 504, true, undefined, route,
       );
       if (route.recoveryTrial && startDirective !== "skip-model") {
-        await onRouteFailure?.(route, timeout);
+        await reportFailure(route, timeout);
       }
       throw timeout;
     }
@@ -476,6 +552,7 @@ export async function requestGeminiRoutes<T = unknown>(
 
     let serverRetry = 0;
     while (serverRetry <= 1) {
+      throwIfRequestAborted(signal);
       const remaining = totalBudgetMs - (now() - startedAt);
       if (remaining <= 0) {
         throw new GeminiRequestError(
@@ -495,58 +572,18 @@ export async function requestGeminiRoutes<T = unknown>(
       throwIfRequestAborted(signal);
       attemptCount++;
       const routeAttemptStartedAt = now();
-      const controller = new AbortController();
-      linkExternalAbort(controller, signal);
-      let timeoutFired = false;
-      let timer: ReturnType<typeof setTimeout>;
-      const deadline = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          timeoutFired = true;
-          controller.abort();
-          reject(new DOMException("Gemini route deadline exceeded", "TimeoutError"));
-        }, Math.min(attemptTimeoutMs, remaining));
-      });
-
       let response: Response;
       let data: unknown;
       try {
-        ({ response, data } = await Promise.race([
-          (async () => {
-            const upstream = await fetchImpl(
-              `https://generativelanguage.googleapis.com/v1beta/models/${route.model}:generateContent`,
-              {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  "x-goog-api-key": route.apiKey,
-                },
-                body: JSON.stringify(payload),
-                signal: controller.signal,
-                cache: "no-store",
-              },
-            );
-            let body: unknown;
-            try {
-              body = await upstream.json();
-            } catch (jsonErr: unknown) {
-              if (timeoutFired || controller.signal.aborted) throw jsonErr;
-              body = {
-                error: {
-                  message: `Gemini returned invalid JSON (${upstream.status})`,
-                },
-              };
-            }
-            return { response: upstream, data: body };
-          })(),
-          deadline,
-        ]));
+        ({ response, data } = await fetchGeminiAttempt(
+          fetchImpl, route.model, route.apiKey, payload, Math.min(attemptTimeoutMs, remaining), signal,
+        ));
+        throwIfRequestAborted(signal);
       } catch (fetchOrBodyErr: unknown) {
         // An external (client) abort must surface as REQUEST_ABORTED, not be
         // misclassified as an upstream timeout and retried.
         throwIfRequestAborted(signal);
         const isTimeout =
-          timeoutFired ||
-          controller.signal.aborted ||
           errorName(fetchOrBodyErr) === "AbortError" ||
           errorName(fetchOrBodyErr) === "TimeoutError";
         const error = isTimeout
@@ -571,14 +608,12 @@ export async function requestGeminiRoutes<T = unknown>(
             );
         lastError = error;
         lastCooldownReason = undefined;
-        const directive = await onRouteFailure?.(route, error);
+        const directive = await reportFailure(route, error);
         fallbackCount++;
         if (directive === "skip-model") {
           skippedModels.add(route.model);
         }
         break;
-      } finally {
-        clearTimeout(timer!);
       }
 
       if (response.ok) {
@@ -638,11 +673,11 @@ export async function requestGeminiRoutes<T = unknown>(
             route,
           );
         }
-        await sleep(Math.min(1_000, retryRemaining));
+        await waitForGeminiRetry(sleep, 1_000, retryRemaining, signal, route);
         continue;
       }
 
-      const directive = await onRouteFailure?.(route, error);
+      const directive = await reportFailure(route, error);
       fallbackCount++;
       if (directive === "skip-model") {
         skippedModels.add(route.model);
@@ -651,6 +686,7 @@ export async function requestGeminiRoutes<T = unknown>(
     }
   }
 
+  throwIfRequestAborted(signal);
   if (lastError) {
     const route = lastError.model && lastError.keyId && lastError.keySlot !== undefined
       ? {
@@ -745,7 +781,7 @@ export async function requestOpenAICompatible<T = unknown>(
 
     attemptCount++;
     const controller = new AbortController();
-    linkExternalAbort(controller, signal);
+    const detachAbort = linkExternalAbort(controller, signal);
     let timeoutFired = false;
     const timer = setTimeout(
       () => {
@@ -806,6 +842,7 @@ export async function requestOpenAICompatible<T = unknown>(
       break;
     } finally {
       clearTimeout(timer);
+      detachAbort();
     }
 
     if (response.ok) {

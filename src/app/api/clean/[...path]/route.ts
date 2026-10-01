@@ -1,3 +1,5 @@
+import { requireLocalRequest } from "@/lib/server/localRequest";
+
 const DEFAULT_CLEANER_URL = "http://127.0.0.1:8765";
 export const MAX_PROXY_BODY_BYTES = 80 * 1024 * 1024;
 
@@ -31,6 +33,8 @@ async function forward(
   context: CleanRouteContext,
   includeBody: boolean,
 ): Promise<Response> {
+  const denial = requireLocalRequest(request);
+  if (denial) return denial;
   const declaredLength = Number(request.headers.get("content-length") ?? "0");
   if (
     includeBody &&

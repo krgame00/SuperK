@@ -81,6 +81,44 @@ function imageSuccess(model = "gemini-test-model") {
   };
 }
 
+test.each(["null", "[]", "\"text\"", "{"])("image route rejects invalid JSON object payload: %s", async (body) => {
+  const response = await translateImage(new Request("http://localhost/api/translate", {
+    method: "POST", headers: { "content-type": "application/json" }, body,
+  }));
+  expect(response.status).toBe(400);
+  expect(await response.json()).toMatchObject({ code: "INVALID_REQUEST" });
+  expect(requestGeminiMock).not.toHaveBeenCalled();
+  expect(executeGeminiTranslationMock).not.toHaveBeenCalled();
+});
+
+test("image route passes cancellation to dynamic routing", async () => {
+  delete process.env.SUPERK_GEMINI_IMAGE_ROUTER;
+  executeGeminiTranslationMock.mockResolvedValue(imageSuccess());
+  const controller = new AbortController();
+  const response = await translateImage(new Request("http://localhost/api/translate", {
+    method: "POST", signal: controller.signal, headers: { "content-type": "application/json" },
+    body: JSON.stringify({ imageBase64: "test", mimeType: "image/png" }),
+  }));
+  expect(response.status).toBe(200);
+  const receivedSignal = (executeGeminiTranslationMock.mock.calls[0][0] as { signal?: AbortSignal }).signal;
+  controller.abort();
+  expect(receivedSignal?.aborted).toBe(true);
+});
+
+test.each([
+  { targetLang: 42 }, { sourceLang: [] }, { modelPreference: {} },
+  { apiKey: [] }, { context: true }, { isRetry: "yes" },
+  { allowPreview: "yes" }, { policy: "text" }, { glossary: {} },
+])("image route rejects invalid optional fields: %j", async (fields) => {
+  const response = await translateImage(new Request("http://localhost/api/translate", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ imageBase64: "test", mimeType: "image/png", ...fields }),
+  }));
+  expect(response.status).toBe(400);
+  expect(await response.json()).toMatchObject({ code: "INVALID_REQUEST" });
+  expect(executeGeminiTranslationMock).not.toHaveBeenCalled();
+});
+
 test("image route returns 504 for Gemini timeout", async () => {
   process.env.GEMINI_API_KEY = "server-key";
   executeGeminiTranslationMock.mockRejectedValue(timeoutError());

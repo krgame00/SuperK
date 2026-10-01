@@ -26,6 +26,20 @@ export const MAX_TRANSLATION_IMAGE_BYTES = 20 * 1024 * 1024;
 
 let fixedImageKeyIndex = 0;
 
+interface TranslationRequestPayload {
+  imageBase64?: string;
+  mimeType?: string;
+  targetLang?: string;
+  sourceLang?: string;
+  modelPreference?: string;
+  allowPreview?: boolean;
+  apiKey?: string;
+  isRetry?: boolean;
+  context?: string;
+  policy?: Partial<TranslationPolicy>;
+  glossary?: GlossaryEntry[];
+}
+
 interface GeminiResponseData {
   promptFeedback?: {
     blockReason?: string;
@@ -184,19 +198,39 @@ async function handleTranslationRequest(
       );
     }
 
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid translation payload", code: "INVALID_REQUEST" }, { status: 400 });
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ error: "Invalid translation payload", code: "INVALID_REQUEST" }, { status: 400 });
+    }
+    const fields = body as Record<string, unknown>;
+    const validStrings = ["targetLang", "sourceLang", "modelPreference", "apiKey", "context"]
+      .every((key) => fields[key] === undefined || typeof fields[key] === "string");
+    const validBooleans = ["isRetry", "allowPreview"]
+      .every((key) => fields[key] === undefined || typeof fields[key] === "boolean");
+    const validPolicy = fields.policy === undefined ||
+      (fields.policy !== null && typeof fields.policy === "object" && !Array.isArray(fields.policy));
+    if (!validStrings || !validBooleans || !validPolicy ||
+        (fields.glossary !== undefined && !Array.isArray(fields.glossary))) {
+      return NextResponse.json({ error: "Invalid translation payload", code: "INVALID_REQUEST" }, { status: 400 });
+    }
     const {
       imageBase64,
       mimeType,
-      targetLang,
-      sourceLang,
+      targetLang = "Thai",
+      sourceLang = "auto",
       modelPreference,
       allowPreview,
       apiKey: userApiKey,
-      isRetry,
+      isRetry = false,
       context,
       policy,
       glossary,
-    } = await req.json();
+    } = body as TranslationRequestPayload;
 
     if (!imageBase64) {
       return NextResponse.json({ error: "Missing image data" }, { status: 400 });
@@ -334,6 +368,7 @@ async function handleTranslationRequest(
           })
         : await executeGeminiTranslation<GeminiResponseData>({
         workflow: "image",
+        signal,
         userApiKeyRaw: userApiKey,
         serverApiKeyRaw: process.env.GEMINI_API_KEY,
         modelPreference: modelPreference || "auto",

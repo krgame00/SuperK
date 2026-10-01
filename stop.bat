@@ -7,12 +7,12 @@ echo =====================================================================
 echo          SuperK - กำลังปิดการทำงานของระบบทั้งหมด...
 echo =====================================================================
 
-:: Close console windows with SuperK titles
-taskkill /f /fi "WINDOWTITLE eq SuperK - Backend*" >nul 2>&1
-taskkill /f /fi "WINDOWTITLE eq SuperK - Frontend*" >nul 2>&1
-
-:: Safely kill processes occupying port 8765 and port 3000
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-NetTCPConnection -LocalPort 8765,3000 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }"
+:: Stop only listeners whose executable and service entrypoint belong to this checkout.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\stop-services.ps1" -ProjectRoot "%~dp0."
+if errorlevel 1 (
+    echo [WARN] Some processes could not be verified or stopped. See the messages above.
+    exit /b 1
+)
 
 echo.
 echo [OK] ปิดการทำงานของทั้ง Backend และ Frontend เรียบร้อยแล้ว!

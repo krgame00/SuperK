@@ -168,7 +168,7 @@ def test_adaptive_dilation_covers_stroke_and_shadow_without_breaching_protection
 
 
 def test_paragraph_gap_closing_smoothes_notched_step() -> None:
-    from app.mask_refiner import close_paragraph_notches, MaskRegion
+    from app.mask_refiner import MaskRegion, close_paragraph_notches
     from app.schemas import PixelRect
 
     # 60x60 mask with a stepped 2-line paragraph:

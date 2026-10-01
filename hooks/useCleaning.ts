@@ -383,6 +383,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
           width: result.width,
           height: result.height,
           timingsMs: result.timingsMs,
+          awaitingReview: result.awaitingReview,
           ...assetIds,
         });
       } catch (saveErr) {
@@ -716,6 +717,9 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
               protectedMaskAsset: protectedMaskUrl,
               regions: safeRestoredRegions(metadata.regions),
               timingsMs: metadata.timingsMs ?? {},
+              awaitingReview: metadata.awaitingReview ?? metadata.regions.some(
+                (region) => region.status === "needs_review" && region.automaticAction === "clean",
+              ),
               pipelineVersion: metadata.pipelineVersion,
               cleanUrl,
               maskUrl,

@@ -289,7 +289,8 @@ export class GeminiCatalogManager {
   private readonly cacheTtlMs: number;
   private readonly states = new Map<string, PoolState>();
   private readonly overloads = new Map<string, Record<string, ModelOverloadState>>();
-  private loaded = false;
+  private loadPromise?: Promise<void>;
+  private persistenceQueue: Promise<void> = Promise.resolve();
 
   constructor(options: ManagerOptions = {}) {
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
@@ -320,7 +321,9 @@ export class GeminiCatalogManager {
     force?: boolean;
     signal?: AbortSignal;
   }): Promise<GeminiCatalogResult> {
+    input.signal?.throwIfAborted();
     await this.ensureLoaded();
+    input.signal?.throwIfAborted();
     const pool = resolveActiveGeminiKeyPool(input.userApiKeyRaw, input.serverApiKeyRaw);
     if (pool.keys.length === 0) {
       throw new GeminiRoutingError("Gemini API Key is required", "GEMINI_API_KEY_MISSING");
@@ -335,10 +338,13 @@ export class GeminiCatalogManager {
 
     try {
       const snapshot = await this.discover(pool, state, input.signal);
+      input.signal?.throwIfAborted();
       state.catalog = cloneSnapshot(snapshot);
       await this.persist();
+      input.signal?.throwIfAborted();
       return { pool, snapshot };
     } catch {
+      input.signal?.throwIfAborted();
       if (current) {
         const snapshot = this.applyStateToSnapshot({ ...cloneSnapshot(current), source: "cache", stale: true }, state);
         return { pool, snapshot };
@@ -603,10 +609,12 @@ export class GeminiCatalogManager {
         const models = await this.discoverForKey(credential.apiKey, signal);
         return { credential, models, valid: true as const };
       } catch (error) {
+        signal?.throwIfAborted();
         const code = error instanceof GeminiDiscoveryError ? error.code : "DISCOVERY_FAILED";
         return { credential, models: [] as ProviderModel[], valid: false as const, code };
       }
     }));
+    signal?.throwIfAborted();
 
     if (!perKey.some((entry) => entry.valid)) {
       throw new GeminiDiscoveryError("No Gemini key could be discovered", "DISCOVERY_FAILED");
@@ -672,6 +680,7 @@ export class GeminiCatalogManager {
     const models: ProviderModel[] = [];
     let pageToken: string | undefined;
     do {
+      signal?.throwIfAborted();
       const url = new URL("https://generativelanguage.googleapis.com/v1beta/models");
       url.searchParams.set("pageSize", "1000");
       if (pageToken) url.searchParams.set("pageToken", pageToken);
@@ -684,8 +693,10 @@ export class GeminiCatalogManager {
           signal: signal ?? AbortSignal.timeout(10000),
         });
       } catch {
+        signal?.throwIfAborted();
         throw new GeminiDiscoveryError("Gemini model discovery failed", "NETWORK");
       }
+      signal?.throwIfAborted();
       if (!response.ok) {
         const code = response.status === 401 || response.status === 403 ? "UNAUTHORIZED" : `HTTP_${response.status}`;
         throw new GeminiDiscoveryError(`Gemini model discovery failed (${response.status})`, code);
@@ -694,8 +705,10 @@ export class GeminiCatalogManager {
       try {
         body = await response.json() as ProviderModelList;
       } catch {
+        signal?.throwIfAborted();
         throw new GeminiDiscoveryError("Gemini model discovery returned invalid JSON", "INVALID_JSON");
       }
+      signal?.throwIfAborted();
       models.push(...(body.models ?? []));
       pageToken = body.nextPageToken;
     } while (pageToken);
@@ -872,34 +885,44 @@ export class GeminiCatalogManager {
     };
   }
 
-  private async ensureLoaded(): Promise<void> {
-    if (this.loaded) return;
-    this.loaded = true;
-    if (!this.persistPath) return;
-    try {
-      const parsed = JSON.parse(await readFile(this.persistPath, "utf8")) as PersistedState;
-      if ((parsed.version !== 1 && parsed.version !== 2) || !parsed.pools) return;
-      for (const [poolId, rawState] of Object.entries(parsed.pools)) {
-        const state = this.normalizePersistedState(rawState);
-        this.dropExpiredCooldowns(state);
-        this.dropStaleLatency(state);
-        this.states.set(poolId, state);
+  private ensureLoaded(): Promise<void> {
+    this.loadPromise ??= (async () => {
+      if (!this.persistPath) return;
+      try {
+        const parsed = JSON.parse(await readFile(this.persistPath, "utf8")) as PersistedState;
+        if ((parsed.version !== 1 && parsed.version !== 2) || !parsed.pools) return;
+        for (const [poolId, rawState] of Object.entries(parsed.pools)) {
+          const state = this.normalizePersistedState(rawState);
+          this.dropExpiredCooldowns(state);
+          this.dropStaleLatency(state);
+          this.states.set(poolId, state);
+        }
+      } catch {
+        // Missing/corrupt local cache is recoverable through live discovery.
       }
-    } catch {
-      // Missing/corrupt local cache is recoverable through live discovery.
-    }
+    })();
+    return this.loadPromise;
   }
 
-  private async persist(): Promise<void> {
-    if (!this.persistPath) return;
-    const pools = Object.fromEntries([...this.states.entries()].map(([poolId, state]) => {
-      this.dropExpiredCooldowns(state);
-      this.dropStaleLatency(state);
-      return [poolId, state];
-    }));
-    const payload: PersistedState = { version: 2, pools };
-    await mkdir(dirname(this.persistPath), { recursive: true });
-    await writeFile(this.persistPath, JSON.stringify(payload), "utf8");
+  private persist(): Promise<void> {
+    const persistPath = this.persistPath;
+    if (!persistPath) return Promise.resolve();
+    this.persistenceQueue = this.persistenceQueue.then(async () => {
+      try {
+        const pools = Object.fromEntries([...this.states.entries()].map(([poolId, state]) => {
+          this.dropExpiredCooldowns(state);
+          this.dropStaleLatency(state);
+          return [poolId, state];
+        }));
+        const payload: PersistedState = { version: 2, pools };
+        await mkdir(dirname(persistPath), { recursive: true });
+        await writeFile(persistPath, JSON.stringify(payload), "utf8");
+      } catch {
+        // Cache writes are advisory. Never expose paths or provider credentials.
+        console.warn("GEMINI_STATE_PERSIST_FAILED: Gemini routing state remains in memory");
+      }
+    });
+    return this.persistenceQueue;
   }
 }
 

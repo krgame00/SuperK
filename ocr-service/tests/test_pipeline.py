@@ -5,7 +5,7 @@ from app.api import RETRY_CLEANERS
 from app.detector import DetectionResult, LetterboxTransform
 from app.mask_refiner import MaskRegion, RefinedMask
 from app.page_context import PageContext, PageFeatures
-from app.pipeline import CleaningPipeline, PipelineOutput, RETRY_CLEANER_ALIASES
+from app.pipeline import RETRY_CLEANER_ALIASES, CleaningPipeline, PipelineOutput
 from app.protection import ProtectionResult
 from app.schemas import (
     AutomaticAction,

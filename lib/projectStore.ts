@@ -27,6 +27,7 @@ export interface StoredCleaningResult {
   width?: number;
   height?: number;
   timingsMs?: Record<string, number | string>;
+  awaitingReview?: boolean;
 }
 
 export interface StoredAsset {

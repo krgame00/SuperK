@@ -44,6 +44,7 @@ const cleaningResult = {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
+  vi.mocked(loadCleaningResultsMetadata).mockResolvedValue(new Map());
   vi.stubGlobal(
     "createImageBitmap",
     vi.fn().mockResolvedValue({ width: 8, height: 8, close: vi.fn() }),
