@@ -45,7 +45,6 @@ import {
 } from "@/lib/export/exportManager";
 import {
   shouldReuseCachedTranslatedRender,
-  shouldReuseSpilledTranslatedRender,
 } from "@/lib/export/renderFreshness";
 import {
   getAskExportDirectory,
@@ -1273,17 +1272,9 @@ export default function WorkspacePage() {
       }
 
       const bubbles = bubbleCacheRef.current.get(pageUrl);
-      const expectedSignature = getPageSignature?.(pageUrl) ?? "rev-0";
-      if (
-        shouldReuseCachedTranslatedRender(isExportDirty) &&
-        shouldReuseSpilledTranslatedRender(bubbles)
-      ) {
-        const restored = workspaceResourceManager.restoreRenderedImage(pageId, expectedSignature);
-        if (restored) {
-          translatedImageCacheRef.current.set(pageUrl, restored);
-          return restored;
-        }
-      }
+      // Spilled-render reuse is intentionally not consulted here: a bubble-free
+      // page's translated output is its cleaned background, and a page with
+      // bubbles must re-render from those bubbles instead of stale pixels.
 
       if (bubbles && bubbles.length > 0) {
         setTranslationResult(`⏳ กำลังเตรียมรูปภาพหน้า ${index + 1}/${pages.length}...`);
@@ -1350,7 +1341,13 @@ export default function WorkspacePage() {
           return null;
         }
       }
-      return null;
+      // A bubble-free page has no translation layer to rasterize: its
+      // translated output is the cleaned background, else the untouched page.
+      return (
+        cleaningResultsByPage.get(pageUrl)?.cleanUrl ??
+        translatedImageCacheRef.current.get(pageUrl) ??
+        pageUrl
+      );
     };
 
     const getExportDataUrl = async (pageUrl: string, index: number): Promise<string> => {
@@ -1644,22 +1641,16 @@ export default function WorkspacePage() {
     try {
       const page = pages[currentPage];
       if (!page) return;
-      if (normalizePageExportSource(page.exportSource) !== "translated") {
-        const url = await resolvePageExportUrl(page, cleaningResultsByPage.get(page.url)?.cleanUrl, async () => null);
-        const blob = await exportImageBlob(url);
-        const filename = exportImageFilename(page.name, currentPage, blob.type);
-        let directory: DirectoryHandleLike | null = null;
-        if (getAskExportDirectory() && isDirectoryPickerSupported()) {
-          directory = await getOrPickExportDirectory();
-          if (!directory) return;
+      const url = await resolvePageExportUrl(page, cleaningResultsByPage.get(page.url)?.cleanUrl, async () => {
+        const bubbles = (bubbleCacheRef.current.get(page.url) ?? []).filter((b) => !b.deleted);
+        if (bubbles.length === 0) {
+          // A bubble-free page has no translation layer: its translated
+          // output is the cleaned background, else the untouched page.
+          return cleaningResultsByPage.get(page.url)?.cleanUrl ?? page.url;
         }
-        await saveBlob(blob, filename, directory);
-        setTranslationResult(`✅ บันทึก ${filename} สำเร็จ!`);
-        return;
-      }
-      const dataUrl = downloadTranslatedImage("single", currentPage, "", true);
-      if (!dataUrl) throw new Error("เรนเดอร์คำแปลไม่สำเร็จ");
-      const blob = await exportImageBlob(dataUrl);
+        return downloadTranslatedImage("single", currentPage, "", true);
+      });
+      const blob = await exportImageBlob(url);
       const filename = exportImageFilename(page.name, currentPage, blob.type);
       let directory: DirectoryHandleLike | null = null;
       if (getAskExportDirectory() && isDirectoryPickerSupported()) {
@@ -2161,7 +2152,7 @@ export default function WorkspacePage() {
                   variant={primaryAction.kind === "export" ? "primary" : "default"}
                   disabled={pages.length === 0}
                   disabledKinds={{
-                    image: isZipping || isChoosingExport || (normalizePageExportSource(pages[currentPage]?.exportSource) === "translated" && (activeBubbles.length === 0 || workspaceLayer !== "translated")),
+                    image: isZipping || isChoosingExport || (normalizePageExportSource(pages[currentPage]?.exportSource) === "translated" && activeBubbles.length > 0 && workspaceLayer !== "translated"),
                     pdf: isZipping || isChoosingExport || pages.length === 0,
                     strip: isZipping || isChoosingExport || pages.length === 0,
                     zip: isZipping || isChoosingExport || pages.length === 0,
@@ -2434,7 +2425,7 @@ export default function WorkspacePage() {
                   void requestSinglePageExport();
                   setIsMobileMenuOpen(false);
                 }}
-                disabled={isZipping || isChoosingExport || (normalizePageExportSource(pages[currentPage]?.exportSource) === "translated" && (activeBubbles.length === 0 || workspaceLayer !== "translated"))}
+                disabled={isZipping || isChoosingExport || (normalizePageExportSource(pages[currentPage]?.exportSource) === "translated" && activeBubbles.length > 0 && workspaceLayer !== "translated")}
                 className="w-full bg-surface text-foreground disabled:opacity-40 p-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2 mb-2 border border-transparent"
               >
                 <Download className="w-5 h-5" /> บันทึกหน้านี้

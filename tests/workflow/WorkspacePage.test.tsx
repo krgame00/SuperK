@@ -863,6 +863,58 @@ test.each(["ZIP", "CBZ"])("mixed %s includes original, clean and translated byte
   expect(downloadTranslatedImage).not.toHaveBeenCalled();
 });
 
+test.each(["ZIP", "CBZ"])("%s exports bubble-free translated pages as clean or original bytes", async (format) => {
+  const { saveBlob } = await import("@/lib/export/saveLocation");
+  const JSZip = (await import("jszip")).default;
+  const blankPage = "data:image/png;base64,cGFnZQ==";
+  const cleanOnlyPage = "data:image/png;base64,Y2xlYW5vbmx5";
+  const clean = "data:image/png;base64,Y2xlYW4=";
+  vi.mocked(useCleaning).mockReturnValue({ ...vi.mocked(useCleaning).mock.results.at(-1)?.value,
+    resultsByPage: new Map([[cleanOnlyPage, { ...cleaningResult, cleanUrl: clean }]]) } as never);
+  vi.mocked(useTranslation).mockReturnValue({ ...translationMockState,
+    activeBubbles: [],
+    translatedImageCacheRef: { current: new Map() },
+    bubbleCacheRef: { current: new Map() },
+    restoreSavedSession: vi.fn().mockResolvedValue({ pages: [
+      { url: blankPage, name: "blank.png" },
+      { url: cleanOnlyPage, name: "cleanonly.png" }], currentPage: 0 }) } as never);
+  render(<WorkspacePage />);
+  fireEvent.click(await screen.findByRole("button", { name: /คืนค่างานเดิม/ }));
+  await screen.findByRole("combobox", { name: "ส่งออกหน้านี้เป็น" });
+  fireEvent.click(screen.getAllByRole("button", { name: "ส่งออก" })[0]);
+  fireEvent.click(await screen.findByRole("menuitem", { name: new RegExp(format) }));
+  await screen.findByText("มีหน้าที่ต้องได้รับการยืนยันก่อน Export");
+  fireEvent.click(screen.getByRole("button", { name: "ยืนยันทุกหน้าและดำเนินการ Export" }));
+  await waitFor(() => expect(saveBlob).toHaveBeenCalled());
+  const blob = vi.mocked(saveBlob).mock.calls.at(-1)![0];
+  const zip = await JSZip.loadAsync(await readBlobBytes(blob));
+  expect(await zip.file("SuperK_Page_001_blank.png")!.async("string")).toBe("page");
+  expect(await zip.file("SuperK_Page_002_cleanonly.png")!.async("string")).toBe("clean");
+});
+
+test("single-image export of a bubble-free page saves its clean render after review confirmation", async () => {
+  const { saveBlob } = await import("@/lib/export/saveLocation");
+  const cleanOnlyPage = "data:image/png;base64,Y2xlYW5vbmx5";
+  const clean = "data:image/png;base64,Y2xlYW4=";
+  vi.mocked(useCleaning).mockReturnValue({ ...vi.mocked(useCleaning).mock.results.at(-1)?.value,
+    resultsByPage: new Map([[cleanOnlyPage, { ...cleaningResult, cleanUrl: clean }]]) } as never);
+  vi.mocked(useTranslation).mockReturnValue({ ...translationMockState,
+    activeBubbles: [],
+    translatedImageCacheRef: { current: new Map() },
+    bubbleCacheRef: { current: new Map() },
+    restoreSavedSession: vi.fn().mockResolvedValue({ pages: [{ url: cleanOnlyPage, name: "cleanonly.png" }], currentPage: 0 }) } as never);
+  render(<WorkspacePage />);
+  fireEvent.click(await screen.findByRole("button", { name: /คืนค่างานเดิม/ }));
+  await screen.findByRole("combobox", { name: "ส่งออกหน้านี้เป็น" });
+  fireEvent.click(screen.getAllByRole("button", { name: "ส่งออก" })[0]);
+  fireEvent.click(await screen.findByRole("menuitem", { name: "รูปภาพหน้านี้" }));
+  await screen.findByText("มีหน้าที่ต้องได้รับการยืนยันก่อน Export");
+  fireEvent.click(screen.getByRole("button", { name: "ยืนยันทุกหน้าและดำเนินการ Export" }));
+  await waitFor(() => expect(saveBlob).toHaveBeenCalledWith(
+    expect.objectContaining({ type: "image/png" }), "SuperK_Page_001_cleanonly.png", null));
+  expect(downloadTranslatedImage).not.toHaveBeenCalled();
+});
+
 test("navigation and selection remain frozen while readability confirmation is pending", async () => {
   vi.mocked(useTranslation).mockReturnValue({ ...translationMockState,
     restoreSavedSession: vi.fn().mockResolvedValue({ pages: [

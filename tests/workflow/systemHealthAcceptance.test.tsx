@@ -3,7 +3,7 @@ import "fake-indexeddb/auto";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { saveProjectSession, loadProjectSession, clearProjectSession } from "@/lib/projectStore";
 import { WorkspaceResourceManager } from "@/lib/lifecycle/workspaceResourceManager";
-import { shouldReuseCachedTranslatedRender, shouldReuseSpilledTranslatedRender } from "@/lib/export/renderFreshness";
+import { shouldReuseCachedTranslatedRender } from "@/lib/export/renderFreshness";
 import { blobToDataUrl } from "@/lib/imageDataUrl";
 import "@/chrome-extension/server.js";
 
@@ -101,10 +101,6 @@ describe("End-to-End System Health Remediation Acceptance (P0-P4)", () => {
       // Dirty page must reject cached render
       expect(shouldReuseCachedTranslatedRender(true)).toBe(false);
       expect(shouldReuseCachedTranslatedRender(false)).toBe(true);
-
-      // If page has active bubbles, spill cache must not silently be reused
-      expect(shouldReuseSpilledTranslatedRender([{ t: "คำแปลล่าสุด", box: [1, 2, 3, 4] }])).toBe(false);
-      expect(shouldReuseSpilledTranslatedRender([])).toBe(true);
     });
   });
 
