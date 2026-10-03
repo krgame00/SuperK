@@ -24,6 +24,10 @@ _Avoid_: Translation contamination, automatically removable artwork
 The area in which translated text is arranged into lines. It may include empty space around the visible letters and is distinct from the text's selection frame.
 _Avoid_: Visible text bounds, selection frame, removal mask
 
+**Source-matched text size**:
+The translated lettering's visible size matched to the original lettering at the same page scale. It does not imply matching the original block's width, height, line count or nominal font-size value.
+_Avoid_: Same font pixels, fill original box, matching selection frame
+
 **Text selection frame**:
 The visible and clickable boundary used to select and manipulate translated lettering, enclosing its visible letters, outline and shadow with a small margin. Selecting this frame does not change the text's size, placement or line breaks; empty space elsewhere in the text layout area is not part of this selection boundary.
 _Avoid_: Text layout area, cleaning region, OCR rectangle
