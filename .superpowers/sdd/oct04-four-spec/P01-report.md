@@ -59,3 +59,7 @@ Launch investigation: original Electron benchmark passed an absolute output JSON
 ## Remaining concerns
 
 Single measured pass per scene, software/offscreen raster, no compositor input-to-photon telemetry, no real mouse device, no app-level persistence completion or application autosave measurements. These limits do not invalidate the observed renderer costs; they constrain claims about visible user smoothness. P02/P03 should compare identical scenes after optimization, and G06 should test visible GPU editing, exact release geometry/line structure, Undo/Redo, reopening and export parity.
+
+## Commits and named comparison runs
+
+Baseline fixture and compact evidence commit: `26faee2` (`test: capture dense-page renderer baseline`). Follow-up adds optional `--name p02` (or `p03`) to **all three commands**. This writes `P01-p02-baseline.json`, `P01-p02-diagnostic.json`, `P01-p02-diagnostic-trace.json`, `P01-p02-metrics.md` and `P01-p02-trace-summary.json`, preserving the original P01 files. Output stays in the Electron child environment. Named file routing is a reversible launcher option; final ESLint checks both scripts. Example: `node scripts/verify-dense-page-baseline.mjs --name p02`, then same with `--diagnostic`, then `node scripts/summarize-dense-page-baseline.mjs --name p02`.

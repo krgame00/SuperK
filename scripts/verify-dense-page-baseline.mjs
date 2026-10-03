@@ -6,7 +6,11 @@ import { resolve } from 'node:path';
 const require = createRequire(import.meta.url);
 console.log('Starting dense-page Vite harness');
 const diagnostic = process.argv.includes('--diagnostic');
-const output = resolve('.superpowers/sdd/oct04-four-spec', diagnostic ? 'P01-diagnostic.json' : 'P01-baseline.json');
+const nameIndex = process.argv.indexOf('--name');
+const name = nameIndex === -1 ? '' : process.argv[nameIndex + 1];
+if (nameIndex !== -1 && (!name || !/^[a-z0-9-]+$/i.test(name))) throw new Error('--name requires a letters/numbers/hyphens run label');
+const prefix = name ? `P01-${name}` : 'P01';
+const output = resolve('.superpowers/sdd/oct04-four-spec', `${prefix}-${diagnostic ? 'diagnostic' : 'baseline'}.json`);
 mkdirSync(resolve('.superpowers/sdd/oct04-four-spec'), { recursive: true });
 const server = await createServer({ configFile: false, root: process.cwd(),
   server: { host: '127.0.0.1', port: 4178, strictPort: true }, resolve: { alias: { '@': process.cwd() } } });
