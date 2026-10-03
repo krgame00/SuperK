@@ -4,6 +4,22 @@ This context defines the image regions, visual styles, desktop boundaries, and r
 
 ## Language
 
+**Target-language translation**:
+The dialogue, names and sound effects rewritten in the selected output language. In strict Thai output, names are written in Thai and sound effects are translated into Thai; Latin lettering is not an exception.
+_Avoid_: Source text, mixed-language translation, permitted foreign names
+
+**Foreign-script contamination**:
+Lettering in a translation that belongs to a writing system excluded by its selected output language, including stray letters embedded in otherwise valid words. It is distinct from text in the wrong language that happens to share the permitted writing system.
+_Avoid_: Wrong font, foreign-language source, any non-Thai character
+
+**Shared-script language mismatch**:
+Translated wording in the wrong language despite using a writing system permitted by the selected output language, such as French dialogue in an English translation. Script compatibility alone does not establish that the wording is in the intended language.
+_Avoid_: Foreign-script contamination, script validation failure
+
+**Source-text remnant**:
+Original lettering still visible in a cleaned manga background intended for translated output. It is distinct from foreign lettering in generated translation text and requires inspection of the original image and removal mask.
+_Avoid_: Translation contamination, automatically removable artwork
+
 **Text layout area**:
 The area in which translated text is arranged into lines. It may include empty space around the visible letters and is distinct from the text's selection frame.
 _Avoid_: Visible text bounds, selection frame, removal mask
