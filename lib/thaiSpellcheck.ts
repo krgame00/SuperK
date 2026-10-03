@@ -182,41 +182,53 @@ export function normalizeThaiText(text: string): string {
 
 /**
  * Gemini occasionally leaks foreign-script characters into the translation:
- * Japanese kana/kanji carried over from the source page, Cyrillic glitch
- * runs, or Hangul. Latin letters stay allowed (names, SFX, brand words).
+ * Latin letters stay allowed (names, SFX, brand words). Unicode properties
+ * cover supplementary planes and scripts beyond the original block list.
  */
 const FOREIGN_SCRIPT_PATTERNS: Array<[RegExp, string]> = [
-  [/[\u3040-\u30FF\u31F0-\u31FF]/g, "Japanese kana"],
-  [/[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/g, "CJK kanji"],
-  [/[\u0400-\u04FF]/g, "Cyrillic"],
-  [/[\uAC00-\uD7AF\u1100-\u11FF]/g, "Hangul"],
+  [/[\u3040-\u30FF\u31F0-\u31FF\uFF66-\uFF9F]/u, "Japanese kana"],
+  [/\p{Script_Extensions=Han}/u, "CJK kanji"],
+  [/\p{Script_Extensions=Cyrillic}/u, "Cyrillic"],
+  [/\p{Script_Extensions=Hangul}/u, "Hangul"],
+  [/\p{Script_Extensions=Hebrew}/u, "Hebrew"],
+  [/\p{Script_Extensions=Arabic}/u, "Arabic"],
+  [/\p{Script_Extensions=Greek}/u, "Greek"],
+  [/\p{Script_Extensions=Devanagari}/u, "Devanagari"],
+  [/\p{Script_Extensions=Myanmar}/u, "Myanmar"],
 ];
 
+export function isThaiTargetLanguage(targetLang?: string): boolean {
+  return !targetLang || /^(?:th|th-[a-z-]+)$/i.test(targetLang.trim()) || /thai|ไทย/i.test(targetLang);
+}
+
+export function foreignScriptCharacters(text: string): string[] {
+  return Array.from(text || "").filter(character =>
+    /[\p{Letter}\p{Mark}]/u.test(character)
+    && !/[\p{Script_Extensions=Thai}\p{Script_Extensions=Latin}\p{Script_Extensions=Inherited}]/u.test(character));
+}
+
 export function countForeignScriptChars(text: string): number {
-  if (!text) return 0;
-  let count = 0;
-  for (const [pattern] of FOREIGN_SCRIPT_PATTERNS) {
-    count += (text.match(pattern) ?? []).length;
-  }
-  return count;
+  return foreignScriptCharacters(text).length;
 }
 
 export function describeForeignScripts(text: string): string[] {
-  if (!text) return [];
-  // `.match` (not `.test`) — global regexes keep lastIndex state between tests.
-  return FOREIGN_SCRIPT_PATTERNS
-    .filter(([pattern]) => text.match(pattern) !== null)
+  const characters = foreignScriptCharacters(text);
+  const scripts = FOREIGN_SCRIPT_PATTERNS
+    .filter(([pattern]) => characters.some(character => pattern.test(character)))
     .map(([, name]) => name);
+  if (characters.some(character => !FOREIGN_SCRIPT_PATTERNS.some(([pattern]) => pattern.test(character)))) scripts.push("Other script");
+  return scripts;
 }
 
 /** How many bubbles carry foreign-script characters in their translation. */
 export function countContaminatedBubbles(
-  bubbles: Array<{ t?: unknown }>,
+  bubbles: Array<{ t?: unknown; translated?: unknown; deleted?: boolean }>,
 ): number {
   return bubbles.reduce(
     (total, b) =>
       total +
-      (typeof b?.t === "string" && countForeignScriptChars(b.t) > 0 ? 1 : 0),
+      (!b?.deleted && countForeignScriptChars(typeof b?.t === "string" && b.t
+        ? b.t : typeof b?.translated === "string" ? b.translated : "") > 0 ? 1 : 0),
     0,
   );
 }

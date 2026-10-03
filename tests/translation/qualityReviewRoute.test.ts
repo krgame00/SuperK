@@ -29,6 +29,19 @@ function request(body: unknown = { items, targetLang: "Thai", apiKey: "user-key"
 }
 
 describe("translation review API", () => {
+  test.each([
+    { translatedText: "กลิ่นนี่มันมีมนמהขลังอะไรกันแน่...", row: { id: "0", status: "ok" } },
+    { translatedText: "สวัสดี", row: { id: "0", status: "suggested", suggestion: "สวัสดีמה" } },
+  ])("guards provider rows before sending them to the client: $translatedText", async ({translatedText,row}) => {
+    execute.mockResolvedValueOnce(result(geminiData({ reviews: [row] })));
+    const response=await POST(request({items:[{...items[0],translatedText}],targetLang:"Thai"}));
+    expect(await response.json()).toMatchObject({reviews:[{id:"0",status:"needs_review",reason:expect.stringContaining("מה")}]});
+  });
+  test("does not block Hebrew approval for a Hebrew target", async () => {
+    execute.mockResolvedValueOnce(result(geminiData()));
+    const response=await POST(request({items:[{...items[0],translatedText:"שלום"}],targetLang:"Hebrew"}));
+    expect(await response.json()).toEqual({reviews});
+  });
   beforeEach(() => {
     vi.stubEnv("GEMINI_API_KEY", "server-key");
     vi.stubEnv("SUPERK_TRANSLATE_BASE_URL", "");

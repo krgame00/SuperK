@@ -27,6 +27,8 @@ import { invalidateQualityReview, needsQualityReview } from "@/lib/translation/q
 import {
   normalizeTranslationPayload,
   countContaminatedBubbles,
+  foreignScriptCharacters,
+  isThaiTargetLanguage,
 } from "@/lib/thaiSpellcheck";
 import { sampleBubbleRegion } from "@/lib/colorMatching/canvasSampler";
 import { extractTextColors } from "@/lib/colorMatching/sampleTextColors";
@@ -1000,6 +1002,15 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         return reviewTranslatedBubbles(bubbles,{targetLang,apiKey:userApiKey,modelPreference,
           allowPreview:allowPreviewModels,glossary,signal});
       };
+      const unresolvedScriptWarning = (bubbles: TranslatedBubble[]) => {
+        if (!isThaiTargetLanguage(targetLang)) return null;
+        const points = bubbles.flatMap((bubble,index) => {
+          if (bubble.deleted) return [];
+          const foreign = foreignScriptCharacters(bubble.t || bubble.translated || "");
+          return foreign.length ? [`#${index+1}: ${Array.from(new Set(foreign)).slice(0,24).join("")}`] : [];
+        });
+        return points.length ? `⚠️ ยังมีตัวอักษรภาษาอื่นปน ${points.length} จุด (${points.slice(0,5).join(" · ")}) เปิดแก้ไขข้อความเพื่อเทียบต้นฉบับ` : null;
+      };
 
       const recoverDetectedOmissions = async (initial: TranslatedBubble[]) => {
         const manual = getManualBubblesForPage(pageUrl);
@@ -1243,11 +1254,12 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         markPageDirty(pageUrl, false);
 
         if (activePageRef.current === pageUrl) {
-          setTranslationResult(completeness.missing.length > 0
+          const scriptWarning = unresolvedScriptWarning(coloredBubbles);
+          setTranslationResult(scriptWarning ?? (completeness.missing.length > 0
             ? `⚠️ ยังขาดคำแปล ${completeness.missing.length} จุด กรุณาตรวจหน้านี้ก่อนส่งออก`
             : coloredBubbles.some(needsQualityReview)
               ? "⚠️ แปลสำเร็จ แต่มีคำแปลที่ต้องตรวจ เปิดแก้ไขข้อความเพื่อเทียบต้นฉบับและดูคำแนะนำ"
-              : `✅ แปลสำเร็จ! (ได้ ${successCount}/6 ส่วน)`);
+              : `✅ แปลสำเร็จ! (ได้ ${successCount}/6 ส่วน)`));
           setShowTranslate(false);
         }
         return true;
@@ -1322,7 +1334,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       // the enhanced image and keep whichever pass came out cleaner. The
       // guard only applies to Thai targets — kana/kanji are legitimate when
       // translating INTO Japanese.
-      const isThaiTarget = !targetLang || /thai|ไทย/i.test(targetLang);
+      const isThaiTarget = isThaiTargetLanguage(targetLang);
       let contaminatedBubbles = isThaiTarget
         ? countContaminatedBubbles(pageBubbles)
         : 0;
@@ -1442,7 +1454,10 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       markPageDirty(pageUrl, false);
 
       if (activePageRef.current === pageUrl) {
-        if (completeness.missing.length > 0) {
+        const scriptWarning = unresolvedScriptWarning(coloredBubbles);
+        if (scriptWarning) {
+          setTranslationResult(scriptWarning);
+        } else if (completeness.missing.length > 0) {
           setTranslationResult(`⚠️ ยังขาดคำแปล ${completeness.missing.length} จุด กรุณาตรวจหน้านี้ก่อนส่งออก`);
         } else if (coloredBubbles.some(needsQualityReview)) {
           setTranslationResult("⚠️ แปลสำเร็จ แต่มีคำแปลที่ต้องตรวจ เปิดแก้ไขข้อความเพื่อเทียบต้นฉบับและดูคำแนะนำ");
@@ -2248,14 +2263,14 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         pageUrl,
         pageIndex,
         total: bubbles.length,
-        contaminated: countContaminatedBubbles(bubbles),
+        contaminated: isThaiTargetLanguage(targetLang) ? countContaminatedBubbles(bubbles) : 0,
         invalidBoxes: bubbles.filter(
           (b) => (b as { isInvalidBox?: boolean }).isInvalidBox === true,
         ).length,
       });
     });
     return results;
-  }, []);
+  }, [targetLang]);
 
   const scanTranslatedPages = useCallback(() => {
     return inspectTranslatedPages()

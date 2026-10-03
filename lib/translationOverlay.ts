@@ -1,6 +1,7 @@
 import { undoManager } from "./undoManager";
 import { measureTextSelection, rotateLocalPoint, type SelectionRect } from "./textSelectionBounds";
-import { invalidateQualityReview, isReviewCurrent } from "./translation/qualityReview";
+import { guardQualityReview, unavailableReview, invalidateQualityReview, isReviewCurrent } from "./translation/qualityReview";
+import { countForeignScriptChars, isThaiTargetLanguage } from "./thaiSpellcheck";
 import type { TranslationReview } from "./translation/qualityReview";
 import {
   recomputeAdaptiveReadableOnLayoutCommit,
@@ -1492,8 +1493,16 @@ export const applyTranslationOverlay = async (
           reviewActions.appendChild(button);
           return button;
         };
+        const displayedReview = () => {
+          const text = (b.t || b.translated || "").trim();
+          if (b.translationReview && isReviewCurrent(b)) return guardQualityReview(b.translationReview, targetLanguage);
+          if (isThaiTargetLanguage(targetLanguage) && countForeignScriptChars(text)) {
+            return guardQualityReview(unavailableReview({id:"",sourceText:b.original_text ?? "",translatedText:text}),targetLanguage);
+          }
+          return b.translationReview;
+        };
         const updateReviewPanel = () => {
-          const review = b.translationReview;
+          const review = displayedReview();
           reviewPanel.hidden = !review && !b.original_text;
           reviewPanel.style.display = reviewPanel.hidden ? "none" : "grid";
           source.textContent = b.original_text ? `ต้นฉบับ: ${b.original_text}` : "ไม่มีข้อความต้นฉบับ";
@@ -1527,7 +1536,7 @@ export const applyTranslationOverlay = async (
         };
         const acceptReview = reviewAction("accept", "ใช้คำแปลที่แนะนำ", () => {
           if (!checkReviewSnapshot()) return;
-          const review = b.translationReview;
+          const review = displayedReview();
           if (review?.status !== "suggested" || !review.suggestion) return;
           b.translationReview = { ...review, status: "accepted", reviewedText: review.suggestion, originalTranslation: review.originalTranslation ?? (b.t || b.translated || "") };
           updateReviewText(review.suggestion);

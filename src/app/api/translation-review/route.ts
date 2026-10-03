@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { GeminiRequestError, requestOpenAICompatible, throwIfRequestAborted, withGeminiDeadline } from "@/lib/server/geminiRequest";
 import { GeminiRoutingError } from "@/lib/server/geminiCatalog";
 import { executeGeminiTranslation, geminiRoutingHttpStatus } from "@/lib/server/geminiTranslationRouter";
-import { buildQualityReviewPrompt, MAX_REVIEW_ITEMS, MAX_REVIEW_TEXT_LENGTH, type QualityReviewItem } from "@/lib/translation/qualityReview";
+import { guardQualityReview, buildQualityReviewPrompt, MAX_REVIEW_ITEMS, MAX_REVIEW_TEXT_LENGTH, type QualityReviewItem } from "@/lib/translation/qualityReview";
 import type { GlossaryEntry } from "@/lib/translation/glossary";
 
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -104,7 +104,13 @@ export async function POST(req: Request): Promise<Response> {
       throwIfRequestAborted(signal);
       return parseProviderReviews(geminiText(result.data), body.items);
     }, REVIEW_BUDGET_MS, req.signal);
-    return NextResponse.json({ reviews });
+    const guardedReviews = reviews.map(row => {
+      const item = body.items.find(item => item.id === row.id)!;
+      const guarded = guardQualityReview({ ...row, sourceText: item.sourceText, reviewedText: item.translatedText }, body.targetLang);
+      return { id: row.id, status: guarded.status, ...(guarded.reason !== undefined ? {reason:guarded.reason} : {}),
+        ...(guarded.suggestion !== undefined ? {suggestion:guarded.suggestion} : {}) };
+    });
+    return NextResponse.json({ reviews: guardedReviews });
   } catch (error) {
     if (req.signal.aborted || (error instanceof GeminiRequestError && error.code === "REQUEST_ABORTED") || (error instanceof Error && error.name === "AbortError")) return NextResponse.json({ error: "Review cancelled", code: "REQUEST_ABORTED" }, { status: 499 });
     if (error instanceof ReviewResponseError) return NextResponse.json({ error: "Review unavailable", code: error.code }, { status: error.status });

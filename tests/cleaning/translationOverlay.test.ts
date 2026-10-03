@@ -169,6 +169,24 @@ async function renderOverlay(
 }
 
 describe("translation quality review editor", () => {
+  test("a legacy contaminated suggestion cannot be accepted", async () => {
+    const savedReview={status:"suggested" as const,sourceText:"Hello",reviewedText:"สวัสดี",suggestion:"สวัสดีמה"};
+    const {wrapper,bubble,chromeRoot}=await renderOverlay("สวัสดี",{original_text:"Hello",translationReview:{...savedReview}});
+    wrapper.dispatchEvent(new MouseEvent("dblclick",{bubbles:true}));
+    const editor=chromeRoot.querySelector<HTMLElement>("[data-translation-editor]")!;
+    expect(editor.textContent).toContain("พบตัวอักษรภาษาอื่นปน");
+    const accept=editor.querySelector<HTMLButtonElement>('[data-review-action="accept"]')!;
+    expect(accept.disabled).toBe(true);
+    accept.click(); expect(bubble.t).toBe("สวัสดี");
+    expect(bubble.translationReview).toEqual(savedReview);
+  });
+  test.each([undefined,{status:"ok" as const,sourceText:"",reviewedText:"คำแปลเดิม"}])("a saved mixed translation shows current offending characters despite old metadata: %j", async oldReview => {
+    const text="กลิ่นนี่มันมีมนמהขลังอะไรกันแน่...";
+    const {wrapper,bubble,chromeRoot}=await renderOverlay(text,{translationReview:oldReview});
+    wrapper.dispatchEvent(new MouseEvent("dblclick",{bubbles:true}));
+    expect(chromeRoot.querySelector<HTMLElement>("[data-translation-editor]")!.textContent).toContain("מה");
+    expect(bubble.t).toBe(text);
+  });
   const review = { status: "suggested" as const, sourceText: "Hello, friend.", reviewedText: "สวัสดี", suggestion: "สวัสดี เพื่อน", reason: "The greeting names a friend." };
   async function openReview() {
     const result = await renderOverlay("สวัสดี", { original_text: review.sourceText, translationReview: { ...review } });

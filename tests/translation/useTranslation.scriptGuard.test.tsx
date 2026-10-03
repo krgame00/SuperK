@@ -97,8 +97,8 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-function renderTranslationHook(pages: string[]) {
-  return renderHook(() =>
+function renderTranslationHook(pages: string[], targetLang = "Thai") {
+  const hook = renderHook(() =>
     useTranslation({
       currentPage: 0,
       pages,
@@ -109,9 +109,11 @@ function renderTranslationHook(pages: string[]) {
       }),
     }),
   );
+  if (targetLang !== "Thai") act(() => hook.result.current.setTargetLang(targetLang));
+  return hook;
 }
 
-test("foreign-script contamination triggers one retry and keeps the cleaner pass", async () => {
+test.each([contaminatedThai,{...contaminatedThai,t:"กลิ่นนี่มันมีมนמהขลังอะไรกันแน่..."}])("foreign-script contamination triggers one retry and keeps the cleaner pass: $t", async mixed => {
   const pages = ["blob:one"];
   let translateCalls = 0;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -121,7 +123,7 @@ test("foreign-script contamination triggers one retry and keeps the cleaner pass
       translateCalls += 1;
       // First pass leaks kana; the enhanced retry comes back clean.
       return bubblesResponse(
-        translateCalls === 1 ? [contaminatedThai, farewell] : [cleanThai, farewell],
+        translateCalls === 1 ? [mixed, farewell] : [cleanThai, farewell],
       );
     }
     throw new Error(`unexpected fetch: ${url}`);
@@ -148,6 +150,23 @@ test("foreign-script contamination triggers one retry and keeps the cleaner pass
   );
   // The kana-contaminated text must not survive into the final bubbles.
   expect(JSON.stringify(rendered)).not.toContain("こんにちは");
+});
+
+test("unresolved Hebrew after the bounded retry reports the point and characters", async () => {
+  let calls=0;
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+    const url=String(input);
+    if(url.startsWith("blob:"))return imageResponse();
+    if(url==="/api/translate") {calls++;return bubblesResponse([{...contaminatedThai,t:"กลิ่นนี่มันมีมนמהขลังอะไรกันแน่..."}]);}
+    throw new Error("unexpected fetch");
+  });
+  const {result}=renderTranslationHook(["blob:one"]);
+  let pending!:Promise<boolean>;act(()=>{pending=result.current.handleTranslate();});
+  await act(async()=>{await vi.advanceTimersByTimeAsync(100);expect(await pending).toBe(true);});
+  expect(calls).toBe(2);
+  expect(result.current.translationResult).toContain("ภาษาอื่น");
+  expect(result.current.translationResult).toContain("מה");
+  expect(result.current.translationResult).toContain("1");
 });
 
 test("a dirtier retry does not replace the original translation", async () => {
@@ -216,10 +235,16 @@ test("scanTranslatedPages reports only pages with contaminated bubbles", () => {
     ]);
     result.current.bubbleCacheRef.current.set("blob:dirty", [
       { box: [0, 0, 10, 10], t: "สวัสดี" },
-      { box: [0, 0, 10, 10], t: "こんにちは" },
+      { box: [0, 0, 10, 10], t: "กลิ่นนี่มันมีมนמהขลังอะไรกันแน่..." },
     ]);
   });
   expect(result.current.scanTranslatedPages()).toEqual([
     { pageUrl: "blob:dirty", pageIndex: 1, contaminated: 1, total: 2 },
   ]);
+});
+
+test("saved Hebrew output is not reported as contamination for a Hebrew target", () => {
+  const {result}=renderTranslationHook(["blob:one"],"Hebrew");
+  act(()=>{result.current.bubbleCacheRef.current.set("blob:one",[{box:[0,0,10,10],t:"שלום"}]);});
+  expect(result.current.scanTranslatedPages()).toEqual([]);
 });

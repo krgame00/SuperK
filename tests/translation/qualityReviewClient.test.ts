@@ -3,6 +3,16 @@ import {reviewTranslatedBubbles} from "@/lib/translation/qualityReviewClient";
 
 describe("page quality review client", () => {
   const bubble={t:"รอตรงนี้นะ",original_text:"Wait here.",box:[0,0,100,100]};
+  it.each([false,true])("flags mixed text locally even when source/provider is unavailable: %s",async withSource=>{
+    const mixed={...bubble,t:"กลิ่นนี่มันมีมนמהขลังอะไรกันแน่...",original_text:withSource?bubble.original_text:""};
+    const result=await reviewTranslatedBubbles([mixed],{targetLang:"Thai",fetchImpl:vi.fn().mockRejectedValue(new Error("offline"))});
+    expect(result[0]).toMatchObject({...mixed,translationReview:{status:"needs_review",reason:expect.stringContaining("מה")}});
+  });
+  it("allows Hebrew when translating into Hebrew",async()=>{
+    const mixed={...bubble,t:"שלום"};
+    const result=await reviewTranslatedBubbles([mixed],{targetLang:"Hebrew",fetchImpl:vi.fn().mockResolvedValue(Response.json({reviews:[{id:"0",status:"ok"}]}))});
+    expect(result[0].translationReview?.status).toBe("ok");
+  });
   it("reviews before rendering without replacing text or geometry", async () => {
     const fetchImpl=vi.fn().mockResolvedValue(Response.json({reviews:[{id:"0",status:"suggested",suggestion:"รอที่นี่นะ"}]}));
     const result=await reviewTranslatedBubbles([bubble],{targetLang:"Thai",fetchImpl});

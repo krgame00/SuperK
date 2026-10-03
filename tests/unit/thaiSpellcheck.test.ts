@@ -58,6 +58,21 @@ describe("Thai Spellcheck & Normalizer", () => {
 });
 
 describe("Foreign-script contamination guard", () => {
+  it.each([
+    ["กลิ่นนี่มันมีมนמהขลังอะไรกันแน่...", 2],
+    ["สวัสดีمرحبا", 5], ["สวัสดีΩ", 1], ["สวัสดีမ", 1],
+    ["สวัสดี𠀀", 1], ["สวัสดีｶﾅ", 2], ["สวัสดีאְ", 2],
+    ["ไทย\u064e\u0652", 2],
+  ])("detects extended Unicode foreign lettering: %s", (text, count) => {
+    expect(countForeignScriptChars(text)).toBe(count);
+    expect(describeForeignScripts(text).length).toBeGreaterThan(0);
+  });
+  it("allows Thai accents, Latin accents and common symbols", () => {
+    expect(countForeignScriptChars("ที่นี่ café cafe\u0301 A\u0308 Zoro!? ๑๒๓ 123 ❤️ © ☆…")).toBe(0);
+  });
+  it("does not reject Unicode numbers or script-specific punctuation", () => {
+    expect(countForeignScriptChars("๑๒๓ ١٢٣ 〇 Ⅷ ・゠ ׀־ ، ©" )).toBe(0);
+  });
   it("counts Japanese kana/kanji, Cyrillic, and Hangul as foreign", () => {
     expect(countForeignScriptChars("สวัสดีこんにちは")).toBe(5);
     expect(countForeignScriptChars("俺はゴムだ")).toBe(5);
@@ -87,6 +102,9 @@ describe("Foreign-script contamination guard", () => {
         {},
       ]),
     ).toBe(2);
+  });
+  it("scans legacy translated fields and skips deleted text", () => {
+    expect(countContaminatedBubbles([{translated:"מה"},{t:"מה",deleted:true}])).toBe(1);
   });
 });
 

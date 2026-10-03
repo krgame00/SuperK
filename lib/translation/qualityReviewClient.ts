@@ -1,5 +1,5 @@
 import type { TranslatedBubble } from "@/lib/translationOverlay";
-import { MAX_REVIEW_ITEMS, MAX_REVIEW_TEXT_LENGTH, parseQualityReviews, unavailableReview, type QualityReviewItem } from "./qualityReview";
+import { guardQualityReview, MAX_REVIEW_ITEMS, MAX_REVIEW_TEXT_LENGTH, parseQualityReviews, unavailableReview, type QualityReviewItem } from "./qualityReview";
 
 interface ReviewOptions {
   targetLang: string;
@@ -21,8 +21,8 @@ export async function reviewTranslatedBubbles(bubbles: TranslatedBubble[], optio
     const eligible = item.sourceText.length > 0 && item.sourceText.length <= MAX_REVIEW_TEXT_LENGTH &&
       item.translatedText.length <= MAX_REVIEW_TEXT_LENGTH && items.length < MAX_REVIEW_ITEMS;
     if (eligible) items.push(item);
-    return {...bubble,translationReview:unavailableReview(item, eligible ? undefined :
-      !item.sourceText ? "ไม่มีข้อความต้นฉบับให้เทียบ กรุณาตรวจจากภาพ" : "ข้อความเกินขอบเขตการตรวจ กรุณาตรวจจากภาพ")};
+    return {...bubble,translationReview:guardQualityReview(unavailableReview(item, eligible ? undefined :
+      !item.sourceText ? "ไม่มีข้อความต้นฉบับให้เทียบ กรุณาตรวจจากภาพ" : "ข้อความเกินขอบเขตการตรวจ กรุณาตรวจจากภาพ"),options.targetLang)};
   });
   if (items.length === 0) return result;
   const controller = new AbortController();
@@ -37,7 +37,7 @@ export async function reviewTranslatedBubbles(bubbles: TranslatedBubble[], optio
     });
     if (options.signal?.aborted) throw new DOMException("Cancelled", "AbortError");
     if (!response.ok) return result;
-    const reviews = parseQualityReviews(items, await response.json());
+    const reviews = parseQualityReviews(items, await response.json(), options.targetLang);
     for (const item of items) result[Number(item.id)].translationReview = reviews[item.id];
     if (options.signal?.aborted) throw new DOMException("Cancelled", "AbortError");
     return result;

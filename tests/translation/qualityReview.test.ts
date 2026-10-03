@@ -3,6 +3,16 @@ import { parseQualityReviews, needsQualityReview, invalidateQualityReview, build
 
 const items = [{id:"0",sourceText:"Wait here.",translatedText:"รอตรงนี้นะ"}];
 describe("translation quality review", () => {
+  it("overrides provider approval for Hebrew in Thai output", () => {
+    const mixed = [{id:"0",sourceText:"What magic does this smell have?",translatedText:"กลิ่นนี่มันมีมนמהขลังอะไรกันแน่..."}];
+    expect(parseQualityReviews(mixed,{reviews:[{id:"0",status:"ok"}]})["0"]).toMatchObject({status:"needs_review",reason:expect.stringContaining("מה")});
+  });
+  it("rejects a contaminated replacement but retains the input text", () => {
+    const review=parseQualityReviews(items,{reviews:[{id:"0",status:"suggested",suggestion:"รอמהที่นี่"}]})["0"];
+    expect(review.status).toBe("needs_review");
+    expect(review.suggestion).toBeUndefined();
+    expect(review.reviewedText).toBe(items[0].translatedText);
+  });
   it("keeps a suggestion separate from the reviewed translation", () => {
     const reviews = parseQualityReviews(items, {reviews:[{id:"0",status:"suggested",suggestion:"รอที่นี่นะ",reason:"ถ้อยคำ"}]});
     expect(reviews["0"]).toMatchObject({status:"suggested",reviewedText:"รอตรงนี้นะ",suggestion:"รอที่นี่นะ"});
