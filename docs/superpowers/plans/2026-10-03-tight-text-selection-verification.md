@@ -29,4 +29,10 @@
 
 ## Production
 
-รอการยืนยันว่าบันทึกงานแล้วก่อนหยุดเว็บเพื่อ production build และตรวจ build ID ที่ให้บริการจริง
+ผู้ใช้อนุญาตให้ทำต่อแล้วเมื่อ 2026-10-03:
+
+- Production build ผ่าน exit 0 รวม TypeScript และสร้าง static pages 17/17
+- ตอนเริ่มบริการพบไฟล์ JavaScript/JSON ใน standalone มี NUL bytes: 63 ไฟล์ dependencies และ 16 ไฟล์ build metadata/artifacts ขณะที่ต้นทางไม่มีไบต์เสีย ซ่อมโดยอ่านและเขียนจากต้นทางที่ติดตั้ง/สร้างไว้ พร้อมตรวจ byte equality; ไม่มีการแก้ dependency source สาเหตุที่ทำให้สำเนาเสียยังไม่ได้ระบุ
+- เปิดบริการผ่าน supervisor เดิม; หลังตรวจซ้ำเว็บและ OCR health ตอบ HTTP 200, build ID `ZpgJYqATzU-tSElO4V9J5` ตรงกับ HTML และไฟล์ assets ที่ตรวจตอบ 200
+- PID ที่ตรวจล่าสุด: web 19164, OCR 13256; web error log ว่างหลังเปิดรอบที่สำเร็จ
+- ไม่มีการเรียกผู้ให้บริการแปลหรือส่งงานมังงะจริงระหว่างการตรวจบริการ
