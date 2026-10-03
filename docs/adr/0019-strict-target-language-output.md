@@ -4,4 +4,4 @@ The user requires target-language-only translated lettering, including names and
 
 Language identity belongs to the saved page and its verified revision. Changing the next-job language preserves existing results; explicit retranslation changes a saved page's language. Batch processing continues past review findings, but repair, original-image substitution or page exclusion requires explicit selection before export. Source-text remnants are a separate image-review finding and never grant permission to erase additional artwork automatically.
 
-These product decisions were accepted across the design interview on 2026-10-04. Implementation and final shared-understanding confirmation remain pending.
+These product decisions were accepted across the design interview on 2026-10-04. The user approved publication of the formal translation and source-remnant specs and their testing seams during to-spec that day. Production implementation remains pending.

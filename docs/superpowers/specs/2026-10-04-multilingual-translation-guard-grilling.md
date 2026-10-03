@@ -64,4 +64,4 @@ Q8 adds image-level verification separate from generated-text validation. Keep s
 
 ## Interview completion
 
-All twelve decisions have answers. The main design and a separate source-remnant design capture the agreed scope. Remaining work is user confirmation of shared understanding, then implementation planning. No production implementation has begun in this interview.
+All twelve decisions have answers. The main design and a separate source-remnant design capture the agreed scope. The user approved formal spec publication and testing seams on 2026-10-04 during to-spec. Specs are published as ready-for-agent in the configured local tracker under multilingual-translation-guard and source-text-remnant-review, covering workspace/output integration, Unicode/provider fixtures, original/clean-image comparison, saved work, manual edits, bounded correction, history, cache and extension boundaries. Detectable foreign-letter violations remain non-overridable; explicit contextual/artwork review remains permitted as agreed. No production implementation has begun; implementation planning is next.
