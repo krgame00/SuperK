@@ -29,7 +29,7 @@ The user separately requests automatic source-matched text sizing and smoother m
 - Overflow constrained by reliable source text-space boundaries or existing layout space; preserve explicit manual geometry.
 - Dense-page bitmap preview with exact settled gesture state; profiling establishes the actual performance cause before implementation.
 - Preserve workspace/export/extension size parity and bounded caches; source changes invalidate measurement provenance, manual sizing remains user-owned.
-- Proposed measurable acceptance is in the two design files; user confirmation of shared understanding remains required before planning/implementation.
+- Measurable acceptance is in the two design files and was approved during to-spec publication on 2026-10-04; implementation has not started.
 
 ## Confirmed round 3
 
@@ -45,4 +45,4 @@ The user separately requests automatic source-matched text sizing and smoother m
 
 ## Completion
 
-All eight interview questions have answers. Product decisions are captured in separate source-size and interaction designs and ADR 0020. The proposed validation compares reliable visible-height fixtures within 10% (allowing pixel rounding) and measures 10/50/100-point browser scenes at 44%/100% zoom. This does not claim perfect source measurement or 60 FPS on all hardware. Final shared-understanding confirmation is pending; no production implementation has started.
+All eight interview questions have answers. Product decisions are captured in separate source-size and interaction designs and ADR 0020. The user approved formal specs and testing seams on 2026-10-04: reliable visible-height fixtures within 10% (allowing pixel rounding), and 10/50/100-point browser scenes at 44%/100% zoom with history/reload/output parity checks. This does not claim perfect source measurement or 60 FPS on all hardware. Both specs are published as ready-for-agent in the configured local Markdown tracker, under source-matched-text-size and dense-page-text-interaction. No production implementation has started.
