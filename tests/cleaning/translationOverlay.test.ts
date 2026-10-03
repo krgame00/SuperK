@@ -616,7 +616,12 @@ describe("translation overlay live editor and keyboard controls", () => {
     // The 120×80 bubble floors chromeScale at 0.6; written offsets are
     // pre-divided so the zoomed chrome lands on the bubble's screen rect.
     expect(toolbar.style.left).toBe(`${260 / 0.6}px`);
-    expect(toolbar.style.top).toBe(`${140 / 0.6}px`);
+    const frame = wrapper.querySelector<HTMLElement>(".bubble-text-selection")!;
+    const left = 200 + 120 * parseFloat(frame.style.left) / 100;
+    const top = 150 + 80 * parseFloat(frame.style.top) / 100;
+    const right = left + 120 * parseFloat(frame.style.width) / 100;
+    const bottom = top + 80 * parseFloat(frame.style.height) / 100;
+    expect(parseFloat(toolbar.style.top)).toBeCloseTo((top - 10) / .6);
     expect(toolbar.style.transform).toBe("translate(-50%, -100%)");
 
     const rotate = chromeRoot.querySelector<HTMLElement>(".action-handle--rotate")!;
@@ -624,10 +629,10 @@ describe("translation overlay live editor and keyboard controls", () => {
     const width = chromeRoot.querySelector<HTMLElement>(".action-handle--width")!;
     const move = chromeRoot.querySelector<HTMLElement>(".action-handle--move")!;
 
-    expect([rotate.style.left, rotate.style.top]).toEqual([`${200 / 0.6}px`, `${150 / 0.6}px`]);
-    expect([scale.style.left, scale.style.top]).toEqual([`${320 / 0.6}px`, `${150 / 0.6}px`]);
-    expect([width.style.left, width.style.top]).toEqual([`${320 / 0.6}px`, `${190 / 0.6}px`]);
-    expect([move.style.left, move.style.top]).toEqual([`${200 / 0.6}px`, `${230 / 0.6}px`]);
+    expect([rotate.style.left, rotate.style.top]).toEqual([`${left / 0.6}px`, `${top / 0.6}px`]);
+    expect([scale.style.left, scale.style.top]).toEqual([`${right / 0.6}px`, `${top / 0.6}px`]);
+    expect([width.style.left, width.style.top]).toEqual([`${right / 0.6}px`, `${(top + bottom) / 2 / 0.6}px`]);
+    expect([move.style.left, move.style.top]).toEqual([`${left / 0.6}px`, `${bottom / 0.6}px`]);
     expect(chromeRoot.querySelector(".action-handle--width-left")).toBeNull();
   });
 
@@ -794,7 +799,7 @@ describe("translation overlay live editor and keyboard controls", () => {
 
   // A large bubble keeps full-size chrome.
   vi.spyOn(wrapper, "getBoundingClientRect").mockReturnValue({
-    left: 40, top: 40, right: 540, bottom: 340, width: 500, height: 300,
+    left: 40, top: 40, right: 5040, bottom: 3040, width: 5000, height: 3000,
   } as DOMRect);
   vi.spyOn(chromeRoot, "getBoundingClientRect").mockReturnValue({
     left: 0, top: 0, right: 1200, bottom: 1600, width: 1200, height: 1600,
@@ -840,7 +845,8 @@ test("zoomed-down chrome stays anchored on the bubble", async () => {
   // Written offsets must be pre-divided by the zoom so the rendered chrome
   // lands on the bubble instead of drifting toward the layer origin.
   expect(handle.style.left).toBe(`${0 / 0.6}px`);
-  expect(handle.style.top).toBe(`${100 / 0.6}px`);
+  const frame = wrapper.querySelector<HTMLElement>(".bubble-text-selection")!;
+  expect(parseFloat(handle.style.top) * .6).toBeCloseTo(100 + 60 * parseFloat(frame.style.top) / 100);
   const expectedCenter = Math.min(Math.max(80, (286 * 0.6) / 2 + 8), 1000 - (286 * 0.6) / 2 - 8);
   expect(Number.parseFloat(toolbar.style.left) * 0.6).toBeCloseTo(expectedCenter, 6);
 
@@ -854,12 +860,12 @@ test("zoomed-down chrome stays anchored on the bubble", async () => {
 
   // A large bubble (zoom 1) keeps raw un-divided offsets.
   vi.spyOn(wrapper, "getBoundingClientRect").mockReturnValue({
-    left: 40, top: 40, right: 540, bottom: 340, width: 500, height: 300,
+    left: 40, top: 40, right: 5040, bottom: 3040, width: 5000, height: 3000,
   } as DOMRect);
   wrapper.dispatchEvent(new FocusEvent("focus"));
   await vi.runAllTimersAsync();
-  expect(handle.style.left).toBe("40px");
-  expect(handle.style.top).toBe("40px");
+  expect(parseFloat(handle.style.left)).toBeCloseTo(40 + 5000 * parseFloat(frame.style.left) / 100);
+  expect(parseFloat(handle.style.top)).toBeCloseTo(40 + 3000 * parseFloat(frame.style.top) / 100);
   expect(toolbar.style.zoom).toBe("1");
 });
 
@@ -1247,6 +1253,96 @@ function mockCanvasRect(container: HTMLElement, zoom = 1): void {
   } as DOMRect);
 }
 
+test("tight selection encloses drawn text without changing layout or intercepting empty space", async () => {
+  const layout = { bx: 100, by: 100, bw: 200, bh: 180, iw: 1000, ih: 1200, manualMinHeightPx: 180 };
+  const { wrapper, bubble } = await renderOverlay("A", { targetFontSize: 24, layoutAdjustment: { ...layout } });
+  const calls = fillTextSpy.mock.calls.map(call => [...call]);
+  const selection = wrapper.querySelector<HTMLElement>(".bubble-text-selection")!;
+  expect(selection).not.toBeNull();
+  expect(parseFloat(selection.style.width)).toBeLessThan(100);
+  expect(parseFloat(selection.style.height)).toBeLessThan(100);
+  expect(wrapper.style.pointerEvents).toBe("none");
+  expect(selection.style.pointerEvents).toBe("auto");
+  selection.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 200, clientY: 200 }));
+  selection.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 200, clientY: 200 }));
+  expect(wrapper.dataset.selected).toBe("true");
+  expect(fillTextSpy.mock.calls).toEqual(calls);
+  expect(bubble.layoutAdjustment).toEqual(layout);
+});
+
+test("a completed selection click does not persist a legacy layout", async () => {
+  const changed = vi.fn();
+  const { wrapper, bubble, container } = await renderOverlay("A", {}, { onBubblesMutated: changed });
+  mockCanvasRect(container);
+  const selection = wrapper.querySelector<HTMLElement>(".bubble-text-selection")!;
+  const before = JSON.stringify(bubble);
+  const saved = localStorage.length;
+  firePointer(selection, "pointerdown", 200, 200);
+  firePointer(selection, "pointerup", 200, 200);
+  expect(JSON.stringify(bubble)).toBe(before);
+  expect(localStorage.length).toBe(saved);
+  expect(changed).not.toHaveBeenCalled();
+});
+
+test("rotated corner scaling near the bottom remains stable after redo and reopening", async () => {
+  const { container, wrapper, chromeRoot, bubble } = await renderOverlay("A", { targetFontSize: 24,
+    layoutAdjustment: { bx: 100, by: 1010, bw: 200, bh: 180, iw: 1000, ih: 1200, rotation: 180, manualMinHeightPx: 180 } });
+  mockCanvasRect(container);
+  const anchor = selectionSouthWest(wrapper, 180);
+  const handle = chromeRoot.querySelector<HTMLElement>('.action-handle--scale')!;
+  handle.setPointerCapture = vi.fn(); handle.releasePointerCapture = vi.fn(); handle.hasPointerCapture = () => true;
+  firePointer(handle, "pointerdown", 200, 200);
+  firePointer(handle, "pointermove", 140, 254);
+  firePointer(handle, "pointerup", 140, 254);
+  const saved = JSON.parse(JSON.stringify(bubble));
+  expect(saved.layoutAdjustment.by + saved.layoutAdjustment.bh).toBeLessThanOrEqual(1200);
+  expect(selectionSouthWest(wrapper, 180).x).toBeCloseTo(anchor.x, 5);
+  expect(selectionSouthWest(wrapper, 180).y).toBeCloseTo(anchor.y, 5);
+  undoManager.undo(); undoManager.redo();
+  expect(bubble.layoutAdjustment).toEqual(saved.layoutAdjustment);
+  const reopened = await renderOverlay("A", saved);
+  expect(reopened.wrapper.style.height).toBe(wrapper.style.height);
+});
+
+function selectionSouthWest(wrapper: HTMLElement, rotation = 0) {
+  const frame = wrapper.querySelector<HTMLElement>(".bubble-text-selection")!;
+  const width = parseFloat(wrapper.style.width) * 10, height = parseFloat(wrapper.style.height) * 12;
+  const x = parseFloat(frame.style.left) / 100 * width;
+  const y = (parseFloat(frame.style.top) + parseFloat(frame.style.height)) / 100 * height;
+  const angle = rotation * Math.PI / 180;
+  return { x: parseFloat(wrapper.style.left) * 10 + width / 2 + (x-width/2)*Math.cos(angle)-(y-height/2)*Math.sin(angle),
+    y: parseFloat(wrapper.style.top) * 12 + height / 2 + (x-width/2)*Math.sin(angle)+(y-height/2)*Math.cos(angle) };
+}
+
+test.each([0, 30])("tight selection corner scale fixes the opposite visible corner at %s degrees", async rotation => {
+  const { container, wrapper, chromeRoot } = await renderOverlay("A", { targetFontSize: 24,
+    layoutAdjustment: { bx: 100, by: 100, bw: 200, bh: 180, iw: 1000, ih: 1200, rotation, manualMinHeightPx: 180 } });
+  mockCanvasRect(container);
+  const initial = selectionSouthWest(wrapper, rotation);
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="ne"]')!;
+  handle.setPointerCapture = vi.fn(); handle.releasePointerCapture = vi.fn(); handle.hasPointerCapture = () => true;
+  firePointer(handle, "pointerdown", 200, 200);
+  firePointer(handle, "pointermove", 240, 170);
+  firePointer(handle, "pointerup", 240, 170);
+  const final = selectionSouthWest(wrapper, rotation);
+  expect(final.x).toBeCloseTo(initial.x, 5); expect(final.y).toBeCloseTo(initial.y, 5);
+  undoManager.undo();
+  expect(selectionSouthWest(wrapper, rotation)).toEqual(initial);
+});
+
+test.each(["pointerup", "pointercancel"])("tight selection returns after width drag %s including no movement", async ending => {
+  const { container, wrapper, chromeRoot } = await renderOverlay("A", { targetFontSize: 24,
+    layoutAdjustment: { bx: 100, by: 100, bw: 200, bh: 180, iw: 1000, ih: 1200, manualMinHeightPx: 180 } });
+  mockCanvasRect(container);
+  const selection = wrapper.querySelector<HTMLElement>(".bubble-text-selection")!;
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  handle.setPointerCapture = vi.fn(); handle.releasePointerCapture = vi.fn(); handle.hasPointerCapture = () => true;
+  firePointer(handle, "pointerdown", 200, 200);
+  expect(selection.style.width).toBe("100%");
+  firePointer(handle, ending, 200, 200);
+  expect(parseFloat(selection.style.width)).toBeLessThan(100);
+});
+
 test("scales the text with the corner resize handle", async () => {
   const { container, chromeRoot, bubble } = await renderOverlay("ปรับขนาด", {
     layoutAdjustment: { bx: 100, by: 100, bw: 200, bh: 360, iw: 1000, ih: 1200 },
@@ -1276,14 +1372,16 @@ test.each([{dx:80,dy:0},{dx:0,dy:-90},{dx:50,dy:-90},{dx:-50,dy:90},{dx:50,dy:-9
   (handle as unknown as {hasPointerCapture:()=>boolean}).hasPointerCapture=()=>true;
   const beforeW=parseFloat(wrapper.style.width)*10;
   const beforeH=parseFloat(wrapper.style.height)*12;
+  const beforeAnchor=selectionSouthWest(wrapper);
   firePointer(handle,'pointerdown',500,500);
   firePointer(handle,'pointermove',500+dx*.44,500+dy*.44);
   firePointer(handle,'pointerup',500+dx*.44,500+dy*.44);
   const final=bubble.layoutAdjustment!;
   expect(final.bw/beforeW).toBeCloseTo(final.bh/beforeH,5);
   expect(bubble.fontSizeMultiplier).toBeCloseTo(final.bw/beforeW,5);
-  expect(final.bx).toBeCloseTo(100,5);
-  expect(final.by+final.bh).toBeCloseTo(460,5);
+  const afterAnchor=selectionSouthWest(wrapper);
+  expect(afterAnchor.x).toBeCloseTo(beforeAnchor.x,5);
+  expect(afterAnchor.y).toBeCloseTo(beforeAnchor.y,5);
   expect(bubble.targetFontSize).toBeGreaterThan(0);
 });
 
@@ -1305,13 +1403,14 @@ test('corner scaling restores geometry and font on cancel and Undo/Redo', async 
   firePointer(handle,'pointerdown',500,500);
   firePointer(handle,'pointermove',550,410);
   firePointer(handle,'pointerup',550,410);
-  expect(bubble.layoutAdjustment).toMatchObject({bw:250,bh:450,by:10});
+  expect(bubble.layoutAdjustment).toMatchObject({bw:250,bh:450});
   const locked=bubble.targetFontSize;
+  const scaledLayout = { ...bubble.layoutAdjustment! };
   freshUndo.undo();
   expect(bubble.layoutAdjustment).toMatchObject({bw:200,bh:360,by:100});
   expect(bubble.targetFontSize).toBeUndefined();
   freshUndo.redo();
-  expect(bubble.layoutAdjustment).toMatchObject({bw:250,bh:450,by:10});
+  expect(bubble.layoutAdjustment).toEqual(scaledLayout);
   expect(bubble.targetFontSize).toBe(locked);
 });
 

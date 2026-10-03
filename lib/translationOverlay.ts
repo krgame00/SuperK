@@ -1,4 +1,5 @@
 import { undoManager } from "./undoManager";
+import { measureTextSelection, rotateLocalPoint, type SelectionRect } from "./textSelectionBounds";
 import { invalidateQualityReview, isReviewCurrent } from "./translation/qualityReview";
 import type { TranslationReview } from "./translation/qualityReview";
 import {
@@ -791,7 +792,8 @@ export const applyTranslationOverlay = async (
         menu.style.display = "none";
       });
       if (selectedBubbleWrapper && selectedBubbleWrapper !== wrapper) {
-        selectedBubbleWrapper.style.outline = "none";
+        const oldFrame = selectedBubbleWrapper.querySelector<HTMLElement>(".bubble-text-selection");
+        if (oldFrame) oldFrame.style.outline = "none";
         selectedBubbleWrapper.style.zIndex = "10";
         selectedBubbleWrapper.removeAttribute("data-selected");
         chromeControlsByWrapper.get(selectedBubbleWrapper)?.setVisible(false);
@@ -799,7 +801,8 @@ export const applyTranslationOverlay = async (
       selectedBubbleWrapper = wrapper;
       if (!wrapper) return;
 
-      wrapper.style.outline = "1.5px dashed #3b82f6";
+      const selectedFrame = wrapper.querySelector<HTMLElement>(".bubble-text-selection");
+      if (selectedFrame) selectedFrame.style.outline = "1.5px dashed #3b82f6";
       wrapper.style.zIndex = "30";
       wrapper.setAttribute("data-selected", "true");
       const controls = chromeControlsByWrapper.get(wrapper);
@@ -953,11 +956,26 @@ export const applyTranslationOverlay = async (
       const baseAriaLabel = `กล่องข้อความ: ${shortText}`;
       wrapper.setAttribute("aria-label", baseAriaLabel);
       wrapper.setAttribute("data-bubble-id", bubbleId);
-      wrapper.style.cssText = `position:absolute; box-sizing:border-box; cursor:grab; pointer-events:auto; touch-action:none; border-radius:4px; z-index:10; transform-origin:center center;`;
+      wrapper.style.cssText = `position:absolute; box-sizing:border-box; cursor:grab; pointer-events:none; touch-action:none; border-radius:4px; z-index:10; transform-origin:center center;`;
       
       const bCanvas = document.createElement("canvas");
       bCanvas.style.cssText = `display:block; width:100%; height:100%; pointer-events:none;`;
       wrapper.appendChild(bCanvas);
+      const selectionFrame = document.createElement("div");
+      selectionFrame.className = "bubble-text-selection";
+      selectionFrame.style.cssText = `position:absolute; pointer-events:${viewMode === "offscreen" ? "none" : "auto"}; cursor:grab; touch-action:none; border-radius:4px;`;
+      wrapper.appendChild(selectionFrame);
+      let textSelection: SelectionRect = { x: 0, y: 0, width: currentBw, height: currentBh };
+      let widthSelectionPreview = false;
+      const visibleSelection = (): SelectionRect => widthSelectionPreview
+        ? { x: 0, y: 0, width: currentBw, height: currentBh } : textSelection;
+      const updateSelectionFrame = () => {
+        const bounds = visibleSelection();
+        selectionFrame.style.left = `${bounds.x / currentBw * 100}%`;
+        selectionFrame.style.top = `${bounds.y / currentBh * 100}%`;
+        selectionFrame.style.width = `${bounds.width / currentBw * 100}%`;
+        selectionFrame.style.height = `${bounds.height / currentBh * 100}%`;
+      };
       const overflowNotice = document.createElement("span");
       overflowNotice.className = "bubble-layout-overflow";
       overflowNotice.setAttribute("role", "status");
@@ -1009,9 +1027,10 @@ export const applyTranslationOverlay = async (
         wrapper.style.width = `${(currentBw / iw) * 100}%`;
         wrapper.style.height = `${(currentBh / ih) * 100}%`;
         wrapper.style.transform = currentRotation ? `rotate(${currentRotation.toFixed(1)}deg)` : "";
+        updateSelectionFrame();
         chromeControlsByWrapper.get(wrapper)?.position();
       };
-      const renderBubble = () => {
+      const renderBubble = (availableHeight = Math.max(0, ih - currentBy)) => {
         const currentStyle = textStyleRef?.current || ts;
         const text = (b.t || b.translated || "").trim();
         const currentFontFam = resolveCanvasFontFamily(currentStyle.fontFamily);
@@ -1038,7 +1057,7 @@ export const applyTranslationOverlay = async (
             currentFontFam,
             !b.isInvalidBox,
             savedManualMinimum,
-            Math.max(0, ih - currentBy),
+            availableHeight,
             wordWrapLocale,
           );
           currentBh = fixedLayout.heightPx;
@@ -1103,7 +1122,11 @@ export const applyTranslationOverlay = async (
         const ctx = bCanvas.getContext("2d");
         if (!ctx) return;
         ctx.clearRect(0, 0, currentBw, currentBh);
-        if (!text) return;
+        if (!text) {
+          textSelection = { x: 0, y: 0, width: currentBw, height: currentBh };
+          updateBubbleFrame();
+          return;
+        }
         const resolvedStyle = resolveBubbleTextStyle(b, currentStyle);
         const textColor = resolvedStyle.textColor;
         const outlineColor = resolvedStyle.textOutline;
@@ -1180,13 +1203,15 @@ export const applyTranslationOverlay = async (
           ctx.fillStyle = fillPaint;
           ctx.fillText(l, currentBw / 2, yPos);
         });
+        textSelection = measureTextSelection(ctx, lines, fontSize, lineH, currentBw, currentBh);
+        updateBubbleFrame();
       };
 
       b.render = renderBubble;
 
       if (viewMode !== "offscreen") {
-        wrapper.addEventListener('mouseenter', () => { if (selectedBubbleWrapper !== wrapper) wrapper.style.outline = "1.5px dashed rgba(249,115,22,0.65)"; });
-      wrapper.addEventListener('mouseleave', () => { if (selectedBubbleWrapper !== wrapper) wrapper.style.outline = "none"; });
+        wrapper.addEventListener('mouseenter', () => { if (selectedBubbleWrapper !== wrapper) selectionFrame.style.outline = "1.5px dashed rgba(249,115,22,0.65)"; });
+      wrapper.addEventListener('mouseleave', () => { if (selectedBubbleWrapper !== wrapper) selectionFrame.style.outline = "none"; });
 
       let isDragging = false;
       let dragStartX = 0, dragStartY = 0;
@@ -1250,6 +1275,8 @@ export const applyTranslationOverlay = async (
           } catch {
             // ignore
           }
+          // A selection click must leave legacy layout and adaptive styles untouched.
+          if (currentBx === initialBx && currentBy === initialBy) return;
           // One final layout settles page-edge constraints for preview/export parity.
           renderBubble();
           saveAdjustment();
@@ -1784,6 +1811,14 @@ export const applyTranslationOverlay = async (
         let rMinimumWordWidth = 30;
         let widthDragDidMove = false;
         let handleDidMove = false;
+        let scaleAnchor = { x: 0, y: 0 };
+        const pinScaleAnchor = () => {
+          const point = rotateLocalPoint(textSelection.x, textSelection.y + textSelection.height,
+            currentBw, currentBh, currentRotation);
+          currentBx = scaleAnchor.x - point.x;
+          currentBy = scaleAnchor.y - point.y;
+          updateBubbleFrame();
+        };
 
         const widthGeometryForDrag = (dx: number): { width: number; left: number } => {
           const requestedWidth = Math.max(30, rInitBw + dx);
@@ -1812,6 +1847,9 @@ export const applyTranslationOverlay = async (
           rDragInitBy = currentBy;
           rInitBw = currentBw; rInitBh = currentBh;
           rInitRot = currentRotation;
+          const anchor = rotateLocalPoint(textSelection.x, textSelection.y + textSelection.height,
+            currentBw, currentBh, currentRotation);
+          scaleAnchor = { x: currentBx + anchor.x, y: currentBy + anchor.y };
           rInitFontMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1;
           rInitRenderedFontSize = (b.t || b.translated || '').trim() ? renderedFontSize : 0;
           rInitTargetFs = typeof b.targetFontSize === "number" && Number.isFinite(b.targetFontSize) && b.targetFontSize > 0
@@ -1822,6 +1860,8 @@ export const applyTranslationOverlay = async (
           rDragTargetFs = rInitTargetFs;
           rInitManualMinHeightPx = manualMinHeightPx;
           resizeDragActive = id === 'width' || id === 'scale';
+          widthSelectionPreview = id === 'width';
+          updateBubbleFrame();
 
           if (id === 'scale' && rInitRenderedFontSize > 0) {
             const currentStyle = textStyleRef?.current || ts;
@@ -1887,6 +1927,8 @@ export const applyTranslationOverlay = async (
         let pendingWidthPointer: { pointerId: number; clientX: number; clientY: number } | null = null;
 
         const applyPointerMove = (clientX: number, clientY: number): void => {
+          const previousScale = { bx: currentBx, by: currentBy, bw: currentBw, bh: currentBh,
+            font: b.fontSizeMultiplier, target: b.targetFontSize, minimum: manualMinHeightPx };
           const rect = tlContainer.getBoundingClientRect();
           const dx = (clientX - rStartX) * (iw / rect.width);
           const dy = (clientY - rStartY) * (ih / rect.height);
@@ -1930,7 +1972,10 @@ export const applyTranslationOverlay = async (
           } else if (id === 'scale') {
             // Project onto the corner diagonal: one scale controls both axes
             // and the font, including horizontal-only or vertical-only drags.
-            const requestedScale = 1 + (dx*rInitBw-dy*rInitBh)/(rInitBw*rInitBw+rInitBh*rInitBh);
+            const angle = rInitRot * Math.PI / 180;
+            const localDx = dx * Math.cos(angle) + dy * Math.sin(angle);
+            const localDy = -dx * Math.sin(angle) + dy * Math.cos(angle);
+            const requestedScale = 1 + (localDx*rInitBw-localDy*rInitBh)/(rInitBw*rInitBw+rInitBh*rInitBh);
             const minScale = Math.max(20/rInitBw,25/rInitBh,.4/rInitFontMult,
               rInitRenderedFontSize > 0 ? 8/rInitRenderedFontSize : 0);
             const scale = Math.max(minScale,Math.min(3/rInitFontMult,requestedScale));
@@ -1948,7 +1993,20 @@ export const applyTranslationOverlay = async (
             currentBy = rInitBy + dy;
           }
           if (id === "move" || id === "rotate") updateBubbleFrame();
-          else renderBubble();
+          else renderBubble(id === "scale" ? ih : undefined);
+          if (id === "scale") {
+            pinScaleAnchor();
+            // Resolve the anchor before page constraints. Keep the last valid
+            // scale when growth would cross an edge, rather than clipping its
+            // height differently on redo, reopening, or export.
+            if (currentBx < 0 || currentBy < 0 || currentBx + currentBw > iw || currentBy + currentBh > ih) {
+              currentBx = previousScale.bx; currentBy = previousScale.by;
+              currentBw = previousScale.bw; currentBh = previousScale.bh;
+              b.fontSizeMultiplier = previousScale.font; b.targetFontSize = previousScale.target;
+              manualMinHeightPx = previousScale.minimum;
+              renderBubble();
+            }
+          }
         };
 
         const cancelPendingWidthPreview = (): void => {
@@ -2006,8 +2064,13 @@ export const applyTranslationOverlay = async (
           } catch {
             // ignore
           }
-          if (id === "width" && !widthDragDidMove) {
+          const unchangedScale = id === "scale"
+            && Math.abs(currentBx - rInitBx) < .001 && Math.abs(currentBy - rInitBy) < .001
+            && Math.abs(currentBw - rInitBw) < .001 && Math.abs(currentBh - rInitBh) < .001
+            && (b.fontSizeMultiplier ?? 1) === rInitFontMult && b.targetFontSize === rInitTargetFs;
+          if ((id === "width" && !widthDragDidMove) || unchangedScale) {
             resizeDragActive = false;
+            widthSelectionPreview = false;
             currentBx = rInitBx;
             currentBy = rInitBy;
             currentBw = rInitBw;
@@ -2016,13 +2079,16 @@ export const applyTranslationOverlay = async (
             b.targetFontSize = rInitTargetFs;
             manualMinHeightPx = rInitManualMinHeightPx;
             floorBase = { w: rInitBw, h: rInitBh };
+            updateBubbleFrame();
             return;
           }
           const wasResizing = resizeDragActive;
           resizeDragActive = false;
+          widthSelectionPreview = false;
           if (id === "scale") manualMinHeightPx = currentBh;
           // Re-apply the frame floor once, now that the drag has ended.
           if (wasResizing || id === "move") renderBubble();
+          if (id === "scale") pinScaleAnchor();
           saveAdjustment();
 
           const finalBx = currentBx, finalBy = currentBy, finalBw = currentBw, finalBh = currentBh, finalRot = currentRotation;
@@ -2087,6 +2153,7 @@ export const applyTranslationOverlay = async (
             // ignore
           }
           resizeDragActive = false;
+          widthSelectionPreview = false;
           currentBx = rInitBx;
           currentBy = rInitBy;
           currentBw = rInitBw;
@@ -2390,18 +2457,19 @@ export const applyTranslationOverlay = async (
 
       const positionChromeControls = () => {
         if (wrapper.style.display === "none") return;
+        const selection = visibleSelection();
+        const localPoints: Record<string, [number, number]> = {
+          nw: [selection.x, selection.y],
+          ne: [selection.x + selection.width, selection.y],
+          e: [selection.x + selection.width, selection.y + selection.height / 2],
+          sw: [selection.x, selection.y + selection.height],
+        };
 
         if (!chromeRoot) {
-          const localPoints: Record<string, [string, string]> = {
-            nw: ["0", "0"],
-            ne: ["100%", "0"],
-            e: ["100%", "50%"],
-            sw: ["0", "100%"],
-          };
           chromeHandles.forEach((handle) => {
             const [left, top] = localPoints[handle.dataset.handlePosition ?? "nw"];
-            handle.style.left = left;
-            handle.style.top = top;
+            handle.style.left = `${left / currentBw * 100}%`;
+            handle.style.top = `${top / currentBh * 100}%`;
           });
           const wrapperChromeScale = Math.max(
             0.6,
@@ -2411,8 +2479,8 @@ export const applyTranslationOverlay = async (
           chromeHandles.forEach((handle) => {
             handle.style.zoom = String(wrapperChromeScale);
           });
-          toolbar.style.left = "50%";
-          toolbar.style.top = "-10px";
+          toolbar.style.left = `${(selection.x + selection.width / 2) / currentBw * 100}%`;
+          toolbar.style.top = `calc(${selection.y / currentBh * 100}% - 10px)`;
           toolbar.style.transform = "translate(-50%, -100%)";
           activeEditorPosition?.();
           return;
@@ -2420,12 +2488,23 @@ export const applyTranslationOverlay = async (
 
         const rootRect = chromeRoot.getBoundingClientRect();
         const bubbleRect = wrapper.getBoundingClientRect();
-        const left = bubbleRect.left - rootRect.left;
-        const top = bubbleRect.top - rootRect.top;
-        const right = bubbleRect.right - rootRect.left;
-        const bottom = bubbleRect.bottom - rootRect.top;
-        const centerX = left + bubbleRect.width / 2;
-        const centerY = top + bubbleRect.height / 2;
+        const stageRect = tlContainer.getBoundingClientRect();
+        const scaleX = stageRect.width > 0 ? stageRect.width / iw : bubbleRect.width / currentBw;
+        const scaleY = stageRect.height > 0 ? stageRect.height / ih : bubbleRect.height / currentBh;
+        const originX = stageRect.width > 0 ? stageRect.left + currentBx * scaleX : bubbleRect.left;
+        const originY = stageRect.height > 0 ? stageRect.top + currentBy * scaleY : bubbleRect.top;
+        const pointInChrome = (x: number, y: number) => {
+          const point = rotateLocalPoint(x, y, currentBw, currentBh, currentRotation);
+          return { x: originX - rootRect.left + point.x * scaleX, y: originY - rootRect.top + point.y * scaleY };
+        };
+        const corners = [localPoints.nw, localPoints.ne, localPoints.sw,
+          [selection.x + selection.width, selection.y + selection.height]];
+        const points = corners.map(([x, y]) => pointInChrome(x, y));
+        const left = Math.min(...points.map(point => point.x));
+        const top = Math.min(...points.map(point => point.y));
+        const right = Math.max(...points.map(point => point.x));
+        const bottom = Math.max(...points.map(point => point.y));
+        const centerX = (left + right) / 2;
 
         // Chrome (toolbar + handles) must not dwarf small bubbles: shrink it
         // as the bubble shrinks, floored so buttons stay grabbable. `zoom`
@@ -2435,7 +2514,7 @@ export const applyTranslationOverlay = async (
         // to stay anchored on the bubble.
         const chromeScale = Math.max(
           0.6,
-          Math.min(1, bubbleRect.width / 220, bubbleRect.height / 100),
+          Math.min(1, (right - left) / 220, (bottom - top) / 100),
         );
         // offsetWidth/offsetHeight already include the previous sync's zoom.
         const prevChromeZoom = Number(toolbar.style.zoom) || 1;
@@ -2459,12 +2538,8 @@ export const applyTranslationOverlay = async (
         toolbar.style.transform = placeBelow ? "translate(-50%, 0)" : "translate(-50%, -100%)";
 
         chromeHandles.forEach((handle) => {
-          const pos = handle.dataset.handlePosition;
-          let x = left;
-          let y = top;
-          if (pos === "ne") x = right;
-          else if (pos === "e") { x = right; y = centerY; }
-          else if (pos === "sw") y = bottom;
+          const local = localPoints[handle.dataset.handlePosition ?? "nw"];
+          const { x, y } = pointInChrome(...local);
           handle.style.left = `${x / chromeScale}px`;
           handle.style.top = `${y / chromeScale}px`;
         });

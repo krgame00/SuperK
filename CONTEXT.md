@@ -4,6 +4,14 @@ This context defines the image regions, visual styles, desktop boundaries, and r
 
 ## Language
 
+**Text layout area**:
+The area in which translated text is arranged into lines. It may include empty space around the visible letters and is distinct from the text's selection frame.
+_Avoid_: Visible text bounds, selection frame, removal mask
+
+**Text selection frame**:
+The visible and clickable boundary used to select and manipulate translated lettering, enclosing its visible letters, outline and shadow with a small margin. Selecting this frame does not change the text's size, placement or line breaks; empty space elsewhere in the text layout area is not part of this selection boundary.
+_Avoid_: Text layout area, cleaning region, OCR rectangle
+
 **Page awaiting review**:
 A manga page with uncertain cleaning or translation results that requires a person's confirmation before export.
 _Avoid_: Failed page, approved page
