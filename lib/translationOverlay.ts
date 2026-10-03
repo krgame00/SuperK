@@ -1,4 +1,6 @@
 import { undoManager } from "./undoManager";
+import { invalidateQualityReview, isReviewCurrent } from "./translation/qualityReview";
+import type { TranslationReview } from "./translation/qualityReview";
 import {
   recomputeAdaptiveReadableOnLayoutCommit,
   resolveBubbleTextStyle,
@@ -83,6 +85,7 @@ export interface TranslatedBubble {
   t?: string;
   translated?: string;
   original_text?: string;
+  translationReview?: TranslationReview;
   /** bounding box [ymin, xmin, ymax, xmax] in 0-1000 scale */
   box?: number[];
   isManual?: boolean;
@@ -778,6 +781,7 @@ export const applyTranslationOverlay = async (
       setVisible: (visible: boolean) => void;
     };
     const chromeControlsByWrapper = new WeakMap<HTMLElement, BubbleChromeControls>();
+    const cancelDragPreviews: Array<() => void> = [];
 
     let fallbackY2 = 10;
 
@@ -990,6 +994,23 @@ export const applyTranslationOverlay = async (
         }
       }
 
+      let renderedFontSize = 0;
+      let textLayoutOverflow = false;
+      // Moving/rotating changes placement only. Reuse the existing glyph bitmap.
+      const updateBubbleFrame = () => {
+        layoutOverflow = textLayoutOverflow || currentBx < 0 || currentBx + currentBw > iw ||
+          currentBy < 0 || currentBy + currentBh > ih;
+        wrapper.dataset.layoutOverflow = layoutOverflow ? "true" : "false";
+        overflowNotice.hidden = !layoutOverflow;
+        wrapper.title = layoutOverflow ? "ข้อความล้นพื้นที่หน้า กรุณาขยายพื้นที่หรือแก้ข้อความ" : "";
+        wrapper.setAttribute("aria-label", layoutOverflow ? `${baseAriaLabel}; ข้อความล้นพื้นที่หน้า` : baseAriaLabel);
+        wrapper.style.left = `${(currentBx / iw) * 100}%`;
+        wrapper.style.top = `${(currentBy / ih) * 100}%`;
+        wrapper.style.width = `${(currentBw / iw) * 100}%`;
+        wrapper.style.height = `${(currentBh / ih) * 100}%`;
+        wrapper.style.transform = currentRotation ? `rotate(${currentRotation.toFixed(1)}deg)` : "";
+        chromeControlsByWrapper.get(wrapper)?.position();
+      };
       const renderBubble = () => {
         const currentStyle = textStyleRef?.current || ts;
         const text = (b.t || b.translated || "").trim();
@@ -1075,30 +1096,8 @@ export const applyTranslationOverlay = async (
             lockedFs, wordWrapLocale,
           );
         }
-        layoutOverflow = fixedLayout
-          ? fixedLayout.overflow
-            || currentBx < 0
-            || currentBx + currentBw > iw
-            || currentBy < 0
-            || currentBy + currentBh > ih
-          : Boolean(text && !legacyFit?.fits)
-            || currentBx < 0
-            || currentBx + currentBw > iw
-            || currentBy < 0
-            || currentBy + currentBh > ih;
-        wrapper.dataset.layoutOverflow = layoutOverflow ? "true" : "false";
-        overflowNotice.hidden = !layoutOverflow;
-        wrapper.title = layoutOverflow ? "ข้อความล้นพื้นที่หน้า กรุณาขยายพื้นที่หรือแก้ข้อความ" : "";
-        wrapper.setAttribute(
-          "aria-label",
-          layoutOverflow ? `${baseAriaLabel}; ข้อความล้นพื้นที่หน้า` : baseAriaLabel,
-        );
-
-        wrapper.style.left = `${(currentBx / iw) * 100}%`;
-        wrapper.style.top = `${(currentBy / ih) * 100}%`;
-        wrapper.style.width = `${(currentBw / iw) * 100}%`;
-        wrapper.style.height = `${(currentBh / ih) * 100}%`;
-        wrapper.style.transform = currentRotation ? `rotate(${currentRotation.toFixed(1)}deg)` : "";
+        textLayoutOverflow = fixedLayout ? fixedLayout.overflow : Boolean(text && !legacyFit?.fits);
+        updateBubbleFrame();
         bCanvas.width = Math.round(currentBw);
         bCanvas.height = Math.round(currentBh);
         const ctx = bCanvas.getContext("2d");
@@ -1129,6 +1128,7 @@ export const applyTranslationOverlay = async (
               wordWrapLocale,
             );
         const fontSize = fit.fontSize;
+        renderedFontSize = fontSize;
         const lines = fit.lines;
         const lineH = Math.min(fontSize * 1.30, currentBh / Math.max(1, lines.length));
 
@@ -1180,7 +1180,6 @@ export const applyTranslationOverlay = async (
           ctx.fillStyle = fillPaint;
           ctx.fillText(l, currentBw / 2, yPos);
         });
-        chromeControlsByWrapper.get(wrapper)?.position();
       };
 
       b.render = renderBubble;
@@ -1192,6 +1191,22 @@ export const applyTranslationOverlay = async (
       let isDragging = false;
       let dragStartX = 0, dragStartY = 0;
       let initialBx = 0, initialBy = 0;
+      let initialBw = 0, initialBh = 0;
+      let pendingMoveFrame: number | null = null;
+      let pendingMovePointer: {clientX:number;clientY:number} | null = null;
+      const cancelMovePreview = () => {
+        if (pendingMoveFrame !== null) window.cancelAnimationFrame(pendingMoveFrame);
+        pendingMoveFrame = null;
+        pendingMovePointer = null;
+      };
+      cancelDragPreviews.push(cancelMovePreview);
+      const applyMovePosition = (clientX:number,clientY:number) => {
+        const rect = tlContainer.getBoundingClientRect();
+        if (!(rect.width > 0 && rect.height > 0)) return;
+        currentBx = initialBx + (clientX - dragStartX) * (iw / rect.width);
+        currentBy = initialBy + (clientY - dragStartY) * (ih / rect.height);
+        updateBubbleFrame();
+      };
 
       wrapper.addEventListener('pointerdown', (e) => {
         const target = e.target as HTMLElement;
@@ -1203,6 +1218,8 @@ export const applyTranslationOverlay = async (
         dragStartY = e.clientY;
         initialBx = currentBx;
         initialBy = currentBy;
+        initialBw = currentBw;
+        initialBh = currentBh;
         try {
           wrapper.setPointerCapture(e.pointerId);
         } catch {
@@ -1213,35 +1230,47 @@ export const applyTranslationOverlay = async (
       wrapper.addEventListener('pointermove', (e) => {
         if (!isDragging) return;
         e.stopPropagation();
-        const rect = tlContainer.getBoundingClientRect();
-        currentBx = initialBx + (e.clientX - dragStartX) * (iw / rect.width);
-        currentBy = initialBy + (e.clientY - dragStartY) * (ih / rect.height);
-        renderBubble();
+        pendingMovePointer = {clientX:e.clientX,clientY:e.clientY};
+        if (pendingMoveFrame === null) pendingMoveFrame = window.requestAnimationFrame(() => {
+          pendingMoveFrame = null;
+          const latest = pendingMovePointer;
+          pendingMovePointer = null;
+          if (latest && isDragging && !isStaleOverlay()) applyMovePosition(latest.clientX,latest.clientY);
+        });
       });
 
       wrapper.addEventListener('pointerup', (e) => {
         if (isDragging) {
           e.stopPropagation();
+          cancelMovePreview();
+          applyMovePosition(e.clientX,e.clientY);
           isDragging = false;
           try {
             wrapper.releasePointerCapture(e.pointerId);
           } catch {
             // ignore
           }
+          // One final layout settles page-edge constraints for preview/export parity.
+          renderBubble();
           saveAdjustment();
           if (currentBx !== initialBx || currentBy !== initialBy) {
-            const finalBx = currentBx, finalBy = currentBy;
+            const finalBx = currentBx, finalBy = currentBy, finalBw = currentBw, finalBh = currentBh;
+            const startBx = initialBx, startBy = initialBy, startBw = initialBw, startBh = initialBh;
             undoManager.push({
               label: "ย้ายตำแหน่งกล่องข้อความ",
               undo: () => {
-                currentBx = initialBx;
-                currentBy = initialBy;
+                currentBx = startBx;
+                currentBy = startBy;
+                currentBw = startBw;
+                currentBh = startBh;
                 renderBubble();
                 saveAdjustment();
               },
               redo: () => {
                 currentBx = finalBx;
                 currentBy = finalBy;
+                currentBw = finalBw;
+                currentBh = finalBh;
                 renderBubble();
                 saveAdjustment();
               },
@@ -1253,11 +1282,17 @@ export const applyTranslationOverlay = async (
       wrapper.addEventListener('pointercancel', (e) => {
         if (isDragging) {
           isDragging = false;
+          cancelMovePreview();
           try {
             wrapper.releasePointerCapture(e.pointerId);
           } catch {
             // ignore
           }
+          currentBx = initialBx;
+          currentBy = initialBy;
+          currentBw = initialBw;
+          currentBh = initialBh;
+          renderBubble();
           saveAdjustment();
         }
       });
@@ -1267,7 +1302,12 @@ export const applyTranslationOverlay = async (
         const editorHost = chromeRoot ?? tlContainer;
         editorHost.querySelectorAll("[data-translation-editor]").forEach((el) => el.remove());
 
-        const openingText = (b.t || b.translated || "").trim();
+        const openingText = b.t || b.translated || "";
+        const openingReview = b.translationReview ? { ...b.translationReview } : undefined;
+        const restoreReview = (review: TranslationReview | undefined) => {
+          if (review) b.translationReview = { ...review };
+          else delete b.translationReview;
+        };
         const editor = document.createElement("div");
         editor.setAttribute("data-translation-editor", "true");
         editor.setAttribute("data-translation-chrome", "true");
@@ -1330,23 +1370,29 @@ export const applyTranslationOverlay = async (
           const finalVal = textarea.value.trim();
           b.t = finalVal;
           b.translated = finalVal;
+          invalidateQualityReview(b);
+          const finalReview = b.translationReview ? { ...b.translationReview } : undefined;
           renderBubble();
           saveAdjustment();
-          if (finalVal !== openingText) {
+          if (finalVal !== openingText || JSON.stringify(finalReview) !== JSON.stringify(openingReview)) {
             onBubblesMutated?.();
             undoManager.push({
               label: "แก้ไขข้อความ",
               undo: () => {
                 b.t = openingText;
                 b.translated = openingText;
+                restoreReview(openingReview);
                 renderBubble();
                 saveAdjustment();
+                onBubblesMutated?.();
               },
               redo: () => {
                 b.t = finalVal;
                 b.translated = finalVal;
+                restoreReview(finalReview);
                 renderBubble();
                 saveAdjustment();
+                onBubblesMutated?.();
               },
             });
           }
@@ -1358,9 +1404,15 @@ export const applyTranslationOverlay = async (
         const cancel = () => {
           if (isCommitted) return;
           isCommitted = true;
+          const discardedDraft = (b.t || b.translated || "") !== openingText ||
+            JSON.stringify(b.translationReview) !== JSON.stringify(openingReview);
           b.t = openingText;
           b.translated = openingText;
+          restoreReview(openingReview);
           renderBubble();
+          if (discardedDraft) {
+            saveAdjustment();
+          }
           activeEditorPosition = null;
           editor.remove();
           wrapper.focus();
@@ -1388,6 +1440,88 @@ export const applyTranslationOverlay = async (
         editorActions.appendChild(createEditorAction("ยกเลิกการแก้ไข", "×", cancel));
         editorActions.appendChild(createEditorAction("บันทึกข้อความ", "✓", commit, true));
 
+        const reviewPanel = document.createElement("div");
+        reviewPanel.style.cssText = "display:grid; gap:6px; color:#e4e4e7; font-size:13px; line-height:1.45; overflow-wrap:anywhere; max-height:240px; overflow-y:auto;";
+        editor.insertBefore(reviewPanel, textarea);
+        const source = document.createElement("div");
+        source.setAttribute("data-review-source", "true");
+        const reviewStatus = document.createElement("div");
+        reviewStatus.setAttribute("role", "status");
+        const suggestion = document.createElement("div");
+        const reviewActions = document.createElement("div");
+        reviewActions.style.cssText = "display:flex; flex-wrap:wrap; gap:6px;";
+        reviewPanel.append(source, reviewStatus, suggestion, reviewActions);
+        const reviewLabels: Record<TranslationReview["status"], string> = {
+          ok: "ตรวจแล้ว", suggested: "มีคำแปลที่แนะนำ", needs_review: "ควรตรวจสอบคำแปล",
+          accepted: "ใช้คำแปลที่แนะนำแล้ว", dismissed: "เก็บคำแปลปัจจุบันแล้ว",
+          unavailable: "ยังตรวจสอบคำแปลไม่ได้", stale: "ข้อความเปลี่ยนแล้ว ต้องตรวจสอบใหม่",
+        };
+        const reviewAction = (name: string, label: string, onClick: () => void) => {
+          const button = createEditorAction(label, label, onClick);
+          button.setAttribute("data-review-action", name);
+          button.style.width = "auto";
+          button.style.padding = "0 8px";
+          button.style.fontSize = "12px";
+          reviewActions.appendChild(button);
+          return button;
+        };
+        const updateReviewPanel = () => {
+          const review = b.translationReview;
+          reviewPanel.hidden = !review && !b.original_text;
+          reviewPanel.style.display = reviewPanel.hidden ? "none" : "grid";
+          source.textContent = b.original_text ? `ต้นฉบับ: ${b.original_text}` : "ไม่มีข้อความต้นฉบับ";
+          reviewStatus.textContent = review ? `${reviewLabels[review.status]}${review.reason ? `: ${review.reason}` : ""}` : "";
+          suggestion.textContent = review?.suggestion ? `คำแปลที่แนะนำ: ${review.suggestion}` : "";
+          const current = isReviewCurrent(b) && review?.status !== "stale";
+          acceptReview.hidden = !review?.suggestion;
+          acceptReview.disabled = !current || review?.status !== "suggested";
+          dismissReview.hidden = !review;
+          dismissReview.disabled = !current || !["suggested", "needs_review", "unavailable"].includes(review?.status ?? "");
+          restoreOriginal.hidden = review?.status !== "accepted" || review.originalTranslation === undefined;
+          restoreOriginal.disabled = !current;
+          for (const button of [acceptReview, dismissReview, restoreOriginal]) {
+            button.style.display = button.hidden ? "none" : "flex";
+            button.style.opacity = button.disabled ? "0.5" : "1";
+            button.style.cursor = button.disabled ? "default" : "pointer";
+          }
+        };
+        const checkReviewSnapshot = () => {
+          invalidateQualityReview(b);
+          updateReviewPanel();
+          return isReviewCurrent(b) && b.translationReview?.status !== "stale";
+        };
+        const updateReviewText = (value: string) => {
+          textarea.value = value;
+          b.t = value;
+          b.translated = value;
+          renderBubble();
+          updateReviewPanel();
+          autoGrowEditor();
+        };
+        const acceptReview = reviewAction("accept", "ใช้คำแปลที่แนะนำ", () => {
+          if (!checkReviewSnapshot()) return;
+          const review = b.translationReview;
+          if (review?.status !== "suggested" || !review.suggestion) return;
+          b.translationReview = { ...review, status: "accepted", reviewedText: review.suggestion, originalTranslation: review.originalTranslation ?? (b.t || b.translated || "") };
+          updateReviewText(review.suggestion);
+        });
+        const dismissReview = reviewAction("dismiss", "เก็บคำแปลปัจจุบัน", () => {
+          if (!checkReviewSnapshot()) return;
+          const review = b.translationReview;
+          if (!review || !["suggested", "needs_review", "unavailable"].includes(review.status)) return;
+          b.translationReview = { ...review, status: "dismissed" };
+          updateReviewPanel();
+        });
+        const restoreOriginal = reviewAction("restore", "คืนคำแปลก่อนหน้า", () => {
+          if (!checkReviewSnapshot()) return;
+          const review = b.translationReview;
+          if (review?.status !== "accepted" || review.originalTranslation === undefined) return;
+          b.translationReview = { ...review, status: "suggested", reviewedText: review.originalTranslation };
+          updateReviewText(review.originalTranslation);
+        });
+        invalidateQualityReview(b);
+        updateReviewPanel();
+
         const autoGrowEditor = () => {
           textarea.style.height = "auto";
           textarea.style.height = `${Math.min(160, Math.max(48, textarea.scrollHeight || 48))}px`;
@@ -1397,6 +1531,8 @@ export const applyTranslationOverlay = async (
         textarea.addEventListener("input", () => {
           b.t = textarea.value;
           b.translated = textarea.value;
+          invalidateQualityReview(b);
+          updateReviewPanel();
           renderBubble();
           autoGrowEditor();
         });
@@ -1641,11 +1777,13 @@ export const applyTranslationOverlay = async (
         let rStartAngle = 0;
         let rInitRot = 0;
         let rInitFontMult = 1;
+        let rInitRenderedFontSize = 0;
         let rInitTargetFs: number | undefined = undefined;
         let rDragTargetFs: number | undefined = undefined;
         let rInitManualMinHeightPx: number | undefined = undefined;
         let rMinimumWordWidth = 30;
         let widthDragDidMove = false;
+        let handleDidMove = false;
 
         const widthGeometryForDrag = (dx: number): { width: number; left: number } => {
           const requestedWidth = Math.max(30, rInitBw + dx);
@@ -1668,12 +1806,14 @@ export const applyTranslationOverlay = async (
 
         handle.addEventListener('pointerdown', (e) => {
           widthDragDidMove = false;
+          handleDidMove = false;
           rStartX = e.clientX; rStartY = e.clientY;
           rInitBx = currentBx; rInitBy = currentBy;
           rDragInitBy = currentBy;
           rInitBw = currentBw; rInitBh = currentBh;
           rInitRot = currentRotation;
           rInitFontMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1;
+          rInitRenderedFontSize = (b.t || b.translated || '').trim() ? renderedFontSize : 0;
           rInitTargetFs = typeof b.targetFontSize === "number" && Number.isFinite(b.targetFontSize) && b.targetFontSize > 0
             ? b.targetFontSize
             : (typeof adj?.targetFontSize === "number" && Number.isFinite(adj.targetFontSize) && adj.targetFontSize > 0
@@ -1682,6 +1822,11 @@ export const applyTranslationOverlay = async (
           rDragTargetFs = rInitTargetFs;
           rInitManualMinHeightPx = manualMinHeightPx;
           resizeDragActive = id === 'width' || id === 'scale';
+
+          if (id === 'scale' && rInitRenderedFontSize > 0) {
+            const currentStyle = textStyleRef?.current || ts;
+            rDragTargetFs = rInitRenderedFontSize / ((currentStyle.fontSizeMultiplier || 1) * rInitFontMult);
+          }
 
           if (id === 'width') {
             if (currentBy < 0 || currentBy + currentBh > ih) {
@@ -1783,20 +1928,27 @@ export const applyTranslationOverlay = async (
               currentBy = rDragInitBy;
             }
           } else if (id === 'scale') {
-            currentBw = Math.max(20, rInitBw + dx);
-            const newBh = Math.max(20, rInitBh - dy);
+            // Project onto the corner diagonal: one scale controls both axes
+            // and the font, including horizontal-only or vertical-only drags.
+            const requestedScale = 1 + (dx*rInitBw-dy*rInitBh)/(rInitBw*rInitBw+rInitBh*rInitBh);
+            const minScale = Math.max(20/rInitBw,25/rInitBh,.4/rInitFontMult,
+              rInitRenderedFontSize > 0 ? 8/rInitRenderedFontSize : 0);
+            const scale = Math.max(minScale,Math.min(3/rInitFontMult,requestedScale));
+            currentBw = rInitBw * scale;
+            const newBh = rInitBh * scale;
             currentBy = rInitBy + (rInitBh - newBh);
             currentBh = newBh;
-            // Corner-drag scales the text with the frame (same 0.4-3.0 clamp
-            // as the A+/A- buttons), so the whole bubble zooms as one unit.
-            const heightRatio = newBh / rInitBh;
-            b.fontSizeMultiplier = Math.max(0.4, Math.min(3.0, rInitFontMult * heightRatio));
+            b.fontSizeMultiplier = rInitFontMult * scale;
+            if (Math.abs(scale-1) > .000001 && typeof rDragTargetFs === 'number') {
+              b.targetFontSize = rDragTargetFs;
+            }
             manualMinHeightPx = currentBh;
           } else if (id === 'move') {
             currentBx = rInitBx + dx;
             currentBy = rInitBy + dy;
           }
-          renderBubble();
+          if (id === "move" || id === "rotate") updateBubbleFrame();
+          else renderBubble();
         };
 
         const cancelPendingWidthPreview = (): void => {
@@ -1806,6 +1958,7 @@ export const applyTranslationOverlay = async (
           }
           pendingWidthPointer = null;
         };
+        cancelDragPreviews.push(cancelPendingWidthPreview);
 
         const flushPendingWidthPreview = (pointer?: { pointerId: number; clientX: number; clientY: number }): void => {
           if (pendingWidthPreviewFrame !== null) {
@@ -1821,23 +1974,22 @@ export const applyTranslationOverlay = async (
 
         handle.addEventListener('pointermove', (e) => {
           if (!handle.hasPointerCapture(e.pointerId)) return;
-          if (id !== "width") {
-            applyPointerMove(e.clientX, e.clientY);
-            return;
+          if (e.clientX === rStartX && e.clientY === rStartY && !handleDidMove) return;
+          handleDidMove = true;
+          if (id === "width") {
+            const rect = tlContainer.getBoundingClientRect();
+            const dx = (e.clientX - rStartX) * (iw / rect.width);
+            const widthGeometry = widthGeometryForDrag(dx);
+            if (Math.abs(widthGeometry.width - rInitBw) < 0.001 && Math.abs(widthGeometry.left - rInitBx) < 0.001) return;
+            widthDragDidMove = true;
           }
-
-          const rect = tlContainer.getBoundingClientRect();
-          const dx = (e.clientX - rStartX) * (iw / rect.width);
-          const widthGeometry = widthGeometryForDrag(dx);
-          if (Math.abs(widthGeometry.width - rInitBw) < 0.001 && Math.abs(widthGeometry.left - rInitBx) < 0.001) return;
-          widthDragDidMove = true;
           pendingWidthPointer = { pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY };
           if (pendingWidthPreviewFrame === null) {
             pendingWidthPreviewFrame = window.requestAnimationFrame(() => {
               pendingWidthPreviewFrame = null;
               const latest = pendingWidthPointer;
               pendingWidthPointer = null;
-              if (latest && handle.hasPointerCapture(latest.pointerId)) {
+              if (latest && !isStaleOverlay() && handle.hasPointerCapture(latest.pointerId)) {
                 applyPointerMove(latest.clientX, latest.clientY);
               }
             });
@@ -1846,7 +1998,7 @@ export const applyTranslationOverlay = async (
 
         handle.addEventListener('pointerup', (e) => {
           e.stopPropagation();
-          if (id === "width" && widthDragDidMove) {
+          if (id === "width" ? widthDragDidMove : handleDidMove || e.clientX !== rStartX || e.clientY !== rStartY) {
             flushPendingWidthPreview({ pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY });
           }
           try {
@@ -1869,9 +2021,9 @@ export const applyTranslationOverlay = async (
           const wasResizing = resizeDragActive;
           resizeDragActive = false;
           if (id === "scale") manualMinHeightPx = currentBh;
-          saveAdjustment();
           // Re-apply the frame floor once, now that the drag has ended.
-          if (wasResizing) renderBubble();
+          if (wasResizing || id === "move") renderBubble();
+          saveAdjustment();
 
           const finalBx = currentBx, finalBy = currentBy, finalBw = currentBw, finalBh = currentBh, finalRot = currentRotation;
           const finalFontMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
@@ -2085,6 +2237,8 @@ export const applyTranslationOverlay = async (
               fallbackReason: undefined,
               nearbySourceId: undefined,
             };
+            shadowBtn.setAttribute("aria-label", shadowLabel());
+            shadowBtn.title = shadowLabel();
             onBubblesMutated?.();
             renderBubble();
             saveAdjustment();
@@ -2092,20 +2246,30 @@ export const applyTranslationOverlay = async (
         }
       );
 
+      const shadowLabel = () => {
+        const profile = b.styleProfile;
+        if (profile?.source === "manual" || profile?.ownershipMode === "manual" ||
+            profile?.ownershipMode === "source_faithful") {
+          return resolveBubbleTextStyle(b, textStyleRef?.current || ts).shadow ? "เงา: มาตรฐาน" : "เงา: ปิด";
+        }
+        return resolveBubbleTextStyle(b, textStyleRef?.current || ts).shadow ? "เงา: Auto (บาง)" : "เงา: Auto (ปิด)";
+      };
       const shadowBtn = createToolBtn(
-        b.styleProfile?.manualShadowMode === "off" ? "เงา: ปิด" : "เงา: มาตรฐาน",
+        shadowLabel(),
         `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="6"/><path d="M14 14l6 6"/><path d="M15 7a6 6 0 0 1 2 8"/></svg>`,
         () => {
           const existing = b.styleProfile;
           const resolved = resolveBubbleTextStyle(b, textStyleRef?.current || ts);
-          const nextMode = existing?.manualShadowMode === "off" ? "standard" : "off";
+          const nextMode = resolved.shadow ? "off" : "standard";
+          const alreadyManual = existing?.source === "manual" || existing?.ownershipMode === "manual";
           b.styleProfile = {
             ...(existing ?? {}),
-            fill: existing?.fill ?? resolved.textColor,
-            outline: existing?.outline ?? resolved.textOutline,
-            hasOutline: existing?.hasOutline ?? resolved.hasOutline,
-            outlineWidth: existing?.outlineWidth ?? resolved.outlineWidth,
-            outlineWidthRatio: existing?.outlineWidthRatio ?? resolved.outlineWidthRatio,
+            fill: alreadyManual ? existing!.fill : resolved.textColor,
+            outline: alreadyManual ? existing!.outline : resolved.textOutline,
+            hasOutline: alreadyManual ? existing!.hasOutline : resolved.hasOutline,
+            outlineWidth: alreadyManual ? existing!.outlineWidth : resolved.outlineWidth,
+            outlineWidthRatio: alreadyManual ? existing!.outlineWidthRatio : resolved.outlineWidthRatio,
+            fillGradient: alreadyManual ? existing!.fillGradient : resolved.fillGradient,
             opacity: existing?.opacity ?? resolved.opacity,
             fillConfidence: existing?.fillConfidence ?? 1.0,
             outlineConfidence: existing?.outlineConfidence ?? 1.0,
@@ -2139,9 +2303,9 @@ export const applyTranslationOverlay = async (
             }
           }
           b.styleProfile = recovered;
-          shadowBtn.setAttribute("aria-label", "เงา: มาตรฐาน");
-          shadowBtn.title = "เงา: มาตรฐาน";
           applyNearbyStyleFallbacks(real);
+          shadowBtn.setAttribute("aria-label", shadowLabel());
+          shadowBtn.title = shadowLabel();
           onBubblesMutated?.();
           renderBubble();
           saveAdjustment();
@@ -2371,6 +2535,7 @@ export const applyTranslationOverlay = async (
     };
     const handleDocumentKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") setSelectedBubble(null); };
     const detachDocumentListeners = () => {
+      for (const cancelPreview of cancelDragPreviews) cancelPreview();
       document.removeEventListener('pointerdown', handleDocumentPointerDown);
       document.removeEventListener('keydown', handleDocumentKeyDown);
       window.removeEventListener('resize', handleViewportChange);

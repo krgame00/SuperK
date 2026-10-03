@@ -57,10 +57,10 @@ describe("Ticket 12: Reported-Regression E2E & Export Parity", () => {
       const resolved = resolveBubbleTextStyle(bubble);
       expect(resolved.textColor).not.toBe("#ff7800");
       expect(resolved.textColor).not.toBe("#8c5028");
-      // Auto preserves the borderless source; explicit Readable adds contrast.
-      expect(resolved.hasOutline).toBe(false);
+      // Auto artwork adds a readable outline independently of source contour presence.
+      expect(resolved.hasOutline).toBe(true);
       expect(resolved.textColor).toBe("#ffffff");
-      expect(resolved.outlineWidthRatio).toBe(0);
+      expect(resolved.outlineWidthRatio).toBeGreaterThan(0);
       expect(resolveBubbleTextStyle({ ...bubble, styleProfile: { ...profile, ownershipMode: "readable" } }).hasOutline).toBe(true);
     });
 
@@ -151,8 +151,9 @@ describe("Ticket 12: Reported-Regression E2E & Export Parity", () => {
       expect(resolvedList[1].textColor).toBe("#000000");
       expect(resolvedList[1].hasOutline).toBe(false);
 
-      // SFX 1 preserves vivid color and outline
-      expect(resolvedList[2].textColor).toBe("#ff0055");
+      // Auto SFX uses white interiors and the detected source accent
+      expect(resolvedList[2].textColor).toBe("#ffffff");
+      expect(resolvedList[2].textOutline).toBe("#ff0055");
       expect(resolvedList[2].hasOutline).toBe(true);
     });
 

@@ -9,6 +9,18 @@ import {
 
 beforeEach(() => vi.restoreAllMocks());
 
+test("cleaning abort signals reach the upload request and keep cancellation distinct from service failure", async () => {
+  const controller=new AbortController();
+  const request=vi.spyOn(globalThis,"fetch").mockImplementation(async (_input,init)=>{
+    expect(init?.signal).toBe(controller.signal);
+    controller.abort();
+    throw new DOMException("Cancelled","AbortError");
+  });
+  await expect(createCleaningJob(new Blob(["png"],{type:"image/png"}),controller.signal)).rejects.toMatchObject({name:"AbortError"});
+  expect(request).toHaveBeenCalledOnce();
+  request.mockRestore();
+});
+
 test("createCleaningJob posts multipart to local proxy", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
     Response.json(
@@ -24,6 +36,15 @@ test("createCleaningJob posts multipart to local proxy", async () => {
   expect(fetchMock.mock.calls[0][1]?.body).toBeInstanceOf(FormData);
   expect(fetchMock.mock.calls[0][1]?.cache).toBe("no-store");
   expect((fetchMock.mock.calls[0][1]?.body as FormData).get("cleaning_mode")).toBe("all-text");
+});
+
+test("aborting while reading a cleaning response is still cancellation", async () => {
+  const controller=new AbortController();
+  const request=vi.spyOn(globalThis,"fetch").mockResolvedValue({ok:true,json:async()=>{
+    controller.abort(); throw new DOMException("Cancelled","AbortError");
+  }} as unknown as Response);
+  await expect(createCleaningJob(new Blob(["png"],{type:"image/png"}),controller.signal)).rejects.toMatchObject({name:"AbortError"});
+  request.mockRestore();
 });
 
 test("getCleaningResult decodes snake case and proxies asset paths", async () => {

@@ -4,7 +4,7 @@ import {
   selectAdaptiveReadableStyle,
   strengthenSourceAccentOutline,
   deriveSourceAccentColor,
-  STANDARD_TRANSLATED_TEXT_SHADOW,
+  SUBTLE_ARTWORK_SHADOW,
 } from "../../lib/colorMatching/resolveTextStyle";
 import type { TranslatedBubble } from "../../lib/translationOverlay";
 import type { TextStyleProfile } from "../../lib/colorMatching/types";
@@ -201,7 +201,7 @@ describe("White Fill + Source-Colored Outline Architecture", () => {
   });
 
   describe("Admitted source colors in Auto mode", () => {
-    it("preserves admitted purple dialogue fill and white outline", () => {
+    it("uses white interiors with admitted purple dialogue fill and white outline", () => {
       const bubble: TranslatedBubble = {
         bubble_id: "purple_dialogue",
         page_num: 1,
@@ -221,12 +221,12 @@ describe("White Fill + Source-Colored Outline Architecture", () => {
       };
 
       const resolved = resolveBubbleTextStyle(bubble);
-      expect(resolved.textColor.toLowerCase()).toBe("#874384");
+      expect(resolved.textColor.toLowerCase()).toBe("#ffffff");
       expect(resolved.hasOutline).toBe(true);
-      expect(resolved.textOutline.toLowerCase()).toBe("#ffffff");
+      expect(resolved.textOutline.toLowerCase()).toBe("#874384");
     });
 
-    it("preserves admitted yellow dialogue fill and black outline", () => {
+    it("uses white interiors with admitted yellow dialogue fill and black outline", () => {
       const bubble: TranslatedBubble = {
         bubble_id: "yellow_dialogue",
         page_num: 1,
@@ -245,12 +245,12 @@ describe("White Fill + Source-Colored Outline Architecture", () => {
       };
 
       const resolved = resolveBubbleTextStyle(bubble);
-      expect(resolved.textColor.toLowerCase()).toBe("#ffcc00");
+      expect(resolved.textColor.toLowerCase()).toBe("#ffffff");
       expect(resolved.hasOutline).toBe(true);
-      expect(resolved.textOutline.toLowerCase()).toBe("#000000");
+      expect(resolved.textOutline.toLowerCase()).toBe(strengthenSourceAccentOutline("#ffcc00", "#ffffff"));
     });
 
-    it("preserves admitted red dialogue fill and white outline", () => {
+    it("uses white interiors with admitted red dialogue fill and white outline", () => {
       const bubble: TranslatedBubble = {
         bubble_id: "red_dialogue",
         page_num: 1,
@@ -269,12 +269,12 @@ describe("White Fill + Source-Colored Outline Architecture", () => {
       };
 
       const resolved = resolveBubbleTextStyle(bubble);
-      expect(resolved.textColor.toLowerCase()).toBe("#d32f2f");
+      expect(resolved.textColor.toLowerCase()).toBe("#ffffff");
       expect(resolved.hasOutline).toBe(true);
-      expect(resolved.textOutline.toLowerCase()).toBe("#ffffff");
+      expect(resolved.textOutline.toLowerCase()).toBe("#d32f2f");
     });
 
-    it("keeps the detected accent in the original fill when confidence is high", () => {
+    it("uses the detected accent as the outline when confidence is high", () => {
       const bubble: TranslatedBubble = {
         bubble_id: "trusted_source_accent",
         page_num: 1,
@@ -295,8 +295,8 @@ describe("White Fill + Source-Colored Outline Architecture", () => {
       };
 
       const resolved = resolveBubbleTextStyle(bubble);
-      expect(resolved.textColor.toLowerCase()).toBe("#7b3fa1");
-      expect(resolved.textOutline.toLowerCase()).toBe("#ffffff");
+      expect(resolved.textColor.toLowerCase()).toBe("#ffffff");
+      expect(resolved.textOutline.toLowerCase()).toBe("#7b3fa1");
     });
 
     it("rejects contaminated detected color and falls back to a safe dark outline", () => {
@@ -325,7 +325,7 @@ describe("White Fill + Source-Colored Outline Architecture", () => {
       expect(resolved.textOutline.toLowerCase()).toBe("#000000");
     });
 
-    it("preserves admitted cyan fill while keeping the uniform shadow policy", () => {
+    it("uses white interiors with admitted cyan fill with a subtle artwork shadow", () => {
       const bubble: TranslatedBubble = {
         bubble_id: "neon_glow_bubble",
         page_num: 1,
@@ -351,12 +351,12 @@ describe("White Fill + Source-Colored Outline Architecture", () => {
       };
 
       const resolved = resolveBubbleTextStyle(bubble);
-      expect(resolved.textColor.toLowerCase()).toBe("#00e5ff");
+      expect(resolved.textColor.toLowerCase()).toBe("#ffffff");
       expect(resolved.hasOutline).toBe(true);
-      expect(resolved.textOutline.toLowerCase()).toBe("#00e5ff");
+      expect(resolved.textOutline.toLowerCase()).toBe(strengthenSourceAccentOutline("#00e5ff", "#ffffff"));
       // ADR 0015 keeps detected glow as source evidence but renders one uniform shadow.
       expect(resolved.glow).toBeUndefined();
-      expect(resolved.shadow).toEqual(STANDARD_TRANSLATED_TEXT_SHADOW);
+      expect(resolved.shadow).toEqual(SUBTLE_ARTWORK_SHADOW);
       expect(bubble.styleProfile?.glow?.color).toBe("#00e5ff");
       expect(bubble.styleProfile?.glow?.opacity).toBe(0.85);
     });

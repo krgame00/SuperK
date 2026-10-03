@@ -19,7 +19,73 @@ export interface ResolveStyleOptions {
 }
 
 /** Derived render caches from earlier policies must be regenerated. */
-export const TEXT_RENDER_POLICY_VERSION = "auto-source-fill-v1";
+export const TEXT_RENDER_POLICY_VERSION = "subtle-artwork-shadow-v1";
+
+function usesAutomaticShadowPolicy(bubble: TranslatedBubble): boolean {
+  const profile = bubble.styleProfile;
+  return !bubble.deleted && profile?.source !== "manual" && profile?.ownershipMode !== "manual" &&
+    profile?.ownershipMode !== "source_faithful";
+}
+
+/** Presentation eligibility is separate from source ink/contour measurements. */
+export function usesAutoWhiteArtwork(bubble: TranslatedBubble): boolean {
+  const profile = bubble.styleProfile;
+  if (!profile || bubble.deleted || profile.source === "manual" ||
+      (profile.ownershipMode && profile.ownershipMode !== "auto")) return false;
+  const category = inferTextStyleCategory(bubble);
+  if (category === "overlay_subtitle") return true;
+  if (shouldUseMonochromeMangaStyle(profile, category)) return false;
+  return isChromatic(profile.fill) || isChromatic(profile.outline) ||
+    isChromatic(profile.sourceAccentColor) ||
+    (profile.evidenceState === "admitted" && (profile.fillConfidence ?? 1) >= .80 &&
+      typeof profile.backgroundLuminance === "number" && profile.backgroundLuminance < 160);
+}
+
+/** Policies affecting stored presentation, including explicit monochrome modes. */
+export function needsWhiteArtworkPolicyRefresh(bubble: TranslatedBubble): boolean {
+  const profile = bubble.styleProfile;
+  return usesAutomaticShadowPolicy(bubble) || usesAutoWhiteArtwork(bubble) || !!(profile && !bubble.deleted && profile.source !== "manual" &&
+    (profile.ownershipMode === "readable" || profile.ownershipMode === "source_faithful") &&
+    shouldUseMonochromeMangaStyle(profile, inferTextStyleCategory(bubble)));
+}
+
+function resolveAutoWhiteArtwork(profile: TextStyleProfile, category: TextStyleCategory, minConfidence: number): ResolvedTextStyle {
+  const trusted = profile.evidenceState === "admitted" && (profile.fillConfidence ?? 1) >= minConfidence &&
+    !["background-contamination", "insufficient-evidence", "low-readability"].includes(profile.fallbackReason ?? "");
+  // The sampled ink may actually be a contour. Either role supplies the same accent,
+  // without requiring source outline confidence for a detected colored interior.
+  const accent = trusted
+    ? (isChromatic(profile.fill, profile.backgroundColor) ? profile.fill
+      : isChromatic(profile.sourceAccentColor, profile.backgroundColor) ? profile.sourceAccentColor
+      : profile.hasOutline && (profile.outlineConfidence ?? 1) >= minConfidence &&
+          isChromatic(profile.outline, profile.backgroundColor) ? profile.outline
+      : undefined)
+    : undefined;
+  const outline = accent
+    ? (calculateColorLuminance(accent) >= 160 ? strengthenSourceAccentOutline(accent, "#ffffff") : accent)
+    : "#000000";
+  const adaptive = selectAdaptiveReadableStyle({
+    category, backgroundLuminance: profile.backgroundLuminance,
+    backgroundLuminanceSamples: profile.backgroundLuminanceSamples,
+    backgroundColor: profile.backgroundColor, requiresPlateEscalation: profile.requiresPlateEscalation,
+    sourceProfile: profile,
+  });
+  return {
+    ...adaptive,
+    textColor: "#ffffff", textOutline: outline, hasOutline: true, outlineWidth: 1,
+    outlineWidthRatio: Math.max(adaptive.outlineWidthRatio, category === "overlay_subtitle" ? .18 : .13,
+      Math.min(.25, profile.outlineWidthRatio ?? 0)),
+    opacity: profile.opacity ?? 1, source: trusted ? profile.source : "fallback",
+    fillConfidence: profile.fillConfidence ?? 1,
+    outlineConfidence: accent ? (isChromatic(profile.fill, profile.backgroundColor) || accent === profile.sourceAccentColor
+      ? profile.fillConfidence ?? 1 : profile.outlineConfidence ?? 1) : 0,
+    shadow: cloneStandardShadow(), isAdaptiveReadable: true,
+    backgroundLuminance: profile.backgroundLuminance,
+    backgroundLuminanceSamples: profile.backgroundLuminanceSamples,
+    backgroundColor: profile.backgroundColor,
+    reviewRequired: adaptive.reviewRequired || (!trusted && !adaptive.backgroundPlate) ? true : undefined,
+  };
+}
 
 export function usesAutoSourceFill(bubble: TranslatedBubble, minConfidence = 0.80): boolean {
   const profile = bubble.styleProfile;
@@ -83,6 +149,10 @@ export const STANDARD_TRANSLATED_TEXT_SHADOW: TextShadowStyle = Object.freeze({
   blurRatio: 0.15,
   offsetXRatio: 0.08,
   offsetYRatio: 0.08,
+});
+
+export const SUBTLE_ARTWORK_SHADOW: TextShadowStyle = Object.freeze({
+  color: "#1e1e1e", opacity: .30, blurRatio: .06, offsetXRatio: .025, offsetYRatio: .025,
 });
 
 function cloneStandardShadow(): TextShadowStyle {
@@ -534,7 +604,7 @@ export function validateOverlaySubtitleReadability(
   return dist >= 60;
 }
 
-export function resolveBubbleTextStyle(
+function resolveBubbleTextStyleBase(
   bubble: TranslatedBubble,
   globalStyle: OverlayTextStyle = {},
   options: ResolveStyleOptions = {},
@@ -560,8 +630,15 @@ export function resolveBubbleTextStyle(
     return resolvedFromProfile(profile, globalStyle);
   }
 
+  // Auto artwork has white interiors by user policy, independent of which
+  // source color was sampled as fill. Explicit Original/Readable remain owned.
+  if (autoMatchEnabled && usesAutoWhiteArtwork(bubble)) {
+    return resolveAutoWhiteArtwork(profile, category, minConfidence);
+  }
+
   // Confirmed monochrome pages use pure black text for every automatic category.
-  if (shouldUseMonochromeMangaStyle(profile, category)) {
+  if (profile.ownershipMode !== "readable" && profile.ownershipMode !== "source_faithful" &&
+      shouldUseMonochromeMangaStyle(profile, category)) {
     return {
       textColor: "#000000",
       textOutline: "#ffffff",
@@ -766,6 +843,25 @@ export function resolveBubbleTextStyle(
   }
 
   return resolvedFromProfile(profile, globalStyle);
+}
+
+/** Apply one presentation shadow rule to every preview and export resolution. */
+export function resolveBubbleTextStyle(
+  bubble: TranslatedBubble,
+  globalStyle: OverlayTextStyle = {},
+  options: ResolveStyleOptions = {},
+): ResolvedTextStyle {
+  const style = resolveBubbleTextStyleBase(bubble, globalStyle, options);
+  if (!usesAutomaticShadowPolicy(bubble)) return style;
+  const profile = bubble.styleProfile;
+  const category = inferTextStyleCategory(bubble);
+  const monochrome = profile && shouldUseMonochromeMangaStyle(profile, category) &&
+    profile.ownershipMode !== "readable" && category !== "overlay_subtitle" && category !== "sfx";
+  const artwork = !monochrome && (category === "overlay_subtitle" || category === "sfx" ||
+    (category === "unknown" && !!profile && (isChromatic(profile.fill) || isChromatic(profile.outline) ||
+      isChromatic(profile.sourceAccentColor) ||
+      (typeof profile.backgroundLuminance === "number" && profile.backgroundLuminance < 160))));
+  return { ...style, shadow: artwork ? { ...SUBTLE_ARTWORK_SHADOW } : undefined };
 }
 
 export function cloneTextStyleProfile(

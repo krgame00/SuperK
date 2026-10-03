@@ -2,10 +2,12 @@
 
 import { useEffect, type ReactElement } from "react";
 import { AlertTriangle, CheckCircle2, X } from "lucide-react";
+import { normalizePageExportSource, type PageExportSource } from "@/lib/export/pageSource";
 import type { ReadabilityFinding } from "@/lib/export/readabilityScan";
 
 export interface ExportReportRow {
   pageIndex: number;
+  exportSource?: PageExportSource;
   translated: boolean;
   totalBubbles: number;
   contaminated: number;
@@ -49,10 +51,10 @@ export function ExportReportModal({
 
   if (!isOpen) return null;
 
-  const untranslated = rows.filter((row) => !row.translated).length;
+  const untranslated = rows.filter((row) => normalizePageExportSource(row.exportSource) === "translated" && !row.translated).length;
   const flagged = rows.filter(
     (row) =>
-      row.translated &&
+      (row.translated || normalizePageExportSource(row.exportSource) === "clean") &&
       (row.contaminated > 0 || row.invalidBoxes > 0 || row.pendingCleaning > 0
         || (row.readabilityFindings?.length ?? 0) > 0 || Boolean(row.readabilityUnavailable)),
   ).length;
@@ -104,7 +106,9 @@ export function ExportReportModal({
                   <tr key={row.pageIndex} className="border-t border-border/40">
                     <td className="py-1.5 pr-3">{row.pageIndex + 1}</td>
                     <td className="py-1.5 pr-3">
-                      {row.translated ? (
+                      {normalizePageExportSource(row.exportSource) !== "translated" ? (
+                        <span className="text-muted">{row.exportSource === "original" ? "ต้นฉบับ" : "ภาพคลีน"}</span>
+                      ) : row.translated ? (
                         <span className="inline-flex items-center gap-1 text-emerald-400">
                           <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
                           {row.totalBubbles} จุด

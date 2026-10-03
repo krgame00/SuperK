@@ -95,6 +95,8 @@ export function buildTranslationPrompt({
 
   return (
     `You are an expert manga translator. ${sourceHint}Translate this manga page to ${targetLang || "Thai"}.${retryDirective}${contextDirective}${glossaryDirective}\n` +
+    `- Capture original_text EXACTLY as visible in each text region, preserving the source wording. Do not rewrite, translate, or guess unreadable source text.\n` +
+    `- Preserve the complete source meaning in 't'. Do not omit or add meaning, invent pronouns, names, relationships, actions, or events. Preserve uncertainty and implied subjects rather than guessing. Natural phrasing must never alter meaning.\n` +
     `- Use highly natural, conversational flow appropriate for comic books. Avoid rigid word-for-word translation.\n` +
     `- Arrange sentences beautifully according to native Thai idioms and phrasing (เรียบเรียงประโยคให้สละสลวยเหมือนคนไทยพูดกันในชีวิตจริง ไม่แปลตรงตัว).\n` +
     `- Do NOT use line breaks (\\n) in the translated text. Keep the text of each bubble on a single continuous line (ห้ามเว้นบรรทัดมั่ว ให้ต่อเป็นบรรทัดเดียวกัน).\n` +

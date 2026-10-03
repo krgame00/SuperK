@@ -100,13 +100,24 @@ test.each(["incremental", "full"])("successfully refreshed outlines drop persist
   expect(persisted.translatedAssetIds).toEqual([]);
 });
 
-test("loader retains legacy outline renders pending successful original analysis even under an old render policy", async () => {
-  const source = "data:image/png;base64,aW52YWxpZC1pbWFnZQ==";
+test.each(["legacy", "mixed", "weak-overlay", "monochrome-readable", "monochrome-original"])("old artwork renders refresh independently of contour migration: %s", async (kind) => {
+  const source = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jAlkAAAAASUVORK5CYII=";
   const rendered = "data:image/png;base64,cmVuZGVyZWQ=";
-  const pages = [{ id: "undecodable-outline", url: source, name: "page.png" }];
+  const pages = [{ id: "old-artwork", url: source, name: "page.png" }];
   const bubbleCache = new Map<string, TranslatedBubble[]>([[source, [{ styleProfile: {
     source: "auto", evidenceState: "admitted", fillConfidence: .95, fill: "#159f9d", outline: "#ffffff",
   } }]]]);
+  if (kind === "mixed") bubbleCache.get(source)!.push({ styleProfile: {
+    ...bubbleCache.get(source)![0].styleProfile!, sourceOutlineVersion: SOURCE_OUTLINE_VERSION,
+  } });
+  if (kind === "weak-overlay") bubbleCache.set(source, [{ styleProfile: {
+    source: "global", category: "overlay_subtitle", fillConfidence: .4, fill: "#000000", outline: "#ffffff",
+  } }]);
+  if (kind.startsWith("monochrome-")) bubbleCache.set(source, [{ styleProfile: {
+    ...bubbleCache.get(source)![0].styleProfile!,
+    ownershipMode: kind === "monochrome-readable" ? "readable" : "source_faithful",
+    isMonochromePage: true, monochromeConfidence: .95,
+  } }]);
   await saveProjectSession({ pages, currentPage: 0, bubbleCache, translatedImageCache: new Map([[source, rendered]]) });
   const db = await new Promise<IDBDatabase>((resolve) => {
     const request = indexedDB.open("SuperKMangaTranslatorDB", 3);
@@ -117,15 +128,16 @@ test("loader retains legacy outline renders pending successful original analysis
   const store = tx.objectStore("project_session");
   store.get("latest_session").onsuccess = (event) => {
     const session = (event.target as IDBRequest).result;
-    delete session.renderPolicyVersion;
+    session.renderPolicyVersion = "auto-source-fill-v1";
     store.put(session);
   };
   await done;
   db.close();
   const saved = (await loadProjectSession())!;
-  expect(saved.translatedImageCache.get(source)).toBe(rendered);
+  expect(saved.translatedImageCache.has(source)).toBe(false);
+  expect(saved.bubbleCache.get(source)).toEqual(bubbleCache.get(source));
   await saveProjectSession(saved, { dirtyPageUrls: new Set() });
-  expect((await loadProjectSession())!.translatedImageCache.get(source)).toBe(rendered);
+  expect((await loadProjectSession())!.translatedImageCache.has(source)).toBe(false);
 });
 
 test("mixed legacy/current outline pages retain evicted caches when no profile was refreshed", async () => {
@@ -184,6 +196,14 @@ test("CBZ session stores short page references while restoring source images and
   const restored = await loadProjectSession();
   expect(restored?.pages.map((page) => page.url)).toEqual(pages.map((page) => page.url));
   expect(restored?.bubbleCache.get(pages[2].url)?.[0].t).toBe("saved text");
+});
+
+test("preserves semantic review snapshots and original translations when restoring a project", async () => {
+  const source="data:image/png;base64,c291cmNl";
+  const review={status:"accepted" as const,sourceText:"Wait here.",reviewedText:"รอที่นี่",suggestion:"รอที่นี่",originalTranslation:"รอตรงนี้",reason:"สำนวน"};
+  await saveProjectSession({pages:[{id:"quality-page",url:source,name:"page.png"}],currentPage:0,
+    bubbleCache:new Map([[source,[{t:"รอที่นี่",original_text:"Wait here.",translationReview:review}]]]),translatedImageCache:new Map()});
+  expect((await loadProjectSession())?.bubbleCache.get(source)?.[0].translationReview).toEqual(review);
 });
 
 test("keeps an evicted translated render linked after compact source migration", async () => {
@@ -659,4 +679,13 @@ test("transactionDone rejects instead of faking success when the transaction sta
   } finally {
     vi.useRealTimers();
   }
+});
+
+test("per-page export source survives asset storage and project reload", async () => {
+  const pages = (["original", "clean", "translated"] as const).map((exportSource, index) => ({
+    id: `export-${index}`, url: `data:image/png;base64,${btoa(`page${index}`)}`,
+    name: `page${index}.png`, exportSource,
+  }));
+  await saveProjectSession({ pages, currentPage: 1, bubbleCache: new Map(), translatedImageCache: new Map() });
+  expect((await loadProjectSession())?.pages.map(p => p.exportSource)).toEqual(["original", "clean", "translated"]);
 });

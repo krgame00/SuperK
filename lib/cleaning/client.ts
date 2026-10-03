@@ -22,7 +22,7 @@ export class CleaningClientError extends Error {
   }
 }
 
-export async function createCleaningJob(file: Blob): Promise<CleaningJob> {
+export async function createCleaningJob(file: Blob, signal?: AbortSignal): Promise<CleaningJob> {
   const form = new FormData();
   let resolvedFile = file;
   const filename =
@@ -61,22 +61,25 @@ export async function createCleaningJob(file: Blob): Promise<CleaningJob> {
     await requestJson(`${PROXY_BASE}/v1/jobs`, {
       method: "POST",
       body: form,
+      ...(signal ? {signal} : {}),
     }),
   );
 }
 
-export async function getCleaningJob(jobId: string): Promise<CleaningJob> {
+export async function getCleaningJob(jobId: string, signal?: AbortSignal): Promise<CleaningJob> {
   return decodeJob(
-    await requestJson(`${PROXY_BASE}/v1/jobs/${encodeURIComponent(jobId)}`),
+    await requestJson(`${PROXY_BASE}/v1/jobs/${encodeURIComponent(jobId)}`, signal ? {signal} : undefined),
   );
 }
 
 export async function getCleaningResult(
   jobId: string,
+  signal?: AbortSignal,
 ): Promise<CleaningResult> {
   return decodeResult(
     await requestJson(
       `${PROXY_BASE}/v1/jobs/${encodeURIComponent(jobId)}/result`,
+      signal ? {signal} : undefined,
     ),
   );
 }
@@ -110,6 +113,9 @@ async function requestJson(
   try {
     response = await fetch(input, { ...init, cache: "no-store" });
   } catch (error) {
+    if (init.signal?.aborted || (error instanceof Error && error.name === "AbortError")) {
+      throw new DOMException("Cleaning cancelled", "AbortError");
+    }
     throw new CleaningClientError(
       0,
       error instanceof Error ? error.message : "Local cleaning service is unavailable.",
@@ -120,8 +126,10 @@ async function requestJson(
   try {
     payload = await response.json();
   } catch {
+    if (init.signal?.aborted) throw new DOMException("Cleaning cancelled", "AbortError");
     payload = {};
   }
+  if (init.signal?.aborted) throw new DOMException("Cleaning cancelled", "AbortError");
   if (!response.ok) {
     const detail =
       isRecord(payload) && typeof payload.detail === "string"

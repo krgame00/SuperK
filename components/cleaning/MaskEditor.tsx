@@ -176,6 +176,21 @@ export function MaskEditor({
   const strokeOpsRef = useRef<Array<{ points: MaskPoint[]; radius: number; mode: BrushMode }>>([]);
   const strokeStartIndexRef = useRef(0);
   const opsBaseRef = useRef<ImageData | null>(null);
+  const submittingRef = useRef(false);
+  const maskGenerationsRef = useRef<Map<string, number>>(new Map());
+
+  // The manager also owns unrelated workspace edits. Retire only callbacks
+  // belonging to a restored region, and never replay into another selection.
+  const pushMaskUndo = (action: { label: string; undo: () => void; redo: () => void }) => {
+    const key = loadedRegionRef.current;
+    const generation = maskGenerationsRef.current.get(key) ?? 0;
+    const guard = (callback: () => void) => () => {
+      if (submittingRef.current || loadedRegionRef.current !== key ||
+        (maskGenerationsRef.current.get(key) ?? 0) !== generation) return;
+      callback();
+    };
+    undoManager.push({ label: action.label, undo: guard(action.undo), redo: guard(action.redo) });
+  };
 
   const snapshotOpsBase = () => {
     opsBaseRef.current = imageDataRef.current ? cloneImageData(imageDataRef.current) : null;
@@ -244,6 +259,7 @@ export function MaskEditor({
       regionSnapshotsRef.current.set(loadedRegionRef.current, imageDataRef.current);
     }
     let active = true;
+    let readingProposal = false;
     const maskImage = new Image();
     maskImage.onload = () => {
       if (!active || !canvasRef.current) return;
@@ -273,6 +289,15 @@ export function MaskEditor({
         source.data[index + 3] = activePixel ? 150 : 0;
       }
       const snapshot = regionSnapshotsRef.current.get(key);
+      const rect = regions.find(region => region.id === regionId)?.rect;
+      // Review status also applies to regions that were already cleaned.
+      // Show their actual removal mask; use a proposal only for an empty region.
+      if (!snapshot && !readingProposal && rect && !maskHasPixels(source, rect) &&
+        selectedRegion?.textRole === "review" && proposalMaskUrl && proposalMaskUrl !== maskUrl) {
+        readingProposal = true;
+        maskImage.src = proposalMaskUrl;
+        return;
+      }
       if (snapshot && snapshot.width === source.width && snapshot.height === source.height) {
         // Returning to a region the user already edited: keep their strokes
         // (undo history restarts from the restored state).
@@ -286,7 +311,7 @@ export function MaskEditor({
     maskImage.onerror = () => {
       if (active) setStatusMessage("โหลด Mask ไม่สำเร็จ กรุณาคลีนหน้านี้ใหม่แล้วเปิด Mask อีกครั้ง");
     };
-    maskImage.src = selectedRegion?.textRole === "review" && proposalMaskUrl ? proposalMaskUrl : maskUrl;
+    maskImage.src = maskUrl;
     return () => {
       active = false;
     };
@@ -295,7 +320,7 @@ export function MaskEditor({
   const drawAt = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     const current = imageDataRef.current;
-    if (!canvas || !current) return;
+    if (submittingRef.current || !canvas || !current) return;
     const bounds = canvas.getBoundingClientRect();
     const point = {
       x: (event.clientX - bounds.left) * (canvas.width / bounds.width),
@@ -307,7 +332,7 @@ export function MaskEditor({
   };
 
   const startStroke = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (isSubmitting) return;
+    if (submittingRef.current) return;
     if (isSpacePressedRef.current || event.button === 1 || event.button === 2) {
       setIsPanning(true);
       panStartRef.current = { x: event.clientX - pan.x, y: event.clientY - pan.y };
@@ -350,7 +375,7 @@ export function MaskEditor({
     }
     const base = opsBaseRef.current;
     const ops = [...strokeOpsRef.current];
-    undoManager.push({
+    pushMaskUndo({
       label: "แก้ Mask",
       undo: () => renderReplayedOps(base, ops, startIndex),
       redo: () => renderReplayedOps(base, ops, endIndex),
@@ -360,7 +385,7 @@ export function MaskEditor({
   // Quick Action: Fill Region with Mask
   const handleFillRegion = () => {
     const current = imageDataRef.current;
-    if (!current || !selectedRegion) return;
+    if (submittingRef.current || !current || !selectedRegion) return;
     const before = cloneImageData(current);
     const updated = cloneImageData(current);
     const r = selectedRegion.rect;
@@ -376,7 +401,7 @@ export function MaskEditor({
       }
     }
     renderMask(updated);
-    undoManager.push({
+    pushMaskUndo({
       label: "เติม Mask เต็มกรอบ",
       undo: () => {
         renderMask(cloneImageData(before));
@@ -394,7 +419,7 @@ export function MaskEditor({
   // Quick Action: Clear Region Mask
   const handleClearRegion = () => {
     const current = imageDataRef.current;
-    if (!current || !selectedRegion) return;
+    if (submittingRef.current || !current || !selectedRegion) return;
     const before = cloneImageData(current);
     const updated = cloneImageData(current);
     const r = selectedRegion.rect;
@@ -407,7 +432,7 @@ export function MaskEditor({
       }
     }
     renderMask(updated);
-    undoManager.push({
+    pushMaskUndo({
       label: "ล้าง Mask ในกรอบ",
       undo: () => {
         renderMask(cloneImageData(before));
@@ -424,7 +449,7 @@ export function MaskEditor({
 
   // Region Carousel Stepper
   const goToRegion = (index: number) => {
-    if (index >= 0 && index < regions.length) {
+    if (!submittingRef.current && index >= 0 && index < regions.length) {
       setRegionId(regions[index].id);
       setStatusMessage(`เลือกจุดที่ ${index + 1}`);
     }
@@ -491,6 +516,11 @@ export function MaskEditor({
   };
 
   const handleCanvasKeyDown = (event: React.KeyboardEvent<HTMLCanvasElement>) => {
+    if (submittingRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -549,7 +579,8 @@ export function MaskEditor({
 
   const submit = async (action: ManualRegionAction, restoreOnly = false, excludedOnly = false) => {
     const imageData = imageDataRef.current;
-    if (!imageData || !regionId) return;
+    if (submittingRef.current || !imageData || !regionId) return;
+    submittingRef.current = true;
     setIsSubmitting(true);
     try {
       const r = selectedRegion?.rect;
@@ -617,6 +648,60 @@ export function MaskEditor({
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "บันทึกไม่สำเร็จ");
     } finally {
+      submittingRef.current = false;
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleRestoreWholeRegion = async () => {
+    const current = imageDataRef.current;
+    if (submittingRef.current || !current || !selectedRegion ||
+      loadedRegionRef.current !== `${sourceUrl}:${selectedRegion.id}`) return;
+    const selectedId = selectedRegion.id;
+    const rect = { ...selectedRegion.rect };
+    const key = `${sourceUrl}:${selectedId}`;
+    const selectedCleaner = cleaner;
+    const selection = new ImageData(new Uint8ClampedArray(current.width * current.height * 4), current.width, current.height);
+    for (let y = Math.max(0, rect.y); y < Math.min(selection.height, rect.y + rect.height); y++) {
+      for (let x = Math.max(0, rect.x); x < Math.min(selection.width, rect.x + rect.width); x++) {
+        const offset = (y * selection.width + x) * 4;
+        selection.data[offset + 2] = 255;
+        selection.data[offset + 3] = 150;
+      }
+    }
+    submittingRef.current = true;
+    drawingRef.current = false;
+    setIsSubmitting(true);
+    setStatusMessage("กำลังกู้ภาพเดิมทั้งจุด…");
+    try {
+      const blob = await encodeAuthorizedMask(selection, rect, true);
+      const result = await onRetry(selectedId, blob, selectedCleaner, "protect");
+      if (!result) {
+        setStatusMessage("กู้ภาพเดิมไม่สำเร็จ กรุณาลองใหม่");
+        return;
+      }
+      const restoredId = isRecoveredResult(result) ? result.recoveredRegionId : selectedId;
+      const restoredKey = `${sourceUrl}:${restoredId}`;
+      for (const retiredKey of new Set([key, restoredKey])) {
+        maskGenerationsRef.current.set(retiredKey, (maskGenerationsRef.current.get(retiredKey) ?? 0) + 1);
+        regionSnapshotsRef.current.delete(retiredKey);
+      }
+      // A cleared snapshot keeps old applied/proposal masks from resurrecting
+      // the discarded draft while updated backend assets propagate.
+      const cleared = new ImageData(new Uint8ClampedArray(current.width * current.height * 4), current.width, current.height);
+      regionSnapshotsRef.current.set(restoredKey, cleared);
+      loadedRegionRef.current = restoredKey;
+      renderMask(cleared);
+      snapshotOpsBase();
+      setRegionId(restoredId);
+      setComparison("cleaned");
+      setStatusMessage(isRecoveredResult(result)
+        ? "กู้ภาพเดิมทั้งจุดแล้วและจับคู่พื้นที่ใหม่ กรุณาตรวจภาพที่คลีนแล้ว"
+        : "กู้ภาพเดิมทั้งจุดแล้ว");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "กู้ภาพเดิมไม่สำเร็จ กรุณาลองใหม่");
+    } finally {
+      submittingRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -624,7 +709,7 @@ export function MaskEditor({
   // One-Click Clean: seamlessly confirms text if necessary and cleans the region immediately
   const handleOneClickClean = async () => {
     const imageData = imageDataRef.current;
-    if (!imageData || !regionId || !selectedRegion) return;
+    if (submittingRef.current || !imageData || !regionId || !selectedRegion) return;
     if (mode === "erase" && !maskHasPixels(imageData, selectedRegion.rect)) {
       if (hasExcludedPixels(imageData, selectedRegion.rect)) {
         await submit("protect", false, true);
@@ -633,6 +718,7 @@ export function MaskEditor({
       }
       return;
     }
+    submittingRef.current = true;
     setIsSubmitting(true);
     setStatusMessage("กำลังคลีนข้อความจุดนี้...");
     try {
@@ -718,6 +804,7 @@ export function MaskEditor({
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "บันทึกไม่สำเร็จ");
     } finally {
+      submittingRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -989,7 +1076,7 @@ export function MaskEditor({
                   {item === "paint" && <Paintbrush className="h-3.5 w-3.5" />}
                   {item === "erase" && <Eraser className="h-3.5 w-3.5" />}
                   {item === "restore" && <RotateCcw className="h-3.5 w-3.5" />}
-                  <span>{item === "paint" ? "ลบข้อความ" : item === "erase" ? "ไม่ลบตรงนี้" : "กู้ภาพเดิม"}</span>
+                  <span>{item === "paint" ? "ลบข้อความ" : item === "erase" ? "ไม่ลบตรงนี้" : "กู้เฉพาะส่วน"}</span>
                 </button>
               ))}
             </div>
@@ -1002,6 +1089,7 @@ export function MaskEditor({
                   type="range"
                   min="2"
                   max="48"
+                  disabled={isSubmitting}
                   value={radius}
                   onChange={(event) => {
                     const newRad = Number(event.target.value);
@@ -1013,7 +1101,9 @@ export function MaskEditor({
               </label>
               <button
                 type="button"
+                disabled={isSubmitting}
                 onClick={() => {
+                  if (submittingRef.current) return;
                   const action = undoManager.undo();
                   if (action) setStatusMessage("เลิกทำแล้ว");
                 }}
@@ -1029,6 +1119,15 @@ export function MaskEditor({
           {/* Right: One-Click Clean, Fallback Buttons */}
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
             <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={isSubmitting || !selectedRegion || !canvasSize.width || loadedRegionRef.current !== `${sourceUrl}:${regionId}`}
+                onClick={handleRestoreWholeRegion}
+                className="flex h-8 items-center gap-1.5 rounded-lg bg-blue-500/20 px-3.5 text-xs font-bold text-blue-200 hover:bg-blue-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                <span>กู้ภาพเดิมทั้งจุด</span>
+              </button>
               {/* 🪄 Instant 1-Click Clean Button */}
               <button
                 type="button"
@@ -1050,6 +1149,7 @@ export function MaskEditor({
           <div className="flex flex-wrap items-center gap-3 py-2">
               <select
                 aria-label="Cleaner"
+                disabled={isSubmitting}
                 value={cleaner}
                 onChange={(event) => setCleaner(event.target.value as CleanerOverride)}
                 className="h-8 rounded-md border border-border/80 bg-background px-2.5 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-primary"
@@ -1066,6 +1166,7 @@ export function MaskEditor({
               <button
                 type="button"
                 onClick={handleFillRegion}
+                disabled={isSubmitting}
                 title="ระบายมาร์กสีแดงเต็มกรอบบอลลูนนี้ทันที"
                 className="flex h-7 items-center gap-1.5 rounded-md border border-red-500/30 bg-red-500/15 px-2.5 text-xs font-semibold text-red-300 transition-colors hover:bg-red-500/25 active:scale-95"
               >
@@ -1075,6 +1176,7 @@ export function MaskEditor({
               <button
                 type="button"
                 onClick={handleClearRegion}
+                disabled={isSubmitting}
                 title="ล้างมาร์กเฉพาะในกรอบบอลลูนนี้"
                 className="flex h-7 items-center gap-1.5 rounded-md border border-border/80 bg-surface px-2.5 text-xs font-medium text-muted transition-colors hover:bg-surface-hover hover:text-foreground active:scale-95"
               >

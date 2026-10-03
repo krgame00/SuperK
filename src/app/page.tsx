@@ -3,7 +3,7 @@
 import { PageReviewNotice } from "@/components/cleaning/PageReviewNotice";
 import { translationScope } from "@/lib/cleaning/textAuthorization";
 
-import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback, type SetStateAction } from "react";
 import { getWorkspacePrimaryAction } from "@/lib/workspacePrimaryAction";
 import { useTranslation } from "@/hooks/useTranslation";
 import { jsPDF } from "jspdf";
@@ -35,6 +35,7 @@ import { WorkspaceExportMenu } from "@/components/workspace/WorkspaceExportMenu"
 import { WorkspacePrimaryAction } from "@/components/workspace/WorkspacePrimaryAction";
 import { WorkspaceAdvancedTools } from "@/components/workspace/WorkspaceAdvancedTools";
 import { ExportReportModal, type ExportReportRow } from "@/components/workspace/ExportReportModal";
+import { normalizePageExportSource, resolvePageExportUrl, exportImageBlob, exportImageFilename, type PageExportSource } from "@/lib/export/pageSource";
 import { scanPageGeometry, type PageGeometryResult, type ReadabilityFinding } from "@/lib/export/readabilityScan";
 import { readabilityAcknowledgmentKey, type ReadabilityPageSnapshot } from "@/lib/export/readabilityAcknowledgment";
 import {
@@ -54,7 +55,7 @@ import {
   saveBlob,
   type DirectoryHandleLike,
 } from "@/lib/export/saveLocation";
-import { dataUrlToBlob, blobToDataUrl } from "@/lib/projectStore";
+import { blobToDataUrl } from "@/lib/projectStore";
 import { pageBlobStore } from "@/lib/lifecycle/pageBlobStore";
 import { workspaceResourceManager } from "@/lib/lifecycle/workspaceResourceManager";
 import {
@@ -65,6 +66,7 @@ import { KeyboardShortcutsDialog } from "@/components/editing/KeyboardShortcutsD
 import {
   doesPageRequireReview,
   getUnconfirmedPages,
+  missingTranslationSignature,
   type PageReviewInfo,
 } from "@/lib/export/reviewGate";
 import {
@@ -118,11 +120,20 @@ function formatStopwatchTime(elapsedMs: number): string {
   return `${String(totalMinutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${tenths}`;
 }
 
+type WorkspaceExportPage = { id?: string; url: string; name: string; originUrl?: string; exportSource?: PageExportSource };
+
 export default function WorkspacePage() {
 
-  const [pages, setPages] = useState<{ id?: string; url: string; name: string; originUrl?: string }[]>([]);
-  const [currentPage, setCurrentPage] = useState(0);
+  const [pages, setPages] = useState<WorkspaceExportPage[]>([]);
+  const [currentPage, setCurrentPageState] = useState(0);
+  const exportSnapshotRef = useRef<{ pages: WorkspaceExportPage[]; currentPage: number } | null>(null);
+  const [isChoosingExport, setIsChoosingExport] = useState(false);
+  const setCurrentPage = useCallback((updater: SetStateAction<number>) => {
+    if (!exportSnapshotRef.current) setCurrentPageState(updater);
+  }, []);
   const [confirmedPages, setConfirmedPages] = useState<Set<string>>(new Set());
+  const confirmedMissingTranslationsRef = useRef(new Map<string, string>());
+  const pendingReviewIndicesRef = useRef<number[] | undefined>(undefined);
   const [unconfirmedReviewPages, setUnconfirmedReviewPages] = useState<PageReviewInfo[] | null>(null);
   const [pendingExportAction, setPendingExportAction] = useState<(() => void) | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -321,13 +332,13 @@ export default function WorkspacePage() {
   };
 
   const preparePageForTranslation = useCallback(
-    async (pageUrl: string, pageIndex: number) => {
+    async (pageUrl: string, pageIndex: number, signal?: AbortSignal) => {
       const page = pages[pageIndex];
       if (!page || page.url !== pageUrl) {
         throw new Error("Page is no longer available for cleaning.");
       }
 
-      const response = await fetch(pageUrl);
+      const response = await fetch(pageUrl, { signal });
       if (!response.ok) {
         throw new Error(`Failed to load page for cleaning (${response.status}).`);
       }
@@ -344,7 +355,10 @@ export default function WorkspacePage() {
           ? rawBlob.type
           : fallbackMime;
       const typedBlob = rawBlob.type === mime ? rawBlob : new Blob([rawBlob], { type: mime });
-      const result = await cleanPage(pageUrl, typedBlob);
+      const result = await cleanPage(pageUrl, typedBlob, false, signal);
+      if (signal?.aborted) {
+        throw new DOMException("Page preparation was cancelled.", "AbortError");
+      }
       const pageId = page.id || `page_${pageIndex}`;
       workspaceResourceManager.registerResource(pageId, "clean", result.cleanUrl, 1024 * 1024);
       if (result.maskUrl) {
@@ -419,6 +433,7 @@ export default function WorkspacePage() {
     pageIds,
     pageNames,
     pageOriginUrls: pages.map((p) => p.originUrl),
+    pageExportSources: pages.map((p) => normalizePageExportSource(p.exportSource)),
     viewMode: "single",
     preparePageForTranslation,
     onPageDirtied: (pageUrl) => {
@@ -557,7 +572,7 @@ export default function WorkspacePage() {
 
   const translationBusy = isTranslating || isTranslatingAll;
   const operationBusy =
-    isUiOperationBusy || translationBusy || Boolean(cleaningProgress);
+    isUiOperationBusy || translationBusy || Boolean(cleaningProgress) || isZipping || isChoosingExport;
   const translateAllStatusText = translateAllProgress
     ? `${translateAllProgress.message}${
         translateAllProgress.secondaryMessage
@@ -602,9 +617,8 @@ export default function WorkspacePage() {
     uiOperationLockRef.current = true;
     setIsUiOperationBusy(true);
     try {
-      const translated = await handleTranslate();
-      if (translated) setWorkspaceLayer("translated");
-      return translated;
+      setWorkspaceLayer("translated");
+      return await handleTranslate();
     } finally {
       uiOperationLockRef.current = false;
       setIsUiOperationBusy(false);
@@ -685,21 +699,24 @@ export default function WorkspacePage() {
   const buildExportReportRows = useCallback((): ExportReportRow[] => {
     const inspected = inspectTranslatedPages();
     return pages.map((page, pageIndex) => {
-      const info = inspected.find((item) => item.pageIndex === pageIndex);
+      const source = normalizePageExportSource(page.exportSource);
+      const info = source === "translated" ? inspected.find((item) => item.pageIndex === pageIndex) : undefined;
       const cleaning = cleaningResultsByPage.get(page.url);
       return {
         pageIndex,
+        exportSource: source,
         translated: Boolean(info),
         totalBubbles: info?.total ?? 0,
         contaminated: info?.contaminated ?? 0,
         invalidBoxes: info?.invalidBoxes ?? 0,
-        pendingCleaning: cleaning?.regions.filter((region) => region.status === "needs_review").length ?? 0,
+        pendingCleaning: source === "original" ? 0 : cleaning?.regions.filter((region) => region.status === "needs_review").length ?? 0,
       };
     });
   }, [pages, inspectTranslatedPages, cleaningResultsByPage]);
 
   const scanReadabilityPage = useCallback(async (pageIndex: number): Promise<PageGeometryResult> => {
-    const page = pages[pageIndex];
+    const page = (exportSnapshotRef.current?.pages ?? pages)[pageIndex];
+    if (page && normalizePageExportSource(page.exportSource) !== "translated") return { findings: [] };
     if (!page) return { findings: [], unavailableReason: "ไม่พบหน้านี้" };
     try {
       return await scanPageGeometry({
@@ -715,6 +732,7 @@ export default function WorkspacePage() {
   }, [pages, cleaningResultsByPage, bubbleCacheRef, textStyleRef]);
 
   const handleOpenExportReport = useCallback(() => {
+    if (exportSnapshotRef.current) return;
     const generation = ++reportScanGenerationRef.current;
     setPendingReadabilityAck(null);
     setPendingReadabilityExport(null);
@@ -746,6 +764,7 @@ export default function WorkspacePage() {
     setPendingReadabilityExport(null);
     setPendingReadabilityAck(null);
     setExportScanProgress(null);
+    setIsChoosingExport(false);
   }, []);
 
   const continueReadabilityExport = useCallback(() => {
@@ -757,11 +776,12 @@ export default function WorkspacePage() {
 
   const selectReadabilityFinding = useCallback((finding: ReadabilityFinding) => {
     closeExportReport();
+    exportSnapshotRef.current = null;
     setViewLayout("single");
     setWorkspaceLayer("translated");
     setCurrentPage(finding.pageIndex);
     setPendingReadabilityTarget(finding);
-  }, [closeExportReport]);
+  }, [closeExportReport, setCurrentPage]);
 
   useEffect(() => {
     if (!pendingReadabilityTarget || currentPage !== pendingReadabilityTarget.pageIndex || workspaceLayer !== "translated") return;
@@ -946,7 +966,7 @@ export default function WorkspacePage() {
         console.error("Failed to process extension handoff:", err);
       }
     })();
-  }, [restoreSavedSession]);
+  }, [restoreSavedSession, setCurrentPage]);
 
   // Keyboard shortcuts refs (to access latest state from event listener closure)
   const currentPageRef = useRef(currentPage);
@@ -1037,7 +1057,7 @@ export default function WorkspacePage() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => { window.removeEventListener('keydown', handleKeyDown); unsub(); };
-  }, [handleTranslateCurrent, toggleOriginalTranslated]);
+  }, [handleTranslateCurrent, toggleOriginalTranslated, setCurrentPage]);
 
   // Clear undo stack when changing pages
   useEffect(() => { undoManager.clear(); }, [currentPage]);
@@ -1171,12 +1191,15 @@ export default function WorkspacePage() {
     if (pages.length === 0) return;
 
     const unconfirmed = getUnconfirmedPages(
-      pages,
+      exportSnapshotRef.current?.pages ?? pages,
       confirmedPages,
       cleaningResultsByPage,
       bubbleCacheRef.current,
+      undefined,
+      confirmedMissingTranslationsRef.current,
     );
     if (unconfirmed.length > 0) {
+      pendingReviewIndicesRef.current = undefined;
       setUnconfirmedReviewPages(unconfirmed);
       setPendingExportAction(() => () => void executeDownloadAll(format));
       return;
@@ -1186,7 +1209,10 @@ export default function WorkspacePage() {
   };
 
   const executeDownloadAll = async (format: "zip" | "cbz" | "pdf" | "strip" = "zip") => {
+    const pages = exportSnapshotRef.current?.pages ?? [];
     if (pages.length === 0) return;
+    const currentPage = exportSnapshotRef.current?.currentPage ?? 0;
+    setIsChoosingExport(false);
     setIsZipping(true);
 
     // Optional destination-folder picker (Chrome/Edge). Unavailable browsers
@@ -1201,20 +1227,22 @@ export default function WorkspacePage() {
         destDir = await getOrPickExportDirectory();
         if (!destDir) {
           setIsZipping(false);
+      exportSnapshotRef.current = null;
           return;
         }
       }
     }
 
     const failedExportPages: number[] = [];
+    const exportErrors: string[] = [];
     const reportRenderFailures = () => {
       setTranslationResult(
-        `❌ Export ไม่สำเร็จ: เรนเดอร์คำแปลไม่สำเร็จที่หน้า ${failedExportPages.join(", ")} — ลองใหม่อีกครั้ง`,
+        `❌ Export ไม่สำเร็จที่หน้า ${failedExportPages.join(", ")} ${exportErrors.join("; ")} — ลองใหม่อีกครั้ง`,
       );
       setTimeout(() => setTranslationResult(null), 5000);
     };
 
-    const getExportDataUrl = async (pageUrl: string, index: number): Promise<string | null> => {
+    const renderTranslatedDataUrl = async (pageUrl: string, index: number): Promise<string | null> => {
       const pageId = pages[index]?.id || `page_${index}`;
       if (
         index === currentPage &&
@@ -1322,7 +1350,13 @@ export default function WorkspacePage() {
           return null;
         }
       }
-      return pageUrl;
+      return null;
+    };
+
+    const getExportDataUrl = async (pageUrl: string, index: number): Promise<string> => {
+      const selectedUrl = await resolvePageExportUrl(pages[index], cleaningResultsByPage.get(pageUrl)?.cleanUrl,
+        () => renderTranslatedDataUrl(pageUrl, index));
+      return selectedUrl.startsWith("data:") ? selectedUrl : blobToDataUrl(await exportImageBlob(selectedUrl));
     };
 
     if (format === "strip") {
@@ -1347,10 +1381,11 @@ export default function WorkspacePage() {
             });
             if (img.naturalWidth && img.naturalHeight) {
               loadedImages.push(img);
-            }
+            } else { failedExportPages.push(i + 1); }
           } catch (err) {
             console.warn(`Error loading page ${i + 1} for long strip`, err);
             failedExportPages.push(i + 1);
+            exportErrors.push(err instanceof Error ? err.message : String(err));
           }
         }
 
@@ -1370,13 +1405,13 @@ export default function WorkspacePage() {
         let currentHeight = 0;
         let chunkIndex = 1;
 
-        const exportChunk = (chunk: { img: HTMLImageElement; height: number }[], index: number, isMulti: boolean) => {
+        const exportChunk = async (chunk: { img: HTMLImageElement; height: number }[], index: number) => {
           const totalH = chunk.reduce((sum, item) => sum + item.height, 0);
           const stripCanvas = document.createElement("canvas");
           stripCanvas.width = targetWidth;
           stripCanvas.height = totalH;
           const ctx = stripCanvas.getContext("2d");
-          if (!ctx) return;
+          if (!ctx) throw new Error("ไม่สามารถสร้างภาพ Strip");
 
           let yOffset = 0;
           for (const item of chunk) {
@@ -1385,26 +1420,20 @@ export default function WorkspacePage() {
           }
 
           const stripFilename = generateStripFilename(index, chunkIndex > 1 ? chunkIndex : 1, pages);
-          stripCanvas.toBlob(
-            (blob) => {
-              if (!blob) return;
-              void saveBlob(blob, stripFilename, destDir).then((savedName) => {
-                if (savedName && savedName !== stripFilename) {
-                  import("react-hot-toast").then((m) =>
-                    m.default.success(`บันทึกเป็น "${savedName}" (พบไฟล์ชื่อซ้ำ)`),
-                  );
-                }
-              });
-            },
-            "image/jpeg",
-            0.92,
-          );
+          const blob = await new Promise<Blob>((resolve, reject) => {
+            stripCanvas.toBlob(result => result ? resolve(result) : reject(new Error("ไม่สามารถสร้างภาพ Strip")), "image/jpeg", 0.92);
+          });
+          const savedName = await saveBlob(blob, stripFilename, destDir);
+          if (savedName && savedName !== stripFilename) {
+            const toast = (await import("react-hot-toast")).default;
+            toast.success(`บันทึกเป็น "${savedName}" (พบไฟล์ชื่อซ้ำ)`);
+          }
         };
 
         for (const img of loadedImages) {
           const scaledHeight = Math.round((targetWidth / img.naturalWidth) * img.naturalHeight);
           if (currentHeight + scaledHeight > MAX_STRIP_HEIGHT && currentChunk.length > 0) {
-            exportChunk(currentChunk, chunkIndex++, true);
+            await exportChunk(currentChunk, chunkIndex++);
             currentChunk = [];
             currentHeight = 0;
           }
@@ -1413,7 +1442,7 @@ export default function WorkspacePage() {
         }
 
         if (currentChunk.length > 0) {
-          exportChunk(currentChunk, chunkIndex, chunkIndex > 1);
+          await exportChunk(currentChunk, chunkIndex);
         }
 
         const folderLabel = destDir?.name ? ` ใน "${destDir.name}"` : "";
@@ -1425,6 +1454,7 @@ export default function WorkspacePage() {
         setTimeout(() => setTranslationResult(null), 3000);
       } finally {
         setIsZipping(false);
+      exportSnapshotRef.current = null;
       }
       return;
     }
@@ -1465,10 +1495,18 @@ export default function WorkspacePage() {
               pdf.addPage([img.naturalWidth, img.naturalHeight], orientation);
             }
 
-            pdf.addImage(dataUrl, "JPEG", 0, 0, img.naturalWidth, img.naturalHeight);
+            const canvas = document.createElement("canvas");
+            canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+            const context = canvas.getContext("2d");
+            if (!context) throw new Error("ไม่สามารถสร้างภาพสำหรับ PDF");
+            context.fillStyle = "#ffffff"; context.fillRect(0, 0, canvas.width, canvas.height);
+            context.drawImage(img, 0, 0);
+            pdf.addImage(canvas.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, img.naturalWidth, img.naturalHeight);
             addedCount++;
           } catch (err) {
             console.warn(`Error processing PDF page ${i + 1}`, err);
+            failedExportPages.push(i + 1);
+            exportErrors.push(err instanceof Error ? err.message : String(err));
           }
         }
 
@@ -1503,6 +1541,7 @@ export default function WorkspacePage() {
         setTimeout(() => setTranslationResult(null), 3000);
       } finally {
         setIsZipping(false);
+      exportSnapshotRef.current = null;
       }
       return;
     }
@@ -1512,29 +1551,28 @@ export default function WorkspacePage() {
 
     for (let i = 0; i < pages.length; i++) {
       try {
-        const dataUrl = await getExportDataUrl(pages[i].url, i);
-        if (!dataUrl) {
-          failedExportPages.push(i + 1);
-          continue;
-        }
-        if (!dataUrl.includes(",")) continue;
-        const base64Data = dataUrl.split(",")[1];
-        if (!base64Data) continue;
-
-        const originalName = pages[i].name;
-        const extension = originalName.includes('.') ? originalName.split('.').pop() : 'png';
-        const baseName = originalName.includes('.') ? originalName.substring(0, originalName.lastIndexOf('.')) : originalName;
-        const filename = `SuperK_Page_${String(i + 1).padStart(3, '0')}_${baseName}.${extension}`;
-        zip.file(filename, base64Data, { base64: true });
+        const selectedUrl = await resolvePageExportUrl(pages[i], cleaningResultsByPage.get(pages[i].url)?.cleanUrl,
+          () => renderTranslatedDataUrl(pages[i].url, i));
+        const blob = await exportImageBlob(selectedUrl);
+        const filename = exportImageFilename(pages[i].name, i, blob.type);
+        // ArrayBuffer keeps raw original/clean bytes and includes blob URLs.
+        const bytes = await new Promise<ArrayBuffer>((resolve, reject) => {
+          const reader = new FileReader(); reader.onload = () => resolve(reader.result as ArrayBuffer);
+          reader.onerror = () => reject(reader.error); reader.readAsArrayBuffer(blob);
+        });
+        zip.file(filename, bytes);
         zipAddedCount++;
       } catch (err) {
         console.warn(`Error processing ZIP page ${i + 1}`, err);
+        failedExportPages.push(i + 1);
+        exportErrors.push(err instanceof Error ? err.message : String(err));
       }
     }
 
     if (failedExportPages.length > 0) {
       reportRenderFailures();
       setIsZipping(false);
+      exportSnapshotRef.current = null;
       return;
     }
 
@@ -1575,18 +1613,21 @@ export default function WorkspacePage() {
       setTimeout(() => setTranslationResult(null), 3000);
     } finally {
       setIsZipping(false);
+      exportSnapshotRef.current = null;
     }
   };
 
   const saveCurrentPageImage = async () => {
     const unconfirmed = getUnconfirmedPages(
-      pages,
+      exportSnapshotRef.current?.pages ?? pages,
       confirmedPages,
       cleaningResultsByPage,
       bubbleCacheRef.current,
-      [currentPage],
+      [exportSnapshotRef.current?.currentPage ?? currentPage],
+      confirmedMissingTranslationsRef.current,
     );
     if (unconfirmed.length > 0) {
+      pendingReviewIndicesRef.current = [exportSnapshotRef.current?.currentPage ?? currentPage];
       setUnconfirmedReviewPages(unconfirmed);
       setPendingExportAction(() => () => void executeSaveCurrentPageImage());
       return;
@@ -1596,40 +1637,46 @@ export default function WorkspacePage() {
   };
 
   const executeSaveCurrentPageImage = async () => {
-    const originalName = pages[currentPage]?.name || "page.png";
-    const extension = originalName.includes('.') ? originalName.split('.').pop() : 'png';
-    const baseName = originalName.includes('.') ? originalName.substring(0, originalName.lastIndexOf('.')) : originalName;
-    const filename = `SuperK_Page_${String(currentPage + 1).padStart(3, '0')}_${baseName}.${extension}`;
-
-    let destDir: DirectoryHandleLike | null = null;
-    if (getAskExportDirectory() && isDirectoryPickerSupported()) {
-      destDir = await getOrPickExportDirectory();
-      if (!destDir) return;
-    }
-    if (destDir) {
-      const dataUrl = downloadTranslatedImage("single", currentPage, "", true);
-      if (dataUrl) {
-        const savedName = await saveBlob(dataUrlToBlob(dataUrl), filename, destDir);
-        const wasRenamed = savedName !== filename;
-        const folderLabel = destDir.name ? ` ใน "${destDir.name}"` : "";
-        setTranslationResult(
-          wasRenamed
-            ? `✅ บันทึก ${savedName}${folderLabel} สำเร็จ! (พบชื่อซ้ำ จึงเปลี่ยนชื่อให้อัตโนมัติ)`
-            : `✅ บันทึก ${filename}${folderLabel} สำเร็จ!`
-        );
-        if (wasRenamed) {
-          import("react-hot-toast").then((m) =>
-            m.default.success(`บันทึกเป็น "${savedName}"${folderLabel} (พบไฟล์ชื่อซ้ำ)`),
-          );
+    const pages = exportSnapshotRef.current?.pages ?? [];
+    const currentPage = exportSnapshotRef.current?.currentPage ?? 0;
+    setIsChoosingExport(false);
+    setIsZipping(true);
+    try {
+      const page = pages[currentPage];
+      if (!page) return;
+      if (normalizePageExportSource(page.exportSource) !== "translated") {
+        const url = await resolvePageExportUrl(page, cleaningResultsByPage.get(page.url)?.cleanUrl, async () => null);
+        const blob = await exportImageBlob(url);
+        const filename = exportImageFilename(page.name, currentPage, blob.type);
+        let directory: DirectoryHandleLike | null = null;
+        if (getAskExportDirectory() && isDirectoryPickerSupported()) {
+          directory = await getOrPickExportDirectory();
+          if (!directory) return;
         }
-        setTimeout(() => setTranslationResult(null), 3000);
+        await saveBlob(blob, filename, directory);
+        setTranslationResult(`✅ บันทึก ${filename} สำเร็จ!`);
+        return;
       }
-      return;
-    }
-    downloadTranslatedImage("single", currentPage, filename);
+      const dataUrl = downloadTranslatedImage("single", currentPage, "", true);
+      if (!dataUrl) throw new Error("เรนเดอร์คำแปลไม่สำเร็จ");
+      const blob = await exportImageBlob(dataUrl);
+      const filename = exportImageFilename(page.name, currentPage, blob.type);
+      let directory: DirectoryHandleLike | null = null;
+      if (getAskExportDirectory() && isDirectoryPickerSupported()) {
+        directory = await getOrPickExportDirectory();
+        if (!directory) return;
+      }
+      await saveBlob(blob, filename, directory);
+      setTranslationResult(`✅ บันทึก ${filename} สำเร็จ!`);
+    } catch (error) {
+      setTranslationResult(`❌ ส่งออกไม่สำเร็จ: ${error instanceof Error ? error.message : String(error)}`);
+    } finally { setIsZipping(false); exportSnapshotRef.current = null; }
   };
 
   const requestSinglePageExport = async () => {
+    if (isChoosingExport || isZipping) return;
+    exportSnapshotRef.current = { pages: pages.map(p => ({ ...p })), currentPage };
+    setIsChoosingExport(true);
     const page = pages[currentPage];
     if (!page) return;
     const generation = ++reportScanGenerationRef.current;
@@ -1667,7 +1714,9 @@ export default function WorkspacePage() {
   };
 
   const requestBookExport = async (format: "zip" | "cbz" | "pdf" | "strip") => {
-    if (pages.length === 0) return;
+    if (pages.length === 0 || isChoosingExport || isZipping) return;
+    exportSnapshotRef.current = { pages: pages.map(p => ({ ...p })), currentPage };
+    setIsChoosingExport(true);
     const generation = ++reportScanGenerationRef.current;
     const rows = buildExportReportRows();
     setExportReportRows(rows);
@@ -1706,7 +1755,7 @@ export default function WorkspacePage() {
   };
 
   const processFiles = async (files: File[]) => {
-    if (files.length === 0 || isImporting) return;
+    if (files.length === 0 || isImporting || exportSnapshotRef.current) return;
 
     setIsImporting(true);
     setImportStatusMessage("กำลังจัดเตรียมไฟล์...");
@@ -2112,11 +2161,11 @@ export default function WorkspacePage() {
                   variant={primaryAction.kind === "export" ? "primary" : "default"}
                   disabled={pages.length === 0}
                   disabledKinds={{
-                    image: activeBubbles.length === 0 || workspaceLayer !== "translated",
-                    pdf: isZipping || pages.length === 0,
-                    strip: isZipping || pages.length === 0,
-                    zip: isZipping || pages.length === 0,
-                    cbz: isZipping || pages.length === 0,
+                    image: isZipping || isChoosingExport || (normalizePageExportSource(pages[currentPage]?.exportSource) === "translated" && (activeBubbles.length === 0 || workspaceLayer !== "translated")),
+                    pdf: isZipping || isChoosingExport || pages.length === 0,
+                    strip: isZipping || isChoosingExport || pages.length === 0,
+                    zip: isZipping || isChoosingExport || pages.length === 0,
+                    cbz: isZipping || isChoosingExport || pages.length === 0,
                   }}
                   onExport={(kind) => {
                     if (kind === "image") {
@@ -2385,7 +2434,7 @@ export default function WorkspacePage() {
                   void requestSinglePageExport();
                   setIsMobileMenuOpen(false);
                 }}
-                disabled={activeBubbles.length === 0 || workspaceLayer !== "translated"}
+                disabled={isZipping || isChoosingExport || (normalizePageExportSource(pages[currentPage]?.exportSource) === "translated" && (activeBubbles.length === 0 || workspaceLayer !== "translated"))}
                 className="w-full bg-surface text-foreground disabled:opacity-40 p-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-2 mb-2 border border-transparent"
               >
                 <Download className="w-5 h-5" /> บันทึกหน้านี้
@@ -2393,28 +2442,28 @@ export default function WorkspacePage() {
               <div className="grid grid-cols-4 gap-2">
                 <button
                   onClick={() => { void requestBookExport("strip"); setIsMobileMenuOpen(false); }}
-                  disabled={isZipping || pages.length === 0}
+                  disabled={isZipping || isChoosingExport || pages.length === 0}
                   className="bg-surface text-foreground disabled:opacity-40 p-2 rounded-lg text-xs font-bold flex flex-col items-center justify-center gap-1 border border-transparent"
                 >
                   {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <><GalleryVertical className="w-5 h-5 text-muted" /><span>Strip</span></>}
                 </button>
                 <button
                   onClick={() => { void requestBookExport("zip"); setIsMobileMenuOpen(false); }}
-                  disabled={isZipping || pages.length === 0}
+                  disabled={isZipping || isChoosingExport || pages.length === 0}
                   className="bg-surface text-foreground disabled:opacity-40 p-2 rounded-lg text-xs font-bold flex flex-col items-center justify-center gap-1 border border-transparent"
                 >
                   {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <><FileArchive className="w-5 h-5 text-muted" /><span>ZIP</span></>}
                 </button>
                 <button
                   onClick={() => { void requestBookExport("cbz"); setIsMobileMenuOpen(false); }}
-                  disabled={isZipping || pages.length === 0}
+                  disabled={isZipping || isChoosingExport || pages.length === 0}
                   className="bg-surface text-foreground disabled:opacity-40 p-2 rounded-lg text-xs font-bold flex flex-col items-center justify-center gap-1 border border-transparent"
                 >
                   {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <><BookOpen className="w-5 h-5 text-muted" /><span>CBZ</span></>}
                 </button>
                 <button
                   onClick={() => { void requestBookExport("pdf"); setIsMobileMenuOpen(false); }}
-                  disabled={isZipping || pages.length === 0}
+                  disabled={isZipping || isChoosingExport || pages.length === 0}
                   className="bg-surface text-foreground disabled:opacity-40 p-2 rounded-lg text-xs font-bold flex flex-col items-center justify-center gap-1 border border-transparent"
                 >
                   {isZipping ? <span className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full"></span> : <><FileText className="w-5 h-5 text-muted" /><span>PDF</span></>}
@@ -2627,6 +2676,23 @@ export default function WorkspacePage() {
                   </div>
                 ) : (
                   <>
+                    {pages[currentPage] && (
+                      <label className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface/95 px-3 py-2 text-xs shadow-lg">
+                        <span>หน้า {currentPage + 1} · ส่งออกหน้านี้เป็น</span>
+                        <select aria-label="ส่งออกหน้านี้เป็น" className="rounded-md border border-border bg-background px-2 py-1"
+                          value={normalizePageExportSource(pages[currentPage].exportSource)}
+                          disabled={isZipping || isChoosingExport || Boolean(pendingExportAction) || Boolean(pendingReadabilityExport)}
+                          onChange={(event) => {
+                            if (isZipping || isChoosingExport || pendingExportAction || pendingReadabilityExport) return;
+                            const source = normalizePageExportSource(event.target.value);
+                            setPages(current => current.map((page, index) => index === currentPage ? { ...page, exportSource: source } : page));
+                          }}>
+                          <option value="translated">พร้อมคำแปล</option>
+                          <option value="original">ต้นฉบับ</option>
+                          <option value="clean" disabled={!currentCleaningResult?.cleanUrl}>ภาพคลีน</option>
+                        </select>
+                      </label>
+                    )}
                     <CleaningToolbar
                       hasPage={pages.length > 0 && !operationBusy}
                       hasResult={Boolean(currentCleaningResult)}
@@ -2650,7 +2716,12 @@ export default function WorkspacePage() {
                       ) && (
                         <PageReviewNotice
                           key={`${currentPageUrl}:${cleaningResultsByPage.get(currentPageUrl)?.jobId ?? ""}`}
-                          onConfirm={() => setConfirmedPages(prev => new Set(prev).add(currentPageUrl))}
+                          onConfirm={() => {
+                            confirmedMissingTranslationsRef.current.set(currentPageUrl, missingTranslationSignature(
+                              cleaningResultsByPage.get(currentPageUrl), bubbleCacheRef.current.get(currentPageUrl),
+                            ));
+                            setConfirmedPages(prev => new Set(prev).add(currentPageUrl));
+                          }}
                         />
                       )}
                     {batchFailures.length > 0 && (
@@ -2713,6 +2784,7 @@ export default function WorkspacePage() {
                 }}
                 onViewLayoutChange={setViewLayout}
                 onRemovePage={(idx) => {
+                  if (exportSnapshotRef.current) return;
                   const targetPage = pages[idx];
                   if (targetPage?.id) {
                     pageBlobStore.delete(targetPage.id);
@@ -2846,6 +2918,7 @@ export default function WorkspacePage() {
         currentPage={currentPage}
         onSelectPage={setCurrentPage}
         onDeletePage={(i) => {
+          if (exportSnapshotRef.current) return;
           const targetPage = pages[i];
           if (targetPage?.id) {
             pageBlobStore.delete(targetPage.id);
@@ -2858,9 +2931,10 @@ export default function WorkspacePage() {
             return newPages;
           });
         }}
-        onReorderPages={setPages}
+        onReorderPages={(reordered) => { if (!exportSnapshotRef.current) setPages(reordered); }}
         onAddImages={handleImageUpload}
         onClearAll={() => {
+          if (exportSnapshotRef.current) return;
           workspaceResourceManager.clear();
           setPages([]);
           setCurrentPage(0);
@@ -2940,7 +3014,7 @@ export default function WorkspacePage() {
                   มีหน้าที่ต้องได้รับการยืนยันก่อน Export
                 </h3>
                 <p className="text-xs text-muted mt-1 leading-relaxed">
-                  พบหน้าที่การคลีนหรือการแปลมีความมั่นใจต่ำ ต้องได้รับการตรวจสอบและยืนยันโดยผู้ใช้งานก่อนที่จะสามารถส่งออกไฟล์ได้
+                  พบหน้าที่การคลีนหรือการแปลมีความมั่นใจต่ำ หรือมีบริเวณข้อความที่ตรวจพบแต่ยังไม่มีคำแปล ตรวจสอบหน้าที่ระบุ หรือยืนยันเพื่อส่งออกพร้อมคำแปลที่มีอยู่
                 </p>
               </div>
             </div>
@@ -2948,14 +3022,19 @@ export default function WorkspacePage() {
             <div className="max-h-60 overflow-y-auto border border-border/60 rounded-xl divide-y divide-border/40 bg-background/50">
               {unconfirmedReviewPages.map((p) => (
                 <div key={p.pageUrl} className="flex items-center justify-between p-3 text-xs">
-                  <div className="flex items-center gap-2 min-w-0">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
                     <span className="font-semibold text-foreground">
                       หน้า {p.pageIndex + 1}
                     </span>
                     <span className="text-muted truncate max-w-[150px]">
                       ({p.pageName})
                     </span>
-                    <div className="flex items-center gap-1">
+                    <div className="flex flex-wrap items-center gap-1">
+                      {p.missingTranslationCount > 0 && (
+                        <span className="px-1.5 py-0.5 rounded bg-red-500/15 text-red-500 text-[10px] font-medium">
+                          ยังไม่มีคำแปล {p.missingTranslationCount} บริเวณ
+                        </span>
+                      )}
                       {p.hasUncertainCleaning && (
                         <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 text-[10px] font-medium">
                           การคลีนไม่แน่นอน
@@ -2963,7 +3042,7 @@ export default function WorkspacePage() {
                       )}
                       {p.hasUncertainTranslation && (
                         <span className="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-500 text-[10px] font-medium">
-                          การแปลความมั่นใจต่ำ
+                          คำแปลควรตรวจสอบ
                         </span>
                       )}
                     </div>
@@ -2971,6 +3050,8 @@ export default function WorkspacePage() {
                   <button
                     type="button"
                     onClick={() => {
+                      exportSnapshotRef.current = null;
+                      setIsChoosingExport(false);
                       setCurrentPage(p.pageIndex);
                       setUnconfirmedReviewPages(null);
                       setPendingExportAction(null);
@@ -2989,6 +3070,8 @@ export default function WorkspacePage() {
                 onClick={() => {
                   setUnconfirmedReviewPages(null);
                   setPendingExportAction(null);
+                  setIsChoosingExport(false);
+                  exportSnapshotRef.current = null;
                 }}
                 className="px-4 py-2 rounded-xl border border-border hover:bg-surface text-xs font-semibold text-muted hover:text-foreground transition-colors cursor-pointer"
               >
@@ -2997,6 +3080,24 @@ export default function WorkspacePage() {
               <button
                 type="button"
                 onClick={() => {
+                  const currentReview = getUnconfirmedPages(
+                    exportSnapshotRef.current?.pages ?? pages, confirmedPages, cleaningResultsByPage, bubbleCacheRef.current,
+                    pendingReviewIndicesRef.current, confirmedMissingTranslationsRef.current,
+                  );
+                  const shown = new Map(unconfirmedReviewPages.map(p => [p.pageUrl, p]));
+                  const hasNewWarning = currentReview.some(p => {
+                    const previous = shown.get(p.pageUrl);
+                    return !previous || previous.missingTranslationSignature !== p.missingTranslationSignature ||
+                      previous.hasUncertainCleaning !== p.hasUncertainCleaning ||
+                      previous.hasUncertainTranslation !== p.hasUncertainTranslation;
+                  });
+                  if (hasNewWarning) {
+                    setUnconfirmedReviewPages(currentReview);
+                    return;
+                  }
+                  unconfirmedReviewPages.forEach(p => {
+                    confirmedMissingTranslationsRef.current.set(p.pageUrl, p.missingTranslationSignature);
+                  });
                   setConfirmedPages((prev) => {
                     const next = new Set(prev);
                     unconfirmedReviewPages.forEach((p) => next.add(p.pageUrl));
@@ -3019,7 +3120,7 @@ export default function WorkspacePage() {
       <ExportReportModal
         isOpen={isExportReportOpen}
         rows={exportReportRows}
-        onClose={closeExportReport}
+        onClose={() => { if (isZipping) return; closeExportReport(); exportSnapshotRef.current = null; }}
         onSelectFinding={selectReadabilityFinding}
         onContinueExport={pendingReadabilityExport ? continueReadabilityExport : undefined}
         scanProgress={exportScanProgress}

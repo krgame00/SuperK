@@ -77,6 +77,27 @@ const storage = (() => {
   } satisfies Storage;
 })();
 
+test("checks source-backed translation quality before drawing a page", async () => {
+  const order: string[] = [];
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input => {
+    const url=String(input);
+    if(url === "blob:original") return imageResponse();
+    if(url === "/api/translate") return Response.json({text:JSON.stringify({bubbles:[{...translatedBubble,original_text:"Hello."}]})});
+    if(url === "/api/translation-review") {
+      order.push("review");
+      return Response.json({reviews:[{id:"0",status:"suggested",suggestion:"สวัสดีครับ",reason:"ตรวจสำนวน"}]});
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+  const {result}=renderHook(()=>useTranslation({currentPage:0,pages:["blob:original"],viewMode:"single",
+    preparePageForTranslation:async()=>({recognitionUrl:"blob:original",backgroundUrl:"blob:clean"})}));
+  await act(async()=>{expect(await result.current.handleTranslate()).toBe(true);});
+  expect(order).toEqual(["review"]);
+  const rendered=vi.mocked(applyTranslationOverlay).mock.calls.find(call=>call[1]==="offscreen")?.[0] as Array<{t:string;translationReview?:{status:string}}>;
+  expect(rendered[0]).toMatchObject({t:"สวัสดี",translationReview:{status:"suggested"}});
+  expect(result.current.translationResult).toContain("คำแปล");
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   Object.defineProperty(globalThis, "localStorage", {
@@ -511,6 +532,49 @@ test("router timeout does not rerun the full translation request", async () => {
   ]);
 });
 
+test.each(['recovered', 'missing', 'blocked'] as const)("recovers only an uncovered detected region and retains partial translations: %s", async outcome => {
+  vi.spyOn(HTMLImageElement.prototype, 'naturalWidth', 'get').mockReturnValue(1000);
+  vi.spyOn(HTMLImageElement.prototype, 'naturalHeight', 'get').mockReturnValue(1000);
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({drawImage:vi.fn(),fillRect:vi.fn()} as unknown as CanvasRenderingContext2D);
+  vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,Y3JvcA==');
+  let requests=0;
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    if (String(input)==='blob:original') return imageResponse();
+    if (String(input)==='/api/translate') {
+      requests++;
+      if(requests===1) return successResponse();
+      expect(JSON.parse(String(init?.body)).imageBase64).toBe('Y3JvcA==');
+      if(outcome==='blocked') return Response.json({error:'blocked',code:'SAFETY_BLOCKED'},{status:400});
+      return Response.json({text:JSON.stringify({bubbles:outcome==='recovered'?[{box:[100,100,900,900],t:'ลาก่อน'}]:[]})});
+    }
+    throw new Error('unexpected fetch');
+  });
+  const {result}=renderHook(()=>useTranslation({currentPage:0,pages:['blob:original'],viewMode:'single',
+    preparePageForTranslation:async()=>({recognitionUrl:'blob:original',backgroundUrl:'blob:clean',
+      textScope:{allowed:[translatedBubble.box,[500,500,600,600]],excluded:[]}}),
+  }));
+  await act(async()=>{expect(await result.current.handleTranslate()).toBe(true);});
+  expect(requests).toBe(2);
+  const cached=result.current.bubbleCacheRef.current.get('blob:original')!;
+  expect(cached[0].t).toBe('สวัสดี');
+  expect(cached).toHaveLength(outcome==='recovered'?2:1);
+  if(outcome==='recovered') expect(cached[1].box).toEqual([500,500,601,601]);
+  else expect(result.current.translationResult).toContain('ยังขาดคำแปล 1 จุด');
+});
+
+test('does not recreate a deliberately deleted Auto bubble when the provider returns it again', async () => {
+  vi.spyOn(globalThis,'fetch').mockImplementation(async input => String(input)==='blob:original'?imageResponse():successResponse());
+  const {result}=renderHook(()=>useTranslation({currentPage:0,pages:['blob:original'],viewMode:'single',
+    preparePageForTranslation:async()=>({recognitionUrl:'blob:original',backgroundUrl:'blob:clean',
+      textScope:{allowed:[translatedBubble.box],excluded:[]}}),
+  }));
+  result.current.bubbleCacheRef.current.set('blob:original',[{...translatedBubble,deleted:true}]);
+  await act(async()=>{expect(await result.current.handleTranslate()).toBe(true);});
+  const cached=result.current.bubbleCacheRef.current.get('blob:original')!;
+  expect(cached).toHaveLength(1);
+  expect(cached[0].deleted).toBe(true);
+});
+
 test("cancellation during preparation prevents the next page", async () => {
   vi.useFakeTimers();
   const pages = ["blob:one", "blob:two"];
@@ -551,8 +615,171 @@ test("cancellation during preparation prevents the next page", async () => {
   });
 
   expect(preparePageForTranslation).toHaveBeenCalledTimes(1);
-  expect(preparePageForTranslation).toHaveBeenCalledWith("blob:one", 0);
+  expect(preparePageForTranslation).toHaveBeenCalledWith("blob:one", 0, expect.any(AbortSignal));
   expect(result.current.bubbleCacheRef.current.has("blob:two")).toBe(false);
+});
+
+test("cleans three future pages serially while the first translation is blocked", async () => {
+  const pages = Array.from({ length: 6 }, (_, index) => `blob:page-${index}`);
+  let releaseTranslation!: (response: Response) => void;
+  const blockedTranslation = new Promise<Response>((resolve) => { releaseTranslation = resolve; });
+  let activeCleaners = 0;
+  let peakCleaners = 0;
+  const cleaned: number[] = [];
+  const preparePageForTranslation = vi.fn(async (url: string, index: number) => {
+    activeCleaners++;
+    peakCleaners = Math.max(peakCleaners, activeCleaners);
+    await Promise.resolve();
+    cleaned.push(index);
+    activeCleaners--;
+    return { recognitionUrl: url, backgroundUrl: `${url}-clean` };
+  });
+  const translated: string[] = [];
+  let recognitionPage = "";
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (pages.includes(url)) {
+      recognitionPage = url;
+      return imageResponse();
+    }
+    if (url === "/api/translate") {
+      translated.push(recognitionPage);
+      return translated.length === 1 ? blockedTranslation : successResponse();
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+  const { result } = renderHook(() => useTranslation({ currentPage: 0, pages, viewMode: "single", preparePageForTranslation }));
+  let batch!: Promise<void>;
+  act(() => { batch = result.current.handleTranslateAll(); });
+  await act(async () => { for (let tick = 0; tick < 50; tick++) await Promise.resolve(); });
+  expect(translated).toEqual([pages[0]]);
+  expect(cleaned).toEqual([0, 1, 2, 3]);
+  expect(peakCleaners).toBe(1);
+  expect(result.current.translateAllProgress?.secondaryMessage).toContain("3");
+  releaseTranslation(successResponse());
+  await act(async () => { await batch; });
+  expect(cleaned).toEqual([0, 1, 2, 3, 4, 5]);
+  expect(translated).toEqual(pages);
+  expect(result.current.batchFailures).toEqual([]);
+});
+
+test("single translation clears stale visible bubbles while preserving their cached edits", async () => {
+  let releasePreparation!: (value: PreparedTranslationPage) => void;
+  const pending = new Promise<PreparedTranslationPage>((resolve) => { releasePreparation = resolve; });
+  const { result } = renderHook(() => useTranslation({ currentPage: 0, pages: ["blob:one"], viewMode: "single", preparePageForTranslation: () => pending }));
+  const cached = [{ ...translatedBubble, isManual: true }];
+  act(() => {
+    result.current.bubbleCacheRef.current.set("blob:one", cached);
+    result.current.setActiveBubbles(cached);
+  });
+  let translation!: Promise<boolean>;
+  act(() => { translation = result.current.handleTranslate(); });
+  expect(result.current.activeBubbles).toEqual([]);
+  expect(result.current.bubbleCacheRef.current.get("blob:one")).toBe(cached);
+  expect(vi.mocked(applyTranslationOverlay)).toHaveBeenCalledWith([], "single", 0, expect.any(Function), undefined, expect.any(Object), undefined, "blob:one");
+  act(() => result.current.cancelTranslateAll());
+  releasePreparation({ recognitionUrl: "blob:one", backgroundUrl: "blob:clean" });
+  await act(async () => { await translation; });
+});
+
+test("restores cached edits after cancellation and allows viewing another cached page during a batch", async () => {
+  const pages = ["blob:one", "blob:two"];
+  const cached = [{ ...translatedBubble, isManual: true }];
+  const preparePageForTranslation = vi.fn(() => new Promise<PreparedTranslationPage>(() => {}));
+  const { result, rerender } = renderHook(({ currentPage }) => useTranslation({ currentPage, pages, viewMode: "single", preparePageForTranslation }), { initialProps: { currentPage: 1 } });
+  act(() => {
+    result.current.bubbleCacheRef.current.set(pages[0], cached);
+    result.current.bubbleCacheRef.current.set(pages[1], cached);
+    result.current.setActiveBubbles(cached);
+  });
+  let batch!: Promise<void>;
+  act(() => { batch = result.current.handleTranslateAll([1]); });
+  expect(result.current.activeBubbles).toEqual([]);
+  rerender({ currentPage: 0 });
+  expect(result.current.activeBubbles).toBe(cached);
+  rerender({ currentPage: 1 });
+  act(() => result.current.cancelTranslateAll());
+  await act(async () => { await batch; });
+  expect(result.current.activeBubbles).toBe(cached);
+});
+
+test("shows a completed background page while a later translation is blocked", async () => {
+  const pages = ["blob:one", "blob:two", "blob:three"];
+  let releaseTranslation!: (response: Response) => void;
+  const pending = new Promise<Response>((resolve) => { releaseTranslation = resolve; });
+  let cloudCalls = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (pages.includes(String(input))) return imageResponse();
+    if (String(input) === "/api/translate") {
+      cloudCalls++;
+      return cloudCalls === 3 ? pending : successResponse();
+    }
+    throw new Error(`unexpected fetch: ${input}`);
+  });
+  const { result, rerender } = renderHook(({ currentPage }) => useTranslation({ currentPage, pages, viewMode: "single",
+    preparePageForTranslation: async (url) => ({ recognitionUrl: url, backgroundUrl: `${url}-clean` }),
+  }), { initialProps: { currentPage: 0 } });
+  let batch!: Promise<void>;
+  act(() => { batch = result.current.handleTranslateAll(); });
+  await act(async () => { for (let tick = 0; tick < 150; tick++) await Promise.resolve(); });
+  expect(cloudCalls).toBe(3);
+  expect(result.current.translatedImageCacheRef.current.has(pages[1])).toBe(true);
+  const cached = result.current.bubbleCacheRef.current.get(pages[1]);
+  expect(cached).toHaveLength(1);
+  rerender({ currentPage: 1 });
+  expect(result.current.activeBubbles).toBe(cached);
+  releaseTranslation(successResponse());
+  await act(async () => { await batch; });
+});
+
+test("quota aborts the in-flight future cleaner and prevents further scheduling", async () => {
+  const pages = ["blob:one", "blob:two", "blob:three", "blob:four", "blob:five"];
+  let releaseCleaning!: (value: PreparedTranslationPage) => void;
+  const pending = new Promise<PreparedTranslationPage>((resolve) => { releaseCleaning = resolve; });
+  const signals: AbortSignal[] = [];
+  const preparePageForTranslation = vi.fn((url: string, index: number, signal?: AbortSignal) => {
+    signals.push(signal!);
+    return index === 1 ? pending : Promise.resolve({ recognitionUrl: url, backgroundUrl: `${url}-clean` });
+  });
+  let cloudCalls = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (pages.includes(String(input))) return imageResponse();
+    if (String(input) === "/api/translate") {
+      cloudCalls++;
+      return Response.json({ error: "quota exhausted", code: "GEMINI_QUOTA", retryable: false }, { status: 429 });
+    }
+    throw new Error(`unexpected fetch: ${input}`);
+  });
+  const { result } = renderHook(() => useTranslation({ currentPage: 0, pages, viewMode: "single", preparePageForTranslation }));
+  await act(async () => { await result.current.handleTranslateAll(); });
+  expect(cloudCalls).toBe(1);
+  expect(preparePageForTranslation).toHaveBeenCalledTimes(2);
+  expect(signals[1].aborted).toBe(true);
+  releaseCleaning({ recognitionUrl: pages[1], backgroundUrl: "blob:clean-two" });
+  await act(async () => { for (let tick = 0; tick < 10; tick++) await Promise.resolve(); });
+  expect(preparePageForTranslation).toHaveBeenCalledTimes(2);
+  expect(result.current.batchPerformanceMetrics?.cancelled).toBe(false);
+  expect(result.current.batchFailures).toEqual([expect.objectContaining({ pageIndex: 0, stage: "translation" })]);
+});
+
+test("cancels promptly while preparation ignores its abort signal", async () => {
+  let releasePreparation!: (value: PreparedTranslationPage) => void;
+  const pending = new Promise<PreparedTranslationPage>((resolve) => { releasePreparation = resolve; });
+  const preparePageForTranslation = vi.fn(() => pending);
+  const fetchSpy = vi.spyOn(globalThis, "fetch");
+  const { result } = renderHook(() => useTranslation({ currentPage: 0, pages: ["blob:one", "blob:two"], viewMode: "single", preparePageForTranslation }));
+  let finished = false;
+  let batch!: Promise<void>;
+  act(() => { batch = result.current.handleTranslateAll().then(() => { finished = true; }); });
+  act(() => result.current.cancelTranslateAll());
+  await act(async () => { for (let tick = 0; tick < 10; tick++) await Promise.resolve(); });
+  expect(finished).toBe(true);
+  expect(result.current.isTranslatingAll).toBe(false);
+  expect(result.current.batchFailures).toEqual([]);
+  releasePreparation({ recognitionUrl: "blob:one", backgroundUrl: "blob:one-clean" });
+  await act(async () => { await batch; });
+  expect(preparePageForTranslation).toHaveBeenCalledTimes(1);
+  expect(fetchSpy).not.toHaveBeenCalled();
 });
 
 test("late in-flight prefetch completion cannot resume a cancelled batch", async () => {
@@ -578,7 +805,7 @@ test("late in-flight prefetch completion cannot resume a cancelled batch", async
     if (pages.includes(url)) return imageResponse();
     if (url === "/api/translate") {
       translateCalls.push(url);
-      return translationPending;
+      return translateCalls.length === 1 ? translationPending : successResponse();
     }
     throw new Error(`unexpected fetch: ${url}`);
   });
@@ -608,6 +835,9 @@ test("late in-flight prefetch completion cannot resume a cancelled batch", async
     await batch;
   });
 
+  // A new batch resets the shared cancel ref while the old cleaner is pending.
+  await act(async () => { await result.current.handleTranslateAll([0]); });
+
   releasePrefetch({
     recognitionUrl: pages[1],
     backgroundUrl: "blob:clean-2",
@@ -617,8 +847,8 @@ test("late in-flight prefetch completion cannot resume a cancelled batch", async
     await Promise.resolve();
   });
 
-  expect(translateCalls).toHaveLength(1);
-  expect(preparePageForTranslation).toHaveBeenCalledTimes(2);
+  expect(translateCalls).toHaveLength(2);
+  expect(preparePageForTranslation).toHaveBeenCalledTimes(3);
   expect(result.current.bubbleCacheRef.current.has(pages[2])).toBe(false);
 });
 

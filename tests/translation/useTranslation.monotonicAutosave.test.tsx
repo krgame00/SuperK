@@ -168,3 +168,16 @@ test("monotonic autosave preserves edits made while a save is in-flight", async 
   expect(result.current.saveStatus).toBe("saved");
   expect(result.current.saveError).toBeNull();
 });
+
+test("changing only per-page export sources schedules a metadata save with unchanged URLs", async () => {
+  const pages = ["blob:page1", "blob:page2"];
+  const { rerender } = renderHook(({ sources }: { sources: ("original" | "clean" | "translated")[] }) =>
+    useTranslation({ currentPage: 0, pages, viewMode: "single", pageExportSources: sources, preparePageForTranslation: vi.fn() }),
+    { initialProps: { sources: ["translated", "translated"] } });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+  vi.mocked(saveProjectSession).mockClear();
+  rerender({ sources: ["original", "clean"] });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+  expect(saveProjectSession).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(saveProjectSession).mock.calls[0][0].pages.map(page => page.exportSource)).toEqual(["original", "clean"]);
+});

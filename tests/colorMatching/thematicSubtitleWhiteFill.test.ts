@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveBubbleTextStyle } from "@/lib/colorMatching/resolveTextStyle";
+import { resolveBubbleTextStyle, strengthenSourceAccentOutline } from "@/lib/colorMatching/resolveTextStyle";
 import type { TranslatedBubble, OverlayTextStyle } from "@/lib/translationOverlay";
 import type { TextStyleProfile } from "@/lib/colorMatching/types";
 
@@ -143,7 +143,7 @@ describe("ADR 0011: Thematic Subtitle Pattern (White Fill + Chromatic Outline)",
     expect(resolved.textColor).toBe("#000000");
   });
 
-  it("preserves authored high-contrast dark outline around bright fills", () => {
+  it("moves a bright source fill into a strengthened outline", () => {
     // Bright yellow with solid black outline
     const yellowBlackProfile: TextStyleProfile = {
       fill: "#ffee00",
@@ -163,8 +163,8 @@ describe("ADR 0011: Thematic Subtitle Pattern (White Fill + Chromatic Outline)",
 
     const resolved = resolveBubbleTextStyle(bubble, globalStyle);
 
-    expect(resolved.textColor).toBe("#ffee00");
-    expect(resolved.textOutline).toBe("#000000");
+    expect(resolved.textColor).toBe("#ffffff");
+    expect(resolved.textOutline).toBe(strengthenSourceAccentOutline("#ffee00", "#ffffff"));
   });
 
   it("strictly preserves manual user override", () => {

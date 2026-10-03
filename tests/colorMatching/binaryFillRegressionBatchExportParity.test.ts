@@ -81,7 +81,7 @@ describe("Ticket 22: Binary Fill Regression, Batch & Export Parity", () => {
         category: "sfx",
         t: "ตูมมม!",
         styleProfile: {
-          ownershipMode: "auto",
+          ownershipMode: "source_faithful",
           source: "auto",
           fill: "#ff5722", // chromatic orange
           outline: "#ffff00", // bright yellow

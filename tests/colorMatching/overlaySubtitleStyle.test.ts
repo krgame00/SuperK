@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { inferTextStyleCategory, applyNearbyStyleFallbacks } from "@/lib/colorMatching/nearbyStyleFallback";
-import { resolveBubbleTextStyle } from "@/lib/colorMatching/resolveTextStyle";
+import { resolveBubbleTextStyle, strengthenSourceAccentOutline } from "@/lib/colorMatching/resolveTextStyle";
 import type { TranslatedBubble } from "@/lib/translationOverlay";
 import type { TextStyleProfile } from "@/lib/colorMatching/types";
 
@@ -91,8 +91,8 @@ describe("Ticket 09: Overlay Subtitle Classification & Readable Safety Path", ()
       };
 
       const resolved = resolveBubbleTextStyle(bubble);
-      expect(resolved.textColor).toBe("#ffee00");
-      expect(resolved.textOutline).toBe("#000000");
+      expect(resolved.textColor).toBe("#ffffff");
+      expect(resolved.textOutline).toBe(strengthenSourceAccentOutline("#ffee00", "#ffffff"));
       expect(resolved.hasOutline).toBe(true);
       expect(resolved.outlineWidthRatio).toBe(0.18);
       expect(resolved.source).toBe("auto");

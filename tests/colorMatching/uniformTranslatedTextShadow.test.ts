@@ -2,19 +2,20 @@ import { describe, expect, it } from "vitest";
 import {
   resolveBubbleTextStyle,
   STANDARD_TRANSLATED_TEXT_SHADOW,
+  SUBTLE_ARTWORK_SHADOW,
 } from "@/lib/colorMatching/resolveTextStyle";
 import type { TranslatedBubble } from "@/lib/translationOverlay";
 
-const expectStandardShadow = (bubble: TranslatedBubble) => {
+const expectSubtleShadow = (bubble: TranslatedBubble) => {
   const resolved = resolveBubbleTextStyle(bubble);
-  expect(resolved.shadow).toEqual(STANDARD_TRANSLATED_TEXT_SHADOW);
+  expect(resolved.shadow).toEqual(SUBTLE_ARTWORK_SHADOW);
   expect(resolved.glow).toBeUndefined();
   expect(resolved.readabilityHalo).toBeUndefined();
   return resolved;
 };
 
 describe("ADR 0015 Uniform translated text shadow", () => {
-  it("uses the same standard shadow for Auto, Readable fallback, explicit Readable, Source-faithful, and plain dialogue", () => {
+  it("uses subtle artwork shadows, clean dialogue, and authoritative Original styling", () => {
     const bubbles: TranslatedBubble[] = [
       {
         id: "auto",
@@ -82,7 +83,8 @@ describe("ADR 0015 Uniform translated text shadow", () => {
       },
     ];
 
-    bubbles.forEach(expectStandardShadow);
+    const expected = [SUBTLE_ARTWORK_SHADOW, undefined, undefined, STANDARD_TRANSLATED_TEXT_SHADOW, undefined];
+    bubbles.forEach((bubble,index) => expect(resolveBubbleTextStyle(bubble).shadow).toEqual(expected[index]));
   });
 
   it("keeps legacy source effects as metadata while automatic rendering ignores them", () => {
@@ -104,7 +106,7 @@ describe("ADR 0015 Uniform translated text shadow", () => {
       },
     };
 
-    expectStandardShadow(bubble);
+    expectSubtleShadow(bubble);
     expect(bubble.styleProfile?.shadow).toEqual(shadow);
     expect(bubble.styleProfile?.glow).toEqual(glow);
     expect(bubble.styleProfile?.readabilityHalo).toBeDefined();
@@ -130,7 +132,7 @@ describe("ADR 0015 Uniform translated text shadow", () => {
     expect(resolveBubbleTextStyle(manualOff).shadow).toBeUndefined();
   });
 
-  it("preserves Standard Shadow for color/unknown pages, with confirmed monochrome dialogue as a narrow ADR 0016 exception", () => {
+  it("keeps plain dialogue clean on both color and monochrome pages", () => {
     const colorBubble: TranslatedBubble = {
       styleProfile: {
         fill: "#111111",
@@ -142,7 +144,7 @@ describe("ADR 0015 Uniform translated text shadow", () => {
         isMonochromePage: false,
       },
     };
-    expect(resolveBubbleTextStyle(colorBubble).shadow).toEqual(STANDARD_TRANSLATED_TEXT_SHADOW);
+    expect(resolveBubbleTextStyle(colorBubble).shadow).toBeUndefined();
 
     const monoBubble: TranslatedBubble = {
       styleProfile: {

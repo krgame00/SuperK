@@ -16,13 +16,15 @@ test("translation overlay contains no browser-side inpainting", () => {
   expect(source).toContain('className = "tl-canvas"');
 });
 
-let fillTextSpy: ReturnType<typeof vi.fn>;
-let strokeTextSpy: ReturnType<typeof vi.fn>;
+let fillTextSpy: ReturnType<typeof vi.fn<CanvasRenderingContext2D["fillText"]>>;
+let strokeTextSpy: ReturnType<typeof vi.fn<CanvasRenderingContext2D["strokeText"]>>;
 let lineWidths: number[];
 let shadowColors: string[];
 let shadowBlurs: number[];
 let shadowOffsetsX: number[];
 let shadowOffsetsY: number[];
+let drawnFillColors: string[];
+let drawnOutlineColors: string[];
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -51,13 +53,15 @@ beforeEach(() => {
     configurable: true,
     value: storage,
   });
-  fillTextSpy = vi.fn();
-  strokeTextSpy = vi.fn();
+  fillTextSpy = vi.fn<CanvasRenderingContext2D["fillText"]>();
+  strokeTextSpy = vi.fn<CanvasRenderingContext2D["strokeText"]>();
   lineWidths = [];
   shadowColors = [];
   shadowBlurs = [];
   shadowOffsetsX = [];
   shadowOffsetsY = [];
+  drawnFillColors = [];
+  drawnOutlineColors = [];
 
   Object.defineProperty(document, "fonts", {
     configurable: true,
@@ -68,8 +72,14 @@ beforeEach(() => {
     new Proxy(
       {
         measureText: () => ({ width: 20 }),
-        fillText: fillTextSpy,
-        strokeText: strokeTextSpy,
+        fillText: function(this: CanvasRenderingContext2D, ...args: Parameters<CanvasRenderingContext2D["fillText"]>) {
+          drawnFillColors.push(String(this.fillStyle));
+          fillTextSpy(...args);
+        },
+        strokeText: function(this: CanvasRenderingContext2D, ...args: Parameters<CanvasRenderingContext2D["strokeText"]>) {
+          drawnOutlineColors.push(String(this.strokeStyle));
+          strokeTextSpy(...args);
+        },
         clearRect: vi.fn(),
         createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
       },
@@ -158,7 +168,164 @@ async function renderOverlay(
   return { viewport, container, chromeRoot, wrapper, canvas, toolbar, bubble };
 }
 
+describe("translation quality review editor", () => {
+  const review = { status: "suggested" as const, sourceText: "Hello, friend.", reviewedText: "สวัสดี", suggestion: "สวัสดี เพื่อน", reason: "The greeting names a friend." };
+  async function openReview() {
+    const result = await renderOverlay("สวัสดี", { original_text: review.sourceText, translationReview: { ...review } });
+    result.wrapper.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    const editor = result.chromeRoot.querySelector<HTMLElement>("[data-translation-editor]")!;
+    const action = (name: string) => editor.querySelector<HTMLButtonElement>(`[data-review-action="${name}"]`)!;
+    const save = () => editor.querySelector<HTMLButtonElement>('[aria-label="บันทึกข้อความ"]')!.click();
+    const cancel = () => editor.querySelector<HTMLButtonElement>('[aria-label="ยกเลิกการแก้ไข"]')!.click();
+    return { ...result, editor, action, save, cancel };
+  }
+  test("shows source and reason without automatically replacing the translation", async () => {
+    const { editor, bubble } = await openReview();
+    expect(editor.textContent).toContain(review.sourceText);
+    expect(editor.textContent).toContain(review.reason);
+    expect(editor.textContent).toContain(review.suggestion);
+    expect(bubble.t).toBe(review.reviewedText);
+  });
+  test("accepts only by choice and restores text and review together through Undo/Redo", async () => {
+    const { action, save, bubble } = await openReview();
+    action("accept").click();
+    expect(bubble.t).toBe(review.suggestion);
+    expect(bubble.translationReview).toMatchObject({ status: "accepted", originalTranslation: review.reviewedText, reviewedText: review.suggestion });
+    save();
+    undoManager.undo();
+    expect(bubble.t).toBe(review.reviewedText);
+    expect(bubble.translationReview).toEqual(review);
+    undoManager.redo();
+    expect(bubble.t).toBe(review.suggestion);
+    expect(bubble.translationReview?.status).toBe("accepted");
+  });
+  test("records a metadata-only dismissal in Undo/Redo", async () => {
+    const { action, save, bubble } = await openReview();
+    action("dismiss").click();
+    save();
+    expect(bubble.translationReview?.status).toBe("dismissed");
+    undoManager.undo();
+    expect(bubble.translationReview).toEqual(review);
+    undoManager.redo();
+    expect(bubble.translationReview?.status).toBe("dismissed");
+  });
+  test("cancel restores review metadata after accepting or typing", async () => {
+    const { action, cancel, bubble, editor } = await openReview();
+    action("accept").click();
+    const input = editor.querySelector("textarea")!;
+    input.value = "changed";
+    input.dispatchEvent(new Event("input"));
+    expect(bubble.translationReview?.status).toBe("stale");
+    cancel();
+    expect(bubble.t).toBe(review.reviewedText);
+    expect(bubble.translationReview).toEqual(review);
+    expect(undoManager.canUndo()).toBe(false);
+  });
+  test("disables stale suggestions and checks snapshots again at click time", async () => {
+    const { action, bubble, editor } = await openReview();
+    bubble.original_text = "Goodbye.";
+    action("accept").click();
+    expect(bubble.t).toBe(review.reviewedText);
+    expect(bubble.translationReview?.status).toBe("stale");
+    const input = editor.querySelector("textarea")!;
+    input.value = "changed";
+    input.dispatchEvent(new Event("input"));
+    expect(action("accept").disabled).toBe(true);
+    expect(action("dismiss").disabled).toBe(true);
+  });
+  test("can restore the translation that preceded an accepted suggestion", async () => {
+    const { action, bubble } = await openReview();
+    action("accept").click();
+    action("restore").click();
+    expect(bubble.t).toBe(review.reviewedText);
+    expect(bubble.translationReview).toMatchObject({ status: "suggested", reviewedText: review.reviewedText, originalTranslation: review.reviewedText });
+  });
+  test("cancel preserves the exact opening text snapshot including whitespace", async () => {
+    const original = " สวัสดี ";
+    const { wrapper, chromeRoot, bubble } = await renderOverlay(original, {
+      original_text: review.sourceText,
+      translationReview: { ...review, reviewedText: original },
+    });
+    wrapper.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    chromeRoot.querySelector<HTMLButtonElement>('[aria-label="ยกเลิกการแก้ไข"]')!.click();
+    expect(bubble.t).toBe(original);
+    expect(bubble.translationReview?.reviewedText).toBe(original);
+  });
+  test("moving focus to a review button keeps the editor open until Save", async () => {
+    const { editor, action, bubble, save } = await openReview();
+    action("accept").focus();
+    await vi.runAllTimersAsync();
+    expect(editor.isConnected).toBe(true);
+    action("accept").click();
+    expect(editor.isConnected).toBe(true);
+    expect(bubble.t).toBe(review.suggestion);
+    save();
+    expect(editor.isConnected).toBe(false);
+  });
+});
+
 describe("translation overlay live editor and keyboard controls", () => {
+  test("refreshes the shadow status after choosing a manual text color", async () => {
+    const { toolbar } = await renderOverlay("TEST", {styleProfile:{
+      source:"auto", category:"dialogue", fill:"#000000", outline:"#ffffff", backgroundLuminance:250,
+    }});
+    vi.spyOn(window, "prompt").mockReturnValue("#123456");
+    toolbar.querySelector<HTMLButtonElement>('[aria-label="เปลี่ยนสีข้อความ"]')!.click();
+    expect(toolbar.querySelector('[aria-label="เงา: มาตรฐาน"]')).not.toBeNull();
+    expect(shadowColors.at(-1)).toBe("rgba(30, 30, 30, 0.8)");
+  });
+  test("turning off the automatic artwork shadow preserves the displayed white fill and colored outline", async () => {
+    const { toolbar, bubble } = await renderOverlay("TEST", {styleProfile:{
+      source:"auto", category:"overlay_subtitle", evidenceState:"admitted", fillConfidence:.95,
+      fill:"#930a0b", outline:"#ffffff", backgroundLuminance:180,
+    }});
+    const button = toolbar.querySelector<HTMLButtonElement>('[aria-label="เงา: Auto (บาง)"]')!;
+    expect(button).not.toBeNull();
+    button.click();
+    expect(bubble.styleProfile?.manualShadowMode).toBe("off");
+    expect(bubble.styleProfile?.fill).toBe("#ffffff");
+    expect(bubble.styleProfile?.outline).toBe("#930a0b");
+    expect(drawnFillColors.at(-1)).toBe("#ffffff");
+    expect(drawnOutlineColors.at(-1)).toBe("#930a0b");
+    expect(shadowColors.at(-1)).toBe("rgba(0,0,0,0)");
+  });
+
+  test("shows automatic shadow-off for dialogue and lets the user enable Manual Standard", async () => {
+    const { toolbar, bubble } = await renderOverlay("TEST", {styleProfile:{
+      source:"auto", category:"dialogue", fill:"#000000", outline:"#ffffff", backgroundLuminance:250,
+    }});
+    const button = toolbar.querySelector<HTMLButtonElement>('[aria-label="เงา: Auto (ปิด)"]');
+    expect(button).not.toBeNull();
+    button!.click();
+    expect(bubble.styleProfile?.manualShadowMode).toBe("standard");
+    expect(button!.getAttribute("aria-label")).toBe("เงา: มาตรฐาน");
+    expect(shadowColors.at(-1)).toBe("rgba(30, 30, 30, 0.8)");
+  });
+
+  test.each(["single", "offscreen"] as const)("draws white Auto interiors and source colored outlines in the %s canvas", async (mode) => {
+    const container = document.createElement("div");
+    const image = document.createElement("img");
+    Object.defineProperties(image, {
+      complete: { configurable: true, value: true },
+      naturalWidth: { configurable: true, value: 1000 },
+      naturalHeight: { configurable: true, value: 1200 },
+    });
+    container.appendChild(image);
+    document.body.appendChild(container);
+    const sourceProfile = { source: "auto" as const, evidenceState: "admitted" as const,
+      fill: "#930a0b", outline: "#ffffff", hasOutline: false, outlineWidthRatio: 0,
+      fillConfidence: .95, outlineConfidence: 0, backgroundLuminance: 180 };
+    await applyTranslationOverlay([{ box: [100, 100, 300, 400], t: "ข้อความ", styleProfile: sourceProfile }],
+      mode, 0, vi.fn(), undefined, undefined, container);
+    await vi.runAllTimersAsync();
+    expect(drawnFillColors.length).toBeGreaterThan(0);
+    expect(drawnFillColors.every(color => color === "#ffffff")).toBe(true);
+    expect(drawnOutlineColors).toContain("#930a0b");
+    expect(shadowColors).toContain("rgba(30, 30, 30, 0.3)");
+    expect(sourceProfile.fill).toBe("#930a0b");
+    expect(sourceProfile.hasOutline).toBe(false);
+  });
+
   test("uses an explicit container for overlay and export", async () => {
     const decoy = document.createElement("div");
     decoy.id = "offscreen-container";
@@ -236,6 +403,7 @@ describe("translation overlay live editor and keyboard controls", () => {
         fillConfidence: 0.95,
         outlineConfidence: 0.95,
         source: "auto",
+        ownershipMode: "source_faithful",
         category: "dialogue",
       },
     });
@@ -254,6 +422,7 @@ describe("translation overlay live editor and keyboard controls", () => {
         fillConfidence: 0.95,
         outlineConfidence: 0.95,
         source: "auto",
+        ownershipMode: "source_faithful",
         category: "dialogue",
       },
     });
@@ -262,7 +431,7 @@ describe("translation overlay live editor and keyboard controls", () => {
     expect(thickWidth).toBeGreaterThan(thinWidth * 2);
   });
 
-  test("renders the proportional Standard Shadow on automatic text and ignores source glow/shadow", async () => {
+  test("renders the proportional subtle shadow on automatic text and ignores source glow/shadow", async () => {
     await renderOverlay("เงามาตรฐาน", {
       styleProfile: {
         fill: "#ffffff",
@@ -280,11 +449,11 @@ describe("translation overlay live editor and keyboard controls", () => {
       },
     });
 
-    expect(shadowColors.at(-1)).toBe("rgba(30, 30, 30, 0.8)");
+    expect(shadowColors.at(-1)).toBe("rgba(30, 30, 30, 0.3)");
     expect(shadowBlurs.at(-1)).toBeGreaterThan(0);
     expect(shadowOffsetsX.at(-1)).toBeGreaterThan(0);
     expect(shadowOffsetsY.at(-1)).toBeGreaterThan(0);
-    expect(shadowBlurs.at(-1)! / shadowOffsetsX.at(-1)!).toBeCloseTo(0.15 / 0.08, 2);
+    expect(shadowBlurs.at(-1)! / shadowOffsetsX.at(-1)!).toBeCloseTo(0.06 / 0.025, 2);
   });
 
   test("lets Manual shadow toggle between Standard and Off without changing other manual styling", async () => {
@@ -309,8 +478,8 @@ describe("translation overlay live editor and keyboard controls", () => {
     toolbar
       .querySelector<HTMLButtonElement>('[aria-label="กลับไปใช้สไตล์ต้นฉบับอัตโนมัติ"]')!
       .click();
-    expect(shadowBtn.getAttribute("aria-label")).toBe("เงา: มาตรฐาน");
-    expect(shadowColors.at(-1)).toBe("rgba(30, 30, 30, 0.8)");
+    expect(shadowBtn.getAttribute("aria-label")).toBe("เงา: Auto (ปิด)");
+    expect(shadowColors.at(-1)).toBe("rgba(0,0,0,0)");
   });
 
   test("keeps the complete manual style profile and offers an explicit Auto/Original reset", async () => {
@@ -830,7 +999,7 @@ test("excludes deleted bubbles from export compositing until undo", async () => 
     expect(exported).toBeTruthy();
   });
 
-  test("renders confirmed monochrome dialogue without a canvas shadow and color page with Standard Shadow", async () => {
+  test("renders confirmed monochrome dialogue without a canvas shadow and color page dialogue without a shadow", async () => {
     await renderOverlay("ข้อความขาวดำ", {
       styleProfile: {
         fill: "#000000",
@@ -847,7 +1016,7 @@ test("excludes deleted bubbles from export compositing until undo", async () => 
     expect(shadowBlurs.at(-1) ?? 0).toBe(0);
     expect(shadowOffsetsX.at(-1) ?? 0).toBe(0);
 
-    // Paired test: Color page still renders Standard Shadow
+    // Color-page dialogue also remains clean
     await renderOverlay("ข้อความสี", {
       styleProfile: {
         fill: "#000000",
@@ -861,8 +1030,8 @@ test("excludes deleted bubbles from export compositing until undo", async () => 
       },
     });
 
-    expect(shadowBlurs.at(-1) ?? 0).toBeGreaterThan(0);
-    expect(shadowOffsetsX.at(-1) ?? 0).toBeGreaterThan(0);
+    expect(shadowBlurs.at(-1) ?? 0).toBe(0);
+    expect(shadowOffsetsX.at(-1) ?? 0).toBe(0);
   });
 });
 test("regression: keyboard focus leaving editor commits pending text", async () => {
@@ -1090,11 +1259,80 @@ test("scales the text with the corner resize handle", async () => {
   handle.releasePointerCapture = vi.fn();
 
   firePointer(handle, "pointerdown", 500, 500);
-  // Dragging down 90 source px grows the frame height 360 -> 450 (x1.25),
-  // and the text must scale with the frame exactly like the fit preview.
-  firePointer(handle, "pointermove", 500, 410);
-  firePointer(handle, "pointerup", 500, 410);
+  // Move along the corner diagonal: both dimensions grow by 1.25.
+  firePointer(handle, "pointermove", 550, 410);
+  firePointer(handle, "pointerup", 550, 410);
   expect(bubble.fontSizeMultiplier).toBeCloseTo(1.25, 5);
+});
+
+test.each([{dx:80,dy:0},{dx:0,dy:-90},{dx:50,dy:-90},{dx:-50,dy:90},{dx:50,dy:-90,targetFontSize:40}])('corner scaling preserves frame proportions at 44% zoom: %j', async ({dx,dy,...settings}) => {
+  const {container,chromeRoot,bubble,wrapper}=await renderOverlayFresh('ปรับขนาด',{
+    layoutAdjustment:{bx:100,by:100,bw:200,bh:360,iw:1000,ih:1200},fontSizeMultiplier:1,
+    ...settings,
+  });
+  mockCanvasRect(container,.44);
+  const handle=chromeRoot.querySelector<HTMLElement>('[data-handle-position="ne"]')!;
+  handle.setPointerCapture=vi.fn();handle.releasePointerCapture=vi.fn();
+  (handle as unknown as {hasPointerCapture:()=>boolean}).hasPointerCapture=()=>true;
+  const beforeW=parseFloat(wrapper.style.width)*10;
+  const beforeH=parseFloat(wrapper.style.height)*12;
+  firePointer(handle,'pointerdown',500,500);
+  firePointer(handle,'pointermove',500+dx*.44,500+dy*.44);
+  firePointer(handle,'pointerup',500+dx*.44,500+dy*.44);
+  const final=bubble.layoutAdjustment!;
+  expect(final.bw/beforeW).toBeCloseTo(final.bh/beforeH,5);
+  expect(bubble.fontSizeMultiplier).toBeCloseTo(final.bw/beforeW,5);
+  expect(final.bx).toBeCloseTo(100,5);
+  expect(final.by+final.bh).toBeCloseTo(460,5);
+  expect(bubble.targetFontSize).toBeGreaterThan(0);
+});
+
+test('corner scaling restores geometry and font on cancel and Undo/Redo', async () => {
+  const {container,chromeRoot,bubble}=await renderOverlayFresh('ปรับขนาด',{
+    layoutAdjustment:{bx:100,by:100,bw:200,bh:360,iw:1000,ih:1200},fontSizeMultiplier:1,
+  });
+  const {undoManager: freshUndo}=await import('@/lib/undoManager');
+  mockCanvasRect(container);
+  const handle=chromeRoot.querySelector<HTMLElement>('[data-handle-position="ne"]')!;
+  handle.setPointerCapture=vi.fn();handle.releasePointerCapture=vi.fn();
+  (handle as unknown as {hasPointerCapture:()=>boolean}).hasPointerCapture=()=>true;
+  firePointer(handle,'pointerdown',500,500);
+  firePointer(handle,'pointermove',550,410);
+  firePointer(handle,'pointercancel',550,410);
+  expect(bubble.targetFontSize).toBeUndefined();
+  expect(bubble.fontSizeMultiplier).toBe(1);
+  expect(freshUndo.undo()).toBeNull();
+  firePointer(handle,'pointerdown',500,500);
+  firePointer(handle,'pointermove',550,410);
+  firePointer(handle,'pointerup',550,410);
+  expect(bubble.layoutAdjustment).toMatchObject({bw:250,bh:450,by:10});
+  const locked=bubble.targetFontSize;
+  freshUndo.undo();
+  expect(bubble.layoutAdjustment).toMatchObject({bw:200,bh:360,by:100});
+  expect(bubble.targetFontSize).toBeUndefined();
+  freshUndo.redo();
+  expect(bubble.layoutAdjustment).toMatchObject({bw:250,bh:450,by:10});
+  expect(bubble.targetFontSize).toBe(locked);
+});
+
+test.each([{width:80,height:40,font:20},{width:200,height:100,font:12}])('corner shrink respects the renderer floors without stretching: %j', async ({width,height,font})=>{
+  const {container,chromeRoot,bubble,wrapper,canvas}=await renderOverlayFresh('A',{
+    layoutAdjustment:{bx:100,by:100,bw:width,bh:height,iw:1000,ih:1200},targetFontSize:font,fontSizeMultiplier:1,
+  });
+  mockCanvasRect(container);
+  const beforeW=parseFloat(wrapper.style.width)*10,beforeH=parseFloat(wrapper.style.height)*12;
+  const handle=chromeRoot.querySelector<HTMLElement>('[data-handle-position="ne"]')!;
+  handle.setPointerCapture=vi.fn();handle.releasePointerCapture=vi.fn();
+  (handle as unknown as {hasPointerCapture:()=>boolean}).hasPointerCapture=()=>true;
+  firePointer(handle,'pointerdown',500,500);
+  firePointer(handle,'pointermove',500-beforeW*.9,500+beforeH*.9);
+  firePointer(handle,'pointerup',500-beforeW*.9,500+beforeH*.9);
+  const final=bubble.layoutAdjustment!;
+  expect(final.bw/beforeW).toBeCloseTo(final.bh/beforeH,5);
+  expect(final.bh).toBeGreaterThanOrEqual(25);
+  const effective=Math.round(font*bubble.fontSizeMultiplier!);
+  expect(effective).toBeGreaterThanOrEqual(8);
+  expect(canvas.height).toBe(Math.round(final.bh));
 });
 
 
@@ -1244,6 +1482,119 @@ test("a real width drag establishes fixed-font mode even when it returns to its 
   const { undoManager: activeUndoManager } = await import("@/lib/undoManager");
   expect(activeUndoManager.undo()).toBe("ปรับความกว้างกล่องข้อความ");
   expect(bubble.targetFontSize).toBeUndefined();
+});
+
+test("moving a bubble does not remeasure or repaint its text on every pointer event", async () => {
+  const {wrapper,canvas,container}=await renderOverlayFresh("ข้อความสำหรับลากย้าย", {targetFontSize:24});
+  mockCanvasRect(container);
+  wrapper.setPointerCapture=vi.fn(); wrapper.releasePointerCapture=vi.fn();
+  const beforeWidth=canvas.width, beforeHeight=canvas.height;
+  fillTextSpy.mockClear();
+  firePointer(wrapper,"pointerdown",500,500);
+  for(let i=1;i<=40;i++) firePointer(wrapper,"pointermove",500+i,500+i,false);
+  vi.advanceTimersByTime(16);
+  expect(fillTextSpy).not.toHaveBeenCalled();
+  expect(canvas.width).toBe(beforeWidth); expect(canvas.height).toBe(beforeHeight);
+  firePointer(wrapper,"pointerup",540,540);
+});
+
+test("wrapper drag commits release coordinates and cancel restores its original placement", async () => {
+  const {wrapper,container,bubble}=await renderOverlayFresh("ลากแล้วปล่อย",{targetFontSize:24});
+  mockCanvasRect(container);
+  wrapper.setPointerCapture=vi.fn(); wrapper.releasePointerCapture=vi.fn();
+  const initialLeft=Number.parseFloat(wrapper.style.left), initialTop=Number.parseFloat(wrapper.style.top);
+  firePointer(wrapper,"pointerdown",500,500);
+  firePointer(wrapper,"pointermove",520,520,false);
+  firePointer(wrapper,"pointerup",550,550);
+  expect(Number.parseFloat(wrapper.style.left)).toBeCloseTo(initialLeft+5);
+  expect(Number.parseFloat(wrapper.style.top)).toBeCloseTo(initialTop+50/1200*100);
+  const committed=bubble.layoutAdjustment;
+  firePointer(wrapper,"pointerdown",550,550);
+  firePointer(wrapper,"pointermove",650,650);
+  firePointer(wrapper,"pointercancel",650,650);
+  vi.advanceTimersByTime(32);
+  expect(bubble.layoutAdjustment?.bx).toBe(committed?.bx);
+  expect(bubble.layoutAdjustment?.by).toBe(committed?.by);
+  const {undoManager:dragUndo}=await import("@/lib/undoManager");
+  dragUndo.undo();
+  expect(Number.parseFloat(wrapper.style.left)).toBeCloseTo(initialLeft);
+  expect(Number.parseFloat(wrapper.style.top)).toBeCloseTo(initialTop);
+});
+
+test("move handle persists the settled frame height at the page edge", async () => {
+  const {wrapper,chromeRoot,container,bubble,canvas}=await renderOverlayFresh("ข้อความยาวสำหรับทดสอบขอบล่าง",{targetFontSize:24});
+  mockCanvasRect(container);
+  const handle=chromeRoot.querySelector<HTMLElement>('[data-handle-position="sw"]')!;
+  handle.setPointerCapture=vi.fn(); (handle as unknown as {hasPointerCapture:()=>boolean}).hasPointerCapture=()=>true;
+  handle.releasePointerCapture=vi.fn();
+  firePointer(handle,"pointerdown",500,500);
+  firePointer(handle,"pointermove",500,1480);
+  firePointer(handle,"pointerup",500,1480);
+  expect(Math.round(bubble.layoutAdjustment!.bh)).toBe(canvas.height);
+  expect(bubble.layoutAdjustment!.bh/1200*100).toBeCloseTo(Number.parseFloat(wrapper.style.height));
+});
+
+test("clicking the rotate handle without moving does not snap the existing rotation", async () => {
+  const {chromeRoot,bubble}=await renderOverlayFresh("คลิกอย่างเดียว",{rotation:3,layoutAdjustment:{bx:300,by:300,bw:200,bh:200,iw:1000,ih:1200,rotation:3}});
+  const handle=chromeRoot.querySelector<HTMLElement>('[data-handle-position="nw"]')!;
+  handle.setPointerCapture=vi.fn(); (handle as unknown as {hasPointerCapture:()=>boolean}).hasPointerCapture=()=>true;
+  handle.releasePointerCapture=vi.fn();
+  firePointer(handle,"pointerdown",500,500);
+  firePointer(handle,"pointerup",500,500);
+  expect(bubble.layoutAdjustment?.rotation).toBe(3);
+});
+
+test("corner resizing coalesces pointer bursts and commits the final release position", async () => {
+  const {chromeRoot,container,wrapper}=await renderOverlayFresh("ข้อความสำหรับขยาย",{targetFontSize:24});
+  mockCanvasRect(container);
+  const handle=chromeRoot.querySelector<HTMLElement>('[data-handle-position="ne"]')!;
+  handle.setPointerCapture=vi.fn(); (handle as unknown as {hasPointerCapture:()=>boolean}).hasPointerCapture=()=>true;
+  handle.releasePointerCapture=vi.fn();
+  const widthBefore=Number.parseFloat(wrapper.style.width);
+  firePointer(handle,"pointerdown",500,500);
+  fillTextSpy.mockClear();
+  for(let i=1;i<=40;i++) firePointer(handle,"pointermove",500+i,500-i,false);
+  expect(fillTextSpy).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(16);
+  const paintedLines=fillTextSpy.mock.calls.length;
+  expect(paintedLines).toBeGreaterThan(0);
+  firePointer(handle,"pointermove",560,440,false);
+  expect(fillTextSpy.mock.calls.length).toBe(paintedLines);
+  firePointer(handle,"pointerup",570,430);
+  expect(Number.parseFloat(wrapper.style.width)).toBeGreaterThan(widthBefore);
+  const committedWidth=wrapper.style.width;
+  vi.advanceTimersByTime(32);
+  expect(wrapper.style.width).toBe(committedWidth);
+});
+
+test("canceling a corner preview discards its queued pointer and restores the frame", async () => {
+  const {chromeRoot,container,wrapper}=await renderOverlayFresh("ขยายแล้วกดยกเลิก",{targetFontSize:24});
+  mockCanvasRect(container);
+  const handle=chromeRoot.querySelector<HTMLElement>('[data-handle-position="ne"]')!;
+  handle.setPointerCapture=vi.fn(); (handle as unknown as {hasPointerCapture:()=>boolean}).hasPointerCapture=()=>true;
+  handle.releasePointerCapture=vi.fn();
+  const before={width:wrapper.style.width,height:wrapper.style.height,top:wrapper.style.top};
+  firePointer(handle,"pointerdown",500,500);
+  firePointer(handle,"pointermove",600,400,false);
+  firePointer(handle,"pointercancel",600,400);
+  const afterCancel=fillTextSpy.mock.calls.length;
+  vi.advanceTimersByTime(32);
+  expect(fillTextSpy.mock.calls.length).toBe(afterCancel);
+  expect({width:wrapper.style.width,height:wrapper.style.height,top:wrapper.style.top}).toEqual(before);
+});
+
+test("overlay cleanup cancels a pending corner redraw", async () => {
+  const {chromeRoot,container}=await renderOverlayFresh("เปลี่ยนหน้าระหว่างขยาย",{targetFontSize:24});
+  mockCanvasRect(container);
+  const handle=chromeRoot.querySelector<HTMLElement>('[data-handle-position="ne"]')!;
+  handle.setPointerCapture=vi.fn(); (handle as unknown as {hasPointerCapture:()=>boolean}).hasPointerCapture=()=>true;
+  firePointer(handle,"pointerdown",500,500);
+  firePointer(handle,"pointermove",600,400,false);
+  fillTextSpy.mockClear();
+  const overlay=container.querySelector(".tl-overlay,.tl-canvas") as HTMLElement & {_cleanupListeners:()=>void};
+  overlay._cleanupListeners();
+  vi.advanceTimersByTime(32);
+  expect(fillTextSpy).not.toHaveBeenCalled();
 });
 
 test("coalesces rapid width pointer moves into the latest animation frame", async () => {
@@ -1779,6 +2130,20 @@ test("renders the identical font and lines for workspace and offscreen export pa
   expect(live.lines).toEqual(exported.lines);
   expect(exported.size).toEqual(live.size);
   expect(live.lines.length).toBeGreaterThan(0);
+});
+
+test("canceling a draft review decision marks restored state dirty for autosave", async () => {
+  const changed=vi.fn();
+  const {chromeRoot,bubble}=await renderOverlay("รอตรงนี้",{
+    original_text:"Wait here.",translationReview:{status:"suggested",sourceText:"Wait here.",reviewedText:"รอตรงนี้",suggestion:"รอที่นี่"},
+  },{onBubblesMutated:changed});
+  chromeRoot.querySelector<HTMLButtonElement>('[aria-label="แก้ไขข้อความ"]')!.click();
+  document.querySelector<HTMLButtonElement>('[data-review-action="dismiss"]')!.click();
+  expect(bubble.translationReview?.status).toBe("dismissed");
+  changed.mockClear();
+  document.querySelector<HTMLButtonElement>('[aria-label="ยกเลิกการแก้ไข"]')!.click();
+  expect(bubble.translationReview?.status).toBe("suggested");
+  expect(changed).toHaveBeenCalledOnce();
 });
 
 test("export compositing survives a font-load rejection", async () => {

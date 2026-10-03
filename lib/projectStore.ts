@@ -1,9 +1,10 @@
 // IndexedDB helper for Manga Translator project state and blob asset persistence
 
+import { normalizePageExportSource, type PageExportSource } from "./export/pageSource";
 import type { CleaningMode, CleaningRegion } from "./cleaning/types";
 import type { TranslatedBubble } from "./translationOverlay";
 import { pageBlobStore } from "./lifecycle/pageBlobStore";
-import { TEXT_RENDER_POLICY_VERSION, usesAutoSourceFill } from "./colorMatching/resolveTextStyle";
+import { TEXT_RENDER_POLICY_VERSION, usesAutoSourceFill, needsWhiteArtworkPolicyRefresh } from "./colorMatching/resolveTextStyle";
 import { needsSourceOutlineRefresh } from "./colorMatching/outlineMigration";
 import { SOURCE_OUTLINE_VERSION } from "./colorMatching/sourceOutlineEvidence";
 
@@ -50,7 +51,7 @@ interface StoredSourceAsset {
 
 interface SessionData {
   id: string;
-  pages: { id?: string; url: string; name: string; originUrl?: string; sourceAssetId?: string }[];
+  pages: { id?: string; url: string; name: string; originUrl?: string; exportSource?: PageExportSource; sourceAssetId?: string }[];
   currentPage: number;
   bubbleCache: [string, TranslatedBubble[]][];
   translatedAssetIds?: [string, string][];
@@ -190,7 +191,7 @@ export const deleteAsset = async (id: string): Promise<void> => {
 
 export const saveProjectSession = async (
   data: {
-    pages: { id?: string; url: string; name: string; originUrl?: string }[];
+    pages: { id?: string; url: string; name: string; originUrl?: string; exportSource?: PageExportSource }[];
     currentPage: number;
     bubbleCache: Map<string, TranslatedBubble[]>;
     translatedImageCache: Map<string, string>;
@@ -259,6 +260,7 @@ export const saveProjectSession = async (
           url: `asset:${sourceAssetId}`,
           name: page.name,
           originUrl: page.originUrl,
+          exportSource: normalizePageExportSource(page.exportSource),
           sourceAssetId,
         });
       } else {
@@ -294,8 +296,9 @@ export const saveProjectSession = async (
       const outlineRefreshed = currentBubbles.some((bubble, index) =>
         oldBubbles[index] && needsSourceOutlineRefresh(oldBubbles[index]) &&
         bubble.styleProfile?.sourceOutlineVersion === SOURCE_OUTLINE_VERSION);
-      const needsPolicyRefresh = !needsOutlineAnalysis && previousSession?.renderPolicyVersion !== TEXT_RENDER_POLICY_VERSION &&
-        currentBubbles.some((bubble) => usesAutoSourceFill(bubble)) &&
+      const needsPolicyRefresh = (!needsOutlineAnalysis || currentBubbles.some(needsWhiteArtworkPolicyRefresh)) &&
+        previousSession?.renderPolicyVersion !== TEXT_RENDER_POLICY_VERSION &&
+        currentBubbles.some((bubble) => usesAutoSourceFill(bubble) || needsWhiteArtworkPolicyRefresh(bubble)) &&
         ((!pageUrl.startsWith("blob:") && !pageUrl.startsWith("asset:")) ||
           (!!pageId && pageBlobStore.has(pageId)));
       const isDirty = outlineRefreshed || needsPolicyRefresh || (dirty ? dirty.has(pageUrl) : true);
@@ -427,6 +430,7 @@ export interface ProjectSessionPage {
   url: string;
   name: string;
   originUrl?: string;
+  exportSource?: PageExportSource;
   unrecoverableSource?: boolean;
 }
 
@@ -507,6 +511,7 @@ export const loadProjectSession = async (): Promise<LoadedProjectSession | null>
         url,
         name: page.name,
         originUrl: page.originUrl,
+          exportSource: normalizePageExportSource(page.exportSource),
         unrecoverableSource,
       });
       pageUrlById.set(id, url);
@@ -548,8 +553,9 @@ export const loadProjectSession = async (): Promise<LoadedProjectSession | null>
       for (const page of processedPages) {
         // Keep the only available image when its original cannot be recovered.
         if (!page.unrecoverableSource &&
-            !(bubbleCache.get(page.url) ?? []).some(needsSourceOutlineRefresh) &&
-            (bubbleCache.get(page.url) ?? []).some((bubble) => usesAutoSourceFill(bubble))) {
+            (!(bubbleCache.get(page.url) ?? []).some(needsSourceOutlineRefresh) ||
+              (bubbleCache.get(page.url) ?? []).some(needsWhiteArtworkPolicyRefresh)) &&
+            (bubbleCache.get(page.url) ?? []).some((bubble) => usesAutoSourceFill(bubble) || needsWhiteArtworkPolicyRefresh(bubble))) {
           translatedImageCache.delete(page.url);
         }
       }

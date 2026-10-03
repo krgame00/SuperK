@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   resolveBubbleTextStyle,
   STANDARD_TRANSLATED_TEXT_SHADOW,
+  SUBTLE_ARTWORK_SHADOW,
 } from "@/lib/colorMatching/resolveTextStyle";
 import type { TranslatedBubble } from "@/lib/translationOverlay";
 import type { TextStyleProfile } from "@/lib/colorMatching/types";
@@ -84,7 +85,7 @@ describe("Monochrome Manga Text Style Policy (Task 3 - ADR 0016)", () => {
     expect(resolved.shadow).toBeUndefined();
   });
 
-  it("preserves color page uniform shadow under ADR 0015", () => {
+  it("keeps color and unknown page dialogue free of shadows", () => {
     const colorBubble = makeBubble({
       isMonochromePage: false,
       monochromeConfidence: 0.95,
@@ -92,17 +93,17 @@ describe("Monochrome Manga Text Style Policy (Task 3 - ADR 0016)", () => {
       category: "dialogue",
     });
     const resolvedColor = resolveBubbleTextStyle(colorBubble);
-    expect(resolvedColor.shadow).toEqual(STANDARD_TRANSLATED_TEXT_SHADOW);
+    expect(resolvedColor.shadow).toBeUndefined();
 
     const unknownBubble = makeBubble({
       backgroundLuminance: 245,
       category: "dialogue",
     });
     const resolvedUnknown = resolveBubbleTextStyle(unknownBubble);
-    expect(resolvedUnknown.shadow).toEqual(STANDARD_TRANSLATED_TEXT_SHADOW);
+    expect(resolvedUnknown.shadow).toBeUndefined();
   });
 
-  it("falls back to standard shadow if monochrome confidence is below 0.85", () => {
+  it("keeps plain dialogue clean even below monochrome confidence threshold", () => {
     const bubble = makeBubble({
       isMonochromePage: true,
       monochromeConfidence: 0.70,
@@ -110,7 +111,7 @@ describe("Monochrome Manga Text Style Policy (Task 3 - ADR 0016)", () => {
       category: "dialogue",
     });
     const resolved = resolveBubbleTextStyle(bubble);
-    expect(resolved.shadow).toEqual(STANDARD_TRANSLATED_TEXT_SHADOW);
+    expect(resolved.shadow).toBeUndefined();
   });
 
   it("honors Manual Standard shadow mode even on monochrome pages", () => {
@@ -152,7 +153,7 @@ describe("Monochrome Manga Text Style Policy (Task 3 - ADR 0016)", () => {
     expect(resolved.textColor).toBe("#000000");
   });
 
-  it("applies the monochrome black-text policy ahead of source-faithful auto styling", () => {
+  it("preserves explicit Original styling on a monochrome page", () => {
     const bubble = makeBubble({
       isMonochromePage: true,
       monochromeConfidence: 0.95,
@@ -164,12 +165,12 @@ describe("Monochrome Manga Text Style Policy (Task 3 - ADR 0016)", () => {
       category: "dialogue",
     });
     const resolved = resolveBubbleTextStyle(bubble);
-    expect(resolved.textColor).toBe("#000000");
-    expect(resolved.hasOutline).toBe(false);
-    expect(resolved.shadow).toBeUndefined();
+    expect(resolved.textColor).toBe("#ffffff");
+    expect(resolved.hasOutline).toBe(true);
+    expect(resolved.shadow).toEqual(STANDARD_TRANSLATED_TEXT_SHADOW);
   });
 
-  it("applies black text to explicit Readable dialogue on a confirmed monochrome page", () => {
+  it("preserves explicit Readable dialogue on a confirmed monochrome page", () => {
     const bubble = makeBubble({
       isMonochromePage: true,
       monochromeConfidence: 0.95,
@@ -178,20 +179,20 @@ describe("Monochrome Manga Text Style Policy (Task 3 - ADR 0016)", () => {
       category: "dialogue",
     });
     const resolved = resolveBubbleTextStyle(bubble);
-    expect(resolved.textColor).toBe("#000000");
-    expect(resolved.hasOutline).toBe(false);
+    expect(resolved.textColor).toBe("#ffffff");
+    expect(resolved.hasOutline).toBe(true);
     expect(resolved.shadow).toBeUndefined();
     expect(resolved.glow).toBeUndefined();
     expect(resolved.readabilityHalo).toBeUndefined();
   });
 });
 
-it.each(['dialogue', 'narration', 'sfx', 'overlay_subtitle'] as const)('uses pure black without effects for monochrome %s', category => {
+it.each(['dialogue', 'narration', 'sfx'] as const)('keeps pure black ink and the category shadow policy for monochrome %s', category => {
  const resolved = resolveBubbleTextStyle(makeBubble({ category, isMonochromePage: true, monochromeConfidence: 0.99, fill: '#ff5500', hasOutline: true, backgroundLuminance: 20 }));
  expect(resolved.textColor).toBe('#000000');
  expect(resolved.hasOutline).toBe(false);
  expect(resolved.outlineWidthRatio).toBe(0);
- expect(resolved.shadow).toBeUndefined();
+ expect(resolved.shadow).toEqual(category === 'sfx' ? SUBTLE_ARTWORK_SHADOW : undefined);
  expect(resolved.glow).toBeUndefined();
  expect(resolved.fillGradient).toBeUndefined();
  expect(resolved.backgroundPlate).toBeUndefined();

@@ -242,12 +242,12 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
   );
 
   const hydrateResult = useCallback(
-    async (result: CleaningResult): Promise<PageCleaningResult> => {
+    async (result: CleaningResult, signal?: AbortSignal): Promise<PageCleaningResult> => {
       const responses = await Promise.all([
-        fetch(result.cleanAsset, { cache: "no-store" }),
-        fetch(result.maskAsset, { cache: "no-store" }),
-        fetch(result.reviewMaskAsset, { cache: "no-store" }),
-        fetch(result.protectedMaskAsset, { cache: "no-store" }),
+        fetch(result.cleanAsset, { cache: "no-store", ...(signal ? {signal} : {}) }),
+        fetch(result.maskAsset, { cache: "no-store", ...(signal ? {signal} : {}) }),
+        fetch(result.reviewMaskAsset, { cache: "no-store", ...(signal ? {signal} : {}) }),
+        fetch(result.protectedMaskAsset, { cache: "no-store", ...(signal ? {signal} : {}) }),
       ]);
       if (responses.some((response) => !response.ok)) {
         throw new CleaningClientError(
@@ -303,17 +303,19 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       initial: CleaningJob,
       token: number,
       pageUrl: string,
+      signal?: AbortSignal,
     ): Promise<CleaningJob> => {
       let job = initial;
       while (job.status === "queued" || job.status === "running") {
         await delay(POLL_INTERVAL_MS);
+        if (signal?.aborted) throw new DOMException("Cleaning cancelled", "AbortError");
         if (
           token !== pageTokensRef.current.get(pageUrl) ||
           !pagesRef.current.includes(pageUrl)
         ) {
           throw new PollingCancelled();
         }
-        job = await getCleaningJob(job.jobId);
+        job = signal ? await getCleaningJob(job.jobId,signal) : await getCleaningJob(job.jobId);
         if (job.progress) setProgressState({ pageUrl, value: job.progress });
       }
       if (job.status === "failed") {
@@ -334,9 +336,15 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       token: number,
       pageUrl: string,
       sourceFingerprint?: string,
+      signal?: AbortSignal,
     ): Promise<PageCleaningResult> => {
-      const result = await getCleaningResult(job.jobId);
-      const hydrated = await hydrateResult(result);
+      if (signal?.aborted) throw new DOMException("Cleaning cancelled", "AbortError");
+      const result = signal ? await getCleaningResult(job.jobId,signal) : await getCleaningResult(job.jobId);
+      const hydrated = await hydrateResult(result,signal);
+      if (signal?.aborted) {
+        revokeResult(hydrated);
+        throw new DOMException("Cleaning cancelled", "AbortError");
+      }
       if (
         token !== pageTokensRef.current.get(pageUrl) ||
         !pagesRef.current.includes(pageUrl)
@@ -406,10 +414,11 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       token: number,
       pageUrl: string,
       sourceFingerprint?: string,
+      signal?: AbortSignal,
     ): Promise<PageCleaningResult> => {
       try {
-        const terminal = await waitForJob(initial, token, pageUrl);
-        return await finishJob(terminal, token, pageUrl, sourceFingerprint);
+        const terminal = await waitForJob(initial, token, pageUrl,signal);
+        return await finishJob(terminal, token, pageUrl, sourceFingerprint,signal);
       } finally {
         setProgressState((previous) => (previous?.pageUrl === pageUrl ? undefined : previous));
       }
@@ -421,7 +430,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     if (pageUrl) {
       setProgressState((previous) => (previous?.pageUrl === pageUrl ? undefined : previous));
     }
-    if (caught instanceof PollingCancelled) return;
+    if (caught instanceof PollingCancelled || (caught && typeof caught === "object" && "name" in caught && caught.name === "AbortError")) return;
     if (caught instanceof CleaningClientError && caught.status === 503) {
       setError({ message: caught.message, recovery: "start-local-service" });
       return;
@@ -445,7 +454,9 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       pageUrl: string,
       source: Blob,
       force: boolean = false,
+      signal?: AbortSignal,
     ): Promise<PageCleaningResult> => {
+      if (signal?.aborted) throw new DOMException("Cleaning cancelled", "AbortError");
       setError(undefined);
       const sourceFingerprintValue = fingerprintBlob(source);
       const cached = !force ? resultsRef.current.get(pageUrl) : undefined;
@@ -454,6 +465,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
           typeof sourceFingerprintValue === "string"
             ? sourceFingerprintValue
             : await sourceFingerprintValue;
+        if (signal?.aborted) throw new DOMException("Cleaning cancelled", "AbortError");
         if (
           cached &&
           cached.sourceFingerprint &&
@@ -468,20 +480,26 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       const token = (pageTokensRef.current.get(pageUrl) ?? 0) + 1;
       pageTokensRef.current.set(pageUrl, token);
       activeRequestRef.current = { token, pageUrl };
+      const cancelRequest = () => {
+        if (pageTokensRef.current.get(pageUrl) === token) pageTokensRef.current.set(pageUrl,token+1);
+      };
+      signal?.addEventListener("abort",cancelRequest,{once:true});
       try {
         // Start the request before hashing the first uncached page so source
         // fingerprinting cannot delay the polling schedule.
-        const jobPromise = createCleaningJob(source);
+        const jobPromise = signal ? createCleaningJob(source,signal) : createCleaningJob(source);
         const sourceFingerprint =
           typeof sourceFingerprintValue === "string"
             ? sourceFingerprintValue
             : await sourceFingerprintValue;
         const job = await jobPromise;
-        return await runJob(job, token, pageUrl, sourceFingerprint);
+        if (signal?.aborted) throw new DOMException("Cleaning cancelled", "AbortError");
+        return await runJob(job, token, pageUrl, sourceFingerprint,signal);
       } catch (caught) {
         handleFailure(caught, pageUrl);
         throw caught;
       } finally {
+        signal?.removeEventListener("abort",cancelRequest);
         setProgressState((previous) => (previous?.pageUrl === pageUrl ? undefined : previous));
         if (activeRequestRef.current?.token === token && activeRequestRef.current?.pageUrl === pageUrl) {
           activeRequestRef.current = undefined;

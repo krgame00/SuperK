@@ -269,6 +269,22 @@ test("cleanPage does not reuse legacy safe cleaning for the clean-all workflow",
   expect(createCleaningJob).toHaveBeenCalledTimes(2);
 });
 
+test("aborting ahead cleaning discards a late result without publishing or persisting it", async () => {
+  let finish!: (job:typeof succeededJob)=>void;
+  vi.mocked(createCleaningJob).mockImplementation(()=>new Promise(resolve=>{finish=resolve;}));
+  vi.mocked(getCleaningResult).mockResolvedValue(cleaningResult);
+  const controller=new AbortController();
+  const {result}=renderHook(()=>useCleaning({pages:["blob:page-1"],currentPage:0}));
+  let cleaning!:Promise<PageCleaningResult>;
+  act(()=>{cleaning=result.current.cleanPage("blob:page-1",new Blob(["png"],{type:"image/png"}),false,controller.signal);});
+  const rejected=expect(cleaning).rejects.toMatchObject({name:"AbortError"});
+  controller.abort(); finish(succeededJob);
+  await act(async()=>{await rejected;});
+  expect(result.current.resultsByPage.has("blob:page-1")).toBe(false);
+  expect(saveCleaningResultMetadata).not.toHaveBeenCalled();
+  expect(result.current.error).toBeUndefined();
+});
+
 test("cleanPage recomputes when the source bytes change", async () => {
   vi.mocked(createCleaningJob)
     .mockResolvedValueOnce({ ...succeededJob, jobId: "job-1" })

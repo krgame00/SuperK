@@ -95,7 +95,7 @@ describe("Ticket 14: Mixed-Background Readability Scoring & Outline Escalation",
       box: [200, 100, 350, 500],
       t: "ข้อความต้นฉบับไม่มีขอบ",
       styleProfile: {
-        ownershipMode: "auto",
+        ownershipMode: "source_faithful",
         source: "auto",
         fill: "#000000",
         outline: "#000000",

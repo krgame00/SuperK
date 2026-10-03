@@ -75,12 +75,12 @@ describe("autoMatchColors style resolution", () => {
       autoMatchColors: true,
     });
 
-    expect(resolved.textColor).toBe("#000000");
-    expect(resolved.textOutline).toBe("#ffffff");
-    expect(resolved.source).toBe("global");
+    expect(resolved.textColor).toBe("#ffffff");
+    expect(resolved.textOutline).toBe("#000000");
+    expect(resolved.source).toBe("fallback");
   });
 
-  it("falls back to global style when confidence is low (< 0.60)", () => {
+  it("uses a safe dark outline when artwork color confidence is low (< 0.60)", () => {
     const bubble: TranslatedBubble = {
       box: [100, 100, 200, 200],
       original_text: "不確か",
@@ -98,9 +98,9 @@ describe("autoMatchColors style resolution", () => {
       autoMatchColors: true,
     });
 
-    expect(resolved.textColor).toBe("#000000");
-    expect(resolved.textOutline).toBe("#ffffff");
-    expect(resolved.source).toBe("global");
+    expect(resolved.textColor).toBe("#ffffff");
+    expect(resolved.textOutline).toBe("#000000");
+    expect(resolved.source).toBe("fallback");
   });
 
   it("preserves a high-confidence source style without readability contrast correction", () => {
