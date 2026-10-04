@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildTranslationPrompt } from "@/src/app/api/translate/route";
+import { buildTranslationPrompt } from "@/src/app/api/translate/handler";
 
 describe("buildTranslationPrompt script directive", () => {
   it("forbids foreign-script leakage for Thai targets", () => {

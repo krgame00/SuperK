@@ -557,6 +557,18 @@ export interface BubbleTextFit {
   fits: boolean;
 }
 
+interface WidthLayoutPreview {
+  layout: FixedFontWidthResult;
+  text: string;
+  widthPx: number;
+  fontSizePx: number;
+  fontFamily: string;
+  isOval: boolean;
+  manualMinHeightPx: number;
+  availableHeightPx: number;
+  locale: string;
+}
+
 // One shared measuring context for text fitting — creating a fresh canvas
 // per wrap/fit iteration churned dozens of canvases per bubble render.
 let sharedMeasureCtx: CanvasRenderingContext2D | null | undefined;
@@ -1122,7 +1134,11 @@ export const applyTranslationOverlay = async (
         updateSelectionFrame();
         chromeControlsByWrapper.get(wrapper)?.position();
       };
-      const renderBubble = (availableHeight = Math.max(0, ih - currentBy), snapshotScale = 1) => {
+      const renderBubble = (
+        availableHeight = Math.max(0, ih - currentBy),
+        snapshotScale = 1,
+        widthLayoutPreview?: WidthLayoutPreview,
+      ) => {
         const currentStyle = textStyleRef?.current || ts;
         const rawText = b.t || b.translated || "";
         const scriptInspection = inspectTargetText(rawText, targetLanguage);
@@ -1199,16 +1215,27 @@ export const applyTranslationOverlay = async (
           const savedManualMinimum = manualMinHeightPx
             ?? adj?.manualMinHeightPx
             ?? (adj ? currentBh : 25);
-          fixedLayout = layoutBubbleAtFixedFont(
-            text,
-            currentBw,
-            effectiveFs,
-            currentFontFam,
-            !b.isInvalidBox,
-            savedManualMinimum,
-            availableHeight,
-            wordWrapLocale,
-          );
+          const canReuseWidthPreview = widthLayoutPreview
+            && widthLayoutPreview.text === text
+            && widthLayoutPreview.widthPx === currentBw
+            && widthLayoutPreview.fontSizePx === effectiveFs
+            && widthLayoutPreview.fontFamily === currentFontFam
+            && widthLayoutPreview.isOval === !b.isInvalidBox
+            && widthLayoutPreview.manualMinHeightPx === savedManualMinimum
+            && widthLayoutPreview.availableHeightPx === availableHeight
+            && widthLayoutPreview.locale === wordWrapLocale;
+          fixedLayout = canReuseWidthPreview
+            ? widthLayoutPreview.layout
+            : layoutBubbleAtFixedFont(
+                text,
+                currentBw,
+                effectiveFs,
+                currentFontFam,
+                !b.isInvalidBox,
+                savedManualMinimum,
+                availableHeight,
+                wordWrapLocale,
+              );
           if (matchedAuto) {
             const neighbors = real.filter(other => other !== b && !other.deleted).flatMap(other => {
               const layout = other.layoutAdjustment;
@@ -1383,7 +1410,6 @@ export const applyTranslationOverlay = async (
           ctx.fillStyle = fillPaint;
           ctx.fillText(l, currentBw / 2, yPos);
         });
-        const measuredSelection = measureTextSelection(ctx, lines, fontSize, lineH, currentBw, currentBh);
         // Snapshot renders keep the captured selection (scaled for a corner
         // release) so the crisp redraw, reopening, and Undo/Redo all show the
         // exact previewed geometry; its padding is additive while scaling is
@@ -1394,7 +1420,7 @@ export const applyTranslationOverlay = async (
               y: snapshotFit.layout.selectionY * snapshotFit.scale,
               width: snapshotFit.layout.selectionWidth * snapshotFit.scale,
               height: snapshotFit.layout.selectionHeight * snapshotFit.scale }
-          : measuredSelection;
+          : measureTextSelection(ctx, lines, fontSize, lineH, currentBw, currentBh);
         // Capture the bounded proportional layout of this render so corner
         // drags preview with this bitmap and later re-renders (movement,
         // rotation, Undo/Redo, reopen) reproduce it exactly.
@@ -2044,6 +2070,7 @@ export const applyTranslationOverlay = async (
         let rMinimumWordWidth = 30;
         let widthDragDidMove = false;
         let handleDidMove = false;
+        let lastAppliedPreviewPointer: { clientX: number; clientY: number } | null = null;
         let scaleAnchor = { x: 0, y: 0 };
         // Proportional layout captured once at corner pointerdown: the drawn
         // bitmap, wrapped lines, font and selection stay frozen for the whole
@@ -2081,6 +2108,7 @@ export const applyTranslationOverlay = async (
         handle.addEventListener('pointerdown', (e) => {
           widthDragDidMove = false;
           handleDidMove = false;
+          lastAppliedPreviewPointer = null;
           rStartX = e.clientX; rStartY = e.clientY;
           rInitBx = currentBx; rInitBy = currentBy;
           rDragInitBy = currentBy;
@@ -2175,8 +2203,10 @@ export const applyTranslationOverlay = async (
         let pendingWidthPointer: { pointerId: number; clientX: number; clientY: number } | null = null;
 
         const applyPointerMove = (clientX: number, clientY: number): void => {
+          lastAppliedPreviewPointer = { clientX, clientY };
           const previousScale = { bx: currentBx, by: currentBy, bw: currentBw, bh: currentBh,
             font: b.fontSizeMultiplier, target: b.targetFontSize, minimum: manualMinHeightPx };
+          let widthLayoutPreview: WidthLayoutPreview | undefined;
           const rect = tlContainer.getBoundingClientRect();
           const dx = (clientX - rStartX) * (iw / rect.width);
           const dy = (clientY - rStartY) * (ih / rect.height);
@@ -2214,6 +2244,17 @@ export const applyTranslationOverlay = async (
                 Math.max(0, ih - rDragInitBy),
                 wordWrapLocale,
               );
+              widthLayoutPreview = {
+                layout,
+                text,
+                widthPx: currentBw,
+                fontSizePx: effectiveFs,
+                fontFamily: currentFontFam,
+                isOval: isOvalBox,
+                manualMinHeightPx: manualMinHeightPx ?? 25,
+                availableHeightPx: Math.max(0, ih - rDragInitBy),
+                locale: wordWrapLocale,
+              };
               currentBh = layout.heightPx;
               currentBy = rDragInitBy;
             }
@@ -2266,7 +2307,7 @@ export const applyTranslationOverlay = async (
             }
             updateBubbleFrame();
           } else {
-            renderBubble(id === "scale" ? ih : undefined);
+            renderBubble(id === "scale" ? ih : undefined, 1, id === "width" ? widthLayoutPreview : undefined);
             if (id === "scale") {
               pinScaleAnchor();
               if (currentBx < 0 || currentBy < 0 || currentBx + currentBw > iw || currentBy + currentBh > ih) {
@@ -2298,7 +2339,8 @@ export const applyTranslationOverlay = async (
           }
           const latest = pointer ?? pendingWidthPointer;
           pendingWidthPointer = null;
-          if (latest && handle.hasPointerCapture(latest.pointerId)) {
+          if (latest && handle.hasPointerCapture(latest.pointerId)
+            && (latest.clientX !== lastAppliedPreviewPointer?.clientX || latest.clientY !== lastAppliedPreviewPointer?.clientY)) {
             applyPointerMove(latest.clientX, latest.clientY);
           }
         };
@@ -2352,6 +2394,7 @@ export const applyTranslationOverlay = async (
             b.targetFontSize = rInitTargetFs;
             manualMinHeightPx = rInitManualMinHeightPx;
             if (scaleDragSnapshot) textSelection = { ...scaleDragSnapshot.selection };
+            scaleDragSnapshot = null;
             floorBase = { w: rInitBw, h: rInitBh };
             updateBubbleFrame();
             return;
@@ -2366,6 +2409,8 @@ export const applyTranslationOverlay = async (
           if (wasResizing || id === "move") {
             if (id === "scale" && scaleDragSnapshot && rInitBw > 0) {
               renderBubble(undefined, currentBw / rInitBw);
+            } else if (id === "width") {
+              // The latest width preview already drew the exact committed layout.
             } else {
               renderBubble();
             }

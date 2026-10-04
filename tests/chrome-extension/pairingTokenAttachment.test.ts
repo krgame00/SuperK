@@ -65,7 +65,7 @@ describe("background.js pairing token attachment", () => {
     expect(syncCall?.init?.headers?.Authorization).toBe("Bearer tok-123");
 
     // OPEN_EDITOR handoff must carry it too.
-    messageListeners[0]({ action: "OPEN_EDITOR", payload: { pageUrl: "https://m.test/p.png" } });
+    messageListeners[0]({ action: "OPEN_EDITOR", payload: { pageUrl: "https://m.test/p.png", sourceImage: "data:image/png;base64,YQ==", sourceRevision: "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb" } });
     await new Promise((resolve) => setTimeout(resolve, 10));
     const editorCall = fetchCalls.find((c) => String(c.url).includes("/api/extension/workspace/append"));
     expect(editorCall?.init?.headers?.Authorization).toBe("Bearer tok-123");

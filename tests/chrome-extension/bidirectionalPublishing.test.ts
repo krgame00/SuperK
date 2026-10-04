@@ -1,11 +1,16 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { inspectedBackgroundEvidence } from "../helpers/extensionBackgroundEvidence";
+import { withReviewIdentity } from "@/lib/translation/qualityReview";
+import { createPageTargetIdentity } from "@/lib/extension/strictParity";
+import * as extensionPolicy from "@/lib/extension/strictParity";
 
 describe("Bidirectional Publishing Integration (Ticket 05)", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
     vi.clearAllMocks();
     vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    vi.stubGlobal("SuperKPolicy", extensionPolicy);
   });
 
   it("updates DOM overlay and local storage when receiving published translation", async () => {
@@ -73,10 +78,15 @@ describe("Bidirectional Publishing Integration (Ticket 05)", () => {
         {
           pageUrl: imgUrl,
           originUrl: "https://manga.example.com/ch1",
+          sourceRevision: "a".repeat(64),
+          targetIdentity: createPageTargetIdentity("th"),
+          ...inspectedBackgroundEvidence("a".repeat(64)),
           bubbles: [
             {
-              t: "คำแปลที่แก้ไขอย่างประณีตใน SuperK Editor",
+              t: "คำแปลที่แก้ไขอย่างประณีต",
+              original_text: "original",
               box: [150, 150, 350, 450],
+              translationReview: withReviewIdentity({status:"ok",sourceText:"original",reviewedText:"คำแปลที่แก้ไขอย่างประณีต"},"th","a".repeat(64)),
             },
           ],
           cleanUrl: null,
@@ -90,6 +100,7 @@ describe("Bidirectional Publishing Integration (Ticket 05)", () => {
         },
       ],
     };
+    expect(extensionPolicy.inspectExtensionOutput(publishedPayload.updates[0] as any, true).reasons).toEqual([]);
 
     globalThis.fetch = vi.fn(async (url: any) => {
       if (typeof url === "string" && url.includes("/api/extension/publish-back")) {
@@ -109,13 +120,13 @@ describe("Bidirectional Publishing Integration (Ticket 05)", () => {
     // 3. Verify storage cache was updated
     expect(storageMap.has(`superk_trans_${imgUrl}`)).toBe(true);
     const cached = storageMap.get(`superk_trans_${imgUrl}`);
-    expect(cached.bubbles[0].t).toBe("คำแปลที่แก้ไขอย่างประณีตใน SuperK Editor");
+    expect(cached.bubbles[0].t).toBe("คำแปลที่แก้ไขอย่างประณีต");
 
     // 4. Verify DOM overlay was updated with the published text
     const overlay = document.querySelector(".superk-overlay-container");
     expect(overlay).not.toBeNull();
     const bubbleEl = overlay?.querySelector(".superk-text-bubble");
     expect(bubbleEl).not.toBeNull();
-    expect(bubbleEl?.textContent?.replace(/\s+/g, "")).toContain("คำแปลที่แก้ไขอย่างประณีตในSuperKEditor");
+    expect(bubbleEl?.textContent?.replace(/\s+/g, "")).toContain("คำแปลที่แก้ไขอย่างประณีต");
   });
 });

@@ -7,6 +7,10 @@ const os = require('node:os');
 process.on('uncaughtException', error => { console.error(error); app.exit(1); });
 process.on('unhandledRejection', error => { console.error(error); app.exit(1); });
 app.commandLine.appendSwitch('disable-background-timer-throttling');
+// This harness runs a hidden offscreen window. The local Electron GPU process
+// may not start on headless/remote Windows sessions, so keep it on software
+// raster and record that limitation in the result instead of aborting early.
+app.commandLine.appendSwitch('disable-gpu');
 app.whenReady().then(async () => {
   console.log('Loading dense-page fixture');
   const window = new BrowserWindow({ show: false, width: 1800, height: 2600,

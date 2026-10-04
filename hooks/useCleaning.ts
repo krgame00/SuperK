@@ -25,6 +25,8 @@ import {
 } from "@/lib/projectStore";
 import { assertMatchingImageDimensions } from "@/lib/translationPipeline";
 import { authorizationIdentity } from "@/lib/cleaning/textAuthorization";
+import { undoManager } from "@/lib/undoManager";
+import { LRUMap } from "@/lib/lruMap";
 import {
   applyArtworkConfirmations,
   backgroundEligibilityState,
@@ -153,6 +155,7 @@ export interface PageRemnantReview {
   inspection: BackgroundInspectionResult;
   /** Shared output-eligibility input: never "approved" while unverified. */
   eligibility: BackgroundEligibilityState;
+  canConfirmHumanInspection?: boolean;
 }
 export interface PageRemnantTextEvidence {
   sourceContext: string;
@@ -189,6 +192,10 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     sourceFingerprint?: string; maskFingerprint?: string; authorization: string; evidenceIdentity: string;
   }>());
   const confirmationsRef = useRef(new RemnantConfirmationStore());
+  const humanInspectionsRef = useRef(new LRUMap<string, true>(48));
+  const inspectionOriginalsRef = useRef(new LRUMap<string, Blob>(8, { maxWeight: 64 * 1024 * 1024, weightOf: blob => blob.size }));
+  const sessionActiveRef = useRef(true);
+  const persistenceQueueRef = useRef(new Map<string, Promise<void>>());
   const inspectionTokensRef = useRef<Map<string, number>>(new Map());
   const lastSourceRevisionRef = useRef<Map<string, string>>(new Map());
   const currentPageUrl = pages[currentPage];
@@ -266,7 +273,12 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
   const publishRemnantReview = useCallback(
     (pageUrl: string, inspection: BackgroundInspectionResult) => {
       const updated = new Map(remnantReviewsRef.current);
-      updated.set(pageUrl, { pageUrl, inspection, eligibility: backgroundEligibilityState(inspection) });
+      const canConfirmHumanInspection = inspection.status === "unverified" && !!inspection.revisionKey &&
+        !!inspectionOriginalsRef.current.get(pageUrl) && !!resultsRef.current.get(pageUrl)?.cleanBlob &&
+        !inspection.candidates.some(candidate => candidate.state !== "human-confirmed-artwork") && !inspection.truncated;
+      const reviewed = canConfirmHumanInspection && humanInspectionsRef.current.get(`${pageUrl}:${inspection.revisionKey}`)
+        ? { ...inspection, humanImageInspection: { revisionKey: inspection.revisionKey } } : inspection;
+      updated.set(pageUrl, { pageUrl, inspection: reviewed, eligibility: backgroundEligibilityState(reviewed), canConfirmHumanInspection });
       remnantReviewsRef.current = updated;
       setRemnantReviews(updated);
     },
@@ -299,6 +311,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
   const inspectPageRemnants = useCallback(
     async (pageUrl: string, result: PageCleaningResult, sourceBlob?: Blob) => {
       const evidence = textEvidenceRef.current.get(pageUrl);
+      const previousInspection = remnantReviewsRef.current.get(pageUrl)?.inspection;
       const token = (inspectionTokensRef.current.get(pageUrl) ?? 0) + 1;
       inspectionTokensRef.current.set(pageUrl, token);
       reviewBindingsRef.current.delete(pageUrl);
@@ -314,6 +327,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       };
       const inspectionResult = { ...result, regions: result.regions.map(region => ({ ...region, rect: { ...region.rect } })) };
       let original = sourceBlob;
+      let sourceMismatch = false;
       if (!original) {
         try {
           const response = await fetch(pageUrl, { cache: "no-store" });
@@ -327,12 +341,15 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       // A URL can keep its identity while its bytes change. Never inspect new
       // original pixels under the old saved source revision or cached approval.
       if (original && await fingerprintBlob(original) !== sourceRevision) {
+        sourceMismatch = true;
         confirmationsRef.current.invalidatePage(pageUrl);
+        for (const key of humanInspectionsRef.current.keys()) if (key.startsWith(`${pageUrl}:`)) humanInspectionsRef.current.delete(key);
         original = undefined;
       }
       const previousSource = lastSourceRevisionRef.current.get(pageUrl);
       if (previousSource && sourceRevision && previousSource !== sourceRevision) {
         confirmationsRef.current.invalidatePage(pageUrl);
+        for (const key of humanInspectionsRef.current.keys()) if (key.startsWith(`${pageUrl}:`)) humanInspectionsRef.current.delete(key);
       }
       if (sourceRevision) lastSourceRevisionRef.current.set(pageUrl, sourceRevision);
       const inspection = await inspectCleanedPage({
@@ -348,6 +365,12 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
           result.cleanBlob !== binding.cleanBlob || result.maskBlob !== binding.maskBlob ||
           result.sourceFingerprint !== binding.sourceFingerprint || result.maskFingerprint !== binding.maskFingerprint ||
           authorizationIdentity(result.regions) !== binding.authorization) return;
+      if (original && (!evidence || evidence.sourceContext === result.sourceFingerprint)) inspectionOriginalsRef.current.set(pageUrl, original);
+      else inspectionOriginalsRef.current.delete(pageUrl);
+      if (!sourceMismatch && inspection.status === "unverified" && previousInspection?.revisionKey === inspection.revisionKey) {
+        inspection.candidates = previousInspection.candidates;
+        inspection.truncated = previousInspection.truncated;
+      }
       reviewBindingsRef.current.set(pageUrl, binding);
       publishRemnantReview(pageUrl, inspection);
     },
@@ -371,23 +394,36 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     });
   }, [inspectPageRemnants]);
 
-  const persistArtworkConfirmations = useCallback(
-    async (pageUrl: string) => {
-      try {
-        const saved = await loadCleaningResultsMetadata();
-        const record = saved.get(pageUrl);
-        if (!record) return;
-        await saveCleaningResultMetadata({
-          ...record,
-          artworkConfirmations: confirmationsRef.current.allForPage(pageUrl),
-          updatedAt: Date.now(),
-        });
-      } catch (error) {
-        console.warn("Failed to persist artwork confirmations:", error);
-      }
-    },
-    [],
-  );
+  // Serialize writes for each page: a quick Undo/Redo must leave the newest
+  // visible snapshot on disk even if the preceding asset write is still pending.
+  const persistCleaningResult = useCallback((pageUrl: string, result: PageCleaningResult, revision: number): Promise<void> => {
+    const pageId = pageIdsRef.current?.[pagesRef.current.indexOf(pageUrl)];
+    const isCurrent = () => sessionActiveRef.current && pagesRef.current.includes(pageUrl) &&
+      resultsRef.current.get(pageUrl) === result && pageIdsRef.current?.[pagesRef.current.indexOf(pageUrl)] === pageId;
+    const operation = (persistenceQueueRef.current.get(pageUrl) ?? Promise.resolve()).then(async () => {
+      if (!isCurrent()) return;
+      const assetIds = result.cleanBlob ? await saveCleaningAssets(pageUrl, {
+        cleanBlob: result.cleanBlob, maskBlob: result.maskBlob,
+        reviewMaskBlob: result.reviewMaskBlob, protectedMaskBlob: result.protectedMaskBlob,
+      }, pageId) : {};
+      if (!isCurrent()) return;
+      const inspection = remnantReviewsRef.current.get(pageUrl)?.inspection;
+      const humanImageConfirmations = inspection && result.sourceFingerprint && result.maskFingerprint &&
+        humanInspectionsRef.current.has(`${pageUrl}:${inspection.revisionKey}`)
+        ? [{ revisionKey: inspection.revisionKey, sourceFingerprint: result.sourceFingerprint, maskFingerprint: result.maskFingerprint }] : [];
+      await saveCleaningResultMetadata({
+        pageUrl, sourceHash: result.sourceHash, sourceFingerprint: result.sourceFingerprint,
+        maskFingerprint: result.maskFingerprint, pipelineVersion: result.pipelineVersion,
+        revision, jobId: result.jobId, regions: result.regions, updatedAt: Date.now(),
+        width: result.width, height: result.height, timingsMs: result.timingsMs,
+        awaitingReview: result.awaitingReview, cleaningMode: result.cleaningMode ?? "safe",
+        artworkConfirmations: confirmationsRef.current.allForPage(pageUrl), humanImageConfirmations, ...assetIds,
+      });
+    }).catch(error => { console.warn("Failed to persist cleaning result:", error); });
+    persistenceQueueRef.current.set(pageUrl, operation);
+    void operation.then(() => { if (persistenceQueueRef.current.get(pageUrl) === operation) persistenceQueueRef.current.delete(pageUrl); });
+    return operation;
+  }, []);
 
   /**
    * Explicitly confirm one candidate of the current inspection as artwork.
@@ -402,11 +438,49 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       if (!confirmation) return false;
       confirmationsRef.current.confirm(pageUrl, confirmation);
       publishRemnantReview(pageUrl, applyArtworkConfirmations(review.inspection, [confirmation]));
-      void persistArtworkConfirmations(pageUrl);
+      const result = resultsRef.current.get(pageUrl);
+      if (result) void persistCleaningResult(pageUrl, result, pageTokensRef.current.get(pageUrl) ?? 0);
       return true;
     },
-    [getCurrentRemnantReview, persistArtworkConfirmations, publishRemnantReview],
+    [getCurrentRemnantReview, persistCleaningResult, publishRemnantReview],
   );
+
+  const confirmHumanImageInspection = useCallback((pageUrl: string, revisionKey: string, sourceUrl: string, cleanUrl: string): boolean => {
+    const review = getCurrentRemnantReview(pageUrl);
+    const result = resultsRef.current.get(pageUrl);
+    if (!review?.canConfirmHumanInspection || !result || review.inspection.status !== "unverified" ||
+        !revisionKey || review.inspection.revisionKey !== revisionKey ||
+        review.inspection.candidates.some(candidate => candidate.state !== "human-confirmed-artwork") ||
+        sourceUrl !== pageUrl || cleanUrl !== result?.cleanUrl || !inspectionOriginalsRef.current.has(pageUrl)) return false;
+    humanInspectionsRef.current.set(`${pageUrl}:${revisionKey}`, true);
+    publishRemnantReview(pageUrl, review.inspection);
+    void persistCleaningResult(pageUrl, result, pageTokensRef.current.get(pageUrl) ?? 0);
+    return true;
+  }, [getCurrentRemnantReview, publishRemnantReview, persistCleaningResult]);
+
+  /** History holds immutable blobs, never revoked object URLs or provider jobs. */
+  const pushCleaningHistory = useCallback((pageUrl: string, before: PageCleaningResult, after: PageCleaningResult) => {
+    if (![before, after].every(result => result.cleanBlob && result.maskBlob && result.reviewMaskBlob && result.protectedMaskBlob) ||
+        !before.sourceFingerprint || before.sourceFingerprint !== after.sourceFingerprint) return;
+    const clone = (value: PageCleaningResult): PageCleaningResult => ({ ...value, regions: value.regions.map(region => ({ ...region, rect: { ...region.rect }, protectionReasons: [...region.protectionReasons] })) });
+    const snapshots = [clone(before), clone(after)];
+    const pageId = pageIdsRef.current?.[pagesRef.current.indexOf(pageUrl)];
+    const evidenceIdentity = textEvidenceIdentity(textEvidenceRef.current.get(pageUrl)?.textEvidence, textEvidenceRef.current.get(pageUrl)?.sourceContext);
+    const restore = (snapshot: PageCleaningResult) => {
+      const current = resultsRef.current.get(pageUrl);
+      if (!sessionActiveRef.current || !pagesRef.current.includes(pageUrl) || !current ||
+          pageIdsRef.current?.[pagesRef.current.indexOf(pageUrl)] !== pageId || current.sourceFingerprint !== snapshot.sourceFingerprint ||
+          textEvidenceIdentity(textEvidenceRef.current.get(pageUrl)?.textEvidence, textEvidenceRef.current.get(pageUrl)?.sourceContext) !== evidenceIdentity) return;
+      pageTokensRef.current.set(pageUrl, (pageTokensRef.current.get(pageUrl) ?? 0) + 1);
+      inspectionTokensRef.current.set(pageUrl, (inspectionTokensRef.current.get(pageUrl) ?? 0) + 1);
+      const restored = { ...clone(snapshot), cleanUrl: URL.createObjectURL(snapshot.cleanBlob!), maskUrl: URL.createObjectURL(snapshot.maskBlob!),
+        reviewMaskUrl: URL.createObjectURL(snapshot.reviewMaskBlob!), protectedMaskUrl: URL.createObjectURL(snapshot.protectedMaskBlob!) };
+      replaceResult(pageUrl, restored);
+      const revision = pageTokensRef.current.get(pageUrl)!;
+      void inspectPageRemnants(pageUrl, restored).then(() => persistCleaningResult(pageUrl, restored, revision));
+    };
+    undoManager.push({ label: "แก้ไขภาพคลีน / Mask", undo: () => restore(snapshots[0]), redo: () => restore(snapshots[1]) });
+  }, [inspectPageRemnants, replaceResult, persistCleaningResult]);
 
   const hydrateResult = useCallback(
     async (result: CleaningResult, signal?: AbortSignal): Promise<PageCleaningResult> => {
@@ -537,47 +611,11 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       // Inspect the fresh clean background (without translated overlays) at
       // this processing boundary; findings bind to the exact revisions above.
       await inspectPageRemnants(pageUrl, identified, sourceBlob);
-      try {
-        let assetIds: {
-          cleanAssetId?: string;
-          maskAssetId?: string;
-          reviewMaskAssetId?: string;
-          protectedMaskAssetId?: string;
-        } = {};
-        if (identified.cleanBlob) {
-          assetIds = await saveCleaningAssets(pageUrl, {
-            cleanBlob: identified.cleanBlob,
-            maskBlob: identified.maskBlob,
-            reviewMaskBlob: identified.reviewMaskBlob,
-            protectedMaskBlob: identified.protectedMaskBlob,
-          }, pageIdsRef.current?.[pagesRef.current.indexOf(pageUrl)]);
-        }
-        await saveCleaningResultMetadata({
-          pageUrl,
-          sourceHash: result.sourceHash,
-          sourceFingerprint,
-          maskFingerprint: identified.maskFingerprint,
-          pipelineVersion: result.pipelineVersion,
-          revision: token,
-          jobId: result.jobId,
-          regions: result.regions,
-          updatedAt: Date.now(),
-          width: result.width,
-          height: result.height,
-          timingsMs: result.timingsMs,
-          awaitingReview: result.awaitingReview,
-          cleaningMode: result.cleaningMode ?? "safe",
-          artworkConfirmations: confirmationsRef.current.allForPage(pageUrl),
-          ...assetIds,
-        });
-      } catch (saveErr) {
-        console.warn("Failed to persist cleaning result metadata:", saveErr);
-      } finally {
-        setProgressState((previous) => (previous?.pageUrl === pageUrl ? undefined : previous));
-      }
+      await persistCleaningResult(pageUrl, identified, token);
+      setProgressState((previous) => (previous?.pageUrl === pageUrl ? undefined : previous));
       return identified;
     },
-    [hydrateResult, inspectPageRemnants, replaceResult, revokeResult],
+    [hydrateResult, inspectPageRemnants, replaceResult, revokeResult, persistCleaningResult],
   );
 
   const runJob = useCallback(
@@ -824,6 +862,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
         }
 
         const result = await runJob(job, token, pageUrl, current.sourceFingerprint);
+        pushCleaningHistory(pageUrl, current, result);
         return remapped
           ? { ...result, maskAdjustment: "remapped", recoveredRegionId: resolvedRegionId }
           : result;
@@ -837,7 +876,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
         }
       }
     },
-    [cleanPage, handleFailure, runJob],
+    [cleanPage, handleFailure, runJob, pushCleaningHistory],
   );
 
   useEffect(() => {
@@ -955,6 +994,12 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
             if (metadata.artworkConfirmations?.length) {
               confirmationsRef.current.replacePage(pageUrl, metadata.artworkConfirmations);
             }
+            for (const item of metadata.humanImageConfirmations ?? []) {
+              if (item.sourceFingerprint === metadata.sourceFingerprint && item.maskFingerprint === metadata.maskFingerprint &&
+                  /^[a-f0-9]{64}$/.test(item.sourceFingerprint) && item.revisionKey) {
+                humanInspectionsRef.current.set(`${pageUrl}:${item.revisionKey}`, true);
+              }
+            }
             await inspectPageRemnants(pageUrl, restored, sourceBlob);
             continue;
           }
@@ -989,6 +1034,12 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       }
     }
     const retainedReviews = new Map(remnantReviewsRef.current);
+    for (const pageUrl of inspectionOriginalsRef.current.keys()) {
+      if (!pagesRef.current.includes(pageUrl)) {
+        inspectionOriginalsRef.current.delete(pageUrl);
+        for (const key of humanInspectionsRef.current.keys()) if (key.startsWith(`${pageUrl}:`)) humanInspectionsRef.current.delete(key);
+      }
+    }
     for (const pageUrl of textEvidenceRef.current.keys()) {
       if (!pagesRef.current.includes(pageUrl)) {
         textEvidenceRef.current.delete(pageUrl);
@@ -1015,11 +1066,16 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
   }, [pages, revokeResult]);
 
   useEffect(
-    () => () => {
-      for (const [url, t] of pageTokensRef.current.entries()) {
-        pageTokensRef.current.set(url, t + 1);
+    () => {
+      const pageTokens = pageTokensRef.current;
+      sessionActiveRef.current = true;
+      return () => {
+        sessionActiveRef.current = false;
+        for (const [url, t] of pageTokens.entries()) {
+          pageTokens.set(url, t + 1);
       }
       for (const result of resultsRef.current.values()) revokeResult(result);
+      };
     },
     [revokeResult],
   );
@@ -1053,6 +1109,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     },
     remnantReviews,
     confirmArtworkCandidate,
+    confirmHumanImageInspection,
     progress,
     error,
     resultsByPage,

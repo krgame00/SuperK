@@ -5,6 +5,30 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const policy = require("lib/extension/strictParity.ts");
 globalThis.SuperKPolicy = policy;
 
+},"lib/cleaning/backgroundInspectionContract.ts":(module,exports,require)=>{
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.BACKGROUND_REMNANT_INSPECTION_VERSION = void 0;
+exports.revisionKeyOf = revisionKeyOf;
+exports.backgroundEligibilityState = backgroundEligibilityState;
+/** Bump when inspection revision identity or output eligibility semantics change. */
+exports.BACKGROUND_REMNANT_INSPECTION_VERSION = 2;
+function revisionKeyOf(revisions) {
+    const { sourceRevision, backgroundRevision, removalRevision } = revisions;
+    if (![sourceRevision, backgroundRevision, removalRevision].every((value) => typeof value === "string" && value.length > 0))
+        return undefined;
+    const textRevision = revisions.textEvidenceRevision ?? JSON.stringify(["source-box-policy-v1", "", []]);
+    return JSON.stringify([`background-remnant-inspection-v${exports.BACKGROUND_REMNANT_INSPECTION_VERSION}`, sourceRevision, backgroundRevision, removalRevision, textRevision]);
+}
+function backgroundEligibilityState(result) {
+    const open = result.candidates.some((candidate) => candidate.state !== "human-confirmed-artwork");
+    if (open || result.truncated)
+        return "unresolved";
+    if (result.status === "unverified")
+        return result.revisionKey && result.humanImageInspection?.revisionKey === result.revisionKey ? "human-confirmed" : "unavailable";
+    return result.candidates.length > 0 ? "human-confirmed" : "approved";
+}
+
 },"lib/extension/sourceFingerprint.ts":(module,exports,require)=>{
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -30,6 +54,7 @@ async function originalSourceFingerprint(base64) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.originalSourceFingerprint = exports.sourceBytesFingerprint = exports.buildQualityReviewPrompt = exports.reviewTranslatedBubbles = exports.createPageTargetIdentity = exports.resolveTargetLanguage = exports.LANGUAGE_POLICY_VERSION = exports.TARGET_LANGUAGES = void 0;
 exports.extensionDisplayedText = extensionDisplayedText;
+exports.inspectBackgroundEvidence = inspectBackgroundEvidence;
 exports.inspectExtensionOutput = inspectExtensionOutput;
 const languagePolicy_1 = require("lib/languagePolicy.ts");
 Object.defineProperty(exports, "TARGET_LANGUAGES", { enumerable: true, get: function () { return languagePolicy_1.TARGET_LANGUAGES; } });
@@ -40,12 +65,65 @@ Object.defineProperty(exports, "createPageTargetIdentity", { enumerable: true, g
 const qualityReview_1 = require("lib/translation/qualityReview.ts");
 const qualityReviewClient_1 = require("lib/translation/qualityReviewClient.ts");
 Object.defineProperty(exports, "reviewTranslatedBubbles", { enumerable: true, get: function () { return qualityReviewClient_1.reviewTranslatedBubbles; } });
+const backgroundInspectionContract_1 = require("lib/cleaning/backgroundInspectionContract.ts");
 /** Raw renderer identity; do not trim/normalize before inspecting or reviewing. */
 function extensionDisplayedText(bubble) {
     return bubble.t || bubble.translated || '';
 }
+/** A background approval is usable only when the complete inspection is bound to these exact source and clean-image revisions. */
+function inspectBackgroundEvidence(value) {
+    const proof = value?.backgroundEvidence;
+    const sourceRevision = value?.sourceRevision;
+    if (!proof || typeof proof !== 'object' || !proof.revisions || typeof proof.revisions !== 'object' || typeof proof.revisionKey !== 'string' || !proof.revisionKey || proof.revisions.sourceRevision !== sourceRevision || typeof proof.revisions.removalRevision !== 'string' || !proof.revisions.removalRevision ||
+        (proof.revisions.textEvidenceRevision !== undefined && typeof proof.revisions.textEvidenceRevision !== 'string'))
+        return {};
+    if (!/^[a-f0-9]{64}$/.test(proof.revisions.sourceRevision) || !/^[a-f0-9]{64}$/.test(proof.revisions.backgroundRevision))
+        return {};
+    const revision = (0, backgroundInspectionContract_1.revisionKeyOf)(proof.revisions);
+    if (!revision || revision !== proof.revisionKey || !Array.isArray(proof.candidates) || !Number.isSafeInteger(proof.inspectedAreas) || proof.inspectedAreas < 0)
+        return {};
+    if (proof.candidates.length > 200 || proof.candidates.some(candidate => !candidate || typeof candidate.id !== 'string' || !candidate.id || !['suspected-remnant', 'unchanged-candidate', 'uncertain', 'human-confirmed-artwork'].includes(candidate.state) ||
+        !['full-glyph', 'partial-glyph', 'unchanged', 'line-like'].includes(candidate.detail) ||
+        !candidate.rect || ![candidate.rect.x, candidate.rect.y, candidate.rect.width, candidate.rect.height].every(number => Number.isFinite(number) && number >= 0) ||
+        !Array.isArray(candidate.box) || candidate.box.length !== 4 || !candidate.box.every(number => Number.isFinite(number) && number >= 0 && number <= 1000) ||
+        !Number.isFinite(candidate.confidence) || candidate.confidence < 0 || candidate.confidence > 1 ||
+        !candidate.evidence || !Array.isArray(candidate.evidence.removalRegionIds) || !candidate.evidence.removalRegionIds.every(id => typeof id === 'string') ||
+        !Array.isArray(candidate.evidence.textEvidenceIds) || !candidate.evidence.textEvidenceIds.every(id => typeof id === 'string') ||
+        ![candidate.evidence.originalInkPixels, candidate.evidence.survivingInkPixels].every(number => Number.isSafeInteger(number) && number >= 0) ||
+        ![candidate.evidence.meanLumaOriginal, candidate.evidence.meanLumaClean].every(number => Number.isFinite(number) && number >= 0 && number <= 255)))
+        return {};
+    const ids = new Set();
+    for (const candidate of proof.candidates) {
+        if (ids.has(candidate.id))
+            return {};
+        ids.add(candidate.id);
+        if (candidate.state === 'human-confirmed-artwork' && (candidate.artworkConfirmation?.candidateId !== candidate.id || candidate.artworkConfirmation?.revisionKey !== proof.revisionKey))
+            return {};
+        if (candidate.state !== 'human-confirmed-artwork' && candidate.artworkConfirmation)
+            return {};
+    }
+    if (proof.truncated !== undefined && typeof proof.truncated !== 'boolean')
+        return {};
+    if (proof.status === 'inspected') {
+        if (proof.inspectedAreas === 0 || proof.unverifiedReason !== undefined || proof.unverifiedDetail !== undefined || proof.humanImageInspection !== undefined)
+            return {};
+    }
+    else if (proof.status === 'unverified') {
+        if (!['missing-revisions', 'missing-original', 'missing-clean', 'dimension-mismatch', 'detection-failed', 'no-removal-evidence'].includes(proof.unverifiedReason ?? '') || proof.candidates.length !== 0 || proof.inspectedAreas !== 0 ||
+            (proof.unverifiedDetail !== undefined && typeof proof.unverifiedDetail !== 'string') ||
+            (proof.humanImageInspection !== undefined && proof.humanImageInspection.revisionKey !== proof.revisionKey))
+            return {};
+    }
+    else
+        return {};
+    const state = (0, backgroundInspectionContract_1.backgroundEligibilityState)(proof);
+    if (value.backgroundState !== state || value.backgroundRevision !== proof.revisionKey)
+        return {};
+    return { state, revision: proof.revisionKey };
+}
 /** Exact evidence is recomputed at every reader/publication boundary. */
-function inspectExtensionOutput(value, publication = false) {
+function inspectExtensionOutput(value, _publication = false) {
+    void _publication; // Kept for API compatibility; all output paths now require both evidence sets.
     const valid = Array.isArray(value?.bubbles) && value.bubbles.every(b => b &&
         (b.t === undefined || typeof b.t === 'string') && (b.translated === undefined || typeof b.translated === 'string') &&
         (b.original_text === undefined || typeof b.original_text === 'string') &&
@@ -54,9 +132,10 @@ function inspectExtensionOutput(value, publication = false) {
         Array.isArray(b.box) && b.box.length === 4 && b.box.every(n => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1000));
     const bubbles = valid ? value.bubbles : [];
     const targetIdentity = valid && typeof value?.targetIdentity?.targetId === 'string' && typeof value.targetIdentity.policyVersion === 'string' ? value.targetIdentity : undefined;
-    const sourceRevision = typeof value?.sourceRevision === 'string' ? value.sourceRevision : undefined;
-    const contextualState = valid && bubbles.filter(b => !b.deleted).every(b => !!b.original_text?.trim() && !!sourceRevision && b.translationReview?.policyVersion === languagePolicy_1.LANGUAGE_POLICY_VERSION && (0, qualityReview_1.isReviewCurrent)(b, targetIdentity?.targetId, sourceRevision) && ['ok', 'accepted', 'dismissed'].includes(b.translationReview?.status ?? '')) ? 'approved' : 'unresolved';
-    return (0, pageEligibility_1.inspectPageOutputEligibility)({ targetIdentity, sourceRevision, backgroundRevision: value?.backgroundRevision, backgroundState: value?.backgroundState, contextualState, points: bubbles.map((b, i) => ({ id: String(i), text: extensionDisplayedText(b), sourceText: b.original_text, deleted: b.deleted })), requirements: { contextual: true, background: publication } });
+    const sourceRevision = typeof value?.sourceRevision === 'string' && /^[a-f0-9]{64}$/.test(value.sourceRevision) ? value.sourceRevision : undefined;
+    const background = valid ? inspectBackgroundEvidence(value) : {};
+    const contextualState = valid && bubbles.filter(b => !b.deleted).every(b => (0, qualityReview_1.hasContextualSourceEvidence)(b, sourceRevision) && !!sourceRevision && b.translationReview?.policyVersion === languagePolicy_1.LANGUAGE_POLICY_VERSION && (0, qualityReview_1.isReviewCurrent)(b, targetIdentity?.targetId, sourceRevision) && ['ok', 'accepted', 'dismissed'].includes(b.translationReview?.status ?? '')) ? 'approved' : 'unresolved';
+    return (0, pageEligibility_1.inspectPageOutputEligibility)({ targetIdentity, sourceRevision, backgroundRevision: background.revision, backgroundState: background.state, contextualState, points: bubbles.map((b, i) => ({ id: String(i), text: extensionDisplayedText(b), sourceText: b.original_text, deleted: b.deleted })), requirements: { contextual: true, background: true } });
 }
 var qualityReview_2 = require("lib/translation/qualityReview.ts");
 Object.defineProperty(exports, "buildQualityReviewPrompt", { enumerable: true, get: function () { return qualityReview_2.buildQualityReviewPrompt; } });
@@ -601,6 +680,8 @@ exports.withReviewIdentity = withReviewIdentity;
 exports.guardQualityReview = guardQualityReview;
 exports.parseQualityReviews = parseQualityReviews;
 exports.isReviewCurrent = isReviewCurrent;
+exports.validOriginalSourceBox = validOriginalSourceBox;
+exports.hasContextualSourceEvidence = hasContextualSourceEvidence;
 exports.invalidateQualityReview = invalidateQualityReview;
 exports.needsQualityReview = needsQualityReview;
 exports.buildQualityReviewPrompt = buildQualityReviewPrompt;
@@ -683,6 +764,13 @@ function isReviewCurrent(bubble, targetId, sourceRevision) {
     const review = bubble.translationReview;
     if (!review)
         return false;
+    if (review.sourceEvidenceKind === 'image') {
+        if (review.status !== 'accepted' || review.humanVerified !== true ||
+            !/^[a-f0-9]{64}$/.test(review.sourceRevision ?? '') || !validOriginalSourceBox(bubble.box) ||
+            !validOriginalSourceBox(review.sourceBox) || JSON.stringify(review.sourceBox) !== JSON.stringify(bubble.box) ||
+            !review.targetId || review.policyVersion !== languagePolicy_1.LANGUAGE_POLICY_VERSION)
+            return false;
+    }
     // Snapshots must describe the exact raw text; trimmed comparisons silently approved raw changes.
     if (review.sourceText !== (typeof bubble.original_text === "string" ? bubble.original_text : ""))
         return false;
@@ -696,6 +784,14 @@ function isReviewCurrent(bubble, targetId, sourceRevision) {
     if (sourceRevision !== undefined && review.sourceRevision !== sourceRevision)
         return false;
     return true;
+}
+function validOriginalSourceBox(box) {
+    return !!box && box.length === 4 && box.every(n => Number.isFinite(n) && n >= 0 && n <= 1000) && box[2] > box[0] && box[3] > box[1];
+}
+/** Transcript-backed review or explicit human review against exact original pixels. */
+function hasContextualSourceEvidence(bubble, sourceRevision) {
+    return !!bubble.original_text?.trim() || (!!sourceRevision && bubble.translationReview?.sourceEvidenceKind === 'image' &&
+        isReviewCurrent(bubble, bubble.translationReview.targetId, sourceRevision));
 }
 function invalidateQualityReview(bubble) {
     if (bubble.translationReview && !isReviewCurrent(bubble)) {

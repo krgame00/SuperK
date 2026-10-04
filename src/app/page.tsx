@@ -37,6 +37,7 @@ import { SettingsModal } from "@/components/workspace/SettingsModal";
 import { WorkspaceExportMenu } from "@/components/workspace/WorkspaceExportMenu";
 import { WorkspacePrimaryAction } from "@/components/workspace/WorkspacePrimaryAction";
 import { WorkspaceAdvancedTools } from "@/components/workspace/WorkspaceAdvancedTools";
+import { SavedTextSizeControls } from "@/components/workspace/SavedTextSizeControls";
 import { ExportReportModal, type ExportReportRow } from "@/components/workspace/ExportReportModal";
 import { normalizePageExportSource, resolvePageExportUrl, exportImageBlob, exportImageFilename, type PageExportSource } from "@/lib/export/pageSource";
 import { scanPageGeometry, type PageGeometryResult, type ReadabilityFinding } from "@/lib/export/readabilityScan";
@@ -122,7 +123,7 @@ function formatStopwatchTime(elapsedMs: number): string {
   return `${String(totalMinutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${tenths}`;
 }
 
-type WorkspaceExportPage = { id?: string; url: string; name: string; originUrl?: string; exportSource?: PageExportSource; exportExcluded?: boolean };
+type WorkspaceExportPage = { id?: string; url: string; name: string; originUrl?: string; readerImageUrl?: string; exportSource?: PageExportSource; exportExcluded?: boolean; sourceFingerprint?: string };
 
 export default function WorkspacePage() {
 
@@ -133,7 +134,13 @@ export default function WorkspacePage() {
   const setCurrentPage = useCallback((updater: SetStateAction<number>) => {
     if (!exportSnapshotRef.current) setCurrentPageState(updater);
   }, []);
-  const [confirmedPages, setConfirmedPages] = useState<Set<string>>(new Set());
+  const [confirmedPages, setConfirmedPagesState] = useState<Set<string>>(new Set());
+  const confirmedPagesRef = useRef(confirmedPages);
+  const setConfirmedPages = useCallback((update: (previous: Set<string>) => Set<string>) => {
+    const next = update(confirmedPagesRef.current);
+    confirmedPagesRef.current = next;
+    setConfirmedPagesState(next);
+  }, []);
   const confirmedMissingTranslationsRef = useRef(new Map<string, string>());
   const pendingReviewIndicesRef = useRef<number[] | undefined>(undefined);
   const [unconfirmedReviewPages, setUnconfirmedReviewPages] = useState<PageReviewInfo[] | null>(null);
@@ -271,6 +278,7 @@ export default function WorkspacePage() {
     resultsByPage: cleaningResultsByPage,
     getCurrentRemnantReview,
     confirmArtworkCandidate,
+    confirmHumanImageInspection,
     recheckPageRemnants,
     setPageRemnantTextEvidence,
   } = useCleaning({ pages: pageUrls, pageIds, currentPage });
@@ -445,6 +453,7 @@ export default function WorkspacePage() {
     replaceBubbleText,
     getPageSignature,
     getPageSourceRevision,
+    resizeSavedText,
     cacheRevision: translationCacheRevision,
   } = useTranslation({
     currentPage,
@@ -452,8 +461,12 @@ export default function WorkspacePage() {
     pageIds,
     pageNames,
     pageOriginUrls: pages.map((p) => p.originUrl),
+    pageReaderImageUrls: pages.map((p) => p.readerImageUrl),
     pageExportSources: pages.map((p) => normalizePageExportSource(p.exportSource)),
-    pageSourceFingerprints: new Map([...cleaningResultsByPage].flatMap(([url, result]) => result.sourceFingerprint ? [[url, result.sourceFingerprint] as const] : [])),
+    pageSourceFingerprints: new Map([
+      ...pages.flatMap(page => page.sourceFingerprint ? [[page.url, page.sourceFingerprint] as const] : []),
+      ...[...cleaningResultsByPage].flatMap(([url, result]) => result.sourceFingerprint ? [[url, result.sourceFingerprint] as const] : []),
+    ]),
     viewMode: "single",
     preparePageForTranslation,
     onPageDirtied: (pageUrl) => {
@@ -1038,13 +1051,20 @@ export default function WorkspacePage() {
         if (!res.ok) return;
         const handoffData = await res.json();
 
-        const { appendPageToProjectSession } = await import("@/lib/projectStore");
+        const [{ appendPageToProjectSession }, { verifyWorkspaceHandoff }] = await Promise.all([
+          import("@/lib/projectStore"),
+          import("@/lib/extension/workspaceHandoff"),
+        ]);
+        const verifiedHandoff = await verifyWorkspaceHandoff(handoffData);
         const appendRes = await appendPageToProjectSession({
-          pageUrl: handoffData.pageUrl,
+          pageUrl: verifiedHandoff.pageUrl,
           name: handoffData.name || `Extension Page`,
           cleanUrl: handoffData.cleanUrl,
-          bubbles: handoffData.bubbles,
+          bubbles: verifiedHandoff.bubbles,
           originUrl: handoffData.originUrl,
+          readerImageUrl: verifiedHandoff.readerImageUrl,
+          targetIdentity: verifiedHandoff.targetIdentity,
+          sourceFingerprint: verifiedHandoff.sourceRevision,
         });
 
         const restored = await restoreSavedSession();
@@ -1291,11 +1311,12 @@ export default function WorkspacePage() {
           ...(pairingToken ? { Authorization: `Bearer ${pairingToken}` } : {}),
         },
         body: JSON.stringify({
-          pageUrl: page.url,
+          pageUrl: page.readerImageUrl || page.url,
           originUrl: page.originUrl,
           bubbles: publicationBubbles,
           targetIdentity: publicationTarget,
           sourceRevision: publicationSource,
+          backgroundEvidence: publicationBackground,
           backgroundState: publicationBackground ? backgroundEligibilityState(publicationBackground) : undefined,
           backgroundRevision: publicationBackground?.revisionKey,
           textStyle,
@@ -1325,7 +1346,7 @@ export default function WorkspacePage() {
   const collectExportReviewPages = useCallback((snapshotPages: WorkspaceExportPage[], targetIndices?: number[]) => {
     return getUnconfirmedPages(
       snapshotPages,
-      confirmedPages,
+      confirmedPagesRef.current,
       cleaningResultsByPage,
       bubbleCacheRef.current,
       targetIndices,
@@ -2271,6 +2292,7 @@ export default function WorkspacePage() {
                 </button>
 
                 {/* Advanced Tools dropdown */}
+                <SavedTextSizeControls key={currentPageUrl} pageUrl={currentPageUrl} points={bubbleCacheRef.current.get(currentPageUrl??'')??activeBubbles} busy={operationBusy} onResize={resizeSavedText}/>
                 <WorkspaceAdvancedTools
                   canClean={Boolean(currentPageUrl)}
                   canEditMask={Boolean(currentCleaningResult)}
@@ -3135,6 +3157,7 @@ export default function WorkspacePage() {
                       sourceUrl={pages[currentPage]?.url}
                       cleanUrl={currentCleaningResult?.cleanUrl}
                       dimensions={currentCleaningResult ? { width: currentCleaningResult.width, height: currentCleaningResult.height } : undefined}
+                      canConfirmHumanInspection={pages[currentPage] ? getCurrentRemnantReview?.(pages[currentPage].url, getExpectedRemnantEvidence(pages[currentPage].url))?.canConfirmHumanInspection : false}
                       inspection={pages[currentPage] ? getCurrentRemnantReview?.(pages[currentPage].url, getExpectedRemnantEvidence(pages[currentPage].url))?.inspection : undefined}
                       regions={currentCleaningResult?.regions ?? []}
                       onOpenMask={(candidate) => {
@@ -3142,6 +3165,8 @@ export default function WorkspacePage() {
                         setIsMaskEditorOpen(true);
                       }}
                       onConfirmArtwork={(candidate) => { if (currentPageUrl) confirmArtworkCandidate(currentPageUrl, candidate.id); }}
+                      onConfirmHumanInspection={(revisionKey, sourceUrl, cleanUrl) => { if (currentPageUrl) confirmHumanImageInspection(currentPageUrl, revisionKey, sourceUrl, cleanUrl); }}
+                      onReimportSource={() => document.querySelector<HTMLInputElement>('input[aria-label="เลือกไฟล์มังงะเพื่อเพิ่ม"]')?.click()}
                       onRecheck={() => { if (currentPageUrl) void recheckPageRemnants(currentPageUrl); }}
                     />
 

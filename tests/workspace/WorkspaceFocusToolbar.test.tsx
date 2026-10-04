@@ -30,6 +30,7 @@ vi.mock("@/hooks/useTranslation", () => ({
     setTargetLang: vi.fn(),
     sourceLang: "auto",
     setSourceLang: vi.fn(),
+    pageTargetCacheRef: { current: new Map() },
     modelPreference: "auto",
     setModelPreference: vi.fn(),
     textStyle: {
@@ -49,6 +50,8 @@ vi.mock("@/hooks/useTranslation", () => ({
     setShowTranslate: vi.fn(),
     activeBubbles: [],
     setActiveBubbles: vi.fn(),
+    bubbleCacheRef: { current: new Map() },
+    getPageSourceRevision: vi.fn(() => "source-revision"),
     userApiKey: "",
     setUserApiKey: vi.fn(),
     restoreSavedSession: vi.fn(async () => ({
@@ -62,6 +65,7 @@ vi.mock("@/hooks/useTranslation", () => ({
     batchFailures: [],
     retryFailedPages: vi.fn(),
     invalidatePageTranslation: vi.fn(),
+    inspectLegacyTargets: vi.fn(() => []),
   }),
 }));
 

@@ -20,9 +20,14 @@ export interface TranslationReview {
   policyVersion?: string;
   /** Exact source evidence revision bound when this snapshot was recorded. */
   sourceRevision?: string;
+  /** Recorded only by explicit human confirmation after viewing verified original pixels. */
+  sourceEvidenceKind?: 'image';
+  humanVerified?: boolean;
+  sourceBox?: number[];
 }
 
 interface ReviewableBubble {
+  box?: number[];
   t?: string;
   translated?: string;
   original_text?: string;
@@ -108,6 +113,12 @@ export function parseQualityReviews(items: QualityReviewItem[], response: unknow
 export function isReviewCurrent(bubble: ReviewableBubble, targetId?: string, sourceRevision?: string): boolean {
   const review = bubble.translationReview;
   if (!review) return false;
+  if (review.sourceEvidenceKind === 'image') {
+    if (review.status !== 'accepted' || review.humanVerified !== true ||
+      !/^[a-f0-9]{64}$/.test(review.sourceRevision ?? '') || !validOriginalSourceBox(bubble.box) ||
+      !validOriginalSourceBox(review.sourceBox) || JSON.stringify(review.sourceBox) !== JSON.stringify(bubble.box) ||
+      !review.targetId || review.policyVersion !== LANGUAGE_POLICY_VERSION) return false;
+  }
   // Snapshots must describe the exact raw text; trimmed comparisons silently approved raw changes.
   if (review.sourceText !== (typeof bubble.original_text === "string" ? bubble.original_text : "")) return false;
   if (review.reviewedText !== (bubble.t || bubble.translated || "")) return false;
@@ -116,6 +127,16 @@ export function isReviewCurrent(bubble: ReviewableBubble, targetId?: string, sou
   if (targetId !== undefined && review.targetId !== targetId) return false;
   if (sourceRevision !== undefined && review.sourceRevision !== sourceRevision) return false;
   return true;
+}
+
+export function validOriginalSourceBox(box?:number[]): box is number[] {
+  return !!box && box.length === 4 && box.every(n=>Number.isFinite(n)&&n>=0&&n<=1000) && box[2]>box[0] && box[3]>box[1];
+}
+
+/** Transcript-backed review or explicit human review against exact original pixels. */
+export function hasContextualSourceEvidence(bubble:ReviewableBubble,sourceRevision?:string):boolean {
+  return !!bubble.original_text?.trim() || (!!sourceRevision && bubble.translationReview?.sourceEvidenceKind === 'image' &&
+    isReviewCurrent(bubble,bubble.translationReview.targetId,sourceRevision));
 }
 
 export function invalidateQualityReview(bubble: ReviewableBubble): void {

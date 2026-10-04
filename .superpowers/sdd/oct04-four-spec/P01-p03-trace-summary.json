@@ -1,0 +1,3566 @@
+[
+  {
+    "label": "1000x1400/10/0.44/move",
+    "drag": {
+      "durationMs": 1012.937,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 16.304000000000002,
+        "maxMs": 0.491
+      },
+      "UpdateLayoutTree": {
+        "calls": 121,
+        "totalMs": 12.911999999999999,
+        "maxMs": 0.228
+      },
+      "Paint": {
+        "calls": 391,
+        "totalMs": 19.91999999999998,
+        "maxMs": 0.294
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 7.757000000000003,
+        "maxMs": 0.207
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 23.573999999999998,
+        "maxMs": 0.562
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 58.312000000000005,
+        "maxMs": 0.966
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 2.778,
+        "maxMs": 0.432
+      },
+      "MinorGC": {
+        "calls": 1,
+        "totalMs": 0.732,
+        "maxMs": 0.732
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    },
+    "release": {
+      "durationMs": 32.241,
+      "Layout": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "UpdateLayoutTree": {
+        "calls": 3,
+        "totalMs": 0.05499999999999999,
+        "maxMs": 0.031
+      },
+      "Paint": {
+        "calls": 7,
+        "totalMs": 0.43400000000000005,
+        "maxMs": 0.263
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.193,
+        "maxMs": 0.178
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 0.466,
+        "maxMs": 0.463
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.085,
+        "maxMs": 0.085
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 5.53,
+        "maxMs": 5.53
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1000x1400/10/0.44/scale",
+    "drag": {
+      "durationMs": 1017.579,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 20.955000000000005,
+        "maxMs": 0.404
+      },
+      "UpdateLayoutTree": {
+        "calls": 121,
+        "totalMs": 28.308,
+        "maxMs": 0.751
+      },
+      "Paint": {
+        "calls": 400,
+        "totalMs": 23.488999999999965,
+        "maxMs": 0.357
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 8.019,
+        "maxMs": 0.214
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 25.304,
+        "maxMs": 0.831
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 76.394,
+        "maxMs": 1.082
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 2.379999999999999,
+        "maxMs": 0.156
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    },
+    "release": {
+      "durationMs": 35.044,
+      "Layout": {
+        "calls": 3,
+        "totalMs": 0.51,
+        "maxMs": 0.249
+      },
+      "UpdateLayoutTree": {
+        "calls": 5,
+        "totalMs": 0.775,
+        "maxMs": 0.498
+      },
+      "Paint": {
+        "calls": 7,
+        "totalMs": 0.28900000000000003,
+        "maxMs": 0.174
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.099,
+        "maxMs": 0.087
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 0.48,
+        "maxMs": 0.479
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.061,
+        "maxMs": 0.061
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 12.914,
+        "maxMs": 12.914
+      },
+      "MinorGC": {
+        "calls": 1,
+        "totalMs": 0.472,
+        "maxMs": 0.472
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1000x1400/10/0.44/width",
+    "drag": {
+      "durationMs": 1931.124,
+      "Layout": {
+        "calls": 122,
+        "totalMs": 22.07399999999999,
+        "maxMs": 0.332
+      },
+      "UpdateLayoutTree": {
+        "calls": 212,
+        "totalMs": 39.10299999999999,
+        "maxMs": 0.975
+      },
+      "Paint": {
+        "calls": 420,
+        "totalMs": 24.242,
+        "maxMs": 0.388
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 8.083,
+        "maxMs": 0.201
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 25.614000000000004,
+        "maxMs": 0.953
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 1384.9530000000004,
+        "maxMs": 45.48
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 112.55700000000006,
+        "maxMs": 109.86
+      },
+      "MinorGC": {
+        "calls": 54,
+        "totalMs": 31.901000000000003,
+        "maxMs": 1.054
+      },
+      "MajorGC": {
+        "calls": 4,
+        "totalMs": 10.527000000000001,
+        "maxMs": 4.445
+      }
+    },
+    "release": {
+      "durationMs": 75.455,
+      "Layout": {
+        "calls": 2,
+        "totalMs": 0.525,
+        "maxMs": 0.274
+      },
+      "UpdateLayoutTree": {
+        "calls": 6,
+        "totalMs": 0.9520000000000001,
+        "maxMs": 0.679
+      },
+      "Paint": {
+        "calls": 12,
+        "totalMs": 0.4640000000000001,
+        "maxMs": 0.161
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.284,
+        "maxMs": 0.186
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 0.412,
+        "maxMs": 0.282
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.059,
+        "maxMs": 0.059
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 62.322,
+        "maxMs": 62.322
+      },
+      "MinorGC": {
+        "calls": 2,
+        "totalMs": 1.326,
+        "maxMs": 0.676
+      },
+      "MajorGC": {
+        "calls": 1,
+        "totalMs": 3.27,
+        "maxMs": 3.27
+      }
+    }
+  },
+  {
+    "label": "1000x1400/10/1/move",
+    "drag": {
+      "durationMs": 1007.594,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 15.572000000000006,
+        "maxMs": 0.194
+      },
+      "UpdateLayoutTree": {
+        "calls": 121,
+        "totalMs": 10.575999999999993,
+        "maxMs": 0.173
+      },
+      "Paint": {
+        "calls": 355,
+        "totalMs": 17.43099999999999,
+        "maxMs": 0.238
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 8.384000000000002,
+        "maxMs": 0.576
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 22.91600000000001,
+        "maxMs": 0.553
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 52.684000000000005,
+        "maxMs": 0.68
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 2.4950000000000006,
+        "maxMs": 0.231
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    },
+    "release": {
+      "durationMs": 32.722,
+      "Layout": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "UpdateLayoutTree": {
+        "calls": 3,
+        "totalMs": 0.057999999999999996,
+        "maxMs": 0.027
+      },
+      "Paint": {
+        "calls": 6,
+        "totalMs": 0.19500000000000003,
+        "maxMs": 0.12
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.127,
+        "maxMs": 0.115
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 0.287,
+        "maxMs": 0.284
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.063,
+        "maxMs": 0.063
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 3.653,
+        "maxMs": 3.653
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1000x1400/10/1/scale",
+    "drag": {
+      "durationMs": 1008.815,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 17.506,
+        "maxMs": 0.381
+      },
+      "UpdateLayoutTree": {
+        "calls": 121,
+        "totalMs": 10.996999999999998,
+        "maxMs": 0.299
+      },
+      "Paint": {
+        "calls": 338,
+        "totalMs": 20.128999999999994,
+        "maxMs": 0.285
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 8.752999999999998,
+        "maxMs": 0.24
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 24.90200000000001,
+        "maxMs": 0.551
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 57.29000000000003,
+        "maxMs": 1.48
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 2.5420000000000003,
+        "maxMs": 0.183
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    },
+    "release": {
+      "durationMs": 32.964,
+      "Layout": {
+        "calls": 3,
+        "totalMs": 0.43799999999999994,
+        "maxMs": 0.184
+      },
+      "UpdateLayoutTree": {
+        "calls": 5,
+        "totalMs": 0.31399999999999995,
+        "maxMs": 0.142
+      },
+      "Paint": {
+        "calls": 6,
+        "totalMs": 0.23700000000000002,
+        "maxMs": 0.139
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.11599999999999999,
+        "maxMs": 0.098
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 0.302,
+        "maxMs": 0.299
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.076,
+        "maxMs": 0.076
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 4.756,
+        "maxMs": 4.756
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1000x1400/10/1/width",
+    "drag": {
+      "durationMs": 1947.842,
+      "Layout": {
+        "calls": 122,
+        "totalMs": 17.691999999999993,
+        "maxMs": 0.251
+      },
+      "UpdateLayoutTree": {
+        "calls": 182,
+        "totalMs": 11.090000000000002,
+        "maxMs": 0.198
+      },
+      "Paint": {
+        "calls": 184,
+        "totalMs": 15.415999999999993,
+        "maxMs": 0.277
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 7.831000000000002,
+        "maxMs": 0.2
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 25.772000000000002,
+        "maxMs": 0.587
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 1387.8329999999999,
+        "maxMs": 50.366
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 106.2720000000001,
+        "maxMs": 103.62
+      },
+      "MinorGC": {
+        "calls": 39,
+        "totalMs": 26.680000000000007,
+        "maxMs": 1.492
+      },
+      "MajorGC": {
+        "calls": 6,
+        "totalMs": 11.749,
+        "maxMs": 2.658
+      }
+    },
+    "release": {
+      "durationMs": 72.727,
+      "Layout": {
+        "calls": 2,
+        "totalMs": 0.32,
+        "maxMs": 0.169
+      },
+      "UpdateLayoutTree": {
+        "calls": 5,
+        "totalMs": 0.275,
+        "maxMs": 0.149
+      },
+      "Paint": {
+        "calls": 7,
+        "totalMs": 0.406,
+        "maxMs": 0.238
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.21300000000000002,
+        "maxMs": 0.2
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 0.496,
+        "maxMs": 0.495
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.048,
+        "maxMs": 0.048
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 65.139,
+        "maxMs": 65.139
+      },
+      "MinorGC": {
+        "calls": 2,
+        "totalMs": 1.3279999999999998,
+        "maxMs": 0.749
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1000x1400/50/0.44/move",
+    "drag": {
+      "durationMs": 996.888,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 51.905000000000015,
+        "maxMs": 1.144
+      },
+      "UpdateLayoutTree": {
+        "calls": 121,
+        "totalMs": 13.558999999999997,
+        "maxMs": 0.258
+      },
+      "Paint": {
+        "calls": 391,
+        "totalMs": 32.10700000000001,
+        "maxMs": 0.634
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 9.790000000000001,
+        "maxMs": 0.26
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 123.61100000000002,
+        "maxMs": 2.818
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 92.63600000000001,
+        "maxMs": 1.418
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 2.377,
+        "maxMs": 0.204
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 1,
+        "totalMs": 2.695,
+        "maxMs": 2.695
+      }
+    },
+    "release": {
+      "durationMs": 32.062,
+      "Layout": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "UpdateLayoutTree": {
+        "calls": 3,
+        "totalMs": 0.05,
+        "maxMs": 0.028
+      },
+      "Paint": {
+        "calls": 7,
+        "totalMs": 0.6100000000000001,
+        "maxMs": 0.424
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.28800000000000003,
+        "maxMs": 0.274
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 1.878,
+        "maxMs": 1.876
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.059,
+        "maxMs": 0.059
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 4.129,
+        "maxMs": 4.129
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1000x1400/50/0.44/scale",
+    "drag": {
+      "durationMs": 1013.661,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 63.49499999999999,
+        "maxMs": 1.355
+      },
+      "UpdateLayoutTree": {
+        "calls": 121,
+        "totalMs": 27.667999999999985,
+        "maxMs": 1.161
+      },
+      "Paint": {
+        "calls": 400,
+        "totalMs": 35.606,
+        "maxMs": 0.599
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 11.692000000000004,
+        "maxMs": 0.364
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 129.637,
+        "maxMs": 2.713
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 119.50599999999997,
+        "maxMs": 2.332
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 2.723,
+        "maxMs": 0.241
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    },
+    "release": {
+      "durationMs": 31.115,
+      "Layout": {
+        "calls": 3,
+        "totalMs": 2.024,
+        "maxMs": 0.952
+      },
+      "UpdateLayoutTree": {
+        "calls": 5,
+        "totalMs": 0.913,
+        "maxMs": 0.546
+      },
+      "Paint": {
+        "calls": 7,
+        "totalMs": 0.5080000000000001,
+        "maxMs": 0.343
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.185,
+        "maxMs": 0.172
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 2.176,
+        "maxMs": 2.173
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.054,
+        "maxMs": 0.054
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 7.524,
+        "maxMs": 7.524
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1000x1400/50/0.44/width",
+    "drag": {
+      "durationMs": 2093.049,
+      "Layout": {
+        "calls": 122,
+        "totalMs": 66.74900000000001,
+        "maxMs": 1.342
+      },
+      "UpdateLayoutTree": {
+        "calls": 213,
+        "totalMs": 42.32500000000002,
+        "maxMs": 1.133
+      },
+      "Paint": {
+        "calls": 420,
+        "totalMs": 38.176999999999964,
+        "maxMs": 0.597
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 11.440000000000005,
+        "maxMs": 0.313
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 126.42399999999996,
+        "maxMs": 2.5
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 1438.835,
+        "maxMs": 51.808
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 106.31000000000007,
+        "maxMs": 103.304
+      },
+      "MinorGC": {
+        "calls": 20,
+        "totalMs": 24.053999999999995,
+        "maxMs": 1.707
+      },
+      "MajorGC": {
+        "calls": 1,
+        "totalMs": 11.634,
+        "maxMs": 11.634
+      }
+    },
+    "release": {
+      "durationMs": 75.181,
+      "Layout": {
+        "calls": 2,
+        "totalMs": 0.9830000000000001,
+        "maxMs": 0.531
+      },
+      "UpdateLayoutTree": {
+        "calls": 6,
+        "totalMs": 0.599,
+        "maxMs": 0.333
+      },
+      "Paint": {
+        "calls": 12,
+        "totalMs": 0.7700000000000001,
+        "maxMs": 0.317
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.275,
+        "maxMs": 0.162
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 2.3529999999999998,
+        "maxMs": 1.595
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.058,
+        "maxMs": 0.058
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 48.94,
+        "maxMs": 48.94
+      },
+      "MinorGC": {
+        "calls": 1,
+        "totalMs": 1.277,
+        "maxMs": 1.277
+      },
+      "MajorGC": {
+        "calls": 1,
+        "totalMs": 2.664,
+        "maxMs": 2.664
+      }
+    }
+  },
+  {
+    "label": "1000x1400/50/1/move",
+    "drag": {
+      "durationMs": 1006.117,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 52.64700000000001,
+        "maxMs": 1.186
+      },
+      "UpdateLayoutTree": {
+        "calls": 121,
+        "totalMs": 10.799999999999994,
+        "maxMs": 0.231
+      },
+      "Paint": {
+        "calls": 355,
+        "totalMs": 30.453999999999997,
+        "maxMs": 0.689
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 10.388999999999996,
+        "maxMs": 0.273
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 113.76300000000003,
+        "maxMs": 2.964
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 88.50200000000002,
+        "maxMs": 1.46
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 2.6499999999999986,
+        "maxMs": 0.268
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    },
+    "release": {
+      "durationMs": 32.292,
+      "Layout": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "UpdateLayoutTree": {
+        "calls": 3,
+        "totalMs": 0.042,
+        "maxMs": 0.023
+      },
+      "Paint": {
+        "calls": 6,
+        "totalMs": 0.48200000000000004,
+        "maxMs": 0.367
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.281,
+        "maxMs": 0.27
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 1.7519999999999998,
+        "maxMs": 1.751
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.052,
+        "maxMs": 0.052
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 2.952,
+        "maxMs": 2.952
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1000x1400/50/1/scale",
+    "drag": {
+      "durationMs": 1003.686,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 55.634999999999984,
+        "maxMs": 1.142
+      },
+      "UpdateLayoutTree": {
+        "calls": 121,
+        "totalMs": 10.655000000000001,
+        "maxMs": 0.205
+      },
+      "Paint": {
+        "calls": 338,
+        "totalMs": 29.857999999999986,
+        "maxMs": 0.542
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 10.951999999999996,
+        "maxMs": 0.588
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 118.20699999999997,
+        "maxMs": 2.725
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 90.67999999999996,
+        "maxMs": 1.523
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 2.553999999999999,
+        "maxMs": 0.245
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    },
+    "release": {
+      "durationMs": 30.938,
+      "Layout": {
+        "calls": 3,
+        "totalMs": 2.1479999999999997,
+        "maxMs": 0.974
+      },
+      "UpdateLayoutTree": {
+        "calls": 5,
+        "totalMs": 0.403,
+        "maxMs": 0.193
+      },
+      "Paint": {
+        "calls": 6,
+        "totalMs": 0.9500000000000001,
+        "maxMs": 0.761
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.219,
+        "maxMs": 0.206
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 2.335,
+        "maxMs": 2.332
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.06,
+        "maxMs": 0.06
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 6.989,
+        "maxMs": 6.989
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1000x1400/50/1/width",
+    "drag": {
+      "durationMs": 2083.144,
+      "Layout": {
+        "calls": 122,
+        "totalMs": 62.07200000000002,
+        "maxMs": 1.038
+      },
+      "UpdateLayoutTree": {
+        "calls": 182,
+        "totalMs": 13.005999999999993,
+        "maxMs": 0.492
+      },
+      "Paint": {
+        "calls": 184,
+        "totalMs": 29.541999999999994,
+        "maxMs": 0.693
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 11.283999999999999,
+        "maxMs": 0.338
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 132.371,
+        "maxMs": 2.844
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 1418.9870000000003,
+        "maxMs": 59.851
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 114.50600000000006,
+        "maxMs": 111.621
+      },
+      "MinorGC": {
+        "calls": 21,
+        "totalMs": 26.172,
+        "maxMs": 1.621
+      },
+      "MajorGC": {
+        "calls": 3,
+        "totalMs": 14.686,
+        "maxMs": 10.054
+      }
+    },
+    "release": {
+      "durationMs": 71.094,
+      "Layout": {
+        "calls": 2,
+        "totalMs": 0.8460000000000001,
+        "maxMs": 0.544
+      },
+      "UpdateLayoutTree": {
+        "calls": 5,
+        "totalMs": 0.29100000000000004,
+        "maxMs": 0.161
+      },
+      "Paint": {
+        "calls": 7,
+        "totalMs": 0.671,
+        "maxMs": 0.478
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.254,
+        "maxMs": 0.239
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 2.198,
+        "maxMs": 2.197
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.063,
+        "maxMs": 0.063
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 55.834,
+        "maxMs": 55.834
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1000x1400/100/0.44/move",
+    "drag": {
+      "durationMs": 1061.446,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 116.04999999999998,
+        "maxMs": 2.036
+      },
+      "UpdateLayoutTree": {
+        "calls": 121,
+        "totalMs": 15.830999999999998,
+        "maxMs": 0.345
+      },
+      "Paint": {
+        "calls": 391,
+        "totalMs": 51.14800000000005,
+        "maxMs": 1.02
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 15.159999999999993,
+        "maxMs": 0.413
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 316.34100000000007,
+        "maxMs": 6.623
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 160.339,
+        "maxMs": 2.427
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 3.113,
+        "maxMs": 0.276
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    },
+    "release": {
+      "durationMs": 31.567,
+      "Layout": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "UpdateLayoutTree": {
+        "calls": 3,
+        "totalMs": 0.046,
+        "maxMs": 0.022
+      },
+      "Paint": {
+        "calls": 7,
+        "totalMs": 1.056,
+        "maxMs": 0.825
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.365,
+        "maxMs": 0.352
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 5.777,
+        "maxMs": 5.775
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.053,
+        "maxMs": 0.053
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 3.146,
+        "maxMs": 3.146
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1000x1400/100/0.44/scale",
+    "drag": {
+      "durationMs": 1043.08,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 132.76500000000001,
+        "maxMs": 2.218
+      },
+      "UpdateLayoutTree": {
+        "calls": 121,
+        "totalMs": 33.493000000000016,
+        "maxMs": 1.219
+      },
+      "Paint": {
+        "calls": 405,
+        "totalMs": 62.70100000000008,
+        "maxMs": 1.441
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 17.727,
+        "maxMs": 0.493
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 338.00299999999993,
+        "maxMs": 6.772
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 195.73499999999999,
+        "maxMs": 3.2
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 3.3229999999999986,
+        "maxMs": 0.26
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    },
+    "release": {
+      "durationMs": 32.163,
+      "Layout": {
+        "calls": 3,
+        "totalMs": 4.477,
+        "maxMs": 1.881
+      },
+      "UpdateLayoutTree": {
+        "calls": 5,
+        "totalMs": 0.8089999999999999,
+        "maxMs": 0.447
+      },
+      "Paint": {
+        "calls": 7,
+        "totalMs": 0.769,
+        "maxMs": 0.57
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.20600000000000002,
+        "maxMs": 0.192
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 6.088,
+        "maxMs": 6.086
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.053,
+        "maxMs": 0.053
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 8.443,
+        "maxMs": 8.443
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1000x1400/100/0.44/width",
+    "drag": {
+      "durationMs": 2317.359,
+      "Layout": {
+        "calls": 122,
+        "totalMs": 122.03099999999999,
+        "maxMs": 1.919
+      },
+      "UpdateLayoutTree": {
+        "calls": 216,
+        "totalMs": 42.90900000000001,
+        "maxMs": 0.833
+      },
+      "Paint": {
+        "calls": 420,
+        "totalMs": 58.47000000000006,
+        "maxMs": 1.053
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 16.009999999999994,
+        "maxMs": 0.442
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 305.42900000000003,
+        "maxMs": 5.935
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 1471.3670000000002,
+        "maxMs": 70.518
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 106.95600000000009,
+        "maxMs": 103.99
+      },
+      "MinorGC": {
+        "calls": 10,
+        "totalMs": 23.590000000000003,
+        "maxMs": 3.001
+      },
+      "MajorGC": {
+        "calls": 2,
+        "totalMs": 13.276,
+        "maxMs": 10.405
+      }
+    },
+    "release": {
+      "durationMs": 106.682,
+      "Layout": {
+        "calls": 2,
+        "totalMs": 2.887,
+        "maxMs": 1.607
+      },
+      "UpdateLayoutTree": {
+        "calls": 6,
+        "totalMs": 0.988,
+        "maxMs": 0.666
+      },
+      "Paint": {
+        "calls": 12,
+        "totalMs": 1.329,
+        "maxMs": 0.641
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.388,
+        "maxMs": 0.221
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 8.463000000000001,
+        "maxMs": 5.763
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.058,
+        "maxMs": 0.058
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 68.407,
+        "maxMs": 68.407
+      },
+      "MinorGC": {
+        "calls": 1,
+        "totalMs": 2.2,
+        "maxMs": 2.2
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1000x1400/100/1/move",
+    "drag": {
+      "durationMs": 1030.526,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 111.93000000000004,
+        "maxMs": 2.468
+      },
+      "UpdateLayoutTree": {
+        "calls": 121,
+        "totalMs": 13.44600000000001,
+        "maxMs": 0.435
+      },
+      "Paint": {
+        "calls": 355,
+        "totalMs": 49.50600000000005,
+        "maxMs": 1.106
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 15.950000000000001,
+        "maxMs": 0.807
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 277.64900000000006,
+        "maxMs": 6.053
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 152.33100000000007,
+        "maxMs": 3.102
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 2.799,
+        "maxMs": 0.207
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 1,
+        "totalMs": 14.61,
+        "maxMs": 14.61
+      }
+    },
+    "release": {
+      "durationMs": 30.869,
+      "Layout": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "UpdateLayoutTree": {
+        "calls": 3,
+        "totalMs": 0.078,
+        "maxMs": 0.047
+      },
+      "Paint": {
+        "calls": 6,
+        "totalMs": 0.742,
+        "maxMs": 0.602
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.269,
+        "maxMs": 0.255
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 5.159,
+        "maxMs": 5.156
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.067,
+        "maxMs": 0.067
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 4.363,
+        "maxMs": 4.363
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1000x1400/100/1/scale",
+    "drag": {
+      "durationMs": 1009.17,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 118.34600000000002,
+        "maxMs": 2.858
+      },
+      "UpdateLayoutTree": {
+        "calls": 123,
+        "totalMs": 13.430000000000001,
+        "maxMs": 0.225
+      },
+      "Paint": {
+        "calls": 339,
+        "totalMs": 51.79500000000003,
+        "maxMs": 1.485
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 17.00400000000001,
+        "maxMs": 0.452
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 307.67,
+        "maxMs": 6.393
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 158.069,
+        "maxMs": 3.152
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 2.636999999999999,
+        "maxMs": 0.144
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    },
+    "release": {
+      "durationMs": 30.716,
+      "Layout": {
+        "calls": 3,
+        "totalMs": 3.58,
+        "maxMs": 1.66
+      },
+      "UpdateLayoutTree": {
+        "calls": 5,
+        "totalMs": 0.42400000000000004,
+        "maxMs": 0.17
+      },
+      "Paint": {
+        "calls": 6,
+        "totalMs": 1.0150000000000001,
+        "maxMs": 0.807
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.17400000000000002,
+        "maxMs": 0.164
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 5.3629999999999995,
+        "maxMs": 5.361
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.056,
+        "maxMs": 0.056
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 7.409,
+        "maxMs": 7.409
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1000x1400/100/1/width",
+    "drag": {
+      "durationMs": 2232.19,
+      "Layout": {
+        "calls": 122,
+        "totalMs": 112.66200000000002,
+        "maxMs": 2.119
+      },
+      "UpdateLayoutTree": {
+        "calls": 182,
+        "totalMs": 13.314000000000002,
+        "maxMs": 0.257
+      },
+      "Paint": {
+        "calls": 184,
+        "totalMs": 45.72999999999999,
+        "maxMs": 1.027
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 14.743000000000002,
+        "maxMs": 0.485
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 287.34599999999995,
+        "maxMs": 6.149
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 1439.7250000000001,
+        "maxMs": 57.917
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 98.4640000000001,
+        "maxMs": 95.728
+      },
+      "MinorGC": {
+        "calls": 10,
+        "totalMs": 22.393000000000004,
+        "maxMs": 2.58
+      },
+      "MajorGC": {
+        "calls": 1,
+        "totalMs": 10.089,
+        "maxMs": 10.089
+      }
+    },
+    "release": {
+      "durationMs": 82.898,
+      "Layout": {
+        "calls": 2,
+        "totalMs": 1.8,
+        "maxMs": 1.294
+      },
+      "UpdateLayoutTree": {
+        "calls": 5,
+        "totalMs": 0.304,
+        "maxMs": 0.187
+      },
+      "Paint": {
+        "calls": 7,
+        "totalMs": 0.7250000000000001,
+        "maxMs": 0.552
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.421,
+        "maxMs": 0.407
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 5.602,
+        "maxMs": 5.601
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.076,
+        "maxMs": 0.076
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 60.013,
+        "maxMs": 60.013
+      },
+      "MinorGC": {
+        "calls": 1,
+        "totalMs": 2.358,
+        "maxMs": 2.358
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1600x2400/10/0.44/move",
+    "drag": {
+      "durationMs": 1028.61,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 16.299,
+        "maxMs": 0.219
+      },
+      "UpdateLayoutTree": {
+        "calls": 121,
+        "totalMs": 12.53799999999999,
+        "maxMs": 0.274
+      },
+      "Paint": {
+        "calls": 391,
+        "totalMs": 21.401999999999983,
+        "maxMs": 0.6
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 7.436000000000002,
+        "maxMs": 0.26
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 24.166999999999994,
+        "maxMs": 0.599
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 55.11700000000001,
+        "maxMs": 0.77
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 2.1789999999999994,
+        "maxMs": 0.161
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    },
+    "release": {
+      "durationMs": 31.529,
+      "Layout": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "UpdateLayoutTree": {
+        "calls": 3,
+        "totalMs": 0.063,
+        "maxMs": 0.037
+      },
+      "Paint": {
+        "calls": 7,
+        "totalMs": 0.5350000000000001,
+        "maxMs": 0.314
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.221,
+        "maxMs": 0.208
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 0.395,
+        "maxMs": 0.393
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.054,
+        "maxMs": 0.054
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 4.534,
+        "maxMs": 4.534
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1600x2400/10/0.44/scale",
+    "drag": {
+      "durationMs": 1037.599,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 22.456000000000007,
+        "maxMs": 0.664
+      },
+      "UpdateLayoutTree": {
+        "calls": 121,
+        "totalMs": 28.167,
+        "maxMs": 0.971
+      },
+      "Paint": {
+        "calls": 400,
+        "totalMs": 21.841,
+        "maxMs": 0.659
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 7.726000000000002,
+        "maxMs": 0.477
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 23.531,
+        "maxMs": 0.633
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 78.94899999999998,
+        "maxMs": 1.361
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 2.193999999999999,
+        "maxMs": 0.149
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    },
+    "release": {
+      "durationMs": 33.207,
+      "Layout": {
+        "calls": 3,
+        "totalMs": 0.631,
+        "maxMs": 0.272
+      },
+      "UpdateLayoutTree": {
+        "calls": 5,
+        "totalMs": 0.723,
+        "maxMs": 0.407
+      },
+      "Paint": {
+        "calls": 7,
+        "totalMs": 0.453,
+        "maxMs": 0.259
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.156,
+        "maxMs": 0.141
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 0.484,
+        "maxMs": 0.482
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.082,
+        "maxMs": 0.082
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 6.41,
+        "maxMs": 6.41
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1600x2400/10/0.44/width",
+    "drag": {
+      "durationMs": 1860.064,
+      "Layout": {
+        "calls": 122,
+        "totalMs": 22.203,
+        "maxMs": 0.353
+      },
+      "UpdateLayoutTree": {
+        "calls": 213,
+        "totalMs": 36.84799999999996,
+        "maxMs": 0.867
+      },
+      "Paint": {
+        "calls": 420,
+        "totalMs": 23.022999999999975,
+        "maxMs": 0.288
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 8.296,
+        "maxMs": 0.207
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 24.802000000000003,
+        "maxMs": 0.578
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 1303.484,
+        "maxMs": 45.773
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 82.49200000000009,
+        "maxMs": 80.126
+      },
+      "MinorGC": {
+        "calls": 9,
+        "totalMs": 21.531999999999996,
+        "maxMs": 2.719
+      },
+      "MajorGC": {
+        "calls": 4,
+        "totalMs": 21.888,
+        "maxMs": 15.444
+      }
+    },
+    "release": {
+      "durationMs": 86.257,
+      "Layout": {
+        "calls": 2,
+        "totalMs": 0.42300000000000004,
+        "maxMs": 0.225
+      },
+      "UpdateLayoutTree": {
+        "calls": 6,
+        "totalMs": 0.657,
+        "maxMs": 0.374
+      },
+      "Paint": {
+        "calls": 12,
+        "totalMs": 0.6720000000000002,
+        "maxMs": 0.25
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.3,
+        "maxMs": 0.207
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 0.6020000000000001,
+        "maxMs": 0.463
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.046,
+        "maxMs": 0.046
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 67.524,
+        "maxMs": 67.524
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 1,
+        "totalMs": 1.829,
+        "maxMs": 1.829
+      }
+    }
+  },
+  {
+    "label": "1600x2400/10/1/move",
+    "drag": {
+      "durationMs": 1012.388,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 15.178999999999993,
+        "maxMs": 0.208
+      },
+      "UpdateLayoutTree": {
+        "calls": 121,
+        "totalMs": 10.219999999999999,
+        "maxMs": 0.178
+      },
+      "Paint": {
+        "calls": 355,
+        "totalMs": 17.060999999999975,
+        "maxMs": 0.244
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 7.791000000000001,
+        "maxMs": 0.181
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 23.214999999999996,
+        "maxMs": 0.512
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 51.620999999999995,
+        "maxMs": 1.017
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 2.151,
+        "maxMs": 0.158
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    },
+    "release": {
+      "durationMs": 32.983,
+      "Layout": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "UpdateLayoutTree": {
+        "calls": 3,
+        "totalMs": 0.029,
+        "maxMs": 0.012
+      },
+      "Paint": {
+        "calls": 6,
+        "totalMs": 0.31500000000000006,
+        "maxMs": 0.192
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.125,
+        "maxMs": 0.114
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 0.295,
+        "maxMs": 0.289
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.081,
+        "maxMs": 0.081
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 3.303,
+        "maxMs": 3.303
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1600x2400/10/1/scale",
+    "drag": {
+      "durationMs": 1003.887,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 15.024000000000004,
+        "maxMs": 0.197
+      },
+      "UpdateLayoutTree": {
+        "calls": 121,
+        "totalMs": 9.363,
+        "maxMs": 0.183
+      },
+      "Paint": {
+        "calls": 338,
+        "totalMs": 17.18699999999999,
+        "maxMs": 0.26
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 7.687,
+        "maxMs": 0.184
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 23.185000000000002,
+        "maxMs": 0.517
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 48.33700000000002,
+        "maxMs": 0.833
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 2.1319999999999992,
+        "maxMs": 0.155
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    },
+    "release": {
+      "durationMs": 32.154,
+      "Layout": {
+        "calls": 3,
+        "totalMs": 0.45999999999999996,
+        "maxMs": 0.188
+      },
+      "UpdateLayoutTree": {
+        "calls": 5,
+        "totalMs": 0.346,
+        "maxMs": 0.158
+      },
+      "Paint": {
+        "calls": 6,
+        "totalMs": 0.31100000000000005,
+        "maxMs": 0.179
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.14300000000000002,
+        "maxMs": 0.129
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 0.518,
+        "maxMs": 0.516
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.091,
+        "maxMs": 0.091
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 5.702,
+        "maxMs": 5.702
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 1,
+        "totalMs": 4.611,
+        "maxMs": 4.611
+      }
+    }
+  },
+  {
+    "label": "1600x2400/10/1/width",
+    "drag": {
+      "durationMs": 1984.598,
+      "Layout": {
+        "calls": 122,
+        "totalMs": 16.898999999999994,
+        "maxMs": 0.23
+      },
+      "UpdateLayoutTree": {
+        "calls": 182,
+        "totalMs": 10.309000000000001,
+        "maxMs": 0.194
+      },
+      "Paint": {
+        "calls": 184,
+        "totalMs": 15.14499999999999,
+        "maxMs": 0.243
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 7.587,
+        "maxMs": 0.173
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 26.917,
+        "maxMs": 0.698
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 1419.9670000000003,
+        "maxMs": 47.471
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 96.50000000000011,
+        "maxMs": 94.096
+      },
+      "MinorGC": {
+        "calls": 8,
+        "totalMs": 17.054,
+        "maxMs": 2.49
+      },
+      "MajorGC": {
+        "calls": 5,
+        "totalMs": 9.832,
+        "maxMs": 3.575
+      }
+    },
+    "release": {
+      "durationMs": 66.437,
+      "Layout": {
+        "calls": 2,
+        "totalMs": 0.194,
+        "maxMs": 0.101
+      },
+      "UpdateLayoutTree": {
+        "calls": 5,
+        "totalMs": 0.22,
+        "maxMs": 0.092
+      },
+      "Paint": {
+        "calls": 7,
+        "totalMs": 0.24400000000000002,
+        "maxMs": 0.144
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.135,
+        "maxMs": 0.123
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 0.276,
+        "maxMs": 0.274
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.054,
+        "maxMs": 0.054
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 55.098,
+        "maxMs": 55.098
+      },
+      "MinorGC": {
+        "calls": 1,
+        "totalMs": 2.11,
+        "maxMs": 2.11
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1600x2400/50/0.44/move",
+    "drag": {
+      "durationMs": 1032.358,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 57.08100000000001,
+        "maxMs": 1.068
+      },
+      "UpdateLayoutTree": {
+        "calls": 121,
+        "totalMs": 15.131999999999998,
+        "maxMs": 0.564
+      },
+      "Paint": {
+        "calls": 391,
+        "totalMs": 35.604,
+        "maxMs": 0.776
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 10.581000000000003,
+        "maxMs": 0.286
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 155.46899999999997,
+        "maxMs": 3.814
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 100.571,
+        "maxMs": 1.733
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 2.5759999999999996,
+        "maxMs": 0.31
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    },
+    "release": {
+      "durationMs": 31.33,
+      "Layout": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "UpdateLayoutTree": {
+        "calls": 3,
+        "totalMs": 0.06,
+        "maxMs": 0.037
+      },
+      "Paint": {
+        "calls": 7,
+        "totalMs": 0.43900000000000006,
+        "maxMs": 0.316
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.197,
+        "maxMs": 0.186
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 2.3699999999999997,
+        "maxMs": 2.368
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.057,
+        "maxMs": 0.057
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 4.14,
+        "maxMs": 4.14
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1600x2400/50/0.44/scale",
+    "drag": {
+      "durationMs": 1190.094,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 68.31299999999999,
+        "maxMs": 1.39
+      },
+      "UpdateLayoutTree": {
+        "calls": 121,
+        "totalMs": 29.476,
+        "maxMs": 0.717
+      },
+      "Paint": {
+        "calls": 400,
+        "totalMs": 39.86300000000002,
+        "maxMs": 0.785
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 12.843,
+        "maxMs": 0.506
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 157.939,
+        "maxMs": 3.633
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 127.61699999999999,
+        "maxMs": 2.233
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 2.8529999999999998,
+        "maxMs": 0.198
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 1,
+        "totalMs": 9.668,
+        "maxMs": 9.668
+      }
+    },
+    "release": {
+      "durationMs": 34.98,
+      "Layout": {
+        "calls": 3,
+        "totalMs": 2.2039999999999997,
+        "maxMs": 0.94
+      },
+      "UpdateLayoutTree": {
+        "calls": 5,
+        "totalMs": 0.7789999999999999,
+        "maxMs": 0.453
+      },
+      "Paint": {
+        "calls": 7,
+        "totalMs": 0.6890000000000001,
+        "maxMs": 0.466
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.203,
+        "maxMs": 0.19
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 2.3899999999999997,
+        "maxMs": 2.388
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.077,
+        "maxMs": 0.077
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 7.695,
+        "maxMs": 7.695
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1600x2400/50/0.44/width",
+    "drag": {
+      "durationMs": 2306.133,
+      "Layout": {
+        "calls": 122,
+        "totalMs": 68.39800000000004,
+        "maxMs": 1.209
+      },
+      "UpdateLayoutTree": {
+        "calls": 213,
+        "totalMs": 42.570999999999984,
+        "maxMs": 1.212
+      },
+      "Paint": {
+        "calls": 420,
+        "totalMs": 39.070999999999955,
+        "maxMs": 0.864
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 11.627000000000002,
+        "maxMs": 0.444
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 152.792,
+        "maxMs": 3.558
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 1569.0489999999998,
+        "maxMs": 47.194
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 100.79600000000008,
+        "maxMs": 98.142
+      },
+      "MinorGC": {
+        "calls": 9,
+        "totalMs": 21.955,
+        "maxMs": 3.373
+      },
+      "MajorGC": {
+        "calls": 3,
+        "totalMs": 16.215,
+        "maxMs": 9.851
+      }
+    },
+    "release": {
+      "durationMs": 90.697,
+      "Layout": {
+        "calls": 2,
+        "totalMs": 2.098,
+        "maxMs": 1.164
+      },
+      "UpdateLayoutTree": {
+        "calls": 6,
+        "totalMs": 1.0510000000000002,
+        "maxMs": 0.682
+      },
+      "Paint": {
+        "calls": 12,
+        "totalMs": 1.1429999999999998,
+        "maxMs": 0.535
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.42400000000000004,
+        "maxMs": 0.278
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 3.992,
+        "maxMs": 2.741
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.047,
+        "maxMs": 0.047
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 63.114,
+        "maxMs": 63.114
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1600x2400/50/1/move",
+    "drag": {
+      "durationMs": 1063.267,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 58.15900000000002,
+        "maxMs": 1.031
+      },
+      "UpdateLayoutTree": {
+        "calls": 121,
+        "totalMs": 11.958000000000002,
+        "maxMs": 0.272
+      },
+      "Paint": {
+        "calls": 355,
+        "totalMs": 35.13899999999999,
+        "maxMs": 1.064
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 11.256000000000002,
+        "maxMs": 0.275
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 138.81200000000007,
+        "maxMs": 2.771
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 96.95300000000009,
+        "maxMs": 1.48
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 2.658,
+        "maxMs": 0.249
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    },
+    "release": {
+      "durationMs": 31.646,
+      "Layout": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "UpdateLayoutTree": {
+        "calls": 3,
+        "totalMs": 0.08,
+        "maxMs": 0.045
+      },
+      "Paint": {
+        "calls": 6,
+        "totalMs": 0.647,
+        "maxMs": 0.477
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.264,
+        "maxMs": 0.25
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 2.421,
+        "maxMs": 2.416
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.058,
+        "maxMs": 0.058
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 4.604,
+        "maxMs": 4.604
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1600x2400/50/1/scale",
+    "drag": {
+      "durationMs": 1008.787,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 53.67,
+        "maxMs": 0.881
+      },
+      "UpdateLayoutTree": {
+        "calls": 121,
+        "totalMs": 10.548999999999996,
+        "maxMs": 0.161
+      },
+      "Paint": {
+        "calls": 338,
+        "totalMs": 30.50799999999997,
+        "maxMs": 0.478
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 10.153999999999996,
+        "maxMs": 0.233
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 132.46200000000002,
+        "maxMs": 2.805
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 89.37100000000002,
+        "maxMs": 1.145
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 2.3049999999999997,
+        "maxMs": 0.175
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    },
+    "release": {
+      "durationMs": 32.247,
+      "Layout": {
+        "calls": 3,
+        "totalMs": 1.265,
+        "maxMs": 0.495
+      },
+      "UpdateLayoutTree": {
+        "calls": 5,
+        "totalMs": 0.356,
+        "maxMs": 0.166
+      },
+      "Paint": {
+        "calls": 6,
+        "totalMs": 0.6050000000000001,
+        "maxMs": 0.425
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.191,
+        "maxMs": 0.177
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 2.34,
+        "maxMs": 2.338
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.075,
+        "maxMs": 0.075
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 6.198,
+        "maxMs": 6.198
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1600x2400/50/1/width",
+    "drag": {
+      "durationMs": 2075.031,
+      "Layout": {
+        "calls": 122,
+        "totalMs": 58.906000000000006,
+        "maxMs": 0.979
+      },
+      "UpdateLayoutTree": {
+        "calls": 182,
+        "totalMs": 12.285000000000007,
+        "maxMs": 0.406
+      },
+      "Paint": {
+        "calls": 184,
+        "totalMs": 29.347999999999978,
+        "maxMs": 0.515
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 10.587999999999996,
+        "maxMs": 0.293
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 142.79399999999995,
+        "maxMs": 2.9
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 1413.7069999999997,
+        "maxMs": 50.6
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 105.65300000000012,
+        "maxMs": 103.105
+      },
+      "MinorGC": {
+        "calls": 6,
+        "totalMs": 20.836,
+        "maxMs": 4.348
+      },
+      "MajorGC": {
+        "calls": 2,
+        "totalMs": 20.648,
+        "maxMs": 17.319
+      }
+    },
+    "release": {
+      "durationMs": 88.404,
+      "Layout": {
+        "calls": 2,
+        "totalMs": 0.711,
+        "maxMs": 0.476
+      },
+      "UpdateLayoutTree": {
+        "calls": 5,
+        "totalMs": 0.217,
+        "maxMs": 0.115
+      },
+      "Paint": {
+        "calls": 7,
+        "totalMs": 0.795,
+        "maxMs": 0.615
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.18300000000000002,
+        "maxMs": 0.171
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 2.371,
+        "maxMs": 2.368
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.346,
+        "maxMs": 0.346
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 57.765,
+        "maxMs": 57.765
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1600x2400/100/0.44/move",
+    "drag": {
+      "durationMs": 1190.348,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 116.61699999999998,
+        "maxMs": 2.467
+      },
+      "UpdateLayoutTree": {
+        "calls": 123,
+        "totalMs": 15.679999999999998,
+        "maxMs": 0.329
+      },
+      "Paint": {
+        "calls": 391,
+        "totalMs": 53.656000000000034,
+        "maxMs": 1.052
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 16.255000000000003,
+        "maxMs": 0.573
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 383.5199999999999,
+        "maxMs": 8.3
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 161.21900000000005,
+        "maxMs": 3.034
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 2.8269999999999986,
+        "maxMs": 0.181
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    },
+    "release": {
+      "durationMs": 25.087,
+      "Layout": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "UpdateLayoutTree": {
+        "calls": 3,
+        "totalMs": 0.037,
+        "maxMs": 0.018
+      },
+      "Paint": {
+        "calls": 7,
+        "totalMs": 0.906,
+        "maxMs": 0.694
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.34800000000000003,
+        "maxMs": 0.336
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 5.56,
+        "maxMs": 5.558
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.109,
+        "maxMs": 0.109
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 3.026,
+        "maxMs": 3.026
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1600x2400/100/0.44/scale",
+    "drag": {
+      "durationMs": 1342.782,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 122.98200000000011,
+        "maxMs": 2.328
+      },
+      "UpdateLayoutTree": {
+        "calls": 122,
+        "totalMs": 29.289,
+        "maxMs": 1.009
+      },
+      "Paint": {
+        "calls": 405,
+        "totalMs": 54.019000000000055,
+        "maxMs": 1.157
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 16.282000000000004,
+        "maxMs": 0.479
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 374.435,
+        "maxMs": 7.795
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 181.35000000000002,
+        "maxMs": 3.423
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 2.809,
+        "maxMs": 0.167
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    },
+    "release": {
+      "durationMs": 24.196,
+      "Layout": {
+        "calls": 3,
+        "totalMs": 3.572,
+        "maxMs": 1.362
+      },
+      "UpdateLayoutTree": {
+        "calls": 5,
+        "totalMs": 0.796,
+        "maxMs": 0.374
+      },
+      "Paint": {
+        "calls": 7,
+        "totalMs": 0.7330000000000001,
+        "maxMs": 0.536
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.20500000000000002,
+        "maxMs": 0.189
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 6.197,
+        "maxMs": 6.195
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.057,
+        "maxMs": 0.057
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 7.99,
+        "maxMs": 7.99
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1600x2400/100/0.44/width",
+    "drag": {
+      "durationMs": 2401.821,
+      "Layout": {
+        "calls": 122,
+        "totalMs": 120.45700000000008,
+        "maxMs": 2.026
+      },
+      "UpdateLayoutTree": {
+        "calls": 215,
+        "totalMs": 43.59699999999999,
+        "maxMs": 0.878
+      },
+      "Paint": {
+        "calls": 420,
+        "totalMs": 55.99700000000005,
+        "maxMs": 1.054
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 15.422,
+        "maxMs": 0.558
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 378.275,
+        "maxMs": 7.367
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 1465.638,
+        "maxMs": 52.267
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 88.76800000000009,
+        "maxMs": 85.93
+      },
+      "MinorGC": {
+        "calls": 5,
+        "totalMs": 24.022,
+        "maxMs": 5.294
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    },
+    "release": {
+      "durationMs": 125.005,
+      "Layout": {
+        "calls": 2,
+        "totalMs": 2.7,
+        "maxMs": 1.62
+      },
+      "UpdateLayoutTree": {
+        "calls": 6,
+        "totalMs": 0.937,
+        "maxMs": 0.553
+      },
+      "Paint": {
+        "calls": 12,
+        "totalMs": 1.281,
+        "maxMs": 0.602
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.446,
+        "maxMs": 0.232
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 10.65,
+        "maxMs": 6.974
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.047,
+        "maxMs": 0.047
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 66.531,
+        "maxMs": 66.531
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 1,
+        "totalMs": 31.199,
+        "maxMs": 31.199
+      }
+    }
+  },
+  {
+    "label": "1600x2400/100/1/move",
+    "drag": {
+      "durationMs": 1007.361,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 125.21000000000005,
+        "maxMs": 2.037
+      },
+      "UpdateLayoutTree": {
+        "calls": 121,
+        "totalMs": 14.660999999999992,
+        "maxMs": 0.245
+      },
+      "Paint": {
+        "calls": 355,
+        "totalMs": 56.41900000000007,
+        "maxMs": 1.217
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 17.639999999999993,
+        "maxMs": 0.434
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 377.842,
+        "maxMs": 7.532
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 169.02499999999998,
+        "maxMs": 2.411
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 2.9179999999999993,
+        "maxMs": 0.21
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    },
+    "release": {
+      "durationMs": 30.225,
+      "Layout": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "UpdateLayoutTree": {
+        "calls": 3,
+        "totalMs": 0.055999999999999994,
+        "maxMs": 0.026
+      },
+      "Paint": {
+        "calls": 6,
+        "totalMs": 1.234,
+        "maxMs": 1.006
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.51,
+        "maxMs": 0.492
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 6.0569999999999995,
+        "maxMs": 6.055
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.066,
+        "maxMs": 0.066
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 4.182,
+        "maxMs": 4.182
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1600x2400/100/1/scale",
+    "drag": {
+      "durationMs": 1059.621,
+      "Layout": {
+        "calls": 120,
+        "totalMs": 122.28799999999998,
+        "maxMs": 2.318
+      },
+      "UpdateLayoutTree": {
+        "calls": 122,
+        "totalMs": 14.344,
+        "maxMs": 0.278
+      },
+      "Paint": {
+        "calls": 343,
+        "totalMs": 50.686000000000035,
+        "maxMs": 1.009
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 19.219,
+        "maxMs": 0.482
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 332.45900000000006,
+        "maxMs": 6.598
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 164.86999999999998,
+        "maxMs": 2.752
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 3.0779999999999994,
+        "maxMs": 0.25
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    },
+    "release": {
+      "durationMs": 30.547,
+      "Layout": {
+        "calls": 3,
+        "totalMs": 3.353,
+        "maxMs": 1.786
+      },
+      "UpdateLayoutTree": {
+        "calls": 5,
+        "totalMs": 0.43200000000000005,
+        "maxMs": 0.161
+      },
+      "Paint": {
+        "calls": 6,
+        "totalMs": 0.9720000000000001,
+        "maxMs": 0.754
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.261,
+        "maxMs": 0.245
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 5.174,
+        "maxMs": 5.171
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.071,
+        "maxMs": 0.071
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 7.771,
+        "maxMs": 7.771
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  {
+    "label": "1600x2400/100/1/width",
+    "drag": {
+      "durationMs": 2359.657,
+      "Layout": {
+        "calls": 122,
+        "totalMs": 114.427,
+        "maxMs": 2.058
+      },
+      "UpdateLayoutTree": {
+        "calls": 182,
+        "totalMs": 13.611999999999998,
+        "maxMs": 0.222
+      },
+      "Paint": {
+        "calls": 184,
+        "totalMs": 43.713,
+        "maxMs": 0.996
+      },
+      "PrePaint": {
+        "calls": 60,
+        "totalMs": 14.302000000000005,
+        "maxMs": 0.463
+      },
+      "Layerize": {
+        "calls": 60,
+        "totalMs": 335.83700000000005,
+        "maxMs": 9.259
+      },
+      "FireAnimationFrame": {
+        "calls": 120,
+        "totalMs": 1478.2010000000002,
+        "maxMs": 64.563
+      },
+      "EventDispatch": {
+        "calls": 61,
+        "totalMs": 95.64400000000012,
+        "maxMs": 92.968
+      },
+      "MinorGC": {
+        "calls": 5,
+        "totalMs": 21.923,
+        "maxMs": 4.882
+      },
+      "MajorGC": {
+        "calls": 1,
+        "totalMs": 23.269,
+        "maxMs": 23.269
+      }
+    },
+    "release": {
+      "durationMs": 98.841,
+      "Layout": {
+        "calls": 2,
+        "totalMs": 2.5229999999999997,
+        "maxMs": 1.777
+      },
+      "UpdateLayoutTree": {
+        "calls": 5,
+        "totalMs": 0.44699999999999995,
+        "maxMs": 0.304
+      },
+      "Paint": {
+        "calls": 7,
+        "totalMs": 1.071,
+        "maxMs": 0.843
+      },
+      "PrePaint": {
+        "calls": 3,
+        "totalMs": 0.494,
+        "maxMs": 0.481
+      },
+      "Layerize": {
+        "calls": 2,
+        "totalMs": 6.21,
+        "maxMs": 6.208
+      },
+      "FireAnimationFrame": {
+        "calls": 1,
+        "totalMs": 0.067,
+        "maxMs": 0.067
+      },
+      "EventDispatch": {
+        "calls": 1,
+        "totalMs": 65.821,
+        "maxMs": 65.821
+      },
+      "MinorGC": {
+        "calls": 0,
+        "totalMs": 0,
+        "maxMs": 0
+      },
+      "MajorGC": {
+        "calls": 1,
+        "totalMs": 7.749,
+        "maxMs": 7.749
+      }
+    }
+  }
+]

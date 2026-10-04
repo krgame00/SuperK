@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
-import { GET, POST, _resetSettingsForTest } from "@/src/app/api/extension/settings/route";
+import { GET, POST, _resetSettingsForTest } from "@/src/app/api/extension/settings/handler";
 import { getOrCreatePairingToken } from "@/lib/server/pairing";
 
 describe("Extension Settings Bridge API (/api/extension/settings)", () => {

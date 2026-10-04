@@ -5,6 +5,7 @@ import type { BackgroundArtworkConfirmation } from "./cleaning/backgroundRemnant
 import type { CleaningMode, CleaningRegion } from "./cleaning/types";
 import type { TranslatedBubble } from "./translationOverlay";
 import type { PageTargetIdentity } from "./translation/pageEligibility";
+import {createPageTargetIdentity} from './translation/pageEligibility';
 import { pageBlobStore } from "./lifecycle/pageBlobStore";
 import { TEXT_RENDER_POLICY_VERSION, usesAutoSourceFill, needsWhiteArtworkPolicyRefresh } from "./colorMatching/resolveTextStyle";
 import { needsSourceOutlineRefresh } from "./colorMatching/outlineMigration";
@@ -37,6 +38,8 @@ export interface StoredCleaningResult {
   cleaningMode?: CleaningMode;
   /** Artwork confirmations bound to exact candidate ids and inspection revision keys. */
   artworkConfirmations?: BackgroundArtworkConfirmation[];
+  /** Whole-image inspection acknowledgements bound to the exact source, mask and evidence revision. */
+  humanImageConfirmations?: { revisionKey: string; sourceFingerprint: string; maskFingerprint: string }[];
 }
 
 export interface StoredAsset {
@@ -55,7 +58,7 @@ interface StoredSourceAsset {
 
 interface SessionData {
   id: string;
-  pages: { id?: string; url: string; name: string; originUrl?: string; exportSource?: PageExportSource; sourceAssetId?: string }[];
+  pages: { id?: string; url: string; name: string; originUrl?: string; readerImageUrl?: string; exportSource?: PageExportSource; sourceAssetId?: string; sourceFingerprint?: string }[];
   currentPage: number;
   bubbleCache: [string, TranslatedBubble[]][];
   /** Keys are stable page IDs, restored to current source URLs on load. */
@@ -197,7 +200,7 @@ export const deleteAsset = async (id: string): Promise<void> => {
 
 export const saveProjectSession = async (
   data: {
-    pages: { id?: string; url: string; name: string; originUrl?: string; exportSource?: PageExportSource }[];
+    pages: { id?: string; url: string; name: string; originUrl?: string; readerImageUrl?: string; exportSource?: PageExportSource; sourceFingerprint?: string }[];
     currentPage: number;
     bubbleCache: Map<string, TranslatedBubble[]>;
     pageTargetCache?: Map<string, PageTargetIdentity>;
@@ -267,7 +270,9 @@ export const saveProjectSession = async (
           url: `asset:${sourceAssetId}`,
           name: page.name,
           originUrl: page.originUrl,
+          readerImageUrl: page.readerImageUrl,
           exportSource: normalizePageExportSource(page.exportSource),
+          sourceFingerprint: page.sourceFingerprint,
           sourceAssetId,
         });
       } else {
@@ -449,8 +454,10 @@ export interface ProjectSessionPage {
   url: string;
   name: string;
   originUrl?: string;
+  readerImageUrl?: string;
   exportSource?: PageExportSource;
   unrecoverableSource?: boolean;
+  sourceFingerprint?: string;
 }
 
 export interface LoadedProjectSession {
@@ -531,8 +538,10 @@ export const loadProjectSession = async (): Promise<LoadedProjectSession | null>
         url,
         name: page.name,
         originUrl: page.originUrl,
+        readerImageUrl: page.readerImageUrl,
           exportSource: normalizePageExportSource(page.exportSource),
         unrecoverableSource,
+        sourceFingerprint: page.sourceFingerprint,
       });
       pageUrlById.set(id, url);
     }
@@ -742,11 +751,14 @@ export const loadCleaningResultAssets = async (
 };
 
 export interface AppendPagePayload {
+  targetIdentity?: PageTargetIdentity;
+  sourceFingerprint?: string;
   pageUrl: string;
   name?: string;
   cleanUrl?: string;
   bubbles?: TranslatedBubble[];
   originUrl?: string;
+  readerImageUrl?: string;
 }
 
 export const appendPageToProjectSession = async (
@@ -762,7 +774,7 @@ export const appendPageToProjectSession = async (
     sessionStore.get("latest_session"),
   );
 
-  let pages: { url: string; name: string; originUrl?: string }[] = [];
+  let pages: { url: string; name: string; originUrl?: string; readerImageUrl?: string; sourceFingerprint?: string }[] = [];
   let bubbleCacheMap = new Map<string, TranslatedBubble[]>();
   let translatedAssetIds: [string, string][] = [];
 
@@ -783,10 +795,14 @@ export const appendPageToProjectSession = async (
       url: payload.pageUrl,
       name: payload.name || `Page ${pages.length + 1}`,
       originUrl: payload.originUrl,
+      readerImageUrl: payload.readerImageUrl,
+      sourceFingerprint: payload.sourceFingerprint,
     });
   } else if (payload.originUrl) {
     pages[pageIndex].originUrl = payload.originUrl;
   }
+  if (payload.readerImageUrl) pages[pageIndex].readerImageUrl = payload.readerImageUrl;
+  if (payload.sourceFingerprint && /^[a-f0-9]{64}$/.test(payload.sourceFingerprint)) pages[pageIndex].sourceFingerprint = payload.sourceFingerprint;
 
   if (Array.isArray(payload.bubbles)) {
     const cleanBubbles = payload.bubbles.map((b) => {
@@ -826,12 +842,18 @@ export const appendPageToProjectSession = async (
     }
   }
 
+  const targetCache = new Map(rawSession?.pageTargetCache ?? []);
+  const validatedTarget = payload.targetIdentity && createPageTargetIdentity(payload.targetIdentity.targetId);
+  if (validatedTarget && validatedTarget.policyVersion === payload.targetIdentity?.policyVersion) {
+    const pageKey = (pages[pageIndex] as {id?:string}).id ?? payload.pageUrl;
+    targetCache.set(pageKey,payload.targetIdentity!);
+  }
   const updatedSession: SessionData = {
     id: "latest_session",
     pages,
     currentPage: pageIndex,
     bubbleCache: Array.from(bubbleCacheMap.entries()),
-    pageTargetCache: rawSession?.pageTargetCache,
+    pageTargetCache: Array.from(targetCache.entries()),
     translatedAssetIds,
     updatedAt: Date.now(),
   };

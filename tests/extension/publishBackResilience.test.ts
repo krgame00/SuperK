@@ -1,6 +1,7 @@
 import * as extensionPolicy from '@/lib/extension/strictParity';
 import {withReviewIdentity} from '@/lib/translation/qualityReview';
-const evidence=(t:string)=>({targetIdentity:extensionPolicy.createPageTargetIdentity('en'),sourceRevision:'pixels',backgroundState:'approved',backgroundRevision:'clean',bubbles:[{t,original_text:'source',box:[0,0,10,10],translationReview:withReviewIdentity({status:'ok',sourceText:'source',reviewedText:t},'en','pixels')}]});
+import {inspectedBackgroundEvidence,TEST_CLEAN_DATA_URL} from '../helpers/extensionBackgroundEvidence';
+const evidence=(t:string)=>({targetIdentity:extensionPolicy.createPageTargetIdentity('en'),sourceRevision:'a'.repeat(64),...inspectedBackgroundEvidence('a'.repeat(64)),cleanUrl:TEST_CLEAN_DATA_URL,bubbles:[{t,original_text:'source',box:[0,0,10,10],translationReview:withReviewIdentity({status:'ok',sourceText:'source',reviewedText:t},'en','a'.repeat(64))}]});
 import { readFileSync } from "node:fs";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 

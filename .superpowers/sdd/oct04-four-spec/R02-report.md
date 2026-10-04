@@ -1,11 +1,23 @@
-# R02 readiness / handoff — 2026-10-04
+# R02 mask resolution and exact image confirmation
 
-Status: partially implemented adjacent work preserved; not claiming R02 complete. Parent must review R01 integration before a fresh R02 owner finishes acceptance.
+Status: implemented; G06 still owns integrated browser/build acceptance.
 
-Owned adjacent hunks: RemnantReviewPanel candidate artwork button and bounded mask-navigation callback; MaskEditor cleanUrl/comparison/focusRect; hooks/useCleaning confirmation store/persistArtworkConfirmations/confirmArtworkCandidate/local restore; lib/projectStore StoredCleaningResult artworkConfirmations; remnantReview confirmation store (6 revisions/page, 50 candidates/revision), source invalidation and region lookup. Existing whole-region restore/draft/Undo behavior was retained; its test timing was corrected without changing production behavior.
+## Changes
 
-Verified: actual hook confirmation exact candidate/revision, source replacement reopens findings, persisted confirmations local-only restore, unverified pages cannot be confirmed away, source changes under same URL become unavailable, mask edits during pending inspection cannot reuse findings. Public panel/mask seams show exact locations and original/clean assets; authorization bounds still constrain mask edits. Pure confirmation store restores exact previous revision bindings and bounds memory. Combined script/background tests prove artwork approval cannot override generated-text script failure and translation approval cannot resolve background findings. Preserved/protected source ink remains an unresolved unchanged-candidate until explicit artwork confirmation.
+- Applying a mask correction records immutable before/after clean, mask, review-mask and protected-mask blobs in workspace Undo/Redo. Restores create fresh object URLs, re-inspect locally, invalidate in-flight work and never call cleaning providers.
+- History restore is scoped to the active workspace, page membership/identity, original source revision and text-evidence identity. Removed pages cannot be mutated by stale commands.
+- Unverified background detection has a separate whole-image compare and explicit human acknowledgement. Both original and clean assets must load; the stored acknowledgement is bound to the exact source, mask and evidence revision. Existing candidate artwork approval remains per candidate.
+- Missing original pixels remain unavailable and show a re-import action; they cannot be approved as clean.
+- The panel can compare source boxes outside the removal mask in read-only mode and navigate to actual mask correction separately.
 
-Latest verification: the R01 report records exact focused commands; 177 tests across 8 cleaning files pass, including all 42 MaskEditor tests. Lint of owned files passes. The previous intermittent whole-mask navigation test asserted before decoding completed; it now waits for actual mask transitions instead of sleeping.
+## Verification
 
-Still required for full R02: actual cleaned-image/mask Undo/Redo integration across workspace history (pure store behavior is not a substitute), revision change/cancel end-to-end page scenario after G04 wiring, and independent review of confirmation persistence plus bounded removal acceptance. The page owner must keep candidate artwork decisions, removal authorization and page-output confirmation separate and must never invoke job recovery/reclean solely when opening a candidate. No broad future artwork approval, no automatic pixel removal and no provider action on opening legacy work are authorized here.
+- Actual hook Undo/Redo test restores clean blobs and exact scoped findings, without reclean calls; also verifies removed-page history is ignored.
+- Unavailable detection test verifies a distinct exact-image acknowledgement and rejects missing-source confirmation.
+- Focused mask/hook/store tests: 3 files, 27 tests passed. Full R-wave/dense-extension integration selection: 34 files, 311 tests passed.
+- TypeScript passed; scoped ESLint has only existing warnings recorded in the R03 report.
+
+## Limits
+
+- Human whole-image acknowledgement means the operator checked this exact source/clean/mask revision; it is not a claim that the detector found every possible artifact.
+- No production service was restarted. G06 owns browser-level page-order, reload and build checks.

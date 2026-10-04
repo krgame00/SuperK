@@ -2,24 +2,57 @@ import { describe, expect, it } from "vitest";
 
 import {
   doesPageRequireReview,
-  getUnconfirmedPages,
   missingTranslationSignature,
   isPageCleaningUncertain,
   isPageTranslationUncertain,
+  getUnconfirmedPages as scanUnconfirmedPages,
+  type PageEligibilityGateOptions,
 } from "@/lib/export/reviewGate";
 import type { PageCleaningResult } from "@/hooks/useCleaning";
 import type { TranslatedBubble } from "@/lib/translationOverlay";
+import { LANGUAGE_POLICY_VERSION } from "@/lib/languagePolicy";
+import { withReviewIdentity } from "@/lib/translation/qualityReview";
+
+const approvedBackground = {
+  status: "inspected" as const,
+  revisionKey: "test-clean-background",
+  revisions: { sourceRevision: "source", backgroundRevision: "clean", removalRevision: "mask" },
+  candidates: [],
+  inspectedAreas: 1,
+};
+
+const getUnconfirmedPages: typeof scanUnconfirmedPages = (
+  pages, confirmed, cleaning, bubbles, targetIndices, signatures, options,
+) => {
+  const cleaningWithAssets = new Map(pages.map(page => [
+    page.url,
+    { ...(cleaning.get(page.url) ?? {}), cleanUrl: "clean-background", regions: cleaning.get(page.url)?.regions ?? [] } as PageCleaningResult,
+  ]));
+  const defaultOptions: PageEligibilityGateOptions = {
+    targetIdentities: new Map(pages.map(page => [page.url, { targetId: "th", policyVersion: LANGUAGE_POLICY_VERSION }])),
+    sourceRevisions: new Map(pages.map(page => [page.url, "source"])),
+    backgroundInspections: new Map(pages.map(page => [page.url, approvedBackground])),
+  };
+  return scanUnconfirmedPages(pages, confirmed, cleaningWithAssets, bubbles, targetIndices, signatures, {
+    ...defaultOptions,
+    ...options,
+    targetIdentities: options?.targetIdentities ?? defaultOptions.targetIdentities,
+    sourceRevisions: options?.sourceRevisions ?? defaultOptions.sourceRevisions,
+    backgroundInspections: options?.backgroundInspections ?? defaultOptions.backgroundInspections,
+  });
+};
 
 describe("Review Gate & Human Confirmation for Exports (Ticket 07)", () => {
   it("requires a fresh snapshot for unresolved semantic suggestions", () => {
     const pages=[{url:"page",name:"Page"}];
-    const bubble: TranslatedBubble={t:"รอ",original_text:"Wait.",translationReview:{status:"suggested",sourceText:"Wait.",reviewedText:"รอ",suggestion:"รอก่อนนะ"}};
+    const bubble: TranslatedBubble={t:"รอ",original_text:"Wait.",translationReview:withReviewIdentity({status:"suggested",sourceText:"Wait.",reviewedText:"รอ",suggestion:"รอก่อนนะ"},"Thai","source")};
     const bubbles=new Map([["page",[bubble]]]);
     const confirmed=new Set(["page"]);
     expect(isPageTranslationUncertain([bubble])).toBe(true);
     expect(getUnconfirmedPages(pages,confirmed,new Map(),bubbles)).toHaveLength(1);
     const signatures=new Map([["page",missingTranslationSignature(null,[bubble])]]);
-    expect(getUnconfirmedPages(pages,confirmed,new Map(),bubbles,undefined,signatures)).toHaveLength(0);
+    // A page-level snapshot cannot approve an unresolved per-point suggestion.
+    expect(getUnconfirmedPages(pages,confirmed,new Map(),bubbles,undefined,signatures)).toHaveLength(1);
     bubble.translationReview!.suggestion="รอที่นี่";
     expect(getUnconfirmedPages(pages,confirmed,new Map(),bubbles,undefined,signatures)).toHaveLength(1);
     bubble.translationReview!.status="dismissed";
@@ -111,8 +144,8 @@ describe("Review Gate & Human Confirmation for Exports (Ticket 07)", () => {
       ["blob:page-1", sampleCleaningResult],
     ]);
     const bubblesMap = new Map<string, TranslatedBubble[]>([
-      ["blob:page-1", [{ box: [7, 10, 43, 60], t: "p1", confidence: 0.9 }]],
-      ["blob:page-2", [{ t: "p2", confidence: 0.95 }]],
+      ["blob:page-1", [{ box: [7, 10, 43, 60], t: "หนึ่ง", original_text: "p1 source", confidence: 0.9, translationReview: withReviewIdentity({ status: "accepted", sourceText: "p1 source", reviewedText: "หนึ่ง" }, "Thai", "source") }]],
+      ["blob:page-2", [{ t: "สอง", original_text: "p2 source", confidence: 0.95, translationReview: withReviewIdentity({ status: "accepted", sourceText: "p2 source", reviewedText: "สอง" }, "Thai", "source") }]],
     ]);
 
     // Page 1 has uncertain cleaning and is unconfirmed

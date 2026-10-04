@@ -4,7 +4,7 @@ import {
   GET,
   MAX_PROXY_BODY_BYTES,
   POST,
-} from "@/src/app/api/clean/[...path]/route";
+} from "@/src/app/api/clean/[...path]/handler";
 
 beforeEach(() => {
   vi.restoreAllMocks();

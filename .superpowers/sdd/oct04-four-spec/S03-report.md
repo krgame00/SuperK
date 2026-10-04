@@ -1,6 +1,6 @@
-# S03 core implementation checkpoint — UI still pending
+# S03 saved size ownership and parity — integrated
 
-Status: core verified, S03 NOT complete. No page edits, commit, staging, full suite, provider calls, browser restart, or user key access performed.
+Status: implementation and UI are integrated; G06 owns the real browser/build acceptance pass. No provider calls, live runtime restart, or user key access were performed.
 
 ## Owned changes
 
@@ -47,9 +47,8 @@ Relevant installed Next documentation read: `node_modules/next/dist/docs/01-app/
 
 ## Integration needs and remaining work
 
-- G04 owns page until release. Actual point/page/book size controls and selected-point Return Auto must be wired before S03 completion. Applied count returned; matched/fallback can be read from resulting bubble metadata.
-- G04 wires validated original cleaning fingerprint map and prepared fingerprint. Stable source fingerprint is distinct from page edit revision; never derive it from recognition crop or URL.
-- Root directed G04 to fresh verified offscreen output after gate when cache/live canvas lacks proof. Accessor intentionally refuses restored/unproven caches; live canvas has no new proof API.
-- Source-free handwritten manual translations remain blocked pending explicit per-point ORIGINAL image comparison UI + valid source box/fingerprint and image-backed contextual review metadata. No generic page approval or guard bypass was added. Root/G04 owns this integration decision.
-- Browser checks at 44/100/additional zoom and real reload/export remain pending actual controls integration. Automated renderer parity covers .44/1/1.6.
-- Independent S03 review and serialized commit remain root-owned after UI integration.
+- `SavedTextSizeControls` is now mounted in the workspace toolbar. It provides point/page/book resizing and selected-point Return Auto; controls disable without a current page or during another operation.
+- Extension handoff now carries the verified reader image URL separately from the locally persisted original image bytes, so the source fingerprint used by the hook survives save/reload and publish-back retains the correct reader target.
+- Existing behavior remains: the original pixel identity comes from the stored source, not the edit revision, and unproven cached rasters are regenerated behind the export gate.
+- Source-free handwritten translations still require explicit image-backed point review; no generic page approval was added.
+- Automated renderer tests cover .44/1/1.6 zoom and ownership restore. Browser acceptance at 44/100 and reload/export is part of G06.

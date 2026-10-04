@@ -103,11 +103,11 @@ describe('Chrome extension translation workflow', () => {
       apiKey: 'test-key', allowPreview: false,
     });
     expect(app.sendMessage).toHaveBeenLastCalledWith(1, expect.objectContaining({
-      action: 'TRANSLATION_SUCCESS',
-      bubbles: [expect.objectContaining({ t: 'สวัสดี', original_text:'Hello', box: [10, 20, 100, 200] })],
-      pageStyle: expect.objectContaining({
-        isMonochromePage: expect.any(Boolean),
-        monochromeConfidence: expect.any(Number),
+      action: 'TRANSLATION_REVIEW_REQUIRED',
+      payload: expect.objectContaining({
+        bubbles: [expect.objectContaining({ t: 'สวัสดี', original_text:'Hello', box: [10, 20, 100, 200] })],
+        sourceRevision: expect.stringMatching(/^[a-f0-9]{64}$/),
+        sourceImage: expect.stringMatching(/^data:image\/png;base64,/),
       }),
     }), { frameId: 7 });
     expect(app.clearInterval).toHaveBeenCalledWith(1);
@@ -176,8 +176,11 @@ describe('Chrome extension translation workflow', () => {
     expect((generateCalls[0][1].headers as Record<string, string>)['x-goog-api-key']).toBe('test-key');
 
     expect(app.sendMessage).toHaveBeenLastCalledWith(1, expect.objectContaining({
-      action: 'TRANSLATION_SUCCESS',
-      bubbles: [expect.objectContaining({ t: 'ผลลัพธ์ออฟไลน์', original_text:'offline source', box: [0, 0, 100, 100] })],
+      action: 'TRANSLATION_REVIEW_REQUIRED',
+      payload: expect.objectContaining({
+        bubbles: [expect.objectContaining({ t: 'ผลลัพธ์ออฟไลน์', original_text:'offline source', box: [0, 0, 100, 100] })],
+        sourceRevision: expect.stringMatching(/^[a-f0-9]{64}$/),
+      }),
     }), { frameId: 7 });
   });
 

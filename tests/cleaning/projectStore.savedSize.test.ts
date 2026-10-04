@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import { expect,test } from 'vitest';
-import {clearProjectSession,saveProjectSession,loadProjectSession} from '@/lib/projectStore';
+import {clearProjectSession,saveProjectSession,loadProjectSession,appendPageToProjectSession} from '@/lib/projectStore';
+import {createPageTargetIdentity} from '@/lib/translation/pageEligibility';
 import {manualSourceSizing} from '@/lib/sourceTextSize';
 import type {TranslatedBubble} from '@/lib/translationOverlay';
 
@@ -18,4 +19,15 @@ test('real saved reload preserves manual ownership, unmeasured evidence, layout,
   const loaded=(await loadProjectSession())!;
   expect(loaded.bubbleCache.get(url)?.[0]).toMatchObject(bubble);
   expect(loaded.translatedImageCache.has(url)).toBe(false);
+});
+test('extension append preserves exact validated target identity and existing page identities',async()=>{
+  await clearProjectSession();
+  const first='data:image/png;base64,Zmlyc3Q=',second='data:image/png;base64,c2Vjb25k';
+  const th=createPageTargetIdentity('th')!,ja=createPageTargetIdentity('ja')!;
+  await saveProjectSession({pages:[{id:'existing',url:first,name:'first.png'}],currentPage:0,bubbleCache:new Map(),translatedImageCache:new Map(),pageTargetCache:new Map([[first,ja]])});
+  await appendPageToProjectSession({pageUrl:second,bubbles:[{t:'สวัสดี'}],targetIdentity:th,sourceFingerprint:'a'.repeat(64)});
+  const loaded=(await loadProjectSession())!;
+  expect(loaded.pageTargetCache.get(second)).toEqual(th);
+  expect(loaded.pageTargetCache.get(first)).toEqual(ja);
+  expect(loaded.pages.find(page=>page.url===second)?.sourceFingerprint).toBe('a'.repeat(64));
 });

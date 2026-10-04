@@ -164,10 +164,18 @@ chrome.runtime.onMessage?.addListener?.(async (message, sender) => {
       if (stored.pairingToken) {
         headers["Authorization"] = `Bearer ${stored.pairingToken}`;
       }
+      const payload = { ...message.payload };
+      if (typeof payload.sourceImage !== "string") {
+        const source = await fetchImageAsBase64(payload.pageUrl);
+        const actualRevision = await SuperKPolicy.originalSourceFingerprint(source.base64);
+        if (payload.sourceRevision && actualRevision !== payload.sourceRevision) throw new Error("ภาพต้นฉบับเปลี่ยนไปหรือไม่ตรงกับคำแปลเดิม เปิดจากไฟล์ต้นฉบับใน SuperK อีกครั้ง");
+        payload.sourceImage = `data:${source.mimeType};base64,${source.base64}`;
+        payload.sourceRevision = actualRevision;
+      }
       const res = await fetch(appendUrl, {
         method: "POST",
         headers,
-        body: JSON.stringify(message.payload),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error(`Server returned ${res.status}`);
       const data = await res.json();
@@ -439,7 +447,7 @@ async function checkPublishedUpdates() {
             [storageKey]: {
               imageUrl: update.pageUrl,
               bubbles: update.bubbles,
-              targetIdentity: update.targetIdentity, sourceRevision: update.sourceRevision, backgroundState: update.backgroundState, backgroundRevision: update.backgroundRevision,
+              targetIdentity: update.targetIdentity, sourceRevision: update.sourceRevision, backgroundEvidence: update.backgroundEvidence, backgroundState: update.backgroundState, backgroundRevision: update.backgroundRevision,
               cleanMode: "inpainting",
               cleanImageBase64: update.cleanUrl || null,
               textStyle: update.textStyle,
@@ -457,7 +465,7 @@ async function checkPublishedUpdates() {
                   pageUrl: update.pageUrl,
                   originUrl: update.originUrl,
                   bubbles: update.bubbles,
-                  targetIdentity: update.targetIdentity, sourceRevision: update.sourceRevision, backgroundState: update.backgroundState, backgroundRevision: update.backgroundRevision,
+                  targetIdentity: update.targetIdentity, sourceRevision: update.sourceRevision, backgroundEvidence: update.backgroundEvidence, backgroundState: update.backgroundState, backgroundRevision: update.backgroundRevision,
                   textStyle: update.textStyle,
                   cleanUrl: update.cleanUrl,
                 }).catch(() => {});

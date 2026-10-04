@@ -381,7 +381,7 @@ function fitTextInBubble(text, width, height, fontFamily, fontSizeMultiplier = 1
 
     let fit = fitTextInBubble(displayedText, origW, origH, fontFamily, fontSizeMultiplier);
     const snapshot = b.layoutSnapshot || b.layoutAdjustment?.layoutSnapshot;
-    const hasSnapshot = snapshot?.text === displayedText && snapshot.fontFamily === fontFamily && snapshot.globalMult === fontSizeMultiplier && snapshot.bubbleMult === (b.fontSizeMultiplier || 1) && (!b.layoutAdjustment || (b.layoutAdjustment.bw === snapshot.frameWidthPx && b.layoutAdjustment.bh === snapshot.frameHeightPx)) && Array.isArray(snapshot.lines) && snapshot.lines.length > 0 && snapshot.lines.length <= 400 &&
+    const hasSnapshot = snapshot?.text === displayedText && snapshot.fontFamily === fontFamily && snapshot.globalMult === fontSizeMultiplier && snapshot.bubbleMult === (b.fontSizeMultiplier || 1) && (!b.layoutAdjustment || (b.layoutAdjustment.bw === snapshot.frameWidthPx && b.layoutAdjustment.bh === snapshot.frameHeightPx)) && Array.isArray(snapshot.lines) && snapshot.lines.length > 0 && snapshot.lines.length <= 400 && snapshot.lines.every(line => typeof line === 'string') && snapshot.lines.join('').replace(/\s/g, '') === displayedText.replace(/\s/g, '') &&
       [snapshot.fontSizePx,snapshot.lineHeightPx,snapshot.frameWidthPx,snapshot.frameHeightPx].every(n=>typeof n==='number' && Number.isFinite(n) && n>0);
     if (hasSnapshot) {
       const scale = origW / snapshot.frameWidthPx;

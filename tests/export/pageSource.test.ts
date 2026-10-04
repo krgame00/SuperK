@@ -28,7 +28,17 @@ describe("per-page export sources", () => {
   });
   test("original bypasses all review and clean bypasses translation review", () => {
     const bubbles = new Map([["original", [{ needsReview: true }]], ["clean", [{ needsReview: true }]]]);
-    expect(getUnconfirmedPages([{ url: "original", name: "blank", exportSource: "original" },
-      { url: "clean", name: "clean", exportSource: "clean" }], new Set(), new Map(), bubbles)).toEqual([]);
+    const cleanReview = {
+      status: "inspected" as const,
+      revisionKey: "reviewed-clean",
+      revisions: { sourceRevision: "source", backgroundRevision: "background", removalRevision: "mask" },
+      candidates: [],
+      inspectedAreas: 1,
+    };
+    const result = getUnconfirmedPages([{ url: "original", name: "blank", exportSource: "original" },
+      { url: "clean", name: "clean", exportSource: "clean" }], new Set(),
+    new Map<string, never>([["clean", { cleanUrl: "clean" } as never]]), bubbles, undefined, undefined,
+    { backgroundInspections: new Map([["clean", cleanReview]]) });
+    expect(result).toEqual([]);
   });
 });

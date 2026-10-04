@@ -12,7 +12,7 @@ vi.mock("@/lib/server/geminiRequest", async (original) => ({
 import { executeGeminiTranslation } from "@/lib/server/geminiTranslationRouter";
 import { GeminiRequestError, requestOpenAICompatible } from "@/lib/server/geminiRequest";
 import { POST } from "@/src/app/api/translation-review/route";
-import { buildTranslationPrompt } from "@/src/app/api/translate/route";
+import { buildTranslationPrompt } from "@/src/app/api/translate/handler";
 
 const execute = vi.mocked(executeGeminiTranslation);
 const compatible = vi.mocked(requestOpenAICompatible);

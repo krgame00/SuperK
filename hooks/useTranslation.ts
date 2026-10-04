@@ -134,6 +134,7 @@ interface UseTranslationProps {
   pageExportSources?: PageExportSource[];
   /** Origin URLs matching `pages` order, persisted with saved sessions. */
   pageOriginUrls?: (string | undefined)[];
+  pageReaderImageUrls?: (string | undefined)[];
   viewMode: "single" | "scroll";
   preparePageForTranslation: (
     pageUrl: string,
@@ -300,6 +301,7 @@ export function useTranslation({
   pageNames,
   pageExportSources,
   pageOriginUrls,
+  pageReaderImageUrls,
   viewMode,
   preparePageForTranslation,
   onPageDirtied,
@@ -657,9 +659,13 @@ export function useTranslation({
     pageNamesRef.current = pageNames;
   }, [pageNames]);
   const pageOriginUrlsRef = useRef(pageOriginUrls);
+  const pageReaderImageUrlsRef = useRef(pageReaderImageUrls);
   useEffect(() => {
     pageOriginUrlsRef.current = pageOriginUrls;
   }, [pageOriginUrls]);
+  useEffect(() => {
+    pageReaderImageUrlsRef.current = pageReaderImageUrls;
+  }, [pageReaderImageUrls]);
   const currentPageRef = useRef(currentPage);
   currentPageRef.current = currentPage;
 
@@ -717,6 +723,8 @@ export function useTranslation({
               url: p,
               name: pageNamesRef.current?.[i] || `Page ${i + 1}`,
               originUrl: pageOriginUrlsRef.current?.[i],
+              readerImageUrl: pageReaderImageUrlsRef.current?.[i],
+              sourceFingerprint: getPageSourceRevision(p),
               exportSource: pageExportSourcesRef.current?.[i],
             }),
           ),
@@ -770,7 +778,7 @@ export function useTranslation({
         void performSaveRef.current(pending);
       }
     }
-  }, []);
+  }, [getPageSourceRevision]);
   useEffect(() => {
     performSaveRef.current = performSave;
   }, [performSave]);

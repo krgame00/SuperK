@@ -1,4 +1,5 @@
 import { applyTranslationOverlay, type TranslatedBubble } from '../../lib/translationOverlay';
+import { SOURCE_SIZE_POLICY } from '../../lib/sourceTextSize';
 import { undoManager } from '../../lib/undoManager';
 
 // Diagnostic instrumentation only. Preview latency ends after the renderer's queued
@@ -42,8 +43,18 @@ async function run() {
       const bubbles: TranslatedBubble[] = Array.from({ length: count }, (_, i) => {
         const bx = i === 0 ? 100 : (i % 10) * (iw / 10), by = i === 0 ? 300 : Math.floor(i / 10) * (ih / 10);
         const bw = i === 0 ? 320 : iw / 10, bh = i === 0 ? 460 : ih / 10;
-        return { t: i === 0 ? 'เมื่อเรื่องราวที่ยาวนานเริ่มต้นขึ้น\nทุกคนต่างเฝ้ารอวันที่จะได้พบกันอีกครั้ง\nเพราะความทรงจำเหล่านั้นยังอยู่ในใจเสมอ\nและพวกเราจะก้าวเดินไปด้วยกันต่อไป' : 'ความทรงจำ\nยังอยู่ในใจ\nเสมอไป',
-          box: [bx, by, bx + bw, by + bh], targetFontSize: i === 0 ? 26 : 14,
+        const text = i === 0 ? 'เมื่อเรื่องราวที่ยาวนานเริ่มต้นขึ้น\nทุกคนต่างเฝ้ารอวันที่จะได้พบกันอีกครั้ง\nเพราะความทรงจำเหล่านั้นยังอยู่ในใจเสมอ\nและพวกเราจะก้าวเดินไปด้วยกันต่อไป' : 'ความทรงจำ\nยังอยู่ในใจ\nเสมอไป';
+        const box = [bx, by, bx + bw, by + bh];
+        return { t: text,
+          box, targetFontSize: i === 0 ? 26 : 14,
+          ...(i === 0 ? { sourceSizing: {
+            mode: 'auto' as const, status: 'matched' as const, baseFontSizePx: 26,
+            font: { family: 'sans-serif', textKey: text, referencePx: 26, bodyHeightPx: 16, loaded: true },
+            evidence: { policyVersion: SOURCE_SIZE_POLICY, sourceRevision: 'p03-source-v1',
+              regionKey: box.join(','), pixelRevision: 'p03-pixels-v1',
+              rect: { x: bx, y: by, width: bw, height: 160 }, quality: 'reliable' as const,
+              confidence: .9, reason: 'glyphs', bodyHeightPx: 16, glyphCount: 24, lineCount: 4 },
+          } } : {}),
           styleProfile: { fill: '#000000', outline: '#ffffff', hasOutline: true, outlineWidthRatio: .12,
             fillConfidence: 1, outlineConfidence: 1, source: 'manual', ownershipMode: 'manual', manualShadowMode: 'standard' },
           layoutAdjustment: { bx, by, bw, bh, iw, ih, manualMinHeightPx: bh } };

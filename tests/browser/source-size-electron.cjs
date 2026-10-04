@@ -6,6 +6,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 app.setPath('userData', path.join(process.cwd(), '.scratch', 'source-size-electron-profile'));
 app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('disable-gpu');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.whenReady().then(async()=>{
   const window=new BrowserWindow({show:false,width:1200,height:900,webPreferences:{contextIsolation:true,nodeIntegration:false,backgroundThrottling:false,offscreen:true}});

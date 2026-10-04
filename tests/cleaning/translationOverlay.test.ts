@@ -25,6 +25,7 @@ let shadowOffsetsX: number[];
 let shadowOffsetsY: number[];
 let drawnFillColors: string[];
 let drawnOutlineColors: string[];
+let fontAwareMeasureTextCount: number;
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -62,6 +63,7 @@ beforeEach(() => {
   shadowOffsetsY = [];
   drawnFillColors = [];
   drawnOutlineColors = [];
+  fontAwareMeasureTextCount = 0;
 
   Object.defineProperty(document, "fonts", {
     configurable: true,
@@ -1155,6 +1157,7 @@ function mockFontAwareMeasureCtx(): void {
     new Proxy(
       {
         measureText: function (this: { font?: string }, str: string) {
+          fontAwareMeasureTextCount += 1;
           const match = /(\d+(?:\.\d+)?)px/.exec(this.font ?? "");
           const fs = match ? parseFloat(match[1]) : 16;
           return { width: str.length * fs * 0.62 };
@@ -2110,6 +2113,46 @@ test("single width handle slides left and right smoothly: widening to right wrap
   expect(bubble.layoutAdjustment?.bw).toBeGreaterThan(100);
   expect(bubble.layoutAdjustment?.bw).toBeLessThan(300);
   expect(bubble.layoutAdjustment?.bh).toBeGreaterThanOrEqual(140);
+});
+
+test("width preview lays out the text once and draws with the computed live reflow", async () => {
+  const text = "ทั้งที่ข้าอุตส่าห์แต่งตัวในแบบที่เจ้าชอบแท้ๆ";
+  const { container, chromeRoot, bubble } = await renderOverlayFresh(text, {
+    layoutAdjustment: { bx: 100, by: 100, bw: 200, bh: 140, iw: 1000, ih: 1200, manualMinHeightPx: 140 },
+    fontSizeMultiplier: 1,
+  });
+  mockCanvasRect(container);
+  const handle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  handle.setPointerCapture = vi.fn();
+  (handle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  handle.releasePointerCapture = vi.fn();
+
+  firePointer(handle, "pointerdown", 500, 500);
+  const { layoutBubbleAtFixedFont, resolveCanvasFontFamily } = await import("@/lib/translationOverlay");
+  const effectiveFontSize = Math.max(8, Math.round((bubble.targetFontSize ?? 16) * (bubble.fontSizeMultiplier ?? 1)));
+  const beforeReferenceLayout = fontAwareMeasureTextCount;
+  const expectedLayout = layoutBubbleAtFixedFont(
+    text,
+    210,
+    effectiveFontSize,
+    resolveCanvasFontFamily("Itim, sans-serif"),
+    true,
+    140,
+    1100,
+    "th",
+  );
+  const singleLayoutMeasureCount = fontAwareMeasureTextCount - beforeReferenceLayout;
+  expect(singleLayoutMeasureCount).toBeGreaterThan(10);
+
+  const beforePreview = fontAwareMeasureTextCount;
+  firePointer(handle, "pointermove", 510, 500);
+  const previewMeasureCount = fontAwareMeasureTextCount - beforePreview;
+  expect(previewMeasureCount).toBeLessThan(singleLayoutMeasureCount * 1.5);
+  expect(fillTextSpy.mock.calls.slice(-expectedLayout.lines.length).map(([line]) => String(line)))
+    .toEqual(expectedLayout.lines);
+  firePointer(handle, "pointerup", 510, 500);
+  expect(bubble.layoutSnapshot?.frameWidthPx).toBeCloseTo(bubble.layoutAdjustment!.bw, 2);
+  expect(bubble.layoutSnapshot?.lines).toEqual(expectedLayout.lines);
 });
 
 test("rotate handle snaps magnetically to cardinal right angles (0, 90, 180, 270) within 6 degrees", async () => {

@@ -4,8 +4,29 @@ import {
   POST as publishEndpoint,
   GET as getPublishedEndpoint,
   _resetPublishedForTest,
-} from "@/src/app/api/extension/publish-back/route";
+} from "@/src/app/api/extension/publish-back/handler";
 import { _resetPairingTokenForTest } from "@/lib/server/pairing";
+import { createPageTargetIdentity } from "@/lib/extension/strictParity";
+import { withReviewIdentity } from "@/lib/translation/qualityReview";
+import { inspectedBackgroundEvidence, TEST_CLEAN_DATA_URL } from "../helpers/extensionBackgroundEvidence";
+
+const SOURCE_REVISION = "a".repeat(64);
+function publication(pageUrl: string, text: string) {
+  return {
+    pageUrl,
+    originUrl: "https://manga.example.com/chapter-5",
+    targetIdentity: createPageTargetIdentity("en"),
+    sourceRevision: SOURCE_REVISION,
+    ...inspectedBackgroundEvidence(SOURCE_REVISION),
+    cleanUrl: TEST_CLEAN_DATA_URL,
+    bubbles: [{
+      t: text,
+      original_text: "Original text",
+      box: [100, 100, 300, 300],
+      translationReview: withReviewIdentity({status:"ok",sourceText:"Original text",reviewedText:text},"en",SOURCE_REVISION),
+    }],
+  };
+}
 
 describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
   beforeEach(() => {
@@ -32,14 +53,7 @@ describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
         method: "POST",
         headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000", authorization: "Bearer test-token" },
         body: JSON.stringify({
-          pageUrl: "https://manga.example.com/chapter-5/page-2.png",
-          originUrl: "https://manga.example.com/chapter-5",
-          bubbles: [
-            {
-              t: "แปลใหม่ใน SuperK Editor สำเร็จแล้ว!",
-              box: [100, 100, 300, 300],
-            },
-          ],
+          ...publication("https://manga.example.com/chapter-5/page-2.png", "Edited translation is ready!"),
           textStyle: {
             fontFamily: "Itim, sans-serif",
             fontSizeMultiplier: 1.2,
@@ -69,7 +83,7 @@ describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
       expect(getRes.status).toBe(200);
       const getData = await getRes.json();
       expect(getData.pageUrl).toBe("https://manga.example.com/chapter-5/page-2.png");
-      expect(getData.bubbles[0].t).toBe("แปลใหม่ใน SuperK Editor สำเร็จแล้ว!");
+      expect(getData.bubbles[0].t).toBe("Edited translation is ready!");
       expect(getData.textStyle.fontSizeMultiplier).toBe(1.2);
     });
 
@@ -78,10 +92,7 @@ describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
       const req = new NextRequest("http://127.0.0.1:3000/api/extension/publish-back", {
         method: "POST",
         headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000", authorization: "Bearer test-token" },
-        body: JSON.stringify({
-          pageUrl: "https://manga.example.com/p1.jpg",
-          bubbles: [{ t: "คำแปลอัปเดต", box: [10, 10, 50, 50] }],
-        }),
+        body: JSON.stringify(publication("https://manga.example.com/p1.jpg", "Translation update")),
       });
       await publishEndpoint(req);
 
@@ -107,10 +118,7 @@ describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
         new NextRequest("http://127.0.0.1:3000/api/extension/publish-back", {
           method: "POST",
           headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000", authorization: "Bearer test-token" },
-          body: JSON.stringify({
-            pageUrl: "https://manga.example.com/p1.jpg",
-            bubbles: [{ t: "First", box: [0, 0, 10, 10] }],
-          }),
+          body: JSON.stringify(publication("https://manga.example.com/p1.jpg", "First")),
         }),
       );
       const data1 = await post1.json();
@@ -122,10 +130,7 @@ describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
         new NextRequest("http://127.0.0.1:3000/api/extension/publish-back", {
           method: "POST",
           headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000", authorization: "Bearer test-token" },
-          body: JSON.stringify({
-            pageUrl: "https://manga.example.com/p2.jpg",
-            bubbles: [{ t: "Second", box: [0, 0, 10, 10] }],
-          }),
+          body: JSON.stringify(publication("https://manga.example.com/p2.jpg", "Second")),
         }),
       );
       const data2 = await post2.json();
@@ -165,7 +170,7 @@ describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
         new NextRequest("http://127.0.0.1:3000/api/extension/publish-back", {
           method: "POST",
           headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000", authorization: "Bearer test-token" },
-          body: JSON.stringify({ pageUrl: "https://manga.example.com/p1.jpg", bubbles: [{ t: "1" }] }),
+          body: JSON.stringify(publication("https://manga.example.com/p1.jpg", "1")),
         }),
       );
 
@@ -174,7 +179,7 @@ describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
         new NextRequest("http://127.0.0.1:3000/api/extension/publish-back", {
           method: "POST",
           headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000", authorization: "Bearer test-token" },
-          body: JSON.stringify({ pageUrl: "https://manga.example.com/p2.jpg", bubbles: [{ t: "2" }] }),
+          body: JSON.stringify(publication("https://manga.example.com/p2.jpg", "2")),
         }),
       );
 
@@ -183,7 +188,7 @@ describe("Bidirectional Publishing Protocol (Ticket 05)", () => {
         new NextRequest("http://127.0.0.1:3000/api/extension/publish-back", {
           method: "POST",
           headers: { "Content-Type": "application/json", origin: "http://127.0.0.1:3000", authorization: "Bearer test-token" },
-          body: JSON.stringify({ pageUrl: "https://manga.example.com/p1.jpg", bubbles: [{ t: "1-v2" }] }),
+          body: JSON.stringify(publication("https://manga.example.com/p1.jpg", "2")),
         }),
       );
 

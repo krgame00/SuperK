@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { webcrypto } from 'node:crypto';
 import { describe, it, expect, vi } from 'vitest';
 
 const read = (name: string) => readFileSync(`chrome-extension/${name}`, 'utf8');
@@ -30,6 +31,7 @@ describe('SuperK Extension Inpainting Pipeline (Ticket 02)', () => {
 
     const context = vm.createContext({
       fetch: fetchMock,
+      crypto: webcrypto,
       console,
       URL,
       FormData,
@@ -40,6 +42,7 @@ describe('SuperK Extension Inpainting Pipeline (Ticket 02)', () => {
       setTimeout,
       clearTimeout,
       AbortSignal,
+      AbortController,
       Date,
     });
 
@@ -80,6 +83,7 @@ describe('SuperK Extension Inpainting Pipeline (Ticket 02)', () => {
       setTimeout,
       clearTimeout,
       AbortSignal,
+      AbortController,
       Date,
     });
 
@@ -167,18 +171,18 @@ describe('SuperK Extension Inpainting Pipeline (Ticket 02)', () => {
       setInterval: vi.fn(() => 1),
       clearInterval: vi.fn(),
       AbortSignal,
+      AbortController,
       Date,
     });
-    context.importScripts = (file: string) => vm.runInContext(read(file), context);
+    context.importScripts = (...files: string[]) => files.forEach(file => vm.runInContext(read(file), context));
     vm.runInContext(read('background.js'), context);
 
     // Trigger translation
     await contextMenuListener({ menuItemId: 'superk-translate-image', srcUrl: 'https://manga.test/image.png' }, { id: 10 });
 
     expect(sendMessageMock).toHaveBeenCalledWith(10, expect.objectContaining({
-      action: 'TRANSLATION_SUCCESS',
-      cleanMode: 'inpainting',
-      cleanImageBase64: expect.any(String),
+      action: 'TRANSLATION_REVIEW_REQUIRED',
+      payload: expect.objectContaining({ cleanUrl: expect.any(String), sourceImage: expect.stringMatching(/^data:image\/png;base64,/) }),
     }), expect.anything());
 
     // Trigger retry message
@@ -186,8 +190,8 @@ describe('SuperK Extension Inpainting Pipeline (Ticket 02)', () => {
     await onMessageListener({ action: 'RETRY_TRANSLATE', imageUrl: 'https://manga.test/image.png' }, { tab: { id: 10 }, frameId: 0 });
 
     expect(sendMessageMock).toHaveBeenCalledWith(10, expect.objectContaining({
-      action: 'TRANSLATION_SUCCESS',
-      cleanMode: 'inpainting',
+      action: 'TRANSLATION_REVIEW_REQUIRED',
+      payload: expect.objectContaining({ cleanUrl: expect.any(String) }),
     }), expect.anything());
   });
 
@@ -213,6 +217,7 @@ describe('SuperK Extension Inpainting Pipeline (Ticket 02)', () => {
 
     const context = vm.createContext({
       fetch: fetchMock,
+      crypto: webcrypto,
       console,
       URL,
       FormData,
@@ -223,6 +228,7 @@ describe('SuperK Extension Inpainting Pipeline (Ticket 02)', () => {
       setTimeout,
       clearTimeout,
       AbortSignal,
+      AbortController,
       Date,
     });
 
@@ -275,6 +281,7 @@ describe('SuperK Extension Inpainting Pipeline (Ticket 02)', () => {
             translationMode: 'direct',
             serverUrl: 'http://127.0.0.1:3000',
             apiKey: 'test-direct-key',
+            targetLang: 'Thai',
             cleanMode: 'inpainting',
           })),
         },
@@ -283,6 +290,7 @@ describe('SuperK Extension Inpainting Pipeline (Ticket 02)', () => {
 
     const context = vm.createContext({
       chrome,
+      crypto: webcrypto,
       fetch: fetchMock,
       console,
       URL,
@@ -296,9 +304,10 @@ describe('SuperK Extension Inpainting Pipeline (Ticket 02)', () => {
       setInterval: vi.fn(() => 1),
       clearInterval: vi.fn(),
       AbortSignal,
+      AbortController,
       Date,
     });
-    context.importScripts = (file: string) => vm.runInContext(read(file), context);
+    context.importScripts = (...files: string[]) => files.forEach(file => vm.runInContext(read(file), context));
     vm.runInContext(read('background.js'), context);
 
     await contextMenuListener({ menuItemId: 'superk-translate-image', srcUrl: 'https://manga.test/direct.png' }, { id: 25 });
@@ -309,10 +318,8 @@ describe('SuperK Extension Inpainting Pipeline (Ticket 02)', () => {
     // Direct mode bypasses cleaning while using shared server routing when available.
     expect(fetchMock.mock.calls.some(call => (call[0] as string).includes(':generateContent'))).toBe(false);
     expect(sendMessageMock).toHaveBeenCalledWith(25, expect.objectContaining({
-      action: 'TRANSLATION_SUCCESS',
-      cleanMode: 'inpainting',
-      cleanImageBase64: null,
-      bubbles: [expect.objectContaining({ t: 'ตรงไปตรงมา', box: [10, 10, 50, 50] })],
+      action: 'TRANSLATION_REVIEW_REQUIRED',
+      payload: expect.objectContaining({ cleanUrl: null, sourceImage: expect.stringMatching(/^data:image\/png;base64,/) }),
     }), expect.anything());
   });
 });

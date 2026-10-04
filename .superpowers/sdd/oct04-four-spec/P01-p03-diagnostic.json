@@ -1,0 +1,2158 @@
+{
+  "ok": true,
+  "diagnostic": true,
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.7977.76 Electron/44.2.0 Safari/537.36",
+  "hardwareConcurrency": 12,
+  "devicePixelRatio": 1,
+  "latencyDefinition": "dispatch to queued preview callback completion plus geometry read; excludes compositor presentation",
+  "rows": [
+    {
+      "label": "1000x1400/10/0.44/move",
+      "iw": 1000,
+      "ih": 1400,
+      "count": 10,
+      "zoom": 0.44,
+      "gesture": "move",
+      "durationMs": 1033.4000000003725,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.69999999999891,
+        "p95": 16.799999999999272,
+        "max": 16.80000000000109
+      },
+      "missedFrames60Hz": 0,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 16.600000001490116,
+        "p95": 17.59999999962747,
+        "max": 18.09999999962747
+      },
+      "releaseHandlerMs": 3.899999998509884,
+      "releaseToSecondFrameMs": 33.399999998509884,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 27.90000000782311
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 0.2999999988824129
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "getBoundingClientRect": {
+          "calls": 2,
+          "ms": 0
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0.09999999962747097
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.40000000037252903
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 16%; top: 23.5714%; width: 32%; height: 32.8571%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 16%; top: 23.5714%; width: 32%; height: 32.8571%;"
+    },
+    {
+      "label": "1000x1400/10/0.44/scale",
+      "iw": 1000,
+      "ih": 1400,
+      "count": 10,
+      "zoom": 0.44,
+      "gesture": "scale",
+      "durationMs": 1032.800000000745,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.69999999999891,
+        "p95": 16.700000000000728,
+        "max": 16.799999999999272
+      },
+      "missedFrames60Hz": 0,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 16.700000001117587,
+        "p95": 17.699999999254942,
+        "max": 17.799999998882413
+      },
+      "releaseHandlerMs": 10.300000000745058,
+      "releaseToSecondFrameMs": 32.20000000111759,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 41.19999999366701
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 6.199999999254942
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0.19999999925494194
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "getBoundingClientRect": {
+          "calls": 4,
+          "ms": 0.8000000007450581
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0.10000000149011612
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.30000000074505806
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 9.77384%; top: 17.1306%; width: 36.7694%; height: 37.7543%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 9.74138%; top: 17.163%; width: 36.7694%; height: 37.7543%;"
+    },
+    {
+      "label": "1000x1400/10/0.44/width",
+      "iw": 1000,
+      "ih": 1400,
+      "count": 10,
+      "zoom": 0.44,
+      "gesture": "width",
+      "durationMs": 1109.300000000745,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.69999999999891,
+        "p95": 33.399999999999636,
+        "max": 66.80000000000109
+      },
+      "missedFrames60Hz": 8,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 17.5,
+        "p95": 26.199999999254942,
+        "max": 29.200000001117587
+      },
+      "releaseHandlerMs": 0.8000000007450581,
+      "releaseToSecondFrameMs": 18.90000000037253,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 303,
+          "ms": 54.599999997764826
+        },
+        "measureText": {
+          "calls": 295437,
+          "ms": 213.8000000435859
+        },
+        "strokeText": {
+          "calls": 715,
+          "ms": 2.3999999966472387
+        },
+        "fillText": {
+          "calls": 715,
+          "ms": 0.7000000011175871
+        }
+      },
+      "releaseCosts": {
+        "setItem": {
+          "calls": 1,
+          "ms": 0
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.2999999988824129
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 21.4286%; width: 38%; height: 35.7143%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 21.4286%; width: 38%; height: 35.7143%;"
+    },
+    {
+      "label": "1000x1400/10/1/move",
+      "iw": 1000,
+      "ih": 1400,
+      "count": 10,
+      "zoom": 1,
+      "gesture": "move",
+      "durationMs": 1033,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.69999999999891,
+        "p95": 16.80000000000109,
+        "max": 16.80000000000109
+      },
+      "missedFrames60Hz": 0,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 16.59999999962747,
+        "p95": 17.59999999962747,
+        "max": 18
+      },
+      "releaseHandlerMs": 2.800000000745058,
+      "releaseToSecondFrameMs": 32.80000000074506,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 20.599999997764826
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 0.49999999813735485
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "getBoundingClientRect": {
+          "calls": 2,
+          "ms": 0
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0.09999999962747097
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.2000000011175871
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 16%; top: 23.5714%; width: 32%; height: 32.8571%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 16%; top: 23.5714%; width: 32%; height: 32.8571%;"
+    },
+    {
+      "label": "1000x1400/10/1/scale",
+      "iw": 1000,
+      "ih": 1400,
+      "count": 10,
+      "zoom": 1,
+      "gesture": "scale",
+      "durationMs": 1033.7000000011176,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.69999999999891,
+        "p95": 16.799999999999272,
+        "max": 16.799999999999272
+      },
+      "missedFrames60Hz": 0,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 16.699999999254942,
+        "p95": 17.600000001490116,
+        "max": 18
+      },
+      "releaseHandlerMs": 3.400000000372529,
+      "releaseToSecondFrameMs": 32.59999999962747,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 26.200000014156103
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 0.2999999988824129
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0.19999999925494194
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "getBoundingClientRect": {
+          "calls": 4,
+          "ms": 0.30000000074505806
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.30000000074505806
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 9.77384%; top: 17.1306%; width: 36.7694%; height: 37.7543%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 9.74138%; top: 17.163%; width: 36.7694%; height: 37.7543%;"
+    },
+    {
+      "label": "1000x1400/10/1/width",
+      "iw": 1000,
+      "ih": 1400,
+      "count": 10,
+      "zoom": 1,
+      "gesture": "width",
+      "durationMs": 1003,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.700000000000728,
+        "p95": 16.80000000000291,
+        "max": 50
+      },
+      "missedFrames60Hz": 2,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 16.5,
+        "p95": 20.699999999254942,
+        "max": 30.199999999254942
+      },
+      "releaseHandlerMs": 0.7000000011175871,
+      "releaseToSecondFrameMs": 18.700000001117587,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 303,
+          "ms": 23.700000004842877
+        },
+        "measureText": {
+          "calls": 295437,
+          "ms": 187.1999999806285
+        },
+        "strokeText": {
+          "calls": 715,
+          "ms": 2.800000000745058
+        },
+        "fillText": {
+          "calls": 715,
+          "ms": 0.6999999992549419
+        }
+      },
+      "releaseCosts": {
+        "setItem": {
+          "calls": 1,
+          "ms": 0
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.30000000074505806
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 21.4286%; width: 38%; height: 35.7143%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 21.4286%; width: 38%; height: 35.7143%;"
+    },
+    {
+      "label": "1000x1400/50/0.44/move",
+      "iw": 1000,
+      "ih": 1400,
+      "count": 50,
+      "zoom": 0.44,
+      "gesture": "move",
+      "durationMs": 1032.699999999255,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.69999999999709,
+        "p95": 16.700000000000728,
+        "max": 16.700000000000728
+      },
+      "missedFrames60Hz": 0,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 16.59999999962747,
+        "p95": 17.799999998882413,
+        "max": 19.40000000037253
+      },
+      "releaseHandlerMs": 2.799999998882413,
+      "releaseToSecondFrameMs": 30.899999998509884,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 59.30000000633299
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 0.6000000033527613
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "getBoundingClientRect": {
+          "calls": 2,
+          "ms": 0.09999999962747097
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0.09999999962747097
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.2999999988824129
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 16%; top: 23.5714%; width: 32%; height: 32.8571%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 16%; top: 23.5714%; width: 32%; height: 32.8571%;"
+    },
+    {
+      "label": "1000x1400/50/0.44/scale",
+      "iw": 1000,
+      "ih": 1400,
+      "count": 50,
+      "zoom": 0.44,
+      "gesture": "scale",
+      "durationMs": 1027.4000000003725,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.700000000000728,
+        "p95": 16.700000000000728,
+        "max": 16.799999999999272
+      },
+      "missedFrames60Hz": 0,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 16.800000000745058,
+        "p95": 18.299999998882413,
+        "max": 22.699999999254942
+      },
+      "releaseHandlerMs": 10.399999998509884,
+      "releaseToSecondFrameMs": 32.79999999888241,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 105.50000001490116
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 1.4999999981373549
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0.7000000011175871
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0.09999999962747097
+        },
+        "getBoundingClientRect": {
+          "calls": 4,
+          "ms": 2
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.5
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 9.77384%; top: 17.1306%; width: 36.7694%; height: 37.7543%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 9.74138%; top: 17.163%; width: 36.7694%; height: 37.7543%;"
+    },
+    {
+      "label": "1000x1400/50/0.44/width",
+      "iw": 1000,
+      "ih": 1400,
+      "count": 50,
+      "zoom": 0.44,
+      "gesture": "width",
+      "durationMs": 1418.800000000745,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.700000000000728,
+        "p95": 33.400000000001455,
+        "max": 116.59999999999854
+      },
+      "missedFrames60Hz": 29,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 24.59999999962747,
+        "p95": 35.399999998509884,
+        "max": 37.90000000037253
+      },
+      "releaseHandlerMs": 1.099999999627471,
+      "releaseToSecondFrameMs": 23.40000000037253,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 303,
+          "ms": 132.20000000298023
+        },
+        "measureText": {
+          "calls": 295437,
+          "ms": 281.899999987334
+        },
+        "strokeText": {
+          "calls": 715,
+          "ms": 3.299999998882413
+        },
+        "fillText": {
+          "calls": 715,
+          "ms": 1.3999999947845936
+        }
+      },
+      "releaseCosts": {
+        "setItem": {
+          "calls": 1,
+          "ms": 0
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.40000000037252903
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 21.4286%; width: 38%; height: 35.7143%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 21.4286%; width: 38%; height: 35.7143%;"
+    },
+    {
+      "label": "1000x1400/50/1/move",
+      "iw": 1000,
+      "ih": 1400,
+      "count": 50,
+      "zoom": 1,
+      "gesture": "move",
+      "durationMs": 1032.300000000745,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.69999999999709,
+        "p95": 16.700000000000728,
+        "max": 16.700000000000728
+      },
+      "missedFrames60Hz": 0,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 16.699999999254942,
+        "p95": 17.800000000745058,
+        "max": 26.90000000037253
+      },
+      "releaseHandlerMs": 3.199999999254942,
+      "releaseToSecondFrameMs": 31.5,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 79.80000000074506
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 0.900000000372529
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0.09999999962747097
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "getBoundingClientRect": {
+          "calls": 2,
+          "ms": 0
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0.09999999962747097
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.30000000074505806
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 16%; top: 23.5714%; width: 32%; height: 32.8571%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 16%; top: 23.5714%; width: 32%; height: 32.8571%;"
+    },
+    {
+      "label": "1000x1400/50/1/scale",
+      "iw": 1000,
+      "ih": 1400,
+      "count": 50,
+      "zoom": 1,
+      "gesture": "scale",
+      "durationMs": 1033.4000000003725,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.700000000000728,
+        "p95": 16.700000000000728,
+        "max": 16.799999999999272
+      },
+      "missedFrames60Hz": 0,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 16.59999999962747,
+        "p95": 18.09999999962747,
+        "max": 29.5
+      },
+      "releaseHandlerMs": 6,
+      "releaseToSecondFrameMs": 32.79999999888241,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 75.09999999590218
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 0.599999999627471
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0.10000000149011612
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "getBoundingClientRect": {
+          "calls": 4,
+          "ms": 1.400000000372529
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0.09999999962747097
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.2999999988824129
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 9.77384%; top: 17.1306%; width: 36.7694%; height: 37.7543%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 9.74138%; top: 17.163%; width: 36.7694%; height: 37.7543%;"
+    },
+    {
+      "label": "1000x1400/50/1/width",
+      "iw": 1000,
+      "ih": 1400,
+      "count": 50,
+      "zoom": 1,
+      "gesture": "width",
+      "durationMs": 1371.300000000745,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.700000000000728,
+        "p95": 33.400000000001455,
+        "max": 83.40000000000146
+      },
+      "missedFrames60Hz": 25,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 23.09999999962747,
+        "p95": 34.100000001490116,
+        "max": 46.40000000037253
+      },
+      "releaseHandlerMs": 0.7999999988824129,
+      "releaseToSecondFrameMs": 16.199999999254942,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 303,
+          "ms": 82.10000000335276
+        },
+        "measureText": {
+          "calls": 295437,
+          "ms": 266.3000000268221
+        },
+        "strokeText": {
+          "calls": 715,
+          "ms": 3.2000000029802322
+        },
+        "fillText": {
+          "calls": 715,
+          "ms": 1
+        }
+      },
+      "releaseCosts": {
+        "setItem": {
+          "calls": 1,
+          "ms": 0
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.5
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 21.4286%; width: 38%; height: 35.7143%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 21.4286%; width: 38%; height: 35.7143%;"
+    },
+    {
+      "label": "1000x1400/100/0.44/move",
+      "iw": 1000,
+      "ih": 1400,
+      "count": 100,
+      "zoom": 0.44,
+      "gesture": "move",
+      "durationMs": 1307.199999999255,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.700000000000728,
+        "p95": 50,
+        "max": 50.099999999998545
+      },
+      "missedFrames60Hz": 16,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 20.5,
+        "p95": 36.70000000111759,
+        "max": 39.80000000074506
+      },
+      "releaseHandlerMs": 3.300000000745058,
+      "releaseToSecondFrameMs": 32.90000000037253,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 175.39999998360872
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 0.900000000372529
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "getBoundingClientRect": {
+          "calls": 2,
+          "ms": 0
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0.09999999962747097
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.40000000037252903
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 16%; top: 23.5714%; width: 32%; height: 32.8571%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 16%; top: 23.5714%; width: 32%; height: 32.8571%;"
+    },
+    {
+      "label": "1000x1400/100/0.44/scale",
+      "iw": 1000,
+      "ih": 1400,
+      "count": 100,
+      "zoom": 0.44,
+      "gesture": "scale",
+      "durationMs": 1235.5,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.700000000000728,
+        "p95": 33.400000000001455,
+        "max": 50
+      },
+      "missedFrames60Hz": 12,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 18.40000000037253,
+        "p95": 38.59999999962747,
+        "max": 42.5
+      },
+      "releaseHandlerMs": 7.699999999254942,
+      "releaseToSecondFrameMs": 39.80000000074506,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 196.30000000447035
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 0.6000000014901161
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0.40000000037252903
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "getBoundingClientRect": {
+          "calls": 4,
+          "ms": 3.099999999627471
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0.10000000149011612
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.40000000037252903
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 9.77384%; top: 17.1306%; width: 36.7694%; height: 37.7543%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 9.74138%; top: 17.163%; width: 36.7694%; height: 37.7543%;"
+    },
+    {
+      "label": "1000x1400/100/0.44/width",
+      "iw": 1000,
+      "ih": 1400,
+      "count": 100,
+      "zoom": 0.44,
+      "gesture": "width",
+      "durationMs": 1638.800000000745,
+      "framesMs": {
+        "samples": 60,
+        "p50": 33.299999999995634,
+        "p95": 50,
+        "max": 83.40000000000146
+      },
+      "missedFrames60Hz": 40,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 26.899999998509884,
+        "p95": 39.30000000074506,
+        "max": 42.40000000037253
+      },
+      "releaseHandlerMs": 1,
+      "releaseToSecondFrameMs": 32.59999999962747,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 303,
+          "ms": 180.79999999143183
+        },
+        "measureText": {
+          "calls": 295437,
+          "ms": 254.39999993890524
+        },
+        "strokeText": {
+          "calls": 715,
+          "ms": 2.599999997764826
+        },
+        "fillText": {
+          "calls": 715,
+          "ms": 1.700000001117587
+        }
+      },
+      "releaseCosts": {
+        "setItem": {
+          "calls": 1,
+          "ms": 0
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.5
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 21.4286%; width: 38%; height: 35.7143%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 21.4286%; width: 38%; height: 35.7143%;"
+    },
+    {
+      "label": "1000x1400/100/1/move",
+      "iw": 1000,
+      "ih": 1400,
+      "count": 100,
+      "zoom": 1,
+      "gesture": "move",
+      "durationMs": 1048.9000000003725,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.69999999999709,
+        "p95": 16.799999999995634,
+        "max": 33.30000000000291
+      },
+      "missedFrames60Hz": 1,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 16.799999998882413,
+        "p95": 19.90000000037253,
+        "max": 35.09999999962747
+      },
+      "releaseHandlerMs": 4.299999998882413,
+      "releaseToSecondFrameMs": 30.799999998882413,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 143.80000001378357
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 0.9000000022351742
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "getBoundingClientRect": {
+          "calls": 2,
+          "ms": 0
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0.09999999962747097
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.40000000037252903
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 16%; top: 23.5714%; width: 32%; height: 32.8571%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 16%; top: 23.5714%; width: 32%; height: 32.8571%;"
+    },
+    {
+      "label": "1000x1400/100/1/scale",
+      "iw": 1000,
+      "ih": 1400,
+      "count": 100,
+      "zoom": 1,
+      "gesture": "scale",
+      "durationMs": 1030.5,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.69999999999709,
+        "p95": 16.700000000004366,
+        "max": 16.80000000000291
+      },
+      "missedFrames60Hz": 0,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 16.600000001490116,
+        "p95": 17.699999999254942,
+        "max": 20
+      },
+      "releaseHandlerMs": 6.900000000372529,
+      "releaseToSecondFrameMs": 31.699999999254942,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 131.29999999515712
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 1
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0.30000000074505806
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "getBoundingClientRect": {
+          "calls": 4,
+          "ms": 1.6000000014901161
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.599999999627471
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 9.77384%; top: 17.1306%; width: 36.7694%; height: 37.7543%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 9.74138%; top: 17.163%; width: 36.7694%; height: 37.7543%;"
+    },
+    {
+      "label": "1000x1400/100/1/width",
+      "iw": 1000,
+      "ih": 1400,
+      "count": 100,
+      "zoom": 1,
+      "gesture": "width",
+      "durationMs": 1579.5999999996275,
+      "framesMs": {
+        "samples": 60,
+        "p50": 33.19999999999709,
+        "p95": 50,
+        "max": 99.90000000000146
+      },
+      "missedFrames60Hz": 38,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 27.300000000745058,
+        "p95": 44.19999999925494,
+        "max": 55.5
+      },
+      "releaseHandlerMs": 0.8000000007450581,
+      "releaseToSecondFrameMs": 21.09999999962747,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 303,
+          "ms": 136.8999999947846
+        },
+        "measureText": {
+          "calls": 295437,
+          "ms": 262.3000000528991
+        },
+        "strokeText": {
+          "calls": 715,
+          "ms": 3.099999997764826
+        },
+        "fillText": {
+          "calls": 715,
+          "ms": 0.7999999988824129
+        }
+      },
+      "releaseCosts": {
+        "setItem": {
+          "calls": 1,
+          "ms": 0.09999999962747097
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.40000000037252903
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 21.4286%; width: 38%; height: 35.7143%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 21.4286%; width: 38%; height: 35.7143%;"
+    },
+    {
+      "label": "1600x2400/10/0.44/move",
+      "iw": 1600,
+      "ih": 2400,
+      "count": 10,
+      "zoom": 0.44,
+      "gesture": "move",
+      "durationMs": 1034.5999999996275,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.69999999999709,
+        "p95": 16.80000000000291,
+        "max": 16.80000000000291
+      },
+      "missedFrames60Hz": 0,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 16.799999998882413,
+        "p95": 18.59999999962747,
+        "max": 20
+      },
+      "releaseHandlerMs": 3.800000000745058,
+      "releaseToSecondFrameMs": 33.30000000074506,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 36.1999999973923
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 0.8000000026077032
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0.10000000149011612
+        },
+        "getBoundingClientRect": {
+          "calls": 2,
+          "ms": 0
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0.09999999962747097
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.40000000037252903
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 13.75%; width: 20%; height: 19.1667%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 13.75%; width: 20%; height: 19.1667%;"
+    },
+    {
+      "label": "1600x2400/10/0.44/scale",
+      "iw": 1600,
+      "ih": 2400,
+      "count": 10,
+      "zoom": 0.44,
+      "gesture": "scale",
+      "durationMs": 1083.2000000011176,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.69999999999709,
+        "p95": 16.80000000000291,
+        "max": 50
+      },
+      "missedFrames60Hz": 3,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 16.700000001117587,
+        "p95": 19.09999999962747,
+        "max": 60.30000000074506
+      },
+      "releaseHandlerMs": 5.699999999254942,
+      "releaseToSecondFrameMs": 32.30000000074506,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 58.19999999552965
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 0.6999999973922968
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0.19999999925494194
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0.09999999962747097
+        },
+        "getBoundingClientRect": {
+          "calls": 4,
+          "ms": 1.1000000014901161
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0.10000000149011612
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.599999999627471
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.10865%; top: 9.99287%; width: 22.9809%; height: 22.0234%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.08836%; top: 10.0118%; width: 22.9809%; height: 22.0234%;"
+    },
+    {
+      "label": "1600x2400/10/0.44/width",
+      "iw": 1600,
+      "ih": 2400,
+      "count": 10,
+      "zoom": 0.44,
+      "gesture": "width",
+      "durationMs": 1282.5,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.69999999999709,
+        "p95": 33.400000000001455,
+        "max": 83.19999999999709
+      },
+      "missedFrames60Hz": 19,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 19.200000001117587,
+        "p95": 33.40000000037253,
+        "max": 37
+      },
+      "releaseHandlerMs": 0.8000000007450581,
+      "releaseToSecondFrameMs": 20.40000000037253,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 303,
+          "ms": 63.500000009313226
+        },
+        "measureText": {
+          "calls": 295437,
+          "ms": 243.3999999538064
+        },
+        "strokeText": {
+          "calls": 715,
+          "ms": 3.5999999959021807
+        },
+        "fillText": {
+          "calls": 715,
+          "ms": 0.49999999813735485
+        }
+      },
+      "releaseCosts": {
+        "setItem": {
+          "calls": 1,
+          "ms": 0
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.40000000037252903
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.25%; top: 12.5%; width: 23.75%; height: 20.8333%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.25%; top: 12.5%; width: 23.75%; height: 20.8333%;"
+    },
+    {
+      "label": "1600x2400/10/1/move",
+      "iw": 1600,
+      "ih": 2400,
+      "count": 10,
+      "zoom": 1,
+      "gesture": "move",
+      "durationMs": 1069.699999999255,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.69999999999709,
+        "p95": 16.700000000004366,
+        "max": 16.80000000000291
+      },
+      "missedFrames60Hz": 0,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 16.799999998882413,
+        "p95": 17.59999999962747,
+        "max": 18.09999999962747
+      },
+      "releaseHandlerMs": 3.599999999627471,
+      "releaseToSecondFrameMs": 69.09999999962747,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 29.000000005587935
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 0.40000000037252903
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0.09999999962747097
+        },
+        "getBoundingClientRect": {
+          "calls": 2,
+          "ms": 0.09999999962747097
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0.09999999962747097
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.3999999985098839
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 13.75%; width: 20%; height: 19.1667%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 13.75%; width: 20%; height: 19.1667%;"
+    },
+    {
+      "label": "1600x2400/10/1/scale",
+      "iw": 1600,
+      "ih": 2400,
+      "count": 10,
+      "zoom": 1,
+      "gesture": "scale",
+      "durationMs": 1030.699999999255,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.69999999999709,
+        "p95": 16.700000000004366,
+        "max": 16.73399999999674
+      },
+      "missedFrames60Hz": 0,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 16.600000001490116,
+        "p95": 17.799999998882413,
+        "max": 18.600000001490116
+      },
+      "releaseHandlerMs": 4.699999999254942,
+      "releaseToSecondFrameMs": 31.699999999254942,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 28.700000010430813
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 0.9999999981373549
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0.19999999925494194
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0.09999999962747097
+        },
+        "getBoundingClientRect": {
+          "calls": 4,
+          "ms": 0.40000000037252903
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0.09999999962747097
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.2999999988824129
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.10865%; top: 9.99287%; width: 22.9809%; height: 22.0234%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.08836%; top: 10.0118%; width: 22.9809%; height: 22.0234%;"
+    },
+    {
+      "label": "1600x2400/10/1/width",
+      "iw": 1600,
+      "ih": 2400,
+      "count": 10,
+      "zoom": 1,
+      "gesture": "width",
+      "durationMs": 1208.199999999255,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.69999999999709,
+        "p95": 33.400000000001455,
+        "max": 66.69999999999709
+      },
+      "missedFrames60Hz": 15,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 18.40000000037253,
+        "p95": 32.19999999925494,
+        "max": 34
+      },
+      "releaseHandlerMs": 1,
+      "releaseToSecondFrameMs": 10.199999999254942,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 303,
+          "ms": 29.200000014156103
+        },
+        "measureText": {
+          "calls": 295437,
+          "ms": 254.5999999884516
+        },
+        "strokeText": {
+          "calls": 715,
+          "ms": 2.100000001490116
+        },
+        "fillText": {
+          "calls": 715,
+          "ms": 1.800000000745058
+        }
+      },
+      "releaseCosts": {
+        "setItem": {
+          "calls": 1,
+          "ms": 0
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.5
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.25%; top: 12.5%; width: 23.75%; height: 20.8333%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.25%; top: 12.5%; width: 23.75%; height: 20.8333%;"
+    },
+    {
+      "label": "1600x2400/50/0.44/move",
+      "iw": 1600,
+      "ih": 2400,
+      "count": 50,
+      "zoom": 0.44,
+      "gesture": "move",
+      "durationMs": 1077,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.69999999999709,
+        "p95": 16.80000000000291,
+        "max": 66.69999999999709
+      },
+      "missedFrames60Hz": 3,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 16.59999999962747,
+        "p95": 19.700000001117587,
+        "max": 70.19999999925494
+      },
+      "releaseHandlerMs": 4.900000000372529,
+      "releaseToSecondFrameMs": 31.800000000745058,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 84.20000000111759
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 1.199999999254942
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "getBoundingClientRect": {
+          "calls": 2,
+          "ms": 0
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.40000000037252903
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 13.75%; width: 20%; height: 19.1667%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 13.75%; width: 20%; height: 19.1667%;"
+    },
+    {
+      "label": "1600x2400/50/0.44/scale",
+      "iw": 1600,
+      "ih": 2400,
+      "count": 50,
+      "zoom": 0.44,
+      "gesture": "scale",
+      "durationMs": 1253.699999999255,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.69999999999709,
+        "p95": 49.900000000001455,
+        "max": 50
+      },
+      "missedFrames60Hz": 13,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 20.40000000037253,
+        "p95": 37.5,
+        "max": 42.30000000074506
+      },
+      "releaseHandlerMs": 5.800000000745058,
+      "releaseToSecondFrameMs": 32.19999999925494,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 106.50000000745058
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 0.6999999973922968
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "getBoundingClientRect": {
+          "calls": 4,
+          "ms": 1.700000001117587
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0.09999999962747097
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.6000000014901161
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.10865%; top: 9.99287%; width: 22.9809%; height: 22.0234%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.08836%; top: 10.0118%; width: 22.9809%; height: 22.0234%;"
+    },
+    {
+      "label": "1600x2400/50/0.44/width",
+      "iw": 1600,
+      "ih": 2400,
+      "count": 50,
+      "zoom": 0.44,
+      "gesture": "width",
+      "durationMs": 1488,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.700000000004366,
+        "p95": 50,
+        "max": 100
+      },
+      "missedFrames60Hz": 32,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 25.899999998509884,
+        "p95": 39.59999999962747,
+        "max": 45.09999999962747
+      },
+      "releaseHandlerMs": 1.099999999627471,
+      "releaseToSecondFrameMs": 27.59999999962747,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 303,
+          "ms": 128.30000000074506
+        },
+        "measureText": {
+          "calls": 295437,
+          "ms": 279.39999999664724
+        },
+        "strokeText": {
+          "calls": 715,
+          "ms": 3.5000000037252903
+        },
+        "fillText": {
+          "calls": 715,
+          "ms": 1.5000000074505806
+        }
+      },
+      "releaseCosts": {
+        "setItem": {
+          "calls": 1,
+          "ms": 0.09999999962747097
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.599999999627471
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.25%; top: 12.5%; width: 23.75%; height: 20.8333%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.25%; top: 12.5%; width: 23.75%; height: 20.8333%;"
+    },
+    {
+      "label": "1600x2400/50/1/move",
+      "iw": 1600,
+      "ih": 2400,
+      "count": 50,
+      "zoom": 1,
+      "gesture": "move",
+      "durationMs": 1083.3999999985099,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.69999999999709,
+        "p95": 16.80000000000291,
+        "max": 66.79999999999563
+      },
+      "missedFrames60Hz": 3,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 16.699999999254942,
+        "p95": 18.699999999254942,
+        "max": 77.40000000037253
+      },
+      "releaseHandlerMs": 2.5,
+      "releaseToSecondFrameMs": 32.09999999962747,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 78.10000002011657
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 0.4000000022351742
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "getBoundingClientRect": {
+          "calls": 2,
+          "ms": 0
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.2999999988824129
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 13.75%; width: 20%; height: 19.1667%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 13.75%; width: 20%; height: 19.1667%;"
+    },
+    {
+      "label": "1600x2400/50/1/scale",
+      "iw": 1600,
+      "ih": 2400,
+      "count": 50,
+      "zoom": 1,
+      "gesture": "scale",
+      "durationMs": 1034.5999999996275,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.69999999999709,
+        "p95": 16.700000000004366,
+        "max": 16.80000000000291
+      },
+      "missedFrames60Hz": 0,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 16.59999999962747,
+        "p95": 18.199999999254942,
+        "max": 18.699999999254942
+      },
+      "releaseHandlerMs": 6.5,
+      "releaseToSecondFrameMs": 33.19999999925494,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 74.49999999813735
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 1.0000000018626451
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0.30000000074505806
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "getBoundingClientRect": {
+          "calls": 4,
+          "ms": 1.0999999977648258
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.5
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.10865%; top: 9.99287%; width: 22.9809%; height: 22.0234%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.08836%; top: 10.0118%; width: 22.9809%; height: 22.0234%;"
+    },
+    {
+      "label": "1600x2400/50/1/width",
+      "iw": 1600,
+      "ih": 2400,
+      "count": 50,
+      "zoom": 1,
+      "gesture": "width",
+      "durationMs": 1456.1000000014901,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.700000000004366,
+        "p95": 50,
+        "max": 83.40000000000146
+      },
+      "missedFrames60Hz": 30,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 24.299999998882413,
+        "p95": 39.80000000074506,
+        "max": 44.59999999962747
+      },
+      "releaseHandlerMs": 0.900000000372529,
+      "releaseToSecondFrameMs": 17.90000000037253,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 303,
+          "ms": 84.40000000782311
+        },
+        "measureText": {
+          "calls": 295437,
+          "ms": 278.30000001750886
+        },
+        "strokeText": {
+          "calls": 715,
+          "ms": 2.700000001117587
+        },
+        "fillText": {
+          "calls": 715,
+          "ms": 0.8999999985098839
+        }
+      },
+      "releaseCosts": {
+        "setItem": {
+          "calls": 1,
+          "ms": 0.09999999962747097
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.40000000037252903
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.25%; top: 12.5%; width: 23.75%; height: 20.8333%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.25%; top: 12.5%; width: 23.75%; height: 20.8333%;"
+    },
+    {
+      "label": "1600x2400/100/0.44/move",
+      "iw": 1600,
+      "ih": 2400,
+      "count": 100,
+      "zoom": 0.44,
+      "gesture": "move",
+      "durationMs": 1192.0999999996275,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.69999999999709,
+        "p95": 33.30000000000291,
+        "max": 83.29999999999563
+      },
+      "missedFrames60Hz": 9,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 16.800000000745058,
+        "p95": 42,
+        "max": 79.20000000111759
+      },
+      "releaseHandlerMs": 3.400000000372529,
+      "releaseToSecondFrameMs": 28.300000000745058,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 138.8000000026077
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 0.6999999992549419
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0.09999999962747097
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "getBoundingClientRect": {
+          "calls": 2,
+          "ms": 0.10000000149011612
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.2999999988824129
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 13.75%; width: 20%; height: 19.1667%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 13.75%; width: 20%; height: 19.1667%;"
+    },
+    {
+      "label": "1600x2400/100/0.44/scale",
+      "iw": 1600,
+      "ih": 2400,
+      "count": 100,
+      "zoom": 0.44,
+      "gesture": "scale",
+      "durationMs": 1527.699999999255,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.700000000004366,
+        "p95": 49.89999999999418,
+        "max": 50
+      },
+      "missedFrames60Hz": 29,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 24.699999999254942,
+        "p95": 40.70000000111759,
+        "max": 41.29999999888241
+      },
+      "releaseHandlerMs": 11.5,
+      "releaseToSecondFrameMs": 36,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 184.19999998807907
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 1.5000000018626451
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0.40000000037252903
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "getBoundingClientRect": {
+          "calls": 4,
+          "ms": 4.200000001117587
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0.09999999962747097
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.5
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.10865%; top: 9.99287%; width: 22.9809%; height: 22.0234%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.08836%; top: 10.0118%; width: 22.9809%; height: 22.0234%;"
+    },
+    {
+      "label": "1600x2400/100/0.44/width",
+      "iw": 1600,
+      "ih": 2400,
+      "count": 100,
+      "zoom": 0.44,
+      "gesture": "width",
+      "durationMs": 1850,
+      "framesMs": {
+        "samples": 60,
+        "p50": 33.30000000000291,
+        "p95": 50,
+        "max": 116.59999999999854
+      },
+      "missedFrames60Hz": 55,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 30.90000000037253,
+        "p95": 55.90000000037253,
+        "max": 59.59999999962747
+      },
+      "releaseHandlerMs": 0.7999999988824129,
+      "releaseToSecondFrameMs": 21.5,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 303,
+          "ms": 195.4000000152737
+        },
+        "measureText": {
+          "calls": 295437,
+          "ms": 256.20000000298023
+        },
+        "strokeText": {
+          "calls": 715,
+          "ms": 3.3999999966472387
+        },
+        "fillText": {
+          "calls": 715,
+          "ms": 1
+        }
+      },
+      "releaseCosts": {
+        "setItem": {
+          "calls": 1,
+          "ms": 0
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.3999999985098839
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.25%; top: 12.5%; width: 23.75%; height: 20.8333%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.25%; top: 12.5%; width: 23.75%; height: 20.8333%;"
+    },
+    {
+      "label": "1600x2400/100/1/move",
+      "iw": 1600,
+      "ih": 2400,
+      "count": 100,
+      "zoom": 1,
+      "gesture": "move",
+      "durationMs": 1033,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.69999999999709,
+        "p95": 16.79999999998836,
+        "max": 16.80000000000291
+      },
+      "missedFrames60Hz": 0,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 16.699999999254942,
+        "p95": 17.90000000037253,
+        "max": 18.5
+      },
+      "releaseHandlerMs": 4.599999999627471,
+      "releaseToSecondFrameMs": 31.09999999962747,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 158.0999999847263
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 0.9000000022351742
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0.09999999962747097
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "getBoundingClientRect": {
+          "calls": 2,
+          "ms": 0
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.599999999627471
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 13.75%; width: 20%; height: 19.1667%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 10%; top: 13.75%; width: 20%; height: 19.1667%;"
+    },
+    {
+      "label": "1600x2400/100/1/scale",
+      "iw": 1600,
+      "ih": 2400,
+      "count": 100,
+      "zoom": 1,
+      "gesture": "scale",
+      "durationMs": 1149.800000000745,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.69999999999709,
+        "p95": 33.30000000000291,
+        "max": 100
+      },
+      "missedFrames60Hz": 7,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 16.700000001117587,
+        "p95": 25.100000001490116,
+        "max": 108.69999999925494
+      },
+      "releaseHandlerMs": 7.900000000372529,
+      "releaseToSecondFrameMs": 30.800000000745058,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 243,
+          "ms": 148.09999999962747
+        }
+      },
+      "releaseCosts": {
+        "measureText": {
+          "calls": 945,
+          "ms": 0.900000000372529
+        },
+        "strokeText": {
+          "calls": 10,
+          "ms": 0.3999999985098839
+        },
+        "fillText": {
+          "calls": 10,
+          "ms": 0
+        },
+        "getBoundingClientRect": {
+          "calls": 4,
+          "ms": 2.399999998509884
+        },
+        "setItem": {
+          "calls": 1,
+          "ms": 0
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.5
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.10865%; top: 9.99287%; width: 22.9809%; height: 22.0234%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.08836%; top: 10.0118%; width: 22.9809%; height: 22.0234%;"
+    },
+    {
+      "label": "1600x2400/100/1/width",
+      "iw": 1600,
+      "ih": 2400,
+      "count": 100,
+      "zoom": 1,
+      "gesture": "width",
+      "durationMs": 1604.5,
+      "framesMs": {
+        "samples": 60,
+        "p50": 16.70000000001164,
+        "p95": 50,
+        "max": 100
+      },
+      "missedFrames60Hz": 39,
+      "inputToPreviewMs": {
+        "samples": 60,
+        "p50": 26.5,
+        "p95": 48.59999999962747,
+        "max": 51.80000000074506
+      },
+      "releaseHandlerMs": 0.7999999988824129,
+      "releaseToSecondFrameMs": 19.199999999254942,
+      "dragCosts": {
+        "getBoundingClientRect": {
+          "calls": 303,
+          "ms": 135.80000000074506
+        },
+        "measureText": {
+          "calls": 295437,
+          "ms": 249.9999999757856
+        },
+        "strokeText": {
+          "calls": 715,
+          "ms": 3.499999998137355
+        },
+        "fillText": {
+          "calls": 715,
+          "ms": 0.7999999970197678
+        }
+      },
+      "releaseCosts": {
+        "setItem": {
+          "calls": 1,
+          "ms": 0.09999999962747097
+        },
+        "getImageData": {
+          "calls": 1,
+          "ms": 0.40000000037252903
+        }
+      },
+      "preview": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.25%; top: 12.5%; width: 23.75%; height: 20.8333%;",
+      "settled": "position: absolute; box-sizing: border-box; cursor: grab; pointer-events: none; touch-action: none; border-radius: 4px; z-index: 30; transform-origin: center center; left: 6.25%; top: 12.5%; width: 23.75%; height: 20.8333%;"
+    }
+  ],
+  "hardware": {
+    "cpu": "AMD Ryzen 5 5600G with Radeon Graphics         ",
+    "logicalCpus": 12,
+    "ramGB": 31.87105941772461,
+    "platform": "win32",
+    "release": "10.0.26200",
+    "versions": {
+      "node": "24.20.0",
+      "acorn": "8.18.0",
+      "ada": "4.0.0",
+      "amaro": "1.1.11",
+      "ares": "1.34.8",
+      "brotli": "1.2.0",
+      "cldr": "48.0",
+      "icu": "78.2",
+      "llhttp": "9.4.3",
+      "merve": "1.2.2",
+      "modules": "149",
+      "napi": "10",
+      "nbytes": "0.1.4",
+      "ncrypto": "0.0.1",
+      "nghttp2": "1.70.0",
+      "nghttp3": "",
+      "ngtcp2": "",
+      "openssl": "0.0.0",
+      "simdjson": "4.6.6",
+      "simdutf": "7.7.0",
+      "sqlite": "3.53.4",
+      "tz": "2025c",
+      "undici": "7.29.0",
+      "unicode": "17.0",
+      "uv": "1.52.1",
+      "uvwasi": "0.0.23",
+      "v8": "15.2.124.19-electron.0",
+      "zlib": "1.3.2.1-motley",
+      "zstd": "1.6.0",
+      "electron": "44.2.0",
+      "chrome": "152.0.7977.76"
+    }
+  },
+  "gpu": {
+    "auxAttributes": {
+      "amdSwitchable": false,
+      "canSupportThreadedTextureMailbox": false,
+      "directMLFeatureLevel": "Not supported",
+      "dx12FeatureLevel": "Not supported",
+      "glImplementationParts": "(gl=none,angle=none)",
+      "glResetNotificationStrategy": 0,
+      "inProcessGpu": true,
+      "initializationTime": 0,
+      "isAsan": false,
+      "isClangCoverage": false,
+      "jpegDecodeAcceleratorSupported": false,
+      "optimus": false,
+      "overlayInfo": {
+        "bgra8OverlaySupport": "NONE",
+        "directComposition": false,
+        "nv12OverlaySupport": "NONE",
+        "p010OverlaySupport": "NONE",
+        "rgb10a2OverlaySupport": "NONE",
+        "supportsOverlays": false,
+        "yuy2OverlaySupport": "NONE"
+      },
+      "passthroughCmdDecoder": false,
+      "sandboxed": false,
+      "skiaBackendType": "None",
+      "subpixelFontRendering": true,
+      "supportsD3dSharedImages": false,
+      "supportsDirectML": false,
+      "supportsDx12": false,
+      "supportsVulkan": false,
+      "targetCpuBits": 64,
+      "visibilityCallbackCallCount": 0,
+      "vulkanVersion": "Not supported"
+    },
+    "gpuDevice": [
+      {
+        "active": false,
+        "deviceId": 11651,
+        "deviceString": "NVIDIA GeForce RTX 5050",
+        "driverVersion": "32.0.16.1088",
+        "gpuPreference": 2,
+        "revision": 161,
+        "subSysId": -1975578557,
+        "vendorId": 4318
+      },
+      {
+        "active": false,
+        "deviceId": 11651,
+        "deviceString": "NVIDIA GeForce RTX 5050",
+        "driverVersion": "32.0.16.1088",
+        "gpuPreference": 0,
+        "revision": 161,
+        "subSysId": -1975578557,
+        "vendorId": 4318
+      },
+      {
+        "active": false,
+        "deviceId": 140,
+        "deviceString": "Microsoft Basic Render Driver",
+        "driverVersion": "10.0.26100.9549",
+        "gpuPreference": 0,
+        "revision": 0,
+        "subSysId": 0,
+        "vendorId": 5140
+      }
+    ]
+  }
+}

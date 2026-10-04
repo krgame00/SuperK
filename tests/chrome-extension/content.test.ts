@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, expect, it, vi } from 'vitest';
+import * as policy from '@/lib/extension/strictParity';
 
 const script = readFileSync('chrome-extension/content.js', 'utf8');
 afterEach(() => {
@@ -15,6 +16,7 @@ function setup() {
   const addListener = vi.fn(fn => { listener = fn; });
   vi.stubGlobal('chrome', { runtime: { onMessage: { addListener } } });
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  vi.stubGlobal('SuperKPolicy', { ...policy, extensionDisplayedText: (bubble: { t?: string; translated?: string }) => bubble.t || bubble.translated || '', inspectExtensionOutput: () => ({ status: 'eligible' }) });
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(new Proxy({}, {
     get: () => vi.fn(),
   }) as CanvasRenderingContext2D);
@@ -191,5 +193,3 @@ it('cleans up loading scrim when translation succeeds or encounters an error', (
   expect(document.querySelector('.superk-loading-scrim-container')).toBeNull();
   expect(document.querySelector('.superk-error')).not.toBeNull();
 });
-
-

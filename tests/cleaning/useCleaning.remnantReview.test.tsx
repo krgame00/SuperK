@@ -2,6 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import { useCleaning, type PageCleaningResult } from "@/hooks/useCleaning";
+import { undoManager } from "@/lib/undoManager";
 import {
   CleaningClientError,
   createCleaningJob,
@@ -13,6 +14,7 @@ import {
   loadCleaningResultAssets,
   loadCleaningResultsMetadata,
   saveCleaningResultMetadata,
+  saveCleaningAssets,
 } from "@/lib/projectStore";
 import {
   blobFingerprint,
@@ -289,6 +291,7 @@ function storedMetadata(overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
+  undoManager.clear();
   vi.useFakeTimers();
   vi.clearAllMocks();
   decodeFailures = 0;
@@ -320,6 +323,86 @@ beforeEach(() => {
     configurable: true,
     value: vi.fn(),
   });
+});
+
+test("applied mask correction restores actual clean assets and scoped findings through workspace history", async () => {
+  vi.mocked(createCleaningJob).mockResolvedValue(queuedJob);
+  vi.mocked(getCleaningJob).mockResolvedValue(succeededJob);
+  vi.mocked(getCleaningResult).mockResolvedValue(cleaningResult);
+  vi.mocked(retryCleaningRegion).mockResolvedValue(queuedJob);
+  const { result, rerender } = renderHook(({ pages }) => useCleaning({ pages, currentPage: 0 }), { initialProps: { pages: ["blob:one", "blob:two"] } });
+  let cleaning!: Promise<PageCleaningResult>;
+  act(() => { cleaning = result.current.cleanPage("blob:one", SOURCE_BLOB); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); await cleaning; });
+  const before = result.current.currentResult!;
+  const finding = result.current.getCurrentRemnantReview("blob:one")!;
+  act(() => { result.current.confirmArtworkCandidate("blob:one", finding.inspection.candidates[0].id); });
+  const fetcher = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) => String(args[0]).includes("clean.png") && !String(args[0]).includes("mask") ? { ok: true, blob: async () => CLEANED_CLEAN_BLOB } as Response : fetcher(...args));
+  let correction!: Promise<PageCleaningResult | undefined>;
+  act(() => { correction = result.current.retryRegion("region-1", maskBlob); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); await correction; });
+  expect(result.current.currentResult!.cleanBlob).toBe(CLEANED_CLEAN_BLOB);
+  const providers = vi.mocked(retryCleaningRegion).mock.calls.length;
+  const creates = vi.mocked(createCleaningJob).mock.calls.length;
+  act(() => { undoManager.undo(); });
+  expect(result.current.currentResult!.cleanBlob).toBe(before.cleanBlob);
+  await act(async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); });
+  expect(result.current.getCurrentRemnantReview("blob:one")?.eligibility).toBe("human-confirmed");
+  expect(vi.mocked(saveCleaningAssets).mock.calls.at(-1)?.[1].cleanBlob).toBe(before.cleanBlob);
+  act(() => { undoManager.redo(); });
+  expect(result.current.currentResult!.cleanBlob).toBe(CLEANED_CLEAN_BLOB);
+  await act(async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); });
+  expect(vi.mocked(saveCleaningAssets).mock.calls.at(-1)?.[1].cleanBlob).toBe(CLEANED_CLEAN_BLOB);
+  expect(retryCleaningRegion).toHaveBeenCalledTimes(providers);
+  expect(createCleaningJob).toHaveBeenCalledTimes(creates);
+  rerender({ pages: ["blob:two"] });
+  act(() => { undoManager.undo(); });
+  expect(result.current.remnantReviews.has("blob:one")).toBe(false);
+});
+
+test("unavailable detection requires separate exact image acknowledgement and rejects missing originals", async () => {
+  vi.mocked(createCleaningJob).mockResolvedValue(queuedJob);
+  vi.mocked(getCleaningJob).mockResolvedValue(succeededJob);
+  vi.mocked(getCleaningResult).mockResolvedValue(cleaningResult);
+  decodeFailures = 1;
+  const { result } = renderHook(() => useCleaning({ pages: ["blob:one"], currentPage: 0 }));
+  let cleaning!: Promise<PageCleaningResult>;
+  act(() => { cleaning = result.current.cleanPage("blob:one", SOURCE_BLOB); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); await cleaning; });
+  const review = result.current.getCurrentRemnantReview("blob:one")!;
+  expect(review.eligibility).toBe("unavailable");
+  expect(review.canConfirmHumanInspection).toBe(true);
+  act(() => { expect(result.current.confirmHumanImageInspection("blob:one", review.inspection.revisionKey, "blob:one", result.current.currentResult!.cleanUrl)).toBe(true); });
+  expect(result.current.getCurrentRemnantReview("blob:one")?.eligibility).toBe("human-confirmed");
+  result.current.currentResult!.maskFingerprint = "changed";
+  expect(result.current.confirmHumanImageInspection("blob:one", review.inspection.revisionKey, "blob:one", result.current.currentResult!.cleanUrl)).toBe(false);
+  vi.mocked(fetch).mockResolvedValue({ ok: false } as Response);
+  await act(async () => { await result.current.recheckPageRemnants("blob:one"); });
+  const unavailable = result.current.getCurrentRemnantReview("blob:one")!;
+  expect(unavailable.canConfirmHumanInspection).toBe(false);
+  expect(result.current.confirmHumanImageInspection("blob:one", unavailable.inspection.revisionKey, "blob:one", "blob:clean")).toBe(false);
+});
+
+test("image acknowledgement made during asset persistence survives the current cleaning save", async () => {
+  vi.mocked(createCleaningJob).mockResolvedValue(queuedJob);
+  vi.mocked(getCleaningJob).mockResolvedValue(succeededJob);
+  vi.mocked(getCleaningResult).mockResolvedValue(cleaningResult);
+  decodeFailures = 1;
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  vi.mocked(saveCleaningAssets).mockImplementationOnce(async () => { await pending; return {}; });
+  const { result } = renderHook(() => useCleaning({ pages: ["blob:one"], currentPage: 0 }));
+  let cleaning!: Promise<PageCleaningResult>;
+  act(() => { cleaning = result.current.cleanPage("blob:one", SOURCE_BLOB); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); for (let i = 0; i < 40; i++) await Promise.resolve(); });
+  const review = result.current.getCurrentRemnantReview("blob:one")!;
+  expect(review.canConfirmHumanInspection).toBe(true);
+  act(() => { expect(result.current.confirmHumanImageInspection("blob:one", review.inspection.revisionKey, "blob:one", result.current.currentResult!.cleanUrl)).toBe(true); });
+  await act(async () => { release(); await cleaning; for (let i = 0; i < 40; i++) await Promise.resolve(); });
+  expect(vi.mocked(saveCleaningResultMetadata).mock.calls.at(-1)?.[0].humanImageConfirmations).toEqual([
+    { revisionKey: review.inspection.revisionKey, sourceFingerprint: result.current.currentResult!.sourceFingerprint, maskFingerprint: result.current.currentResult!.maskFingerprint },
+  ]);
 });
 
 afterEach(() => {

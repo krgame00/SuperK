@@ -169,6 +169,15 @@ test("monotonic autosave preserves edits made while a save is in-flight", async 
   expect(result.current.saveError).toBeNull();
 });
 
+test("autosave retains the verified source fingerprint of an extension handoff", async () => {
+  const sourceFingerprint = "a".repeat(64);
+  renderHook(() => useTranslation({ currentPage: 0, pages: ["blob:handoff"],
+    pageSourceFingerprints: new Map([["blob:handoff", sourceFingerprint]]),
+    viewMode: "single", preparePageForTranslation: vi.fn() }));
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+  expect(vi.mocked(saveProjectSession).mock.calls.at(-1)?.[0].pages[0].sourceFingerprint).toBe(sourceFingerprint);
+});
+
 test("changing only per-page export sources schedules a metadata save with unchanged URLs", async () => {
   const pages = ["blob:page1", "blob:page2"];
   const { rerender } = renderHook(({ sources }: { sources: ("original" | "clean" | "translated")[] }) =>

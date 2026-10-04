@@ -23,11 +23,9 @@
  */
 
 import { LRUMap } from "../lruMap";
-import type { BackgroundEligibilityState } from "../translation/pageEligibility";
 import type { PixelRect } from "./types";
-
-/** Bumped when the detection or binding semantics change, invalidating old keys. */
-export const BACKGROUND_REMNANT_INSPECTION_VERSION = 2;
+import { revisionKeyOf } from "./backgroundInspectionContract";
+export { BACKGROUND_REMNANT_INSPECTION_VERSION, backgroundEligibilityState, revisionKeyOf } from "./backgroundInspectionContract";
 
 /** Single-channel luma plane (0-255). Kept DOM-free so inspection is deterministic and testable. */
 export interface GrayscalePlane {
@@ -141,6 +139,8 @@ export type BackgroundInspectionUnverifiedReason =
   | "no-removal-evidence";
 
 export interface BackgroundInspectionResult {
+  /** Separate explicit whole-image comparison, never candidate artwork approval. */
+  humanImageInspection?: { revisionKey: string };
   /** "inspected" only when detection actually ran over a non-empty bounded area. */
   status: "inspected" | "unverified";
   unverifiedReason?: BackgroundInspectionUnverifiedReason;
@@ -165,14 +165,6 @@ const DEFAULTS = {
 
 /** Smallest reviewable surviving mark, in pixels. */
 const MIN_SURVIVING_ANY = 6;
-
-export function revisionKeyOf(revisions: BackgroundInspectionRevisions): string | undefined {
-  const { sourceRevision, backgroundRevision, removalRevision } = revisions;
-  if (![sourceRevision, backgroundRevision, removalRevision].every(v => typeof v === "string" && v.length > 0)) {
-    return undefined;
-  }
-  return JSON.stringify([`background-remnant-inspection-v${BACKGROUND_REMNANT_INSPECTION_VERSION}`, sourceRevision, backgroundRevision, removalRevision, revisions.textEvidenceRevision ?? textEvidenceIdentity()]);
-}
 
 /** ITU-R BT.601 luma with transparent pixels composited over white. */
 export function lumaPlaneFromRgba(rgba: Uint8Array | Uint8ClampedArray, width: number, height: number): GrayscalePlane {
@@ -507,13 +499,6 @@ export function confirmCandidateArtwork(result: BackgroundInspectionResult, cand
  * Map an inspection outcome onto the shared page-output eligibility boundary
  * (lib/translation/pageEligibility.ts backgroundState input).
  */
-export function backgroundEligibilityState(result: BackgroundInspectionResult): BackgroundEligibilityState {
-  if (result.status === "unverified") return "unavailable";
-  const open = result.candidates.some(c => c.state !== "human-confirmed-artwork");
-  if (open || result.truncated) return "unresolved";
-  return result.candidates.length > 0 ? "human-confirmed" : "approved";
-}
-
 /**
  * Bounded, revision-aware reuse of inspection results. Entries are keyed by the
  * exact revision identity, so any source/mask/background change misses the

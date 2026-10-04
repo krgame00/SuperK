@@ -39,7 +39,7 @@ describe("WorkspaceControls", () => {
     expect(trigger).toHaveClass("whitespace-nowrap");
     fireEvent.click(trigger);
     expect(trigger).toHaveAttribute("aria-expanded", "true");
-    for (const name of ["รูปภาพหน้านี้", "PDF", "Strip", "ZIP", "CBZ"]) {
+    for (const name of ["รูปภาพหน้านี้", "PDF", /Strip ภาพยาว/, "ZIP", "CBZ"]) {
       expect(screen.getByRole("menuitem", { name })).toBeVisible();
     }
     fireEvent.click(screen.getByRole("menuitem", { name: "CBZ" }));

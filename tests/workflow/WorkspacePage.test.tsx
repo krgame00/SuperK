@@ -15,8 +15,11 @@ import { useCleaning } from "@/hooks/useCleaning";
 import { useTranslation } from "@/hooks/useTranslation";
 import WorkspacePage from "@/src/app/page";
 import { scanPageGeometry } from "@/lib/export/readabilityScan";
-import { downloadTranslatedImage } from "@/lib/translationOverlay";
+import { downloadTranslatedImage, applyTranslationOverlay } from "@/lib/translationOverlay";
+import { saveBlob } from "@/lib/export/saveLocation";
 import { workspaceResourceManager } from "@/lib/lifecycle/workspaceResourceManager";
+import { LANGUAGE_POLICY_VERSION } from "@/lib/languagePolicy";
+import { withReviewIdentity } from "@/lib/translation/qualityReview";
 
 vi.mock("@/hooks/useCleaning");
 vi.mock("@/hooks/useTranslation");
@@ -95,6 +98,7 @@ const CLEAN_URL = "data:image/png;base64,CLEAN";
 const TRANSLATED_URL = "data:image/png;base64,TRANSLATED";
 const PAGE_NAME = "page-one.png";
 const cleaningResult = {
+  sourceFingerprint: "src-1",
   width: 100,
   height: 100,
   pageId: ORIGINAL_URL,
@@ -113,12 +117,31 @@ const cleaningResult = {
   ],
 };
 
+const approvedBackgroundInspection = {
+  status: "inspected" as const,
+  revisionKey: "test-background-revision",
+  revisions: { sourceRevision: "src-1", backgroundRevision: "bg-1", removalRevision: "rm-1" },
+  candidates: [],
+  inspectedAreas: 1,
+};
+
+function acceptedBubble<T extends { t?: string; original_text?: string }>(bubble: T) {
+  const sourceText = bubble.original_text ?? "Hello";
+  const reviewedText = bubble.t ?? "สวัสดี";
+  return {
+    ...bubble,
+    original_text: sourceText,
+    translationReview: withReviewIdentity({ status: "accepted", sourceText, reviewedText }, "Thai", "src-1"),
+  };
+}
+
 let cleanCurrentPage: ReturnType<typeof vi.fn>;
 let retryRegion: ReturnType<typeof vi.fn>;
 let invalidatePageTranslation: ReturnType<typeof vi.fn>;
 let refreshPageTranslation: ReturnType<typeof vi.fn>;
 let handleTranslate: ReturnType<typeof vi.fn>;
 let translationMockState: Record<string, unknown>;
+let cleaningMockState: Record<string, unknown>;
 
 function toolbar(): HTMLElement {
   return screen.getByRole("region", { name: "Cleaning toolbar" });
@@ -149,14 +172,25 @@ async function renderRestoredWorkspace() {
 }
 
 beforeEach(() => {
+  vi.restoreAllMocks();
   vi.clearAllMocks();
+  vi.mocked(applyTranslationOverlay).mockImplementation((...args) => {
+    args[4]?.(TRANSLATED_URL);
+    return true as never;
+  });
+  const imageSrc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src")!;
+  vi.spyOn(HTMLImageElement.prototype, "src", "set").mockImplementation(function(this: HTMLImageElement, url) {
+    imageSrc.set?.call(this, url);
+    if (this.id === "offscreen-image") queueMicrotask(() => this.dispatchEvent(new Event("load")));
+  });
   cleanCurrentPage = vi.fn().mockResolvedValue(cleaningResult);
   retryRegion = vi.fn().mockResolvedValue(cleaningResult);
   invalidatePageTranslation = vi.fn();
   refreshPageTranslation = vi.fn().mockResolvedValue(undefined);
   handleTranslate = vi.fn().mockResolvedValue(true);
 
-  vi.mocked(useCleaning).mockReturnValue({
+  cleaningMockState = {
+    getCurrentRemnantReview: vi.fn(() => ({ inspection: approvedBackgroundInspection })),
     cleanPage: vi.fn().mockResolvedValue(cleaningResult),
     cleanCurrentPage,
     retryRegion,
@@ -165,12 +199,13 @@ beforeEach(() => {
     progress: undefined,
     error: undefined,
     resultsByPage: new Map([[ORIGINAL_URL, cleaningResult]]),
-  } as never);
+  };
+  vi.mocked(useCleaning).mockReturnValue(cleaningMockState as never);
   translationMockState = {
     targetLang: "Thai",
     setTargetLang: vi.fn(),
-    pageTargetCacheRef: { current: new Map() },
-    getPageTargetLanguage: vi.fn(() => undefined),
+    pageTargetCacheRef: { current: new Map([[ORIGINAL_URL, { targetId: "th", policyVersion: LANGUAGE_POLICY_VERSION }]]) },
+    getPageTargetLanguage: vi.fn(() => "th"),
     sourceLang: "auto",
     setSourceLang: vi.fn(),
     modelPreference: "auto",
@@ -203,6 +238,7 @@ beforeEach(() => {
       {
         id: "bubble-1",
         originalText: "Hello",
+        original_text: "Hello",
         translatedText: "สวัสดี",
         t: "สวัสดี",
         box: [100, 100, 200, 300],
@@ -210,6 +246,7 @@ beforeEach(() => {
         y: 0.1,
         width: 0.2,
         height: 0.1,
+        translationReview: withReviewIdentity({ status: "accepted", sourceText: "Hello", reviewedText: "สวัสดี" }, "Thai", "src-1"),
       },
     ],
     setActiveBubbles: vi.fn(),
@@ -256,6 +293,7 @@ beforeEach(() => {
     isRepairingBook: false,
     replaceBubbleText: vi.fn(() => 0),
     getPageSignature: vi.fn(() => "rev-0"),
+    getPageSourceRevision: vi.fn(() => "src-1"),
     getPageRevision: vi.fn(() => 0),
     cacheRevision: 0,
   };
@@ -465,7 +503,7 @@ describe("workspace clean-then-translate integration", () => {
   });
 
   test("single-page export waits for a readability choice and can continue", async () => {
-    const bubble = { id: "bubble-1", t: "ข้อความยาว", box: [100, 100, 200, 300] };
+    const bubble = acceptedBubble({ id: "bubble-1", t: "ข้อความยาว", box: [100, 100, 200, 300] });
     vi.mocked(useTranslation).mockReturnValue({
       ...translationMockState,
       bubbleCacheRef: { current: new Map([[ORIGINAL_URL, [bubble]]]) },
@@ -481,7 +519,7 @@ describe("workspace clean-then-translate integration", () => {
     expect(vi.mocked(scanPageGeometry)).toHaveBeenCalledWith(expect.objectContaining({ pageIndex: 0 }));
     expect(downloadTranslatedImage).not.toHaveBeenCalled();
     fireEvent.click(within(report).getByRole("button", { name: "ส่งออกต่อ" }));
-    await waitFor(() => expect(downloadTranslatedImage).toHaveBeenCalled());
+    await waitFor(() => expect(saveBlob).toHaveBeenCalled());
   });
 
   test("returning to edit discards the export and a new attempt scans again", async () => {
@@ -502,7 +540,7 @@ describe("workspace clean-then-translate integration", () => {
     expect(downloadTranslatedImage).not.toHaveBeenCalled();
     await requestImage();
     await waitFor(() => expect(vi.mocked(scanPageGeometry)).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(downloadTranslatedImage).toHaveBeenCalled());
+    await waitFor(() => expect(saveBlob).toHaveBeenCalled());
     expect(screen.queryByRole("dialog", { name: "รายงานก่อนส่งออก" })).toBeNull();
   });
 
@@ -512,7 +550,7 @@ describe("workspace clean-then-translate integration", () => {
     vi.mocked(useTranslation).mockReturnValue({
       ...translationMockState,
       bubbleCacheRef: { current: new Map([[ORIGINAL_URL, [
-        { id: "bubble-1", t: "สวัสดี", box: [100, 100, 200, 300] },
+        acceptedBubble({ id: "bubble-1", t: "สวัสดี", box: [100, 100, 200, 300] }),
       ]]]) },
     } as never);
     await renderRestoredWorkspace();
@@ -532,7 +570,7 @@ describe("workspace clean-then-translate integration", () => {
     ] });
     await renderRestoredWorkspace();
     fireEvent.click(screen.getAllByRole("button", { name: "ส่งออก" })[0]);
-    fireEvent.click(await screen.findByRole("menuitem", { name: format }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: format === "Strip" ? /^Strip/ : format }));
     expect(await screen.findByRole("dialog", { name: "รายงานก่อนส่งออก" })).toHaveTextContent("ข้อความล้น");
     expect(vi.mocked(scanPageGeometry)).toHaveBeenCalledWith(expect.objectContaining({ pageIndex: 0 }));
   });
@@ -568,7 +606,7 @@ describe("workspace clean-then-translate integration", () => {
       ...translationMockState,
       getPageSignature: vi.fn(() => revision),
       bubbleCacheRef: { current: new Map([[ORIGINAL_URL, [
-        { id: "bubble-1", t: "สวัสดี", box: [100, 100, 200, 300] },
+        acceptedBubble({ id: "bubble-1", t: "สวัสดี", box: [100, 100, 200, 300] }),
       ]]]) },
     } as never);
     vi.mocked(scanPageGeometry).mockResolvedValue({ findings: [
@@ -870,9 +908,13 @@ test.each(["ZIP", "CBZ"])("mixed %s includes original, clean and translated byte
   const translatedPage = "data:image/png;base64,dGhpcmQ=";
   const clean = "data:image/png;base64,Y2xlYW4=";
   const translated = "data:image/jpeg;base64,dHJhbnNsYXRlZA==";
-  vi.mocked(useCleaning).mockReturnValue({ ...vi.mocked(useCleaning).mock.results.at(-1)?.value,
-    resultsByPage: new Map([[cleanPage, { ...cleaningResult, cleanUrl: clean }]]) } as never);
+  vi.mocked(applyTranslationOverlay).mockImplementation((...args) => { args[4]?.(translated); return true as never; });
+  vi.mocked(useCleaning).mockReturnValue({ ...cleaningMockState,
+    resultsByPage: new Map([[cleanPage, { ...cleaningResult, cleanUrl: clean }],
+      [translatedPage, { ...cleaningResult, cleanUrl: clean, regions: [] }]]) } as never);
   vi.mocked(useTranslation).mockReturnValue({ ...translationMockState,
+    pageTargetCacheRef: { current: new Map([[translatedPage, { targetId: "th", policyVersion: LANGUAGE_POLICY_VERSION }]]) },
+    bubbleCacheRef: { current: new Map([[translatedPage, [acceptedBubble({ t: "คำแปล", box: [100, 100, 200, 300] })]]]) },
     translatedImageCacheRef: { current: new Map([[translatedPage, translated]]) },
     restoreSavedSession: vi.fn().mockResolvedValue({ pages: [
       { url: original, name: "original.png", exportSource: "original" },
@@ -882,7 +924,7 @@ test.each(["ZIP", "CBZ"])("mixed %s includes original, clean and translated byte
   fireEvent.click(await screen.findByRole("button", { name: /คืนค่างานเดิม/ }));
   await screen.findByRole("combobox", { name: "ส่งออกหน้านี้เป็น" });
   fireEvent.click(screen.getAllByRole("button", { name: "ส่งออก" })[0]);
-  fireEvent.click(await screen.findByRole("menuitem", { name: new RegExp(format) }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: new RegExp("^" + format + "$") }));
   await waitFor(() => expect(saveBlob).toHaveBeenCalled());
   const blob = vi.mocked(saveBlob).mock.calls.at(-1)![0];
   const zip = await JSZip.loadAsync(await readBlobBytes(blob));
@@ -893,26 +935,27 @@ test.each(["ZIP", "CBZ"])("mixed %s includes original, clean and translated byte
   expect(downloadTranslatedImage).not.toHaveBeenCalled();
 });
 
-test.each(["ZIP", "CBZ"])("%s exports bubble-free translated pages as clean or original bytes", async (format) => {
+test.each(["ZIP", "CBZ"])("%s exports explicit originals and bubble-free translated pages as clean bytes", async (format) => {
   const { saveBlob } = await import("@/lib/export/saveLocation");
   const JSZip = (await import("jszip")).default;
   const blankPage = "data:image/png;base64,cGFnZQ==";
   const cleanOnlyPage = "data:image/png;base64,Y2xlYW5vbmx5";
   const clean = "data:image/png;base64,Y2xlYW4=";
-  vi.mocked(useCleaning).mockReturnValue({ ...vi.mocked(useCleaning).mock.results.at(-1)?.value,
+  vi.mocked(useCleaning).mockReturnValue({ ...cleaningMockState,
     resultsByPage: new Map([[cleanOnlyPage, { ...cleaningResult, cleanUrl: clean }]]) } as never);
   vi.mocked(useTranslation).mockReturnValue({ ...translationMockState,
     activeBubbles: [],
     translatedImageCacheRef: { current: new Map() },
     bubbleCacheRef: { current: new Map() },
+    pageTargetCacheRef: { current: new Map([[cleanOnlyPage, { targetId: "th", policyVersion: LANGUAGE_POLICY_VERSION }]]) },
     restoreSavedSession: vi.fn().mockResolvedValue({ pages: [
-      { url: blankPage, name: "blank.png" },
+      { url: blankPage, name: "blank.png", exportSource: "original" },
       { url: cleanOnlyPage, name: "cleanonly.png" }], currentPage: 0 }) } as never);
   render(<WorkspacePage />);
   fireEvent.click(await screen.findByRole("button", { name: /คืนค่างานเดิม/ }));
   await screen.findByRole("combobox", { name: "ส่งออกหน้านี้เป็น" });
   fireEvent.click(screen.getAllByRole("button", { name: "ส่งออก" })[0]);
-  fireEvent.click(await screen.findByRole("menuitem", { name: new RegExp(format) }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: new RegExp("^" + format + "$") }));
   await screen.findByText("มีหน้าที่ต้องได้รับการยืนยันก่อน Export");
   fireEvent.click(screen.getByRole("button", { name: "ยืนยันทุกหน้าและดำเนินการ Export" }));
   await waitFor(() => expect(saveBlob).toHaveBeenCalled());
@@ -926,12 +969,13 @@ test("single-image export of a bubble-free page saves its clean render after rev
   const { saveBlob } = await import("@/lib/export/saveLocation");
   const cleanOnlyPage = "data:image/png;base64,Y2xlYW5vbmx5";
   const clean = "data:image/png;base64,Y2xlYW4=";
-  vi.mocked(useCleaning).mockReturnValue({ ...vi.mocked(useCleaning).mock.results.at(-1)?.value,
+  vi.mocked(useCleaning).mockReturnValue({ ...cleaningMockState,
     resultsByPage: new Map([[cleanOnlyPage, { ...cleaningResult, cleanUrl: clean }]]) } as never);
   vi.mocked(useTranslation).mockReturnValue({ ...translationMockState,
     activeBubbles: [],
     translatedImageCacheRef: { current: new Map() },
     bubbleCacheRef: { current: new Map() },
+    pageTargetCacheRef: { current: new Map([[cleanOnlyPage, { targetId: "th", policyVersion: LANGUAGE_POLICY_VERSION }]]) },
     restoreSavedSession: vi.fn().mockResolvedValue({ pages: [{ url: cleanOnlyPage, name: "cleanonly.png" }], currentPage: 0 }) } as never);
   render(<WorkspacePage />);
   fireEvent.click(await screen.findByRole("button", { name: /คืนค่างานเดิม/ }));
@@ -964,11 +1008,12 @@ test("selected missing clean asset fails visibly without saving or translated fa
   const { saveBlob } = await import("@/lib/export/saveLocation");
   vi.mocked(useTranslation).mockReturnValue({ ...translationMockState,
     restoreSavedSession: vi.fn().mockResolvedValue({ pages: [{ url: ORIGINAL_URL, name: PAGE_NAME, exportSource: "clean" }], currentPage: 0 }) } as never);
-  vi.mocked(useCleaning).mockReturnValue({ ...vi.mocked(useCleaning).mock.results.at(-1)?.value, resultsByPage: new Map() } as never);
+  vi.mocked(useCleaning).mockReturnValue({ ...cleaningMockState, resultsByPage: new Map() } as never);
   await renderRestoredWorkspace();
   fireEvent.click(screen.getAllByRole("button", { name: "ส่งออก" })[0]);
   fireEvent.click(await screen.findByRole("menuitem", { name: "รูปภาพหน้านี้" }));
-  await waitFor(() => expect(translationMockState.setTranslationResult).toHaveBeenCalledWith(expect.stringContaining("ไม่พบภาพคลีน")));
+  await screen.findByText("พบร่องรอยต้องตรวจในภาพพื้นหลัง");
+  expect(screen.getByRole("button", { name: "ยืนยันทุกหน้าและดำเนินการ Export" })).toBeDisabled();
   expect(saveBlob).not.toHaveBeenCalled();
   expect(downloadTranslatedImage).not.toHaveBeenCalled();
 });
@@ -981,14 +1026,14 @@ test("failed original fetch aborts ZIP instead of omitting the page", async () =
       { url: "blob:missing", name: "missing.png", exportSource: "original" }], currentPage: 0 }) } as never);
   await renderRestoredWorkspace();
   fireEvent.click(screen.getAllByRole("button", { name: "ส่งออก" })[0]);
-  fireEvent.click(await screen.findByRole("menuitem", { name: /ZIP/ }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: /^ZIP$/ }));
   await waitFor(() => expect(translationMockState.setTranslationResult).toHaveBeenCalledWith(expect.stringContaining("โหลดภาพสำหรับส่งออกไม่สำเร็จ")));
   expect(saveBlob).not.toHaveBeenCalled();
 });
 
 test.each(["ยกเลิก", "ไปที่หน้านี้"])("clean review keeps only cleaning warning and %s releases page navigation", async (action) => {
   const second = "second-page";
-  vi.mocked(useCleaning).mockReturnValue({ ...vi.mocked(useCleaning).mock.results.at(-1)?.value,
+  vi.mocked(useCleaning).mockReturnValue({ ...cleaningMockState,
     resultsByPage: new Map([[second, { ...cleaningResult, regions: [{ ...cleaningResult.regions[0], status: "needs_review" }] }]]) } as never);
   vi.mocked(useTranslation).mockReturnValue({ ...translationMockState,
     restoreSavedSession: vi.fn().mockResolvedValue({ pages: [{ url: ORIGINAL_URL, name: PAGE_NAME, exportSource: "original" },
@@ -996,7 +1041,7 @@ test.each(["ยกเลิก", "ไปที่หน้านี้"])("clean
     bubbleCacheRef: { current: new Map([[second, [{ needsReview: true }]]]) } } as never);
   await renderRestoredWorkspace();
   fireEvent.click(screen.getAllByRole("button", { name: "ส่งออก" })[0]);
-  fireEvent.click(await screen.findByRole("menuitem", { name: /ZIP/ }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: /^ZIP$/ }));
   await screen.findByText("มีหน้าที่ต้องได้รับการยืนยันก่อน Export");
   expect(screen.getByText("การคลีนไม่แน่นอน")).toBeInTheDocument();
   expect(screen.queryByText("คำแปลควรตรวจสอบ")).not.toBeInTheDocument();
@@ -1051,7 +1096,7 @@ test("manual export report cannot release the snapshot during a deferred source 
       { url: "second-page", name: "second.png", exportSource: "original" }], currentPage: 0 }) } as never);
   await renderRestoredWorkspace();
   fireEvent.click(screen.getAllByRole("button", { name: "ส่งออก" })[0]);
-  fireEvent.click(await screen.findByRole("menuitem", { name: /ZIP/ }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: /^ZIP$/ }));
   await waitFor(() => expect(fetch).toHaveBeenCalledWith("blob:deferred"));
   try {
     const toolsButton = screen.getAllByRole("button", { name: "เครื่องมือ" })[0];

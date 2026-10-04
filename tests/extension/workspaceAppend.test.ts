@@ -12,7 +12,7 @@ import {
   GET as handoffEndpoint,
   _resetHandoffsForTest,
   _setHandoffTtlForTest,
-} from "@/src/app/api/extension/workspace/append/route";
+} from "@/src/app/api/extension/workspace/append/handler";
 import { _resetPairingTokenForTest } from "@/lib/server/pairing";
 
 describe("Workspace Handoff & Session Append Protocol (Ticket 04)", () => {
@@ -41,10 +41,11 @@ describe("Workspace Handoff & Session Append Protocol (Ticket 04)", () => {
 
       // Now append a new page from extension
       const appendResult = await appendPageToProjectSession({
-        pageUrl: "https://manga.test/ch1/page41.jpg",
+        pageUrl: "data:image/png;base64,YQ==",
         cleanUrl: "data:image/png;base64,Y2xlYW5lZDQx",
         bubbles: [{ t: "คำพูดหน้าใหม่จาก Extension", box: [20, 20, 100, 100] }],
         originUrl: "https://manga.test/read/ch1",
+        readerImageUrl: "https://manga.test/ch1/page41.jpg",
       });
 
       expect(appendResult.totalPages).toBe(41);
@@ -55,12 +56,13 @@ describe("Workspace Handoff & Session Append Protocol (Ticket 04)", () => {
       expect(session).not.toBeNull();
       expect(session?.pages.length).toBe(41);
       expect(session?.pages[0].url).toBe(existingPages[0].url);
-      expect(session?.pages[40].url).toBe("https://manga.test/ch1/page41.jpg");
+      expect(session?.pages[40].url).toBe("data:image/png;base64,YQ==");
+      expect(session?.pages[40].readerImageUrl).toBe("https://manga.test/ch1/page41.jpg");
       expect(session?.currentPage).toBe(40);
 
       // Check bubble cache preserved for both old and new
       expect(session?.bubbleCache.get(existingPages[0].url)?.[0].t).toBe("คำพูดหน้า 1");
-      expect(session?.bubbleCache.get("https://manga.test/ch1/page41.jpg")?.[0].t).toBe("คำพูดหน้าใหม่จาก Extension");
+      expect(session?.bubbleCache.get("data:image/png;base64,YQ==")?.[0].t).toBe("คำพูดหน้าใหม่จาก Extension");
     });
 
     it("creates a new session when no session previously exists", async () => {

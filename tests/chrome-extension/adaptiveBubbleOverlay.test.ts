@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as policy from '@/lib/extension/strictParity';
 
 const script = readFileSync('chrome-extension/content.js', 'utf8');
 
@@ -54,6 +55,7 @@ describe('Adaptive Speech Bubble Overlay & Local Persistence (Ticket 03)', () =>
 
     vi.stubGlobal('chrome', chrome);
     vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+    vi.stubGlobal('SuperKPolicy', { ...policy, extensionDisplayedText: (bubble: { t?: string; translated?: string }) => bubble.t || bubble.translated || '', inspectExtensionOutput: () => ({ status: 'eligible' }) });
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(new Proxy({}, {
       get: () => vi.fn(),
     }) as CanvasRenderingContext2D);

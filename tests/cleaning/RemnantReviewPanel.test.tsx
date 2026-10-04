@@ -109,6 +109,23 @@ describe("RemnantReviewPanel", () => {
     expect(screen.getByRole("status")).toHaveTextContent("ไม่พบจุดสงสัย");
     expect(screen.getByRole("status")).toHaveTextContent("ขอบเขต");
   });
+  test("requires both verified image assets to load before whole-image acknowledgement", () => {
+    const onConfirmHumanInspection = vi.fn();
+    const inspection: BackgroundInspectionResult = {
+      status: "unverified", unverifiedReason: "detection-failed", revisionKey: "rk-human",
+      revisions: { sourceRevision: "src", backgroundRevision: "bg", removalRevision: "rem" }, candidates: [], inspectedAreas: 0,
+    };
+    render(<RemnantReviewPanel inspection={inspection} regions={[]} sourceUrl="blob:original" cleanUrl="blob:clean"
+      dimensions={{ width: 400, height: 600 }} canConfirmHumanInspection onConfirmHumanInspection={onConfirmHumanInspection} />);
+    fireEvent.click(screen.getByRole("button", { name: "เทียบภาพต้นฉบับกับภาพคลีนทั้งหน้า" }));
+    const confirm = screen.getByRole("button", { name: "กำลังโหลดภาพ…" });
+    expect(confirm).toBeDisabled();
+    fireEvent.load(screen.getByRole("img", { name: "ภาพต้นฉบับ" }));
+    expect(screen.getByRole("button", { name: "กำลังโหลดภาพ…" })).toBeDisabled();
+    fireEvent.load(screen.getByRole("img", { name: "ภาพคลีน" }));
+    fireEvent.click(screen.getByRole("button", { name: "ยืนยันว่าตรวจภาพทั้งหน้าแล้ว" }));
+    expect(onConfirmHumanInspection).toHaveBeenCalledWith("rk-human", "blob:original", "blob:clean");
+  });
   test("lists an open finding with its page location and offers both resolutions", () => {
     const onOpenMask = vi.fn();
     const onConfirmArtwork = vi.fn();

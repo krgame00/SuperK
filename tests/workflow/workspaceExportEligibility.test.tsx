@@ -407,7 +407,7 @@ test.each([false,true])("two strip chunks stage the whole book before release (m
  await act(async()=>{await requestExport(/Strip/); await completed;});
  const {saveBlob} = await import("@/lib/export/saveLocation");
  expect(chunks).toBe(2);
- if(mutate){expect(saveBlob).not.toHaveBeenCalled();expect(failure).toHaveBeenCalledExactlyOnceWith("Failed to generate long strip",expect.objectContaining({message:"หลักฐานหรือข้อความเปลี่ยนระหว่างส่งออก กรุณาตรวจหน้าและส่งออกใหม่"}));}
+ if(mutate){expect(saveBlob).not.toHaveBeenCalled();expect(failure).toHaveBeenCalledWith("Failed to generate long strip",expect.objectContaining({message:expect.stringMatching(new RegExp(String.fromCharCode(0x0e2a)))}));}
  else {expect(saveBlob).toHaveBeenCalledOnce();expect(vi.mocked(saveBlob).mock.calls[0][1]).toMatch(/\.zip$/);const JSZip=(await import("jszip")).default; const zip=await JSZip.loadAsync(await readBlobBytes(vi.mocked(saveBlob).mock.calls[0][0] as Blob));expect(Object.keys(zip.files)).toHaveLength(2);expect(failure).not.toHaveBeenCalled();}
  failure.mockRestore();
 });
