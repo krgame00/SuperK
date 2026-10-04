@@ -157,12 +157,13 @@ export function RemnantReviewPanel({
   );
 
   return (
-    <div className="flex w-full flex-col gap-2 rounded-lg border border-border/70 bg-surface/90 px-3 py-2 text-xs" data-testid="remnant-review-findings">
+    <div role="region" aria-label="รายการจุดตรวจข้อความที่เหลือ" className="fixed bottom-32 left-1/2 z-40 flex max-h-[45vh] w-[calc(100%-1rem)] max-w-6xl -translate-x-1/2 flex-col gap-2 overflow-hidden rounded-lg border border-border/70 bg-surface/95 px-3 py-2 text-xs shadow-xl backdrop-blur-sm" data-testid="remnant-review-findings">
       <p className="font-semibold text-foreground">
         พบจุดสงสัยว่ามีข้อความต้นฉบับหลงเหลือบนภาพคลีน {openCandidates.length} จุด
         {confirmedCandidates.length > 0 && ` (ยืนยันลายภาพแล้ว ${confirmedCandidates.length} จุด)`}
+        {openCandidates.length > 4 && <span className="ml-2 font-normal text-muted">เลื่อนภายในกรอบเพื่อดูรายการที่เหลือ</span>}
       </p>
-      <ul className="flex flex-col gap-2">
+      <ul data-testid="remnant-candidate-list" aria-label="จุดข้อความที่เหลือ · เลื่อนเพื่อดูทั้งหมด" tabIndex={0} className="mt-2 flex max-h-[36vh] flex-col gap-2 overflow-y-auto overscroll-contain pr-1 [scrollbar-width:thin]">
         {[...openCandidates, ...confirmedCandidates].map((candidate) => {
           const region = findRegionForCandidate(regions, candidate.rect);
           const confirmed = candidate.state === "human-confirmed-artwork";

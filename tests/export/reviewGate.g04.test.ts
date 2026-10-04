@@ -86,6 +86,17 @@ const backgroundOnlyPage = (inspection: ReturnType<typeof inspectedRemnant>) => 
 // ── Deterministic script failures ───────────────────────────────────────────
 
 describe("G04 shared export eligibility gate", () => {
+  it("allows export only when an explicit unreviewed-export override is supplied", () => {
+    const url = "p1";
+    const pages = [page(url)];
+    const confirmations = new Set([url]);
+    const points = bubbles(url, [oldAcceptedContaminated()]);
+    expect(getUnconfirmedPages(pages, confirmations, new Map(), points, undefined, undefined,
+      { targetIdentities: new Map([[url, { targetId: "th", policyVersion: acceptedReview("", "").policyVersion! }]]) })).toHaveLength(1);
+    expect(getUnconfirmedPages(pages, confirmations, new Map(), points, undefined, undefined,
+      { allowUnreviewedExport: true })).toEqual([]);
+  });
+
   it("requires absent background evidence and rejects old saved policy", () => {
     expect(scanBlockers([cleanVerified()], { targetId: "th", policyVersion: acceptedReview("", "").policyVersion! }).backgroundBlocked).toBe(true);
     const result = getUnconfirmedPages([page("old")], new Set(["old"]), new Map(), bubbles("old", [cleanVerified()]), undefined, undefined, { targetIdentities: new Map([["old", { targetId: "th", policyVersion: "old" }]]) });

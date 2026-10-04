@@ -60,6 +60,15 @@ function inspected(candidates: RemnantCandidate[]): BackgroundInspectionResult {
 }
 
 describe("RemnantReviewPanel", () => {
+  test("keeps a long remnant list in a visible, independently scrollable panel", () => {
+    const candidates = Array.from({ length: 6 }, (_, index) => candidate({ id: `rem-${index + 1}` }));
+    render(<RemnantReviewPanel inspection={inspected(candidates)} regions={[region]} />);
+    expect(screen.getByTestId("remnant-review-findings")).toHaveClass("fixed", "z-40");
+    expect(screen.getByTestId("remnant-candidate-list")).toHaveClass("overflow-y-auto");
+    expect(screen.getByText(/เลื่อนภายในกรอบเพื่อดูรายการที่เหลือ/)).toBeInTheDocument();
+    expect(screen.getByTestId("remnant-candidate-rem-6")).toBeInTheDocument();
+  });
+
   test.each([region, farRegion])("compares immutable source/clean crops independently of mask authorization ($id)", (authorizedRegion) => {
     const onOpenMask = vi.fn();
     const onConfirmArtwork = vi.fn();

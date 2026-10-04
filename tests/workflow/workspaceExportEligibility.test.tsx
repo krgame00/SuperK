@@ -242,6 +242,19 @@ test("the gate fires before any cached raster or live-canvas render is consulted
   expect(saveBlob).not.toHaveBeenCalled();
 });
 
+test("explicitly exports the currently rendered translated page despite review blockers", async () => {
+  await restoreWorkspaceWith({ bubbleCacheRef: { current: new Map([[PAGE_ONE_URL, [oldAcceptedContaminated()]]]) } });
+  await requestExport("รูปภาพหน้านี้");
+  const forceExport = await screen.findByRole("button", { name: "ส่งออกภาพและคำแปลปัจจุบัน แม้มีจุดค้าง" });
+  expect(forceExport).toBeEnabled();
+  const { saveBlob } = await import("@/lib/export/saveLocation");
+  await act(async () => { fireEvent.click(forceExport); });
+  await waitFor(() => expect(saveBlob).toHaveBeenCalled());
+  expect(screen.queryByText("มีหน้าที่ต้องได้รับการยืนยันก่อน Export")).not.toBeInTheDocument();
+  const [blob] = vi.mocked(saveBlob).mock.calls.at(-1)!;
+  expect(new TextDecoder().decode(await readBlobBytes(blob as Blob))).toBe("RENDERED");
+});
+
 test("an affected page can be explicitly substituted with its original image", async () => {
   await restoreWorkspaceWith({
     bubbleCacheRef: { current: new Map([[PAGE_ONE_URL, [oldAcceptedContaminated()]]]) },

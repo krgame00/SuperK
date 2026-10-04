@@ -156,6 +156,8 @@ export function getPageOutputBlockers(
 }
 
 export interface PageEligibilityGateOptions {
+  /** Only set after the user explicitly chooses to export current output with unresolved findings. */
+  allowUnreviewedExport?: boolean;
   /** Legacy target IDs never provide policy evidence; retained for old callers to fail closed. */
   targetIds?: Map<string, string | undefined>;
   targetIdentities?: Map<string, PageTargetIdentity | undefined>;
@@ -172,6 +174,7 @@ export interface PageEligibilityGateOptions {
  * unconfirmed targets and background-remnant findings (`hasHardBlockers`) are
  * listed until repaired, explicitly substituted with the original image
  * (`exportSource: "original"`) or explicitly excluded (`exportExcluded`).
+ * Callers may bypass findings only after a separate explicit user choice.
  */
 export function getUnconfirmedPages(
   pages: { url: string; name: string; exportSource?: PageExportSource; exportExcluded?: boolean }[],
@@ -182,6 +185,7 @@ export function getUnconfirmedPages(
   confirmedMissingTranslations?: Map<string, string>,
   options?: PageEligibilityGateOptions,
 ): PageReviewInfo[] {
+  if (options?.allowUnreviewedExport) return [];
   const indices = targetIndices ?? pages.map((_, i) => i);
   const unconfirmed: PageReviewInfo[] = [];
 

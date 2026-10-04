@@ -130,6 +130,7 @@ export default function WorkspacePage() {
   const [pages, setPages] = useState<WorkspaceExportPage[]>([]);
   const [currentPage, setCurrentPageState] = useState(0);
   const exportSnapshotRef = useRef<{ pages: WorkspaceExportPage[]; currentPage: number } | null>(null);
+  const allowUnreviewedExportRef = useRef(false);
   const [isChoosingExport, setIsChoosingExport] = useState(false);
   const setCurrentPage = useCallback((updater: SetStateAction<number>) => {
     if (!exportSnapshotRef.current) setCurrentPageState(updater);
@@ -1339,11 +1340,10 @@ export default function WorkspacePage() {
     }
   };
 
-  // Shared output-eligibility gate: every translated export path evaluates this
-  // BEFORE choosing the live canvas, a cached raster or a fresh offscreen render.
-  // The eligibility result is recomputed from raw text at each attempt, so old
-  // accepted/dismissed states and generic page confirmations cannot bypass it.
-  const collectExportReviewPages = useCallback((snapshotPages: WorkspaceExportPage[], targetIndices?: number[]) => {
+  // Shared output-eligibility gate runs before selecting a cached or fresh render.
+  // Only the explicit "export current output" action bypasses findings; render
+  // signature checks still reject source or text changes during export.
+  const collectExportReviewPages = useCallback((snapshotPages: WorkspaceExportPage[], targetIndices?: number[], allowUnreviewedExport = false) => {
     return getUnconfirmedPages(
       snapshotPages,
       confirmedPagesRef.current,
@@ -1352,6 +1352,7 @@ export default function WorkspacePage() {
       targetIndices,
       confirmedMissingTranslationsRef.current,
       {
+        allowUnreviewedExport,
         targetIdentities: pageTargetCacheRef.current,
         sourceRevisions: new Map(snapshotPages.map((page) => [page.url, getPageSourceRevision?.(page.url)])),
         backgroundInspections: new Map(snapshotPages.flatMap((page) => {
@@ -1392,7 +1393,7 @@ export default function WorkspacePage() {
   const exportInputSignature = (pageUrl: string) => JSON.stringify([pageTargetCacheRef.current.get(pageUrl), bubbleCacheRef.current.get(pageUrl), textStyleRef.current, getCurrentRemnantReview?.(pageUrl, getExpectedRemnantEvidence(pageUrl))?.inspection.revisionKey, getPageSourceRevision?.(pageUrl), cleaningResultsByPage.get(pageUrl)?.sourceFingerprint, cleaningResultsByPage.get(pageUrl)?.cleanUrl]);
 
     const renderExportImage = async (pageUrl: string, index: number, pages: WorkspaceExportPage[]): Promise<string | null> => {
-      if (collectExportReviewPages(pages, [index]).length) throw new Error("กรุณาตรวจหลักฐานหน้านี้ใหม่ เลือกต้นฉบับ หรือข้ามหน้า");
+      if (collectExportReviewPages(pages, [index], allowUnreviewedExportRef.current).length) throw new Error("กรุณาตรวจหลักฐานหน้านี้ใหม่ เลือกต้นฉบับ หรือข้ามหน้า");
       const beforeSignature = exportInputSignature(pageUrl);
       const pageId = pages[index]?.id || `page_${index}`;
       const bubbles = bubbleCacheRef.current.get(pageUrl);
@@ -1438,7 +1439,7 @@ export default function WorkspacePage() {
                 (renderedUrl) => {
                   clearTimeout(timeout);
                   const approxBytes = Math.round(renderedUrl.length * 0.75);
-                  if (collectExportReviewPages(pages, [index]).length || beforeSignature !== exportInputSignature(pageUrl)) { reject(new Error("ข้อความหรือหลักฐานเปลี่ยนระหว่างเรนเดอร์ กรุณาลองส่งออกใหม่")); return; }
+                  if (collectExportReviewPages(pages, [index], allowUnreviewedExportRef.current).length || beforeSignature !== exportInputSignature(pageUrl)) { reject(new Error("ข้อความหรือหลักฐานเปลี่ยนระหว่างเรนเดอร์ กรุณาลองส่งออกใหม่")); return; }
                   translatedImageCacheRef.current.set(pageUrl, renderedUrl);
                   const freshSig = getPageSignature?.(pageUrl) ?? "rev-0";
                   workspaceResourceManager.registerRenderedImage(
@@ -1490,10 +1491,10 @@ export default function WorkspacePage() {
 
   const executeDownloadAll = async (format: "zip" | "cbz" | "pdf" | "strip" = "zip") => {
     const pages = exportSnapshotRef.current?.pages ?? [];
-    if (pages.length === 0) return;
+    if (pages.length === 0) { allowUnreviewedExportRef.current = false; return; }
     const outputSignatures = new Map(pages.map(page => [page.url, exportInputSignature(page.url)]));
     const assertCurrentOutput = () => {
-      if (collectExportReviewPages(pages).length || pages.some(page => !page.exportExcluded && normalizePageExportSource(page.exportSource) !== "original" && outputSignatures.get(page.url) !== exportInputSignature(page.url))) throw new Error("หลักฐานหรือข้อความเปลี่ยนระหว่างส่งออก กรุณาตรวจหน้าและส่งออกใหม่");
+      if (collectExportReviewPages(pages, undefined, allowUnreviewedExportRef.current).length || pages.some(page => !page.exportExcluded && normalizePageExportSource(page.exportSource) !== "original" && outputSignatures.get(page.url) !== exportInputSignature(page.url))) throw new Error("หลักฐานหรือข้อความเปลี่ยนระหว่างส่งออก กรุณาตรวจหน้าและส่งออกใหม่");
     };
     setIsChoosingExport(false);
     setIsZipping(true);
@@ -1510,7 +1511,8 @@ export default function WorkspacePage() {
         destDir = await getOrPickExportDirectory();
         if (!destDir) {
           setIsZipping(false);
-      exportSnapshotRef.current = null;
+          allowUnreviewedExportRef.current = false;
+          exportSnapshotRef.current = null;
           return;
         }
       }
@@ -1529,7 +1531,7 @@ export default function WorkspacePage() {
     };
 
     const getExportDataUrl = async (pageUrl: string, index: number): Promise<string> => {
-      if (collectExportReviewPages(pages, [index]).length) throw new Error("กรุณาตรวจหลักฐานหน้านี้ใหม่ เลือกต้นฉบับ หรือข้ามหน้า");
+      if (collectExportReviewPages(pages, [index], allowUnreviewedExportRef.current).length) throw new Error("กรุณาตรวจหลักฐานหน้านี้ใหม่ เลือกต้นฉบับ หรือข้ามหน้า");
       const selectedUrl = await resolvePageExportUrl(pages[index], cleaningResultsByPage.get(pageUrl)?.cleanUrl,
         () => renderExportImage(pageUrl, index, pages));
       return selectedUrl.startsWith("data:") ? selectedUrl : blobToDataUrl(await exportImageBlob(selectedUrl));
@@ -1650,7 +1652,8 @@ export default function WorkspacePage() {
         setTimeout(() => setTranslationResult(null), 3000);
       } finally {
         setIsZipping(false);
-      exportSnapshotRef.current = null;
+        allowUnreviewedExportRef.current = false;
+        exportSnapshotRef.current = null;
       }
       return;
     }
@@ -1750,7 +1753,7 @@ export default function WorkspacePage() {
     for (let i = 0; i < pages.length; i++) {
       if (pages[i].exportExcluded) continue;
       try {
-        if (collectExportReviewPages(pages, [i]).length) throw new Error("กรุณาตรวจหลักฐานหน้านี้ใหม่ เลือกต้นฉบับ หรือข้ามหน้า");
+        if (collectExportReviewPages(pages, [i], allowUnreviewedExportRef.current).length) throw new Error("กรุณาตรวจหลักฐานหน้านี้ใหม่ เลือกต้นฉบับ หรือข้ามหน้า");
         const selectedUrl = await resolvePageExportUrl(pages[i], cleaningResultsByPage.get(pages[i].url)?.cleanUrl,
           () => renderExportImage(pages[i].url, i, pages));
         const blob = await exportImageBlob(selectedUrl);
@@ -1819,6 +1822,7 @@ export default function WorkspacePage() {
       setTimeout(() => setTranslationResult(null), 3000);
     } finally {
       setIsZipping(false);
+      allowUnreviewedExportRef.current = false;
       exportSnapshotRef.current = null;
     }
   };
@@ -1846,7 +1850,7 @@ export default function WorkspacePage() {
     try {
       const page = pages[currentPage];
       if (!page) return;
-      if (collectExportReviewPages(pages, [currentPage]).length) throw new Error("หน้านี้ยังต้องตรวจคำแปลหรือภาพพื้นหลัง กรุณาตรวจใหม่ เลือกต้นฉบับ หรือข้ามหน้า");
+      if (collectExportReviewPages(pages, [currentPage], allowUnreviewedExportRef.current).length) throw new Error("หน้านี้ยังต้องตรวจคำแปลหรือภาพพื้นหลัง กรุณาตรวจใหม่ เลือกต้นฉบับ หรือข้ามหน้า");
       const beforeSignature = exportInputSignature(page.url);
       const url = await resolvePageExportUrl(page, cleaningResultsByPage.get(page.url)?.cleanUrl, () => renderExportImage(page.url, currentPage, pages));
       const blob = await exportImageBlob(url);
@@ -1856,12 +1860,12 @@ export default function WorkspacePage() {
         directory = await getOrPickExportDirectory();
         if (!directory) return;
       }
-      if (collectExportReviewPages(pages, [currentPage]).length || (normalizePageExportSource(page.exportSource) !== "original" && beforeSignature !== exportInputSignature(page.url))) throw new Error("หลักฐานเปลี่ยนระหว่างส่งออก กรุณาตรวจหน้าอีกครั้ง");
+      if (collectExportReviewPages(pages, [currentPage], allowUnreviewedExportRef.current).length || (normalizePageExportSource(page.exportSource) !== "original" && beforeSignature !== exportInputSignature(page.url))) throw new Error("หลักฐานเปลี่ยนระหว่างส่งออก กรุณาตรวจหน้าอีกครั้ง");
       await saveBlob(blob, filename, directory);
       setTranslationResult(`✅ บันทึก ${filename} สำเร็จ!`);
     } catch (error) {
       setTranslationResult(`❌ ส่งออกไม่สำเร็จ: ${error instanceof Error ? error.message : String(error)}`);
-    } finally { setIsZipping(false); exportSnapshotRef.current = null; }
+    } finally { setIsZipping(false); allowUnreviewedExportRef.current = false; exportSnapshotRef.current = null; }
   };
 
   const requestSinglePageExport = async () => {
@@ -3402,7 +3406,7 @@ export default function WorkspacePage() {
       {/* ── Human Review Confirmation Gate Modal (Ticket 07 + output eligibility) ── */}
       {unconfirmedReviewPages && (unconfirmedReviewPages.length > 0 || pendingExportAction) && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150">
-          <div className="bg-surface border border-border shadow-2xl rounded-2xl max-w-lg w-full p-5 flex flex-col gap-4">
+          <div className="bg-surface border border-border shadow-2xl rounded-2xl max-w-2xl w-full p-5 flex flex-col gap-4">
             <div className="flex items-start gap-3">
               <div className="p-2.5 rounded-xl bg-amber-500/15 text-amber-500 text-xl flex-shrink-0">
                 ⚠️
@@ -3412,8 +3416,7 @@ export default function WorkspacePage() {
                   มีหน้าที่ต้องได้รับการยืนยันก่อน Export
                 </h3>
                 <p className="text-xs text-muted mt-1 leading-relaxed">
-                  พบหน้าที่การคลีนหรือการแปลมีความมั่นใจต่ำ หรือมีบริเวณข้อความที่ตรวจพบแต่ยังไม่มีคำแปล ตรวจสอบหน้าที่ระบุ หรือยืนยันเพื่อส่งออกพร้อมคำแปลที่มีอยู่
-                  หน้าที่ตรวจพบตัวอักษรภาษาอื่นหรือยังไม่ได้ตรวจกับต้นฉบับยืนยันผ่านไม่ได้ ต้องแก้ไข ส่งออกเป็นภาพต้นฉบับ หรือตัดออกจากการส่งออกอย่างชัดเจน
+                  ตรวจหน้าที่ระบุหรือกลับไปแก้ก่อนก็ได้ หากต้องการไฟล์ทันที เลือกส่งออกภาพและคำแปลปัจจุบันทั้งที่มีจุดค้างได้
                 </p>
               </div>
             </div>
@@ -3509,22 +3512,38 @@ export default function WorkspacePage() {
               </p>
             )}
 
-            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-border/50">
+            <div className="flex flex-wrap items-center justify-end gap-2.5 pt-2 border-t border-border/50">
               <button
                 type="button"
                 onClick={() => {
                   setUnconfirmedReviewPages(null);
                   setPendingExportAction(null);
                   setIsChoosingExport(false);
+                  allowUnreviewedExportRef.current = false;
                   exportSnapshotRef.current = null;
                 }}
                 className="px-4 py-2 rounded-xl border border-border hover:bg-surface text-xs font-semibold text-muted hover:text-foreground transition-colors cursor-pointer"
               >
                 ยกเลิก
               </button>
+              {pendingExportAction && unconfirmedReviewPages.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const action = pendingExportAction;
+                    allowUnreviewedExportRef.current = true;
+                    setUnconfirmedReviewPages(null);
+                    setPendingExportAction(null);
+                    action();
+                  }}
+                  className="px-3 py-2 rounded-xl border border-amber-500/60 bg-amber-500/10 hover:bg-amber-500/20 text-amber-200 text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  ส่งออกภาพและคำแปลปัจจุบัน แม้มีจุดค้าง
+                </button>
+              )}
               {unconfirmedReviewPages.some((p) => p.hasHardBlockers) && (
                 <p className="text-[11px] text-muted max-w-[220px] text-right">
-                  หน้าที่ติดสถานะยืนยันผ่านไม่ได้ต้องแก้ไข ส่งออกเป็นต้นฉบับ หรือตัดออกก่อน
+                  ทางเลือกส่งออกปัจจุบันจะรวมหน้าที่มีจุดค้างตามภาพและคำแปลที่เห็น
                 </p>
               )}
               <button
