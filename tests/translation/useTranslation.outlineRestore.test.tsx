@@ -5,6 +5,7 @@ import { loadProjectSession, saveProjectSession } from "@/lib/projectStore";
 import { sampleBubbleRegion } from "@/lib/colorMatching/canvasSampler";
 import { extractTextColors } from "@/lib/colorMatching/sampleTextColors";
 import type { TextStyleProfile } from "@/lib/colorMatching/types";
+import { createPageTargetIdentity } from "@/lib/translation/pageEligibility";
 
 vi.mock("@/lib/translationOverlay", () => ({ applyTranslationOverlay: vi.fn() }));
 vi.mock("@/lib/projectStore", () => ({ deleteAsset: vi.fn(), saveProjectSession: vi.fn().mockResolvedValue(undefined),
@@ -22,6 +23,7 @@ function savedSession(unrecoverableSource = false, styleProfile = profile) {
   return { pages: [{ id: "page1", url: original, name: "page1", unrecoverableSource }],
     currentPage: 0, updatedAt: 0, hasUnrecoverableSources: unrecoverableSource,
     bubbleCache: new Map([[original, [{ box: [1, 2, 900, 900], t: "text", styleProfile }]]]),
+    pageTargetCache: new Map([[original,createPageTargetIdentity("en")!]]),
     translatedImageCache: new Map([[original, rendered]]) };
 }
 beforeEach(() => {

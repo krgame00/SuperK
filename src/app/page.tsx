@@ -6,6 +6,7 @@ import { translationScope } from "@/lib/cleaning/textAuthorization";
 import { useState, useMemo, useRef, useEffect, useCallback, type SetStateAction } from "react";
 import { getWorkspacePrimaryAction } from "@/lib/workspacePrimaryAction";
 import { useTranslation } from "@/hooks/useTranslation";
+import { resolveTargetLanguage } from "@/lib/languagePolicy";
 import { jsPDF } from "jspdf";
 import { Toaster } from "react-hot-toast";
 import {
@@ -402,6 +403,9 @@ export default function WorkspacePage() {
     allowPreviewModels,
     setAllowPreviewModels,
     targetLang,
+    setTargetLang,
+    pageTargetCacheRef,
+    getPageTargetLanguage,
     sourceLang,
     setSourceLang,
     textStyle,
@@ -1329,7 +1333,7 @@ export default function WorkspacePage() {
                 undefined,
                 pageUrl,
                 undefined,
-                targetLang,
+                getPageTargetLanguage(pageUrl),
               );
             };
             offscreenImg.onerror = () => fail("โหลดภาพไม่สำเร็จ");
@@ -1579,7 +1583,12 @@ export default function WorkspacePage() {
           const xml = generateComicInfoXml({
             title: pages[0]?.name?.replace(/\.[^/.]+$/, "") || "Manga Translation",
             pageCount: zipAddedCount,
-            languageISO: targetLang === "Thai" ? "th" : "en",
+            languageISO: (() => {
+              const targets = pages.map(page => getPageTargetLanguage(page.url));
+              if (targets.some(target => !target)) return "und";
+              const languages = [...new Set(targets.map(target => target!.split("-")[0]))];
+              return languages.length === 1 ? languages[0] : "mul";
+            })(),
           });
           zip.file("ComicInfo.xml", xml);
         }
@@ -2670,6 +2679,10 @@ export default function WorkspacePage() {
                     {pages[currentPage] && (
                       <label className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface/95 px-3 py-2 text-xs shadow-lg">
                         <span>หน้า {currentPage + 1} · ส่งออกหน้านี้เป็น</span>
+                        <span aria-label="ภาษาคำแปลของหน้า">{(() => {
+                          const target = resolveTargetLanguage(pageTargetCacheRef.current.get(pages[currentPage].url)?.targetId);
+                          return target.status === "resolved" ? `คำแปล: ${target.profile.label}` : "คำแปล: ยังไม่ยืนยันภาษา";
+                        })()}</span>
                         <select aria-label="ส่งออกหน้านี้เป็น" className="rounded-md border border-border bg-background px-2 py-1"
                           value={normalizePageExportSource(pages[currentPage].exportSource)}
                           disabled={isZipping || isChoosingExport || Boolean(pendingExportAction) || Boolean(pendingReadabilityExport)}
@@ -2953,6 +2966,8 @@ export default function WorkspacePage() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         sourceLang={sourceLang}
+        targetLang={targetLang}
+        onTargetLangChange={setTargetLang}
         onSourceLangChange={setSourceLang}
         textStyle={textStyle}
         onTextStyleChange={setTextStyle}

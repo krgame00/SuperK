@@ -30,7 +30,7 @@ const sizing=():SourceSizing=>({mode:'auto',status:'matched',baseFontSizePx:5,
   font:{family:'sans-serif',textKey:'Hello',referencePx:100,bodyHeightPx:80,loaded:true},
   evidence:{policyVersion:SOURCE_SIZE_POLICY,sourceRevision:'1000x1000:pixels',regionKey:'100,100,300,400',pixelRevision:'crop',rect:{x:100,y:100,width:300,height:200},quality:'reliable',confidence:.9,reason:'glyphs',bodyHeightPx:4,glyphCount:5,lineCount:1},readabilityWarning:'ข้อความต้นฉบับขนาดเล็ก อาจอ่านยาก'});
 async function paint(b:TranslatedBubble,family='sans-serif') {
-  await applyTranslationOverlay([b],'single',0,()=>{},undefined,{current:{fontFamily:family,fontSizeMultiplier:1}});
+  await applyTranslationOverlay([b],'single',0,()=>{},undefined,{current:{fontFamily:family,fontSizeMultiplier:1}},undefined,undefined,undefined,b.t==='Hello'?'en':'th');
   await vi.advanceTimersByTimeAsync(250);
 }
 test('matched original small size renders below legacy floor and survives saved reload',async()=>{

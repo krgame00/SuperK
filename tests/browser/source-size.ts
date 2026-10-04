@@ -31,17 +31,18 @@ async function run(){
     const clean=new Image();clean.src='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="160"><rect width="100%" height="100%" fill="white"/></svg>');await clean.decode();
     const chrome=document.createElement('div');chrome.dataset.overlayChromeLayer='true';viewport.append(stage,chrome);stage.append(clean);document.body.append(viewport);
     const style={current:{fontFamily:family,fontSizeMultiplier:1,textColor:'#000000',textOutline:'#ffffff'}};
-    await applyTranslationOverlay([bubble],'single',0,()=>{},undefined,style,stage);await pause();
+    const target = family === 'Tahoma' ? 'th' : 'en';
+    await applyTranslationOverlay([bubble],'single',0,()=>{},undefined,style,stage,undefined,undefined,target);await pause();
     const output=stage.querySelector<HTMLCanvasElement>('.tl-canvas canvas')!;
     const outputBody=visibleHeight(output),error=Math.abs(outputBody-sourceBody);
     check(error/sourceBody<=.10 || error<1,`${family} ${text} ${nominal} zoom ${zoom}: body ${sourceBody} vs ${outputBody}; ${JSON.stringify(bubble.sourceSizing)}; canvas ${output.width}x${output.height}`);
     const bitmap=output.toDataURL(),exported=downloadTranslatedImage('single',0,'',true,stage);
     const saved=JSON.parse(JSON.stringify(bubble)) as TranslatedBubble;
-    await applyTranslationOverlay([saved],'single',0,()=>{},undefined,style,stage);await pause();
+    await applyTranslationOverlay([saved],'single',0,()=>{},undefined,style,stage,undefined,undefined,target);await pause();
     check(stage.querySelector<HTMLCanvasElement>('.tl-canvas canvas')!.toDataURL()===bitmap,'saved reload changed rendered glyphs');
     check(downloadTranslatedImage('single',0,'',true,stage)===exported,'saved reload changed export');
     const offscreen=document.createElement('div');offscreen.style.cssText='position:relative;width:300px;height:160px';offscreen.append(clean.cloneNode());document.body.append(offscreen);
-    await applyTranslationOverlay([saved],'offscreen',0,()=>{},undefined,style,offscreen);await pause();
+    await applyTranslationOverlay([saved],'offscreen',0,()=>{},undefined,style,offscreen,undefined,undefined,target);await pause();
     check(downloadTranslatedImage('offscreen',0,'',true,offscreen)===exported,'offscreen export changed source-matched glyphs');
     rows.push({zoom,family,text,sourceNominal:nominal,sourceBodyPx:sourceBody,outputBodyPx:outputBody,baseFontSizePx:bubble.targetFontSize,errorPx:error,relativeError:error/sourceBody,status:bubble.sourceSizing!.status,reloadEqual:true,exportEqual:true});
   }

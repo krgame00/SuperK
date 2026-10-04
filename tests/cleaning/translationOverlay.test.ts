@@ -157,7 +157,7 @@ async function renderOverlay(
     },
     container,
     options.pageKeyOverride,
-    options.onBubblesMutated,
+    options.onBubblesMutated, (/[A-Za-z]/.test(text) && !/\p{Script=Thai}/u.test(text) ? "en" : "th"),
   );
   await vi.runAllTimersAsync();
 
@@ -334,7 +334,7 @@ describe("translation overlay live editor and keyboard controls", () => {
       fill: "#930a0b", outline: "#ffffff", hasOutline: false, outlineWidthRatio: 0,
       fillConfidence: .95, outlineConfidence: 0, backgroundLuminance: 180 };
     await applyTranslationOverlay([{ box: [100, 100, 300, 400], t: "ข้อความ", styleProfile: sourceProfile }],
-      mode, 0, vi.fn(), undefined, undefined, container);
+      mode, 0, vi.fn(), undefined, undefined, container, undefined, undefined, "th");
     await vi.runAllTimersAsync();
     expect(drawnFillColors.length).toBeGreaterThan(0);
     expect(drawnFillColors.every(color => color === "#ffffff")).toBe(true);
@@ -374,7 +374,7 @@ describe("translation overlay live editor and keyboard controls", () => {
           fontSizeMultiplier: 1,
         },
       },
-      explicitContainer,
+      explicitContainer, undefined, undefined, "th",
     );
     await vi.runAllTimersAsync();
 
@@ -1090,7 +1090,7 @@ test("regression: saved empty text remains editable after reopening overlay", as
   document.querySelector<HTMLButtonElement>('[aria-label="บันทึกข้อความ"]')!.click();
   expect(bubble.deleted).not.toBe(true);
   const restoredBubble = JSON.parse(JSON.stringify(bubble)) as TranslatedBubble;
-  await applyTranslationOverlay([restoredBubble], "single", 0, () => {}, undefined, undefined, container);
+  await applyTranslationOverlay([restoredBubble], "single", 0, () => {}, undefined, undefined, container, undefined, undefined, "en");
   await vi.runAllTimersAsync();
   const restoredWrapper = container.querySelector<HTMLElement>(".translation-bubble-wrapper")!;
   expect(restoredWrapper).not.toBeNull();
@@ -1134,11 +1134,11 @@ test("a stale overlay paint bails once a newer generation painted", async () => 
   // A's deferred paint runs — A must bail instead of repainting over B.
   const paintA = applyTranslationOverlay(
     [{ box: [100, 100, 300, 400], t: "จากหน้าเก่า" }],
-    "single", 0, vi.fn(), undefined, styleRef, explicitContainer,
+    "single", 0, vi.fn(), undefined, styleRef, explicitContainer, undefined, undefined, "th",
   );
   const paintB = applyTranslationOverlay(
     [{ box: [100, 100, 300, 400], t: "จากหน้าใหม่" }],
-    "single", 0, vi.fn(), undefined, styleRef, explicitContainer,
+    "single", 0, vi.fn(), undefined, styleRef, explicitContainer, undefined, undefined, "th",
   );
 
   releaseFonts!();
@@ -1223,7 +1223,7 @@ async function renderOverlayFresh(text: string, overrides: Partial<TranslatedBub
         fontSizeMultiplier: 1,
       },
     },
-    container,
+    container, undefined, undefined, (/[A-Za-z]/.test(text) && !/\p{Script=Thai}/u.test(text) ? "en" : "th"),
   );
   await vi.runAllTimersAsync();
   const wrapper = container.querySelector<HTMLElement>(".translation-bubble-wrapper")!;
@@ -2221,7 +2221,7 @@ test("renders the identical font and lines for workspace and offscreen export pa
     vi.fn(),
     undefined,
     styleRef,
-    liveContainer,
+    liveContainer, undefined, undefined, "th",
   );
   await vi.runAllTimersAsync();
 
@@ -2232,7 +2232,7 @@ test("renders the identical font and lines for workspace and offscreen export pa
     -1,
     vi.fn(),
     undefined,
-    styleRef,
+    styleRef, undefined, undefined, undefined, "th",
   );
   await vi.runAllTimersAsync();
 

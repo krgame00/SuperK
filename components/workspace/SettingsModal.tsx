@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { type GlossaryEntry } from "@/lib/translation/glossary";
+import { TARGET_LANGUAGES, resolveTargetLanguage } from "@/lib/languagePolicy";
 import { MANUAL_IMAGE_MODEL_IDS } from "@/lib/translation/imageModelChoices";
 import { workspaceResourceManager } from "@/lib/lifecycle/workspaceResourceManager";
 import { Plus, Trash2, BookText, Flame, X, ChevronDown, Download, Folder, Search, Check, Sparkles, Power, AlertTriangle, Loader2 } from "lucide-react";
@@ -106,6 +107,8 @@ export interface SettingsModalProps {
   onClose: () => void;
   sourceLang: string;
   onSourceLangChange: (lang: string) => void;
+  targetLang?: string;
+  onTargetLangChange?: (lang: string) => void;
   textStyle: WorkspaceTextStyle;
   onTextStyleChange: (style: WorkspaceTextStyle | ((prev: WorkspaceTextStyle) => WorkspaceTextStyle)) => void;
   modelPreference: string;
@@ -130,6 +133,8 @@ export function SettingsModal({
   onClose,
   sourceLang,
   onSourceLangChange,
+  targetLang = "th",
+  onTargetLangChange,
   textStyle,
   onTextStyleChange,
   modelPreference,
@@ -148,6 +153,7 @@ export function SettingsModal({
   autoProceedOnReview = true,
   onAutoProceedOnReviewChange,
 }: SettingsModalProps): ReactElement | null {
+  const targetResolution = resolveTargetLanguage(targetLang);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const apiKeyInputRef = useRef<HTMLInputElement>(null);
@@ -538,6 +544,25 @@ export function SettingsModal({
               </select>
               <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" aria-hidden="true" />
             </div>
+          </div>
+
+          <div className="rounded-xl border border-border/70 bg-background/45 p-3">
+            <label htmlFor="settings-target-lang" className="mb-1 block text-xs font-medium text-muted">
+              Target Language (ภาษาปลายทาง)
+            </label>
+            <div className="relative">
+              <select id="settings-target-lang" aria-label="Target Language (ภาษาปลายทาง)"
+                value={targetResolution.status === "resolved" ? targetResolution.profile.id : ""}
+                onChange={(event) => onTargetLangChange?.(event.target.value)}
+                disabled={!onTargetLangChange}
+                className="w-full appearance-none rounded-md border border-surface-hover bg-background px-3 py-2 pr-8 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary">
+                {targetResolution.status === "blocked" && <option value="">เลือกภาษาและระบบอักษร</option>}
+                {TARGET_LANGUAGES.map((target) => <option key={target.id} value={target.id}>{target.label}</option>)}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" aria-hidden="true" />
+            </div>
+            <p className="mt-2 text-xs text-muted">ใช้สำหรับงานแปลถัดไป ภาษาของหน้าที่แปลแล้วจะเปลี่ยนเมื่อแปลหน้านั้นใหม่</p>
+            {targetResolution.status === "blocked" && <p role="alert" className="mt-2 text-xs text-amber-500">{targetResolution.message}</p>}
           </div>
 
           <div className="rounded-xl border border-border/70 bg-background/45 p-3">

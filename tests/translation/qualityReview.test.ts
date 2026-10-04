@@ -3,6 +3,25 @@ import { parseQualityReviews, needsQualityReview, invalidateQualityReview, build
 
 const items = [{id:"0",sourceText:"Wait here.",translatedText:"รอตรงนี้นะ"}];
 describe("translation quality review", () => {
+  it.each(["John", "BOOM", "𐐀", "ⓐ"])("rejects excluded Thai suggestion %s", suggestion => {
+    const review = parseQualityReviews(items, {reviews:[{id:"0",status:"suggested",suggestion}]}, "th")["0"];
+    expect(review.status).toBe("needs_review");
+    expect(review.suggestion).toBeUndefined();
+  });
+  it.each([["ja", "こんにちは𐐀"], ["en", "Helloไทย"], ["ar", "سلامA"]])("overrides approval for excluded scripts in %s", (target, text) => {
+    const review = parseQualityReviews([{...items[0],translatedText:text}], {reviews:[{id:"0",status:"ok"}]}, target)["0"];
+    expect(review.status).toBe("needs_review");
+  });
+  it.each(["unknown", "Chinese", "Serbian"])("blocks review for unresolved target %s", target => {
+    const review = parseQualityReviews(items, {reviews:[{id:"0",status:"suggested",suggestion:"replacement"}]}, target)["0"];
+    expect(review.status).toBe("needs_review");
+    expect(review.suggestion).toBeUndefined();
+  });
+  it("requires Thai lettering for names, SFX and glossary entries in the review prompt", () => {
+    const prompt = buildQualityReviewPrompt(items, "th");
+    expect(prompt).toContain("Latin names, SFX, brands and glossary entries must also be translated into Thai lettering");
+    expect(prompt).not.toContain("may remain");
+  });
   it("overrides provider approval for Hebrew in Thai output", () => {
     const mixed = [{id:"0",sourceText:"What magic does this smell have?",translatedText:"กลิ่นนี่มันมีมนמהขลังอะไรกันแน่..."}];
     expect(parseQualityReviews(mixed,{reviews:[{id:"0",status:"ok"}]})["0"]).toMatchObject({status:"needs_review",reason:expect.stringContaining("מה")});

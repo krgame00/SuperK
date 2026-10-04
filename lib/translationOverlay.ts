@@ -2,8 +2,8 @@ import { undoManager } from "./undoManager";
 import { calibrateOutputBodyMetric, resolveSourceFontSize, sourceRegionKey, SOURCE_SIZE_POLICY, SOURCE_SIZE_FALLBACK_LABEL, type SourceSizing } from './sourceTextSize';
 import { measureTextSelection, rotateLocalPoint, type SelectionRect } from "./textSelectionBounds";
 import { guardQualityReview, unavailableReview, invalidateQualityReview, isReviewCurrent } from "./translation/qualityReview";
-import { countForeignScriptChars, isThaiTargetLanguage } from "./thaiSpellcheck";
 import type { TranslationReview } from "./translation/qualityReview";
+import { inspectTargetText, formatOffendingCharacters } from "./languagePolicy";
 import {
   recomputeAdaptiveReadableOnLayoutCommit,
   resolveBubbleTextStyle,
@@ -1020,14 +1020,15 @@ export const applyTranslationOverlay = async (
 
       let renderedFontSize = 0;
       let textLayoutOverflow = false;
+      let scriptNotice = "";
       // Moving/rotating changes placement only. Reuse the existing glyph bitmap.
       const updateBubbleFrame = () => {
         layoutOverflow = textLayoutOverflow || currentBx < 0 || currentBx + currentBw > iw ||
           currentBy < 0 || currentBy + currentBh > ih;
         wrapper.dataset.layoutOverflow = layoutOverflow ? "true" : "false";
         overflowNotice.hidden = !layoutOverflow;
-        wrapper.title = layoutOverflow ? "ข้อความล้นพื้นที่หน้า กรุณาขยายพื้นที่หรือแก้ข้อความ" : "";
-        wrapper.setAttribute("aria-label", layoutOverflow ? `${baseAriaLabel}; ข้อความล้นพื้นที่หน้า` : baseAriaLabel);
+        wrapper.title = [scriptNotice, layoutOverflow ? "ข้อความล้นพื้นที่หน้า กรุณาขยายพื้นที่หรือแก้ข้อความ" : ""].filter(Boolean).join('; ');
+        wrapper.setAttribute("aria-label", [baseAriaLabel, scriptNotice, layoutOverflow ? "ข้อความล้นพื้นที่หน้า" : ""].filter(Boolean).join('; '));
         const sizingNotice = b.sourceSizing?.status === 'fallback' ? b.sourceSizing.fallbackLabel : b.sourceSizing?.readabilityWarning;
         if (b.sourceSizing) {
           wrapper.dataset.sourceSizingStatus = b.sourceSizing.status;
@@ -1047,7 +1048,17 @@ export const applyTranslationOverlay = async (
       };
       const renderBubble = (availableHeight = Math.max(0, ih - currentBy)) => {
         const currentStyle = textStyleRef?.current || ts;
-        const text = (b.t || b.translated || "").trim();
+        const rawText = (b.t || b.translated || "").trim();
+        const scriptInspection = inspectTargetText(rawText, targetLanguage);
+        const text = scriptInspection.normalizedText;
+        wrapper.dataset.scriptStatus = scriptInspection.status;
+        scriptNotice = scriptInspection.status === "blocked"
+          ? scriptInspection.reason === "excluded-script"
+            ? `ซ่อนคำแปลที่ผิดอักษร: ${formatOffendingCharacters(scriptInspection.offendingCharacters)} — เปิดแก้ไขข้อความ`
+            : "ยังไม่ยืนยันภาษาของหน้า — เปิดแก้ไขข้อความ"
+          : text !== rawText ? "แสดงตัวเลขในรูปแบบที่รองรับ โดยเก็บข้อความเดิมไว้" : "";
+        wrapper.title = scriptNotice;
+        wrapper.setAttribute("aria-label", [baseAriaLabel, scriptNotice].filter(Boolean).join("; "));
         const currentFontFam = resolveCanvasFontFamily(currentStyle.fontFamily);
         const autoSizing = b.sourceSizing?.mode === 'auto' ? b.sourceSizing : undefined;
         const discardDerivedSize = () => {
@@ -1159,7 +1170,7 @@ export const applyTranslationOverlay = async (
         const ctx = bCanvas.getContext("2d");
         if (!ctx) return;
         ctx.clearRect(0, 0, currentBw, currentBh);
-        if (!text) {
+        if (!text || scriptInspection.status === "blocked") {
           textSelection = { x: 0, y: 0, width: currentBw, height: currentBh };
           updateBubbleFrame();
           return;
@@ -1531,9 +1542,9 @@ export const applyTranslationOverlay = async (
         };
         const displayedReview = () => {
           const text = (b.t || b.translated || "").trim();
-          if (b.translationReview && isReviewCurrent(b)) return guardQualityReview(b.translationReview, targetLanguage);
-          if (isThaiTargetLanguage(targetLanguage) && countForeignScriptChars(text)) {
-            return guardQualityReview(unavailableReview({id:"",sourceText:b.original_text ?? "",translatedText:text}),targetLanguage);
+          if (b.translationReview && isReviewCurrent(b)) return guardQualityReview(b.translationReview, targetLanguage ?? "");
+          if (inspectTargetText(text, targetLanguage).status === "blocked") {
+            return guardQualityReview(unavailableReview({id:"",sourceText:b.original_text ?? "",translatedText:text}),targetLanguage ?? "");
           }
           return b.translationReview;
         };

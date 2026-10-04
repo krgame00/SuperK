@@ -25,10 +25,10 @@ import { parseLLMJSON } from "@/lib/parseLLMJSON";
 import { deduplicateTranslations, excludeDeletedTranslations, findMissingTranslationRegions, recoverMissingTranslations } from "@/lib/translation/completeness";
 import { reviewTranslatedBubbles } from "@/lib/translation/qualityReviewClient";
 import { invalidateQualityReview, needsQualityReview } from "@/lib/translation/qualityReview";
+import { LANGUAGE_POLICY_VERSION, inspectTargetText, normalizeTargetTranslationPayload, formatOffendingCharacters } from "@/lib/languagePolicy";
+import { createPageTargetIdentity, inspectPageOutputEligibility, type PageTargetIdentity } from "@/lib/translation/pageEligibility";
 import {
-  normalizeTranslationPayload,
   countContaminatedBubbles,
-  foreignScriptCharacters,
   isThaiTargetLanguage,
 } from "@/lib/thaiSpellcheck";
 import { sampleBubbleRegion } from "@/lib/colorMatching/canvasSampler";
@@ -382,6 +382,8 @@ export function useTranslation({
   );
 
   const [targetLang, setTargetLang] = useState("Thai");
+  const targetLangRef = useRef(targetLang);
+  targetLangRef.current = targetLang;
   const [sourceLang, setSourceLang] = useState("auto");
   const [modelPreference, setModelPreference] = useState("auto");
   const [allowPreviewModels, setAllowPreviewModelsState] = useState<boolean>(() => {
@@ -446,6 +448,11 @@ export function useTranslation({
 
   // Per-page bubble cache, keyed by image data URL so it survives reordering
   const bubbleCacheRef = useRef<Map<string, TranslatedBubble[]>>(new Map());
+  const pageTargetCacheRef = useRef<Map<string, PageTargetIdentity>>(new Map());
+  const getPageTargetLanguage = useCallback((pageUrl: string) => {
+    const identity = pageTargetCacheRef.current.get(pageUrl);
+    return identity?.policyVersion === LANGUAGE_POLICY_VERSION ? identity.targetId : undefined;
+  }, []);
   // Per-page final translated image dataUrl cache — LRU-bounded so very long
   // books don't hold every rendered page in memory; exports re-render evicted
   // pages from the bubble cache on demand.
@@ -528,14 +535,14 @@ export function useTranslation({
           undefined,
           currentKey,
           () => markPageDirty(currentKey),
-          targetLang,
+          getPageTargetLanguage(currentKey),
         );
       }, 100);
       return () => clearTimeout(timer);
     } else {
       setActiveBubbles((prev) => (prev.length === 0 ? prev : []));
     }
-  }, [currentPage, pages, viewMode, markPageDirty, targetLang, isTranslating, isTranslatingAll]);
+  }, [currentPage, pages, viewMode, markPageDirty, getPageTargetLanguage, isTranslating, isTranslatingAll]);
 
   // Save status and revision management for session reliability
   const saveRevisionRef = useRef(0);
@@ -628,6 +635,7 @@ export function useTranslation({
           ),
           currentPage: currentPageRef.current,
           bubbleCache: bubbleCacheRef.current,
+          pageTargetCache: pageTargetCacheRef.current,
           translatedImageCache: translatedImageCacheRef.current,
         },
         { dirtyPageUrls: isInitial ? undefined : dirtyPageUrls },
@@ -725,6 +733,19 @@ export function useTranslation({
       }
     }
     bubbleCacheRef.current = saved.bubbleCache;
+    pageTargetCacheRef.current = new Map(saved.pageTargetCache ?? []);
+    // Older baked images cannot be selectively erased. Rebuild from the retained points.
+    for (const pageUrl of saved.translatedImageCache.keys()) {
+      const eligibility = inspectPageOutputEligibility({targetIdentity:pageTargetCacheRef.current.get(pageUrl),points:(saved.bubbleCache.get(pageUrl) ?? []).map((bubble,index)=>({id:String(index),text:bubble.t || bubble.translated || "",deleted:bubble.deleted})),requirements:{contextual:false,background:false}});
+      const needsNormalizedRendition = (saved.bubbleCache.get(pageUrl) ?? []).some(bubble => {
+        const text = bubble.t || bubble.translated || "";
+        return !bubble.deleted && inspectTargetText(text, getPageTargetLanguage(pageUrl)).normalizedText !== text;
+      });
+      if (eligibility.scriptStatus === "blocked" || needsNormalizedRendition) {
+        saved.translatedImageCache.delete(pageUrl);
+        outlineRefreshedPages.add(pageUrl);
+      }
+    }
     const restoredImages = new LRUMap<string, string>(
       TRANSLATED_IMAGE_CACHE_LIMIT,
       (pageUrl) => pageUrl === activePageRef.current,
@@ -748,7 +769,7 @@ export function useTranslation({
     setSaveError(null);
     for (const pageUrl of outlineRefreshedPages) markPageDirty(pageUrl);
     return saved;
-  }, [markPageDirty]);
+  }, [markPageDirty, getPageTargetLanguage]);
 
   const retrySaveSession = useCallback(async (): Promise<boolean> => {
     if (pages.length === 0 || isSavingRef.current) return false;
@@ -759,6 +780,7 @@ export function useTranslation({
 
   const clearSavedSession = async () => {
     bubbleCacheRef.current.clear();
+    pageTargetCacheRef.current.clear();
     translatedImageCacheRef.current.clear();
     setTranslatedImages(new Map());
     pageRevisionsRef.current.clear();
@@ -784,6 +806,14 @@ export function useTranslation({
   };
 
   const translateCrop = async (cropBox: { x: number, y: number, w: number, h: number }, cropBase64: string, fullWidth: number, fullHeight: number) => {
+    const pageUrl = pages[currentPage];
+    const jobTargetIdentity = createPageTargetIdentity(targetLangRef.current);
+    const existingTarget = pageTargetCacheRef.current.get(pageUrl);
+    if (!jobTargetIdentity || (activeBubbles.length > 0 && (!existingTarget || existingTarget.targetId !== jobTargetIdentity.targetId || existingTarget.policyVersion !== jobTargetIdentity.policyVersion))) {
+      setTranslationResult("❌ ภาษาของจุดใหม่ต้องตรงกับภาษาที่บันทึกไว้ของหน้า กรุณาแปลทั้งหน้าเพื่อเปลี่ยนภาษา");
+      return;
+    }
+    const targetLang = jobTargetIdentity.targetId;
     setIsTranslating(true);
     setTranslationResult("กำลังแปลเฉพาะจุดที่เลือก...");
     try {
@@ -802,7 +832,7 @@ export function useTranslation({
         }),
       });
       const data = await readTranslationResponse<{ text: string }>(res);
-      const parsed = JSON.parse(data.text);
+      const parsed = normalizeTargetTranslationPayload(JSON.parse(data.text), targetLang);
       if (!parsed || !parsed.bubbles || parsed.bubbles.length === 0) {
         setTranslationResult("❌ ไม่พบข้อความในจุดที่เลือก");
         return;
@@ -833,6 +863,7 @@ export function useTranslation({
       if (!await sizeNewTranslatedBubbles(coloredNewBubbles, pages[currentPage])) return;
       const updatedBubbles = [...activeBubbles, ...coloredNewBubbles];
       bubbleCacheRef.current.set(pages[currentPage], updatedBubbles);
+      pageTargetCacheRef.current.set(pageUrl, jobTargetIdentity);
       markPageDirty(pages[currentPage]);
 
       if (activePageRef.current === pages[currentPage]) {
@@ -860,7 +891,9 @@ export function useTranslation({
       backgroundUrl: string,
       pageUrl: string,
       pageIndex: number,
+      targetIdentity = pageTargetCacheRef.current.get(pageUrl),
     ): Promise<void> => {
+      const renderTarget = targetIdentity?.policyVersion === LANGUAGE_POLICY_VERSION ? targetIdentity.targetId : undefined;
       const offscreenContainer = document.createElement("div");
       offscreenContainer.dataset.translationOffscreen = pageUrl;
       offscreenContainer.style.cssText =
@@ -884,6 +917,8 @@ export function useTranslation({
             if (settled) return;
             settled = true;
             cleanup();
+            bubbleCacheRef.current.set(pageUrl, bubbles);
+            if (targetIdentity) pageTargetCacheRef.current.set(pageUrl, targetIdentity);
             translatedImageCacheRef.current.set(pageUrl, dataUrl);
             markPageDirty(pageUrl, false);
             setTranslatedImages(new Map(translatedImageCacheRef.current));
@@ -906,7 +941,7 @@ export function useTranslation({
                 offscreenContainer,
                 pageUrl,
                 undefined,
-                targetLang,
+                renderTarget,
               ),
             )
             .catch(rejectOnce);
@@ -931,11 +966,11 @@ export function useTranslation({
           undefined,
           pageUrl,
           () => markPageDirty(pageUrl),
-          targetLang,
+          renderTarget,
         );
       }
     },
-    [viewMode, markPageDirty, targetLang],
+    [viewMode, markPageDirty],
   );
 
 async function readBlobAsDataUrl(blob: Blob): Promise<string> {
@@ -967,7 +1002,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
 }
 
   const cacheBackgroundOnly = useCallback(
-    async (backgroundUrl: string, pageUrl: string): Promise<void> => {
+    async (backgroundUrl: string, pageUrl: string, targetIdentity?: PageTargetIdentity): Promise<void> => {
       const response = await fetch(backgroundUrl);
       if (!response.ok) {
         throw new Error(`ไม่สามารถโหลดรูปภาพคลีนได้ (HTTP ${response.status})`);
@@ -977,6 +1012,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
 
       translatedImageCacheRef.current.set(pageUrl, dataUrl);
       bubbleCacheRef.current.set(pageUrl, []);
+      if (targetIdentity) pageTargetCacheRef.current.set(pageUrl, targetIdentity);
       completedPagesRef.current.add(pageUrl);
       suppressedOverlayPagesRef.current.delete(pageUrl);
       markPageDirty(pageUrl, false);
@@ -998,8 +1034,12 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     forceNsfwBypass: boolean = false,
     isAutoRetry: boolean = false,
     signal?: AbortSignal,
+    requestedTarget = targetLangRef.current,
   ): Promise<boolean> => {
+    const jobTargetIdentity = createPageTargetIdentity(requestedTarget);
+    if (!jobTargetIdentity) throw new Error("กรุณาเลือกภาษาปลายทางที่รองรับพร้อมรูปแบบอักษร");
     try {
+      const targetLang = jobTargetIdentity.targetId;
       const { backgroundUrl, textScope } = preparedPage;
       const recognitionUrl = preparedPage.recognitionUrl;
       const resImg = await fetch(recognitionUrl, signal ? { signal } : undefined);
@@ -1016,11 +1056,10 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           allowPreview:allowPreviewModels,glossary,signal});
       };
       const unresolvedScriptWarning = (bubbles: TranslatedBubble[]) => {
-        if (!isThaiTargetLanguage(targetLang)) return null;
         const points = bubbles.flatMap((bubble,index) => {
           if (bubble.deleted) return [];
-          const foreign = foreignScriptCharacters(bubble.t || bubble.translated || "");
-          return foreign.length ? [`#${index+1}: ${Array.from(new Set(foreign)).slice(0,24).join("")}`] : [];
+          const foreign = inspectTargetText(bubble.t || bubble.translated || "", targetLang).offendingCharacters;
+          return foreign.length ? [`#${index+1}: ${formatOffendingCharacters(foreign)}`] : [];
         });
         return points.length ? `⚠️ ยังมีตัวอักษรภาษาอื่นปน ${points.length} จุด (${points.slice(0,5).join(" · ")}) เปิดแก้ไขข้อความเพื่อเทียบต้นฉบับ` : null;
       };
@@ -1061,7 +1100,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           const data = await readTranslationResponse<{text:string}>(response);
           const parsed = parseLLMJSON(data.text) as {bubbles?:TranslatedBubble[]} | null;
           if (!Array.isArray(parsed?.bubbles)) throw new Error("Missing translation recovery response malformed.");
-          const candidates = normalizeTranslationPayload(parsed!).bubbles ?? [];
+          const candidates = normalizeTargetTranslationPayload(parsed!, targetLang).bubbles ?? [];
           return candidates.filter(b=>b.box?.length===4 && b.box.every(Number.isFinite)).map(b=>({...b,box:[
             Math.round((sy+b.box![0]*crop.height/1000)/height*1000),
             Math.round((sx+b.box![1]*crop.width/1000)/width*1000),
@@ -1136,7 +1175,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             if (!parsed || !Array.isArray(parsed.bubbles)) {
               throw new Error("Translation response malformed: bubbles array missing.");
             }
-            parsed = normalizeTranslationPayload(parsed);
+            parsed = normalizeTargetTranslationPayload(parsed, targetLang);
             const sliceBubbles = parsed.bubbles ?? [];
             if (sliceBubbles.length > 0) {
               const { sx, sy, sWidth, sHeight } = slice;
@@ -1240,7 +1279,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           getManualBubblesForPage(pageUrl),
         );
         if (outcome.kind === "clean-only") {
-          await cacheBackgroundOnly(backgroundUrl, pageUrl);
+          await cacheBackgroundOnly(backgroundUrl, pageUrl, jobTargetIdentity);
           if (completeness.missing.length > 0 && activePageRef.current === pageUrl) {
             setTranslationResult(`⚠️ ยังขาดคำแปล ${completeness.missing.length} จุด กรุณาตรวจหน้านี้ก่อนส่งออก`);
           }
@@ -1262,6 +1301,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           backgroundUrl,
           pageUrl,
           pageIndex,
+          jobTargetIdentity,
         );
         bubbleCacheRef.current.set(pageUrl, coloredBubbles);
         completedPagesRef.current.add(pageUrl);
@@ -1341,7 +1381,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         parsed = { ...parsed, bubbles: [] as TranslatedBubble[] };
       }
       const typedParsed = parsed as { bubbles?: TranslatedBubble[] } & Record<string, unknown>;
-      const normalized = normalizeTranslationPayload(typedParsed);
+      const normalized = normalizeTargetTranslationPayload(typedParsed, targetLang);
       let pageBubbles: TranslatedBubble[] = normalized.bubbles ?? [];
       // Foreign-script leakage (Japanese kana/kanji from the source page,
       // Cyrillic runs) is treated like the 0-bubble failure: retry once on
@@ -1414,8 +1454,9 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         if (!retryParsed || !Array.isArray(retryParsed.bubbles)) {
           throw new Error("Translation retry response malformed: bubbles array missing.");
         }
-        const retryNormalized = normalizeTranslationPayload(
+        const retryNormalized = normalizeTargetTranslationPayload(
           retryParsed as { bubbles?: unknown[] } & Record<string, unknown>,
+          targetLang,
         );
         const retryBubbles: TranslatedBubble[] =
           (retryNormalized as { bubbles?: TranslatedBubble[] }).bubbles ?? [];
@@ -1441,7 +1482,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         getManualBubblesForPage(pageUrl),
       );
       if (outcome.kind === "clean-only") {
-        await cacheBackgroundOnly(backgroundUrl, pageUrl);
+        await cacheBackgroundOnly(backgroundUrl, pageUrl, jobTargetIdentity);
         if (completeness.missing.length > 0 && activePageRef.current === pageUrl) {
           setTranslationResult(`⚠️ ยังขาดคำแปล ${completeness.missing.length} จุด กรุณาตรวจหน้านี้ก่อนส่งออก`);
         }
@@ -1463,6 +1504,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         backgroundUrl,
         pageUrl,
         pageIndex,
+        jobTargetIdentity,
       );
       bubbleCacheRef.current.set(pageUrl, coloredBubbles);
       completedPagesRef.current.add(pageUrl);
@@ -1527,6 +1569,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     ) return false;
     translationOperationLockRef.current = true;
     const pageUrl = pages[currentPage];
+    const requestedTarget = targetLangRef.current;
     translationAbortRef.current = new AbortController();
     const signal = translationAbortRef.current.signal;
 
@@ -1550,6 +1593,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         nsfwBypassMode,
         false,
         signal,
+        requestedTarget,
       );
     } catch (error) {
       if (isUserCancelledError(error)) {
@@ -1844,6 +1888,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         let retries = 0;
         const forceNsfw = forceNsfwForBatch;
         let lastTranslationError: unknown;
+        const requestedTarget = targetLangRef.current;
 
         while (!success && retries < 2 && !cancelTranslateAllRef.current) {
           try {
@@ -1874,6 +1919,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
               forceNsfw,
               false,
               signal,
+              requestedTarget,
             );
 
             if (!success) throw new Error("Translation failed");
@@ -2094,6 +2140,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     for (const idx of pageIndices) {
       const pUrl = pages[idx];
       if (!pUrl) continue;
+      const requestedTarget = targetLangRef.current;
       try {
         const preparation = await prepareSafely(idx);
         if (!preparation.ok) throw preparation.error;
@@ -2104,6 +2151,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           forceNsfw,
           false,
           translationAbortRef.current?.signal,
+          requestedTarget,
         );
       } catch (err: unknown) {
         if (!isUserCancelledError(err)) {
@@ -2217,6 +2265,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
 
   const invalidatePageTranslation = useCallback((pageUrl: string) => {
     bubbleCacheRef.current.delete(pageUrl);
+    pageTargetCacheRef.current.delete(pageUrl);
     translatedImageCacheRef.current.delete(pageUrl);
     completedPagesRef.current.delete(pageUrl);
     const nextRev = (pageRevisionsRef.current.get(pageUrl) ?? 0) + 1;
@@ -2278,14 +2327,14 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         pageUrl,
         pageIndex,
         total: bubbles.length,
-        contaminated: isThaiTargetLanguage(targetLang) ? countContaminatedBubbles(bubbles) : 0,
+        contaminated: bubbles.filter(bubble=>!bubble.deleted && inspectTargetText(bubble.t || bubble.translated || "",getPageTargetLanguage(pageUrl)).status === "blocked").length,
         invalidBoxes: bubbles.filter(
           (b) => (b as { isInvalidBox?: boolean }).isInvalidBox === true,
         ).length,
       });
     });
     return results;
-  }, [targetLang]);
+  }, [getPageTargetLanguage]);
 
   const scanTranslatedPages = useCallback(() => {
     return inspectTranslatedPages()
@@ -2398,6 +2447,9 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     translatedImages,
     translatedImageCacheRef,
     bubbleCacheRef,
+    pageTargetCacheRef,
+    getPageTargetLanguage,
+    inspectPageOutputEligibility: (pageUrl: string) => inspectPageOutputEligibility({targetIdentity:pageTargetCacheRef.current.get(pageUrl),points:(bubbleCacheRef.current.get(pageUrl) ?? []).map((bubble,index)=>({id:String(index),text:bubble.t || bubble.translated || "",sourceText:bubble.original_text,deleted:bubble.deleted})),sourceRevision:String(getPageRevision(pageUrl))}),
     textStyleRef,
     userApiKey,
     setUserApiKey: (key: string) => {

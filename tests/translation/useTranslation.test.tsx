@@ -905,7 +905,7 @@ test("background batch renders final images by original URL and skips them later
     expect.any(HTMLElement),
     expect.any(String),
     undefined,
-    "Thai",
+    "th",
   );
 
   let secondBatch!: Promise<void>;

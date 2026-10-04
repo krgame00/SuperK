@@ -3,6 +3,7 @@
 import { normalizePageExportSource, type PageExportSource } from "./export/pageSource";
 import type { CleaningMode, CleaningRegion } from "./cleaning/types";
 import type { TranslatedBubble } from "./translationOverlay";
+import type { PageTargetIdentity } from "./translation/pageEligibility";
 import { pageBlobStore } from "./lifecycle/pageBlobStore";
 import { TEXT_RENDER_POLICY_VERSION, usesAutoSourceFill, needsWhiteArtworkPolicyRefresh } from "./colorMatching/resolveTextStyle";
 import { needsSourceOutlineRefresh } from "./colorMatching/outlineMigration";
@@ -54,6 +55,8 @@ interface SessionData {
   pages: { id?: string; url: string; name: string; originUrl?: string; exportSource?: PageExportSource; sourceAssetId?: string }[];
   currentPage: number;
   bubbleCache: [string, TranslatedBubble[]][];
+  /** Keys are stable page IDs, restored to current source URLs on load. */
+  pageTargetCache?: [string, PageTargetIdentity][];
   translatedAssetIds?: [string, string][];
   translatedImageCache?: [string, string][];
   renderPolicyVersion?: string;
@@ -194,6 +197,7 @@ export const saveProjectSession = async (
     pages: { id?: string; url: string; name: string; originUrl?: string; exportSource?: PageExportSource }[];
     currentPage: number;
     bubbleCache: Map<string, TranslatedBubble[]>;
+    pageTargetCache?: Map<string, PageTargetIdentity>;
     translatedImageCache: Map<string, string>;
   },
   options?: { dirtyPageUrls?: Set<string> },
@@ -361,11 +365,23 @@ export const saveProjectSession = async (
       ],
     );
 
+    const previousTargets = new Map(previousSession?.pageTargetCache ?? []);
+    const pageTargetCache: [string, PageTargetIdentity][] = [];
+    for (const [index, page] of data.pages.entries()) {
+      const pageId = page.id || legacyPageId(page.url, index);
+      // Omission means an unrelated caller did not supply target metadata.
+      // A supplied empty map intentionally clears legacy/removed identities.
+      const identity = data.pageTargetCache
+        ? data.pageTargetCache.get(page.url)
+        : previousTargets.get(pageId) ?? previousTargets.get(page.url);
+      if (identity) pageTargetCache.push([pageId, identity]);
+    }
     const sessionData: SessionData = {
       id: "latest_session",
       pages: storedPages,
       currentPage: data.currentPage,
       bubbleCache,
+      pageTargetCache,
       translatedAssetIds,
       renderPolicyVersion: TEXT_RENDER_POLICY_VERSION,
       updatedAt: Date.now(),
@@ -438,6 +454,7 @@ export interface LoadedProjectSession {
   pages: ProjectSessionPage[];
   currentPage: number;
   bubbleCache: Map<string, TranslatedBubble[]>;
+  pageTargetCache: Map<string, PageTargetIdentity>;
   translatedImageCache: Map<string, string>;
   updatedAt: number;
   hasUnrecoverableSources: boolean;
@@ -565,6 +582,9 @@ export const loadProjectSession = async (): Promise<LoadedProjectSession | null>
       pages: processedPages,
       currentPage: data.currentPage || 0,
       bubbleCache,
+      pageTargetCache: new Map((data.pageTargetCache ?? []).map(([pageKey, identity]) => [
+        pageUrlById.get(pageKey) ?? pageKey, identity,
+      ])),
       translatedImageCache,
       updatedAt: data.updatedAt,
       hasUnrecoverableSources,
@@ -808,6 +828,7 @@ export const appendPageToProjectSession = async (
     pages,
     currentPage: pageIndex,
     bubbleCache: Array.from(bubbleCacheMap.entries()),
+    pageTargetCache: rawSession?.pageTargetCache,
     translatedAssetIds,
     updatedAt: Date.now(),
   };
