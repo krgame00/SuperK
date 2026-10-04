@@ -1048,15 +1048,15 @@ export const applyTranslationOverlay = async (
       };
       const renderBubble = (availableHeight = Math.max(0, ih - currentBy)) => {
         const currentStyle = textStyleRef?.current || ts;
-        const rawText = (b.t || b.translated || "").trim();
+        const rawText = b.t || b.translated || "";
         const scriptInspection = inspectTargetText(rawText, targetLanguage);
-        const text = scriptInspection.normalizedText;
+        const text = scriptInspection.status === "eligible" ? scriptInspection.normalizedText.trim() : scriptInspection.normalizedText;
         wrapper.dataset.scriptStatus = scriptInspection.status;
         scriptNotice = scriptInspection.status === "blocked"
           ? scriptInspection.reason === "excluded-script"
             ? `ซ่อนคำแปลที่ผิดอักษร: ${formatOffendingCharacters(scriptInspection.offendingCharacters)} — เปิดแก้ไขข้อความ`
             : "ยังไม่ยืนยันภาษาของหน้า — เปิดแก้ไขข้อความ"
-          : text !== rawText ? "แสดงตัวเลขในรูปแบบที่รองรับ โดยเก็บข้อความเดิมไว้" : "";
+          : scriptInspection.normalizedText !== rawText ? "แสดงตัวเลขในรูปแบบที่รองรับ โดยเก็บข้อความเดิมไว้" : "";
         wrapper.title = scriptNotice;
         wrapper.setAttribute("aria-label", [baseAriaLabel, scriptNotice].filter(Boolean).join("; "));
         const currentFontFam = resolveCanvasFontFamily(currentStyle.fontFamily);
@@ -1541,11 +1541,11 @@ export const applyTranslationOverlay = async (
           return button;
         };
         const displayedReview = () => {
-          const text = (b.t || b.translated || "").trim();
-          if (b.translationReview && isReviewCurrent(b)) return guardQualityReview(b.translationReview, targetLanguage ?? "");
+          const text = b.t || b.translated || "";
           if (inspectTargetText(text, targetLanguage).status === "blocked") {
             return guardQualityReview(unavailableReview({id:"",sourceText:b.original_text ?? "",translatedText:text}),targetLanguage ?? "");
           }
+          if (b.translationReview && isReviewCurrent(b)) return guardQualityReview(b.translationReview, targetLanguage ?? "");
           return b.translationReview;
         };
         const updateReviewPanel = () => {

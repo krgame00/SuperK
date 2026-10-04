@@ -49,6 +49,19 @@ test("shows code points for invisible or unverifiable excluded characters",async
   expect(title).toContain("U+0301");
   expect(ink).toEqual([]);
 });
+test.each(["\u000Bสวัสดี", "สวัสดี\u000B", "\u000Cสวัสดี", "สวัสดี\u000C"])("inspects stored edge controls before layout trimming: %j",async text=>{
+  const bubble:TranslatedBubble={t:text,box:[100,100,300,400],translationReview:{status:"accepted",sourceText:"Hello",reviewedText:text.trim()}};
+  await paint([bubble],"th");
+  expect(ink).toEqual([]);
+  const blocked=document.querySelector<HTMLElement>('[data-script-status="blocked"]')!;
+  expect(blocked).not.toBeNull();
+  expect(blocked.title).toContain(text.includes("\u000B") ? "U+000B" : "U+000C");
+  expect(blocked.querySelector(".bubble-text-selection")).not.toBeNull();
+  blocked.dispatchEvent(new MouseEvent("dblclick",{bubbles:true}));
+  expect(document.querySelector<HTMLTextAreaElement>('[data-translation-editor] textarea')?.value).toBe(text);
+  expect(document.querySelector('[data-translation-editor] [role="status"]')?.textContent).toContain(text.includes("\u000B") ? "U+000B" : "U+000C");
+  expect(bubble.t).toBe(text);
+});
 test("renders permitted normalized Thai numerals without rewriting legacy stored text",async()=>{
   const bubble:TranslatedBubble={t:"เลข ١٢",box:[100,100,300,400]};
   await paint([bubble],"th");

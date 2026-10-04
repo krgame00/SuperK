@@ -75,3 +75,14 @@ G01-owned paths for root commit coordination:
 - `.superpowers/sdd/oct04-four-spec/G01-report.md`
 
 Do not stage unrelated dirty documentation, P01 reports, S02 source-size modules or tests.
+
+## Important review fix: raw edge controls
+
+- Renderer now inspects complete stored bubble text before trimming eligible normalized text for layout. Diagnostic normalization notice compares policy normalization with raw text, so ordinary edge spacing is not mislabeled as numeral conversion. The editor review panel also inspects raw stored text before considering current accepted review metadata. Blocked lettering retains its selectable frame, original editor value and U+000B/U+000C diagnostics.
+- Provider suggestion parsing now guards the raw suggestion before trimming a permitted suggestion or comparing it with the current translation. Forbidden leading/trailing vertical tab and form feed cannot disappear into an accepted replacement; raw reviewed text handling is preserved.
+- Owned changed files: `lib/translationOverlay.ts`, `lib/translation/qualityReview.ts`, `tests/translation/targetPolicyOverlay.test.ts`, `tests/translation/qualityReview.test.ts`, and this report. Concurrent S02 changes were preserved.
+- RED command: `node node_modules/vitest/vitest.mjs run tests/translation/targetPolicyOverlay.test.ts tests/translation/qualityReview.test.ts --root . --maxWorkers 1` exited 1: 2 failed files, 8 failed / 29 passed tests (4.26s). Four actual renderer cases inked Thai text despite forbidden edge controls and accepted review metadata; four parser cases returned `suggested` instead of `needs_review`.
+- Final GREEN command: `node node_modules/vitest/vitest.mjs run tests/translation/targetPolicyOverlay.test.ts tests/translation/qualityReview.test.ts tests/translation/languagePolicy.test.ts tests/cleaning/sourceSizeOverlay.test.ts --root . --maxWorkers 1` exited 0: 4 files / 111 tests passed (10.32s), including original editor preservation, current accepted review panel diagnostics, native policy and source sizing regressions.
+- `node node_modules/typescript/bin/tsc --noEmit` exited 0 with no output.
+- `node node_modules/eslint/bin/eslint.js lib/translationOverlay.ts lib/translation/qualityReview.ts tests/translation/targetPolicyOverlay.test.ts tests/translation/qualityReview.test.ts` exited 0 with no output (zero errors/warnings).
+- Read the installed Next client directive guide before editing. No full suite, provider calls, restart, staging or commit performed.

@@ -66,7 +66,13 @@ export function parseQualityReviews(items: QualityReviewItem[], response: unknow
       status:row.status as "ok" | "suggested" | "needs_review",reason:typeof row.reason === "string" ? row.reason.trim() : undefined};
     if (review.status === "suggested") {
       if (typeof row.suggestion !== "string" || !row.suggestion.trim() || row.suggestion.length > MAX_REVIEW_TEXT_LENGTH) continue;
-      review.suggestion = row.suggestion.trim();
+      review.suggestion = row.suggestion;
+      const guarded = guardQualityReview(review, targetLang);
+      if (guarded.suggestion === undefined) {
+        result[item.id] = guarded;
+        continue;
+      }
+      review.suggestion = review.suggestion.trim();
       if (review.suggestion === item.translatedText.trim()) {
         review.status = "needs_review";
         delete review.suggestion;

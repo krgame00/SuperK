@@ -3,6 +3,13 @@ import { parseQualityReviews, needsQualityReview, invalidateQualityReview, build
 
 const items = [{id:"0",sourceText:"Wait here.",translatedText:"รอตรงนี้นะ"}];
 describe("translation quality review", () => {
+  it.each(["\u000Bรอที่นี่นะ", "รอที่นี่นะ\u000B", "\u000Cรอที่นี่นะ", "รอที่นี่นะ\u000C"])("rejects raw suggestion edge controls: %j", suggestion => {
+    const review = parseQualityReviews(items, {reviews:[{id:"0",status:"suggested",suggestion}]}, "th")["0"];
+    expect(review.status).toBe("needs_review");
+    expect(review.suggestion).toBeUndefined();
+    expect(review.reason).toContain(suggestion.includes("\u000B") ? "U+000B" : "U+000C");
+    expect(review.reviewedText).toBe(items[0].translatedText);
+  });
   it.each(["John", "BOOM", "𐐀", "ⓐ"])("rejects excluded Thai suggestion %s", suggestion => {
     const review = parseQualityReviews(items, {reviews:[{id:"0",status:"suggested",suggestion}]}, "th")["0"];
     expect(review.status).toBe("needs_review");
