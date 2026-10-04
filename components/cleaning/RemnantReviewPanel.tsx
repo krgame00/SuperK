@@ -1,6 +1,7 @@
 "use client";
 
 import { Eraser, ImageOff, Sparkles } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import type {
   BackgroundInspectionResult,
@@ -13,6 +14,9 @@ import type { CleaningRegion } from "@/lib/cleaning/types";
 export interface RemnantReviewPanelProps {
   inspection?: BackgroundInspectionResult;
   regions: CleaningRegion[];
+  sourceUrl?: string;
+  cleanUrl?: string;
+  dimensions?: { width: number; height: number };
   /** Open the mask editor on the candidate's authorized removal region. */
   onOpenMask?: (candidate: RemnantCandidate, region: CleaningRegion | undefined) => void;
   /** Confirm this exact candidate (this revision) is artwork. */
@@ -54,10 +58,16 @@ const DETAIL_LABELS: Record<RemnantCandidate["detail"], string> = {
 export function RemnantReviewPanel({
   inspection,
   regions,
+  sourceUrl,
+  cleanUrl,
+  dimensions,
   onOpenMask,
   onConfirmArtwork,
   onRecheck,
 }: RemnantReviewPanelProps) {
+  const [comparison, setComparison] = useState<{ candidate: RemnantCandidate; revisionKey: string; sourceUrl: string; cleanUrl: string }>();
+  const returnFocus = useRef<HTMLButtonElement | null>(null);
+  const closeComparison = () => { setComparison(undefined); returnFocus.current?.focus(); };
   if (!inspection) return null;
 
   if (inspection.status === "unverified") {
@@ -124,6 +134,15 @@ export function RemnantReviewPanel({
                   {" · "}หมึกที่ยังเหลือ {candidate.evidence.survivingInkPixels} พิกเซล
                 </span>
               </span>
+              <button type="button" disabled={!sourceUrl || !cleanUrl || !dimensions?.width || !dimensions?.height}
+                className="rounded-md bg-surface px-2.5 py-1.5 font-medium text-foreground hover:bg-surface-hover disabled:opacity-40"
+                onClick={(event) => {
+                  if (!sourceUrl || !cleanUrl) return;
+                  returnFocus.current = event.currentTarget;
+                  setComparison({ candidate, revisionKey: inspection.revisionKey, sourceUrl, cleanUrl });
+                }}>
+                เปรียบเทียบภาพเดิม/ภาพคลีน
+              </button>
               {!confirmed && (
                 <span className="flex items-center gap-1.5">
                   <button
@@ -150,6 +169,42 @@ export function RemnantReviewPanel({
           );
         })}
       </ul>
+      {comparison && dimensions && comparison.revisionKey === inspection.revisionKey && comparison.sourceUrl === sourceUrl && comparison.cleanUrl === cleanUrl && (
+        <CandidateComparison candidate={comparison.candidate} sourceUrl={comparison.sourceUrl} cleanUrl={comparison.cleanUrl} dimensions={dimensions} onClose={closeComparison} />
+      )}
+    </div>
+  );
+}
+
+function CandidateComparison({ candidate, sourceUrl, cleanUrl, dimensions, onClose }: {
+  candidate: RemnantCandidate; sourceUrl: string; cleanUrl: string;
+  dimensions: { width: number; height: number }; onClose: () => void;
+}) {
+  const dialog = useRef<HTMLDivElement>(null);
+  useEffect(() => { dialog.current?.focus(); }, []);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="เปรียบเทียบจุดสงสัย" tabIndex={-1}
+        className="max-h-[90vh] max-w-[90vw] overflow-auto rounded-lg bg-surface p-4 text-foreground"
+        onKeyDown={(event) => {
+          if (event.key === "Escape") { event.preventDefault(); onClose(); }
+          if (event.key === "Tab") { event.preventDefault(); dialog.current?.querySelector<HTMLButtonElement>("button")?.focus(); }
+        }}>
+        <p className="mb-3 font-semibold">เปรียบเทียบจุดสงสัย · x{candidate.rect.x} y{candidate.rect.y}</p>
+        <div className="flex flex-wrap gap-4">
+          {[["ภาพต้นฉบับ", sourceUrl], ["ภาพคลีน", cleanUrl]].map(([label, url]) => (
+            <figure key={label}>
+              <figcaption className="mb-2">{label}</figcaption>
+              <div style={{ position: "relative", overflow: "hidden", width: candidate.rect.width, height: candidate.rect.height }}>
+                {/* Immutable page assets, clipped in source pixels; no canvas or mask writes. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={url} alt={label} draggable={false} style={{ position: "absolute", maxWidth: "none", width: dimensions.width, height: dimensions.height, left: -candidate.rect.x, top: -candidate.rect.y }} />
+              </div>
+            </figure>
+          ))}
+        </div>
+        <button type="button" onClick={onClose} className="mt-4 rounded bg-primary px-3 py-2 text-primary-content">ปิดการเปรียบเทียบ</button>
+      </div>
     </div>
   );
 }

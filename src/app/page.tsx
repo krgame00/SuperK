@@ -3132,6 +3132,9 @@ export default function WorkspacePage() {
         isFocusMode={isFocusMode}
       />
                     <RemnantReviewPanel
+                      sourceUrl={pages[currentPage]?.url}
+                      cleanUrl={currentCleaningResult?.cleanUrl}
+                      dimensions={currentCleaningResult ? { width: currentCleaningResult.width, height: currentCleaningResult.height } : undefined}
                       inspection={pages[currentPage] ? getCurrentRemnantReview?.(pages[currentPage].url, getExpectedRemnantEvidence(pages[currentPage].url))?.inspection : undefined}
                       regions={currentCleaningResult?.regions ?? []}
                       onOpenMask={(candidate) => {

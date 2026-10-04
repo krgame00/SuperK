@@ -60,6 +60,50 @@ function inspected(candidates: RemnantCandidate[]): BackgroundInspectionResult {
 }
 
 describe("RemnantReviewPanel", () => {
+  test.each([region, farRegion])("compares immutable source/clean crops independently of mask authorization ($id)", (authorizedRegion) => {
+    const onOpenMask = vi.fn();
+    const onConfirmArtwork = vi.fn();
+    const exactCandidate = candidate();
+    render(<RemnantReviewPanel inspection={inspected([exactCandidate])} regions={[authorizedRegion]}
+      sourceUrl="blob:original" cleanUrl="blob:clean" dimensions={{ width: 400, height: 600 }}
+      onOpenMask={onOpenMask} onConfirmArtwork={onConfirmArtwork} />);
+    const compare = screen.getByRole("button", { name: "เปรียบเทียบภาพเดิม/ภาพคลีน" });
+    fireEvent.click(compare);
+    const dialog = screen.getByRole("dialog", { name: "เปรียบเทียบจุดสงสัย" });
+    expect(dialog).toHaveFocus();
+    for (const [label, src] of [["ภาพต้นฉบับ", "blob:original"], ["ภาพคลีน", "blob:clean"]]) {
+      const img = screen.getByRole("img", { name: label });
+      expect(img).toHaveAttribute("src", src);
+      expect(img).toHaveStyle({ width: "400px", height: "600px", left: "-20px", top: "-24px" });
+      expect(img.parentElement).toHaveStyle({ width: "20px", height: "10px", overflow: "hidden" });
+    }
+    expect(onOpenMask).not.toHaveBeenCalled();
+    expect(onConfirmArtwork).not.toHaveBeenCalled();
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(compare).toHaveFocus();
+    fireEvent.click(compare);
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Tab" });
+    expect(screen.getByRole("button", { name: "ปิดการเปรียบเทียบ" })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Tab", shiftKey: true });
+    expect(screen.getByRole("button", { name: "ปิดการเปรียบเทียบ" })).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "ปิดการเปรียบเทียบ" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    if (authorizedRegion === farRegion) expect(screen.getByRole("button", { name: "แก้ Mask ที่จุดนี้" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "ยืนยันเป็นลายภาพ" }));
+    expect(onConfirmArtwork).toHaveBeenCalledWith(exactCandidate);
+    expect(onOpenMask).not.toHaveBeenCalled();
+  });
+  test("confirmed artwork stays inspectable and a changed image revision hides an obsolete crop", () => {
+    const exactCandidate = candidate({ state: "human-confirmed-artwork", artworkConfirmation: { candidateId: "rem-1", revisionKey: "rk-1" } });
+    const props = { regions: [farRegion], sourceUrl: "blob:original", cleanUrl: "blob:clean", dimensions: { width: 400, height: 600 } };
+    const { rerender } = render(<RemnantReviewPanel {...props} inspection={inspected([exactCandidate])} />);
+    fireEvent.click(screen.getByRole("button", { name: "เปรียบเทียบภาพเดิม/ภาพคลีน" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "ยืนยันเป็นลายภาพ" })).not.toBeInTheDocument();
+    rerender(<RemnantReviewPanel {...props} inspection={{ ...inspected([exactCandidate]), revisionKey: "rk-2" }} />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
   test("shows inspected empty findings without claiming perfect text recognition", () => {
     render(<RemnantReviewPanel inspection={inspected([])} regions={[region]} />);
     expect(screen.getByRole("status")).toHaveTextContent("ไม่พบจุดสงสัย");

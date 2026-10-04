@@ -147,3 +147,21 @@ Verification:
 - `node node_modules/typescript/bin/tsc --noEmit` — final exit 0. Earlier concurrent run reported G05 strictParity/strictEvidence errors; owner changes resolved them before final run.
 - `node node_modules/eslint/bin/eslint.js hooks/useCleaning.ts lib/cleaning/remnantReview.ts lib/cleaning/backgroundRemnantInspection.ts tests/cleaning/useCleaning.remnantReview.test.tsx tests/cleaning/backgroundRemnantInspection.test.ts` — exit 0, no diagnostics.
 - Global `npx` is unavailable (missing roaming npx-cli.js), so verification invokes local CLI entrypoints directly. No full suite, provider/restart commands, index or commits performed.
+
+### R01 Important correction — read-only candidate comparison (2026-10-04)
+
+Added an independent comparison action to every candidate, including known source candidates outside authorized cleaning regions and already confirmed artwork. A focused dialog clips immutable original/clean image assets at candidate.rect using the cleaning result's source pixel dimensions. Opening/closing comparison invokes no mask, provider, recovery, recheck, or confirmation callback. Outside-region mask action remains disabled. Existing artwork confirmation still receives the exact candidate. Escape/Close restores trigger focus; Tab/Shift+Tab stays on the dialog's close action. Changed revision/assets hide stale comparison synchronously.
+
+Installed Next client directive documentation read before UI changes: node_modules/next/dist/docs/01-app/03-api-reference/01-directives/use-client.md.
+
+Exact changed files:
+- components/cleaning/RemnantReviewPanel.tsx
+- tests/cleaning/RemnantReviewPanel.test.tsx
+- src/app/page.tsx (only three props on the existing panel: original source URL, clean URL, width/height)
+- .superpowers/sdd/oct04-four-spec/R01-report.md (this append)
+
+Verification:
+- RED: node node_modules/vitest/vitest.mjs run tests/cleaning/RemnantReviewPanel.test.tsx — exit 1, 2 failed / 6 passed; both inside/outside tests could not find the missing comparison button (18:16:01).
+- GREEN final: same command — exit 0, 9 passed (18:17:50, duration 2.18s). Real panel tests check immutable image URLs, crop width/height and exact offsets, no open-mask/confirmation on comparison, disabled outside mask, exact candidate confirmation, Close/Escape/focus, keyboard containment, confirmed candidate comparison and stale revision hiding.
+- node node_modules/eslint/bin/eslint.js components/cleaning/RemnantReviewPanel.tsx tests/cleaning/RemnantReviewPanel.test.tsx — exit 0, no diagnostics.
+- git diff inspected: page.tsx has only the three allowed props. No full suite, provider, restart, index, or commit commands performed. Root owns checkpoint/re-review and subsequent S03 page handoff.
