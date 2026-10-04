@@ -1,4 +1,4 @@
-import { inspectTargetText, resolveTargetLanguage, formatOffendingCharacters } from "@/lib/languagePolicy";
+import { LANGUAGE_POLICY_VERSION, inspectTargetText, resolveTargetLanguage, formatOffendingCharacters } from "@/lib/languagePolicy";
 
 export interface QualityReviewItem {
   id: string;
@@ -8,11 +8,18 @@ export interface QualityReviewItem {
 
 export interface TranslationReview {
   status: "ok" | "suggested" | "needs_review" | "accepted" | "dismissed" | "unavailable" | "stale";
+  /** Exact raw source text; trimmed evidence cannot silently approve raw content. */
   sourceText: string;
+  /** Exact raw translated text at snapshot time. */
   reviewedText: string;
   suggestion?: string;
   reason?: string;
   originalTranslation?: string;
+  /** Target-policy identity bound when this snapshot was recorded. */
+  targetId?: string;
+  policyVersion?: string;
+  /** Exact source evidence revision bound when this snapshot was recorded. */
+  sourceRevision?: string;
 }
 
 interface ReviewableBubble {
@@ -28,6 +35,17 @@ export const MAX_REVIEW_TEXT_LENGTH = 2000;
 
 export function unavailableReview(item: QualityReviewItem, reason = "ยังตรวจคำแปลไม่ได้ กรุณาเทียบต้นฉบับ") : TranslationReview {
   return {status:"unavailable",sourceText:item.sourceText,reviewedText:item.translatedText,reason};
+}
+
+/** Every recorded snapshot binds the target policy and source revision it was captured under. */
+export function withReviewIdentity(review: TranslationReview, targetLang: string, sourceRevision?: string): TranslationReview {
+  const resolution = resolveTargetLanguage(targetLang);
+  return {
+    ...review,
+    ...(resolution.status === "resolved" ? {targetId:resolution.profile.id} : {}),
+    policyVersion: LANGUAGE_POLICY_VERSION,
+    ...(sourceRevision !== undefined ? {sourceRevision} : {}),
+  };
 }
 
 /** Provider output is untrusted. Missing, duplicated, or invalid IDs never imply approval. */
@@ -51,12 +69,16 @@ export function guardQualityReview(review: TranslationReview, targetLang = "Thai
   return { ...review, status: review.status === "suggested" ? "suggested" : "needs_review", reason };
 }
 
-export function parseQualityReviews(items: QualityReviewItem[], response: unknown, targetLang = "Thai"): Record<string, TranslationReview> {
+export function parseQualityReviews(items: QualityReviewItem[], response: unknown, targetLang = "Thai", sourceRevision?: string): Record<string, TranslationReview> {
   const rows = response && typeof response === "object" && "reviews" in response && Array.isArray(response.reviews)
     ? response.reviews as unknown[] : [];
   const result: Record<string, TranslationReview> = Object.create(null);
   for (const item of items) {
-    result[item.id] = guardQualityReview(unavailableReview(item), targetLang);
+    // Provider output is never approval without source-backed evidence to compare against.
+    result[item.id] = guardQualityReview(withReviewIdentity(
+      unavailableReview(item, item.sourceText.trim() ? "ยังตรวจคำแปลไม่ได้ กรุณาเทียบต้นฉบับ" : "ไม่มีข้อความต้นฉบับให้เทียบ กรุณาตรวจจากภาพ"),
+      targetLang, sourceRevision), targetLang);
+    if (!item.sourceText.trim()) continue;
     const matches = rows.filter(row => row && typeof row === "object" && "id" in row && row.id === item.id);
     if (matches.length !== 1) continue;
     const row = matches[0] as Record<string, unknown>;
@@ -69,7 +91,7 @@ export function parseQualityReviews(items: QualityReviewItem[], response: unknow
       review.suggestion = row.suggestion;
       const guarded = guardQualityReview(review, targetLang);
       if (guarded.suggestion === undefined) {
-        result[item.id] = guarded;
+        result[item.id] = withReviewIdentity(guarded, targetLang, sourceRevision);
         continue;
       }
       review.suggestion = review.suggestion.trim();
@@ -78,15 +100,20 @@ export function parseQualityReviews(items: QualityReviewItem[], response: unknow
         delete review.suggestion;
       }
     }
-    result[item.id] = guardQualityReview(review, targetLang);
+    result[item.id] = withReviewIdentity(guardQualityReview(review, targetLang), targetLang, sourceRevision);
   }
   return result;
 }
 
-export function isReviewCurrent(bubble: ReviewableBubble): boolean {
+export function isReviewCurrent(bubble: ReviewableBubble, targetId?: string, sourceRevision?: string): boolean {
   const review = bubble.translationReview;
-  return !!review && review.sourceText === (typeof bubble.original_text === "string" ? bubble.original_text.trim() : "") &&
-    review.reviewedText === (bubble.t || bubble.translated || "").trim();
+  if (!review) return false;
+  // Snapshots must describe the exact raw text; trimmed comparisons silently approved raw changes.
+  if (review.sourceText !== (typeof bubble.original_text === "string" ? bubble.original_text : "")) return false;
+  if (review.reviewedText !== (bubble.t || bubble.translated || "")) return false;
+  if (targetId !== undefined && review.targetId !== targetId) return false;
+  if (sourceRevision !== undefined && review.sourceRevision !== sourceRevision) return false;
+  return true;
 }
 
 export function invalidateQualityReview(bubble: ReviewableBubble): void {

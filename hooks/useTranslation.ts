@@ -27,10 +27,6 @@ import { reviewTranslatedBubbles } from "@/lib/translation/qualityReviewClient";
 import { invalidateQualityReview, needsQualityReview } from "@/lib/translation/qualityReview";
 import { LANGUAGE_POLICY_VERSION, inspectTargetText, normalizeTargetTranslationPayload, formatOffendingCharacters } from "@/lib/languagePolicy";
 import { createPageTargetIdentity, inspectPageOutputEligibility, type PageTargetIdentity } from "@/lib/translation/pageEligibility";
-import {
-  countContaminatedBubbles,
-  isThaiTargetLanguage,
-} from "@/lib/thaiSpellcheck";
 import { sampleBubbleRegion } from "@/lib/colorMatching/canvasSampler";
 import { extractTextColors } from "@/lib/colorMatching/sampleTextColors";
 import { needsSourceOutlineRefresh, refreshSourceOutline } from "@/lib/colorMatching/outlineMigration";
@@ -1053,7 +1049,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           setTranslationResult("กำลังตรวจความหมายและสำนวนคำแปล…");
         }
         return reviewTranslatedBubbles(bubbles,{targetLang,apiKey:userApiKey,modelPreference,
-          allowPreview:allowPreviewModels,glossary,signal});
+          allowPreview:allowPreviewModels,glossary,signal,
+          sourceRevision:String(getPageRevision(pageUrl)),repairContamination:true});
       };
       const unresolvedScriptWarning = (bubbles: TranslatedBubble[]) => {
         const points = bubbles.flatMap((bubble,index) => {
@@ -1383,28 +1380,21 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       const typedParsed = parsed as { bubbles?: TranslatedBubble[] } & Record<string, unknown>;
       const normalized = normalizeTargetTranslationPayload(typedParsed, targetLang);
       let pageBubbles: TranslatedBubble[] = normalized.bubbles ?? [];
-      // Foreign-script leakage (Japanese kana/kanji from the source page,
-      // Cyrillic runs) is treated like the 0-bubble failure: retry once on
-      // the enhanced image and keep whichever pass came out cleaner. The
-      // guard only applies to Thai targets — kana/kanji are legitimate when
-      // translating INTO Japanese.
-      const isThaiTarget = isThaiTargetLanguage(targetLang);
-      let contaminatedBubbles = isThaiTarget
-        ? countContaminatedBubbles(pageBubbles)
-        : 0;
-
+      // Foreign-script leakage is repaired per point by the single bounded
+      // repair round inside reviewPage below. A whole-image retry here would
+      // stack a second automatic correction pass on top of point repair, so
+      // only the genuinely distinct 0-bubble recognition failure retries the
+      // enhanced image.
       if (
-        (pageBubbles.length === 0 || contaminatedBubbles > 0)
+        pageBubbles.length === 0
         && !isAutoRetry
         && !nsfwBypassMode
         && !forceNsfwBypass
       ) {
-        console.log(`[Auto-Retry] ${pageBubbles.length === 0 ? "0 bubbles found" : `${contaminatedBubbles} bubble(s) with foreign-script characters`} for page ${pageIndex + 1}. Retrying with enhanced single image...`);
+        console.log(`[Auto-Retry] 0 bubbles found for page ${pageIndex + 1}. Retrying with enhanced single image...`);
         if (activePageRef.current === pageUrl) {
           setTranslationResult(
-            pageBubbles.length === 0
-              ? "⏳ ไม่พบข้อความ! กำลังปรับความคมชัดภาพและ Auto-Retry..."
-              : `⏳ พบตัวอักษรภาษาอื่นปนในคำแปล ${contaminatedBubbles} จุด! กำลังแปลใหม่อัตโนมัติ...`,
+            "⏳ ไม่พบข้อความ! กำลังปรับความคมชัดภาพและ Auto-Retry...",
           );
         }
 
@@ -1460,14 +1450,12 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         );
         const retryBubbles: TranslatedBubble[] =
           (retryNormalized as { bubbles?: TranslatedBubble[] }).bubbles ?? [];
-        const retryContamination = countContaminatedBubbles(retryBubbles);
         // The retry replaced the first response only when the first pass had
-        // nothing to keep (0 bubbles) or the retry is actually cleaner —
-        // swapping for a dirtier result would throw away good translations.
-        if (pageBubbles.length === 0 || retryContamination < contaminatedBubbles) {
+        // nothing to keep (0 bubbles); contamination is handled per point by
+        // the bounded repair round, not by swapping whole-image passes.
+        if (pageBubbles.length === 0) {
           parsed = retryNormalized;
           pageBubbles = retryBubbles;
-          contaminatedBubbles = retryContamination;
         }
       }
 

@@ -23,13 +23,17 @@ describe("page quality review client", () => {
     const result=await reviewTranslatedBubbles([bubble],{targetLang:"Thai",fetchImpl:vi.fn().mockRejectedValue(new Error("offline"))});
     expect(result[0]).toMatchObject({...bubble,translationReview:{status:"unavailable"}});
   });
-  it("does not guess missing source or review manual/deleted bubbles",async()=>{
-    const fetchImpl=vi.fn();
+  it("reviews manual points, never guesses without source, and excludes deleted points",async()=>{
+    const fetchImpl=vi.fn(async(_url,init)=>{const body=JSON.parse(String(init?.body));return Response.json({reviews:body.items.map((item:{id:string})=>({id:item.id,status:"ok"}))});});
     const manual={...bubble,isManual:true}; const deleted={...bubble,deleted:true};
     const result=await reviewTranslatedBubbles([{t:"สวัสดี"},manual,deleted],{targetLang:"Thai",fetchImpl});
-    expect(fetchImpl).not.toHaveBeenCalled();
+    const sent=JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body)).items as Array<{id:string}>;
+    expect(sent.map(item=>item.id)).toEqual(["1"]);
     expect(result[0].translationReview?.status).toBe("unavailable");
-    expect(result[1]).toBe(manual); expect(result[2]).toBe(deleted);
+    expect(result[0].t).toBe("สวัสดี");
+    expect(result[1].translationReview?.status).toBe("ok");
+    expect(result[1].isManual).toBe(true);
+    expect(result[2]).toBe(deleted);
   });
   it("propagates cancellation instead of caching a completed page",async()=>{
     const controller=new AbortController(); controller.abort();
@@ -47,10 +51,11 @@ describe("page quality review client", () => {
     expect(result[0].translationReview?.status).toBe("unavailable");
     expect(fetchImpl).not.toHaveBeenCalled();
   });
-  it("flags excess items rather than silently approving them",async()=>{
-    const fetchImpl=vi.fn().mockResolvedValue(Response.json({reviews:Array.from({length:64},(_,i)=>({id:String(i),status:"ok"}))}));
+  it("chunks dense pages across requests instead of leaving points unreviewed",async()=>{
+    const fetchImpl=vi.fn(async(_url,init)=>{const body=JSON.parse(String(init?.body));return Response.json({reviews:body.items.map((item:{id:string})=>({id:item.id,status:"ok"}))});});
     const result=await reviewTranslatedBubbles(Array.from({length:65},()=>({...bubble})),{targetLang:"Thai",fetchImpl});
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(result[63].translationReview?.status).toBe("ok");
-    expect(result[64].translationReview?.status).toBe("unavailable");
+    expect(result[64].translationReview?.status).toBe("ok");
   });
 });

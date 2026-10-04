@@ -43,6 +43,10 @@ const translatedBubble = {
   box: [10, 20, 40, 80],
   t: "translated",
 };
+// Review evidence snapshots are attached to every active point (G02), so
+// manual bubbles are matched by content instead of exact deep equality.
+const manualLike = (bubble: { box: number[]; t: string }) =>
+  expect.objectContaining({ box: bubble.box, t: bubble.t, isManual: true });
 const storageValues = new Map<string, string>();
 const storage = {
   get length() {
@@ -157,9 +161,9 @@ test("NSFW translation publishes same-page manual bubbles to both render and bub
   const rendered = vi
     .mocked(applyTranslationOverlay)
     .mock.calls.findLast((call) => call[1] === "offscreen")?.[0];
-  expect(rendered).toEqual(expect.arrayContaining([activeManual]));
+  expect(rendered).toEqual(expect.arrayContaining([manualLike(activeManual)]));
   expect(result.current.bubbleCacheRef.current.get("blob:one")).toEqual(
-    expect.arrayContaining([activeManual]),
+    expect.arrayContaining([manualLike(activeManual)]),
   );
 });
 
@@ -211,13 +215,13 @@ test("Translate All uses each background page cache instead of active-page manua
       (call) => call[1] === "offscreen" && call[2] === 1,
     )?.[0];
   expect(backgroundRender).toEqual(
-    expect.arrayContaining([backgroundManual]),
+    expect.arrayContaining([manualLike(backgroundManual)]),
   );
-  expect(backgroundRender).not.toEqual(expect.arrayContaining([activeManual]));
+  expect(backgroundRender).not.toEqual(expect.arrayContaining([manualLike(activeManual)]));
   expect(result.current.bubbleCacheRef.current.get("blob:two")).toEqual(
-    expect.arrayContaining([backgroundManual]),
+    expect.arrayContaining([manualLike(backgroundManual)]),
   );
   expect(result.current.bubbleCacheRef.current.get("blob:two")).not.toEqual(
-    expect.arrayContaining([activeManual]),
+    expect.arrayContaining([manualLike(activeManual)]),
   );
 });

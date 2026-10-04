@@ -3,6 +3,8 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import { useTranslation } from "@/hooks/useTranslation";
 import { applyTranslationOverlay } from "@/lib/translationOverlay";
+import { loadProjectSession } from "@/lib/projectStore";
+import { createPageTargetIdentity } from "@/lib/translation/pageEligibility";
 
 vi.mock("@/lib/translationOverlay", () => ({
   applyTranslationOverlay: vi.fn(
@@ -29,16 +31,28 @@ vi.mock("@/lib/projectStore", () => ({
   clearProjectSession: vi.fn().mockResolvedValue(undefined),
 }));
 
-const contaminatedThai = { box: [100, 100, 300, 200], t: "สวัสดีこんにちは" };
-const cleanThai = { box: [100, 100, 300, 200], t: "สวัสดี" };
-const farewell = { box: [400, 400, 600, 500], t: "ลาก่อน" };
-const contaminatedFarewell = { box: [400, 400, 600, 500], t: "Привет" };
+const contaminatedThai = { box: [100, 100, 300, 200], t: "สวัสดีこんにちは", original_text: "Hello" };
+const cleanThai = { box: [100, 100, 300, 200], t: "สวัสดี", original_text: "Hello" };
+const farewell = { box: [400, 400, 600, 500], t: "ลาก่อน", original_text: "Goodbye" };
 
 const imageResponse = () =>
   new Response(new Blob(["clean"], { type: "image/png" }), { status: 200 });
 
 const bubblesResponse = (bubbles: unknown[]) =>
   Response.json({ text: JSON.stringify({ bubbles }) });
+
+interface ReviewBody {
+  mode?: string;
+  items: Array<{ id: string; sourceText: string; translatedText: string }>;
+}
+
+function lastRendered() {
+  return vi
+    .mocked(applyTranslationOverlay)
+    .mock.calls.findLast((call) => call[1] === "offscreen")?.[0] as Array<{
+    t?: string;
+  }>;
+}
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -113,138 +127,189 @@ function renderTranslationHook(pages: string[], targetLang = "Thai") {
   return hook;
 }
 
-test.each([contaminatedThai,{...contaminatedThai,t:"กลิ่นนี่มันมีมนמהขลังอะไรกันแน่..."}])("foreign-script contamination triggers one retry and keeps the cleaner pass: $t", async mixed => {
-  const pages = ["blob:one"];
-  let translateCalls = 0;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    const url = String(input);
-    if (url === "blob:one" || url === "blob:clean-one") return imageResponse();
-    if (url === "/api/translate") {
-      translateCalls += 1;
-      // First pass leaks kana; the enhanced retry comes back clean.
-      return bubblesResponse(
-        translateCalls === 1 ? [mixed, farewell] : [cleanThai, farewell],
-      );
-    }
-    throw new Error(`unexpected fetch: ${url}`);
-  });
-  const { result } = renderTranslationHook(pages);
-
+async function runTranslation(result: ReturnType<typeof renderTranslationHook>["result"]) {
   let translation!: Promise<boolean>;
   act(() => {
     translation = result.current.handleTranslate();
   });
   await act(async () => {
-    await vi.runAllTimersAsync();
+    // Bounded advancement: running all timers would fire the 4s message reset.
+    await vi.advanceTimersByTimeAsync(100);
     expect(await translation).toBe(true);
   });
+}
 
-  expect(translateCalls).toBe(2);
-  const rendered = vi
-    .mocked(applyTranslationOverlay)
-    .mock.calls.findLast((call) => call[1] === "offscreen")?.[0] as Array<{
-    t?: string;
-  }>;
+test("script contamination skips the whole-image retry and repairs only the affected point once", async () => {
+  let translateCalls = 0;
+  const reviewBodies: ReviewBody[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "blob:one" || url === "blob:clean-one") return imageResponse();
+    if (url === "/api/translate") {
+      translateCalls += 1;
+      return bubblesResponse([contaminatedThai, farewell]);
+    }
+    if (url === "/api/translation-review") {
+      const body = JSON.parse(String(init?.body)) as ReviewBody;
+      reviewBodies.push(body);
+      if (reviewBodies.length === 1) {
+        return Response.json({
+          reviews: [
+            { id: "0", status: "needs_review", reason: "ตรวจพบตัวอักษรปน" },
+            { id: "1", status: "ok" },
+          ],
+        });
+      }
+      return Response.json({
+        reviews: [{ id: "0", status: "suggested", suggestion: "สวัสดี" }],
+      });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+  const { result } = renderTranslationHook(["blob:one"]);
+  await runTranslation(result);
+
+  // The full original-image retry must not stack with the point repair round.
+  expect(translateCalls).toBe(1);
+  expect(reviewBodies).toHaveLength(2);
+  expect(reviewBodies[1].mode).toBe("repair");
+  expect(reviewBodies[1].items.map((item) => item.id)).toEqual(["0"]);
+  expect(reviewBodies[1].items[0]).toMatchObject({
+    sourceText: "Hello",
+    translatedText: "สวัสดีこんにちは",
+  });
+  const rendered = lastRendered();
   expect(rendered).toEqual(
-    expect.arrayContaining([expect.objectContaining({ t: "สวัสดี" })]),
+    expect.arrayContaining([
+      expect.objectContaining({ t: "สวัสดี" }),
+      expect.objectContaining({ t: "ลาก่อน" }),
+    ]),
   );
-  // The kana-contaminated text must not survive into the final bubbles.
-  expect(JSON.stringify(rendered)).not.toContain("こんにちは");
+  // The repaired point text is clean; the corrupted wording survives only as
+  // the originalTranslation diagnostic, never as rendered text.
+  expect(rendered.every((bubble) => !(bubble.t ?? "").includes("こんにちは"))).toBe(true);
 });
 
-test("unresolved Hebrew after the bounded retry reports the point and characters", async () => {
-  let calls=0;
-  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
-    const url=String(input);
-    if(url.startsWith("blob:"))return imageResponse();
-    if(url==="/api/translate") {calls++;return bubblesResponse([{...contaminatedThai,t:"กลิ่นนี่มันมีมนמהขลังอะไรกันแน่..."}]);}
-    throw new Error("unexpected fetch");
+test("unresolved contamination after the repair round reports the point without looping or deleting text", async () => {
+  let translateCalls = 0;
+  const reviewBodies: ReviewBody[] = [];
+  const unresolved = { ...contaminatedThai, t: "กลิ่นนี่มันมีมน\u05DE\u05D4ขลังอะไรกันแน่..." };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "blob:one" || url === "blob:clean-one") return imageResponse();
+    if (url === "/api/translate") {
+      translateCalls += 1;
+      return bubblesResponse([unresolved]);
+    }
+    if (url === "/api/translation-review") {
+      const body = JSON.parse(String(init?.body)) as ReviewBody;
+      reviewBodies.push(body);
+      if (body.mode === "repair") {
+        // The repair suggestion itself is still contaminated: it must never apply.
+        return Response.json({
+          reviews: [{ id: "0", status: "suggested", suggestion: "กลิ่นนี่มันมีมนมาขลังA" }],
+        });
+      }
+      return Response.json({
+        reviews: [{ id: "0", status: "needs_review", reason: "ตรวจพบตัวอักษรปน" }],
+      });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
   });
-  const {result}=renderTranslationHook(["blob:one"]);
-  let pending!:Promise<boolean>;act(()=>{pending=result.current.handleTranslate();});
-  await act(async()=>{await vi.advanceTimersByTimeAsync(100);expect(await pending).toBe(true);});
-  expect(calls).toBe(2);
+  const { result } = renderTranslationHook(["blob:one"]);
+  await runTranslation(result);
+
+  expect(translateCalls).toBe(1);
+  // Exactly one repair round: no third provider request.
+  expect(reviewBodies).toHaveLength(2);
+  expect(reviewBodies[1].mode).toBe("repair");
   expect(result.current.translationResult).toContain("ภาษาอื่น");
   expect(result.current.translationResult).toContain("מה");
   expect(result.current.translationResult).toContain("1");
+  // The corrupted wording is retained for repair instead of being stripped.
+  const renderedText = JSON.stringify(lastRendered());
+  expect(renderedText).toContain("กลิ่นนี่มันมีมน");
+  expect(renderedText).toContain("\u05DE\u05D4");
 });
 
-test("a dirtier retry does not replace the original translation", async () => {
-  const pages = ["blob:one"];
+test("zero-bubble recognition failure still retries once on the enhanced image", async () => {
   let translateCalls = 0;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+  const reviewBodies: ReviewBody[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url === "blob:one" || url === "blob:clean-one") return imageResponse();
     if (url === "/api/translate") {
       translateCalls += 1;
-      // First pass has one contaminated bubble; the retry is worse (two).
-      return bubblesResponse(
-        translateCalls === 1
-          ? [contaminatedThai, farewell]
-          : [contaminatedThai, contaminatedFarewell],
-      );
+      return translateCalls === 1
+        ? Response.json({ text: JSON.stringify({ bubbles: [] }) })
+        : bubblesResponse([cleanThai, farewell]);
+    }
+    if (url === "/api/translation-review") {
+      const body = JSON.parse(String(init?.body)) as ReviewBody;
+      reviewBodies.push(body);
+      return Response.json({
+        reviews: body.items.map((item) => ({ id: item.id, status: "ok" })),
+      });
     }
     throw new Error(`unexpected fetch: ${url}`);
   });
-  const { result } = renderTranslationHook(pages);
-
-  let translation!: Promise<boolean>;
-  act(() => {
-    translation = result.current.handleTranslate();
-  });
-  await act(async () => {
-    await vi.runAllTimersAsync();
-    expect(await translation).toBe(true);
-  });
+  const { result } = renderTranslationHook(["blob:one"]);
+  await runTranslation(result);
 
   expect(translateCalls).toBe(2);
-  const rendered = vi
-    .mocked(applyTranslationOverlay)
-    .mock.calls.findLast((call) => call[1] === "offscreen")?.[0] as Array<{
-    t?: string;
-  }>;
-  // The original pass stays: it had fewer contaminated bubbles.
+  expect(reviewBodies).toHaveLength(1);
+  const rendered = lastRendered();
   expect(rendered).toEqual(
-    expect.arrayContaining([expect.objectContaining({ t: "ลาก่อน" })]),
+    expect.arrayContaining([
+      expect.objectContaining({ t: "สวัสดี" }),
+      expect.objectContaining({ t: "ลาก่อน" }),
+    ]),
   );
-  expect(JSON.stringify(rendered)).not.toContain("Привет");
 });
 
-test("inspectTranslatedPages reports per-page bubble stats", () => {
-  const { result } = renderTranslationHook(["blob:clean", "blob:dirty", "blob:none"]);
-  act(() => {
-    result.current.bubbleCacheRef.current.set("blob:clean", [
-      { box: [0, 0, 10, 10], t: "สวัสดี" },
-    ]);
-    result.current.bubbleCacheRef.current.set("blob:dirty", [
-      { box: [0, 0, 10, 10], t: "สวัสดี" },
-      { box: [0, 0, 10, 10], t: "สวัสดีこんにちは", isInvalidBox: true },
-    ]);
+test("contamination without source text is left unresolved without provider guesses", async () => {
+  let translateCalls = 0;
+  let reviewCalls = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+    const url = String(input);
+    if (url === "blob:one" || url === "blob:clean-one") return imageResponse();
+    if (url === "/api/translate") {
+      translateCalls += 1;
+      return bubblesResponse([{ box: contaminatedThai.box, t: contaminatedThai.t }]);
+    }
+    if (url === "/api/translation-review") {
+      reviewCalls += 1;
+      return Response.json({ reviews: [{ id: "0", status: "ok" }] });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
   });
-  const stats = result.current.inspectTranslatedPages();
-  expect(stats).toHaveLength(2);
-  expect(stats[0]).toEqual({ pageUrl: "blob:clean", pageIndex: 0, total: 1, contaminated: 0, invalidBoxes: 0 });
-  expect(stats[1]).toEqual({ pageUrl: "blob:dirty", pageIndex: 1, total: 2, contaminated: 1, invalidBoxes: 1 });
+  const { result } = renderTranslationHook(["blob:one"]);
+  await runTranslation(result);
+
+  expect(translateCalls).toBe(1);
+  // No source-backed evidence means the provider is never asked to guess.
+  expect(reviewCalls).toBe(0);
+  expect(lastRendered()?.[0]?.t).toBe(contaminatedThai.t);
+  expect(result.current.translationResult).toContain("ภาษาอื่น");
 });
 
-test("scanTranslatedPages reports only pages with contaminated bubbles", () => {
-  const { result } = renderTranslationHook(["blob:clean", "blob:dirty"]);
-  act(() => {
-    result.current.bubbleCacheRef.current.set("blob:clean", [
-      { box: [0, 0, 10, 10], t: "สวัสดี" },
-    ]);
-    result.current.bubbleCacheRef.current.set("blob:dirty", [
-      { box: [0, 0, 10, 10], t: "สวัสดี" },
-      { box: [0, 0, 10, 10], t: "กลิ่นนี่มันมีมนמהขลังอะไรกันแน่..." },
-    ]);
+test("opening saved work inspects locally without network calls or text rewrite", async () => {
+  const savedBubble = { ...contaminatedThai };
+  vi.mocked(loadProjectSession).mockResolvedValue({
+    pages: [{ id: "stable", url: "blob:one", name: "page" }],
+    currentPage: 0,
+    updatedAt: 1,
+    hasUnrecoverableSources: false,
+    bubbleCache: new Map([["blob:one", [savedBubble]]]),
+    translatedImageCache: new Map([["blob:one", "data:old-bitmap"]]),
+    pageTargetCache: new Map([["blob:one", createPageTargetIdentity("th")!]]),
   });
-  expect(result.current.scanTranslatedPages()).toEqual([
-    { pageUrl: "blob:dirty", pageIndex: 1, contaminated: 1, total: 2 },
-  ]);
-});
+  const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(imageResponse());
+  const { result } = renderTranslationHook(["blob:one"]);
+  await act(async () => {
+    await result.current.restoreSavedSession();
+  });
 
-test("saved Hebrew output is not reported as contamination for a Hebrew target", () => {
-  const {result}=renderTranslationHook(["blob:one"],"Hebrew");
-  act(()=>{result.current.bubbleCacheRef.current.set("blob:one",[{box:[0,0,10,10],t:"שלום"}]);});
-  expect(result.current.scanTranslatedPages()).toEqual([]);
+  expect(fetchSpy).not.toHaveBeenCalled();
+  expect(result.current.bubbleCacheRef.current.get("blob:one")?.[0].t).toBe(contaminatedThai.t);
 });
