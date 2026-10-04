@@ -1,5 +1,5 @@
 if (typeof importScripts === "function") {
-  importScripts("server.js");
+  importScripts("policy.js", "server.js");
 }
 
 chrome.runtime.onInstalled?.addListener?.(() => {
@@ -22,7 +22,7 @@ async function runTranslationFlow(tabId, frameId, imageUrl) {
     catch {
       const target = { tabId, frameIds: [frameId] };
       await chrome.scripting.insertCSS({ target, files: ["content.css"] });
-      await chrome.scripting.executeScript({ target, files: ["content.js"] });
+      await chrome.scripting.executeScript({ target, files: ["policy.js", "content.js"] });
       await send({ action: "TRANSLATION_START" });
     }
     const image = await fetchImageAsBase64(imageUrl);
@@ -48,6 +48,8 @@ async function runTranslationFlow(tabId, frameId, imageUrl) {
       cleanMode: (!synced.isOfflineFallback && synced.cleanMode) ? synced.cleanMode : (stored.cleanMode || "inpainting"),
     };
 
+    const targetIdentity = SuperKPolicy.createPageTargetIdentity(settings.targetLang);
+    if (!targetIdentity) throw new Error("Choose a supported target writing system");
     let cleanImageBase64 = null;
     let cleanJobId = null;
     if (settings.cleanMode === "inpainting" && settings.translationMode !== "direct") {
@@ -80,6 +82,21 @@ async function runTranslationFlow(tabId, frameId, imageUrl) {
       result = await SuperKServer.translate(image, settings);
     }
 
+    let sourceRevision;
+    try { sourceRevision = await SuperKPolicy.originalSourceFingerprint(image.base64); }
+    catch {
+      await send({action:'TRANSLATION_REVIEW_REQUIRED',payload:{bubbles:result.bubbles,targetIdentity,pageUrl:imageUrl,sourceImage:`data:${image.mimeType};base64,${image.base64}`,cleanUrl:cleanImageBase64,textStyle:settings.textStyle}});
+      return;
+    }
+    result.bubbles = await SuperKPolicy.reviewTranslatedBubbles(result.bubbles, {
+      targetLang: targetIdentity.targetId, sourceRevision, repairContamination: true,
+      fetchImpl: (url, init) => SuperKServer.reviewRequest(url, init, settings),
+    });
+    const evidence = {bubbles: result.bubbles, targetIdentity, sourceRevision};
+    if (SuperKPolicy.inspectExtensionOutput(evidence).status !== "eligible") {
+      await send({action:'TRANSLATION_REVIEW_REQUIRED',payload:{...evidence,pageUrl:imageUrl,sourceImage:`data:${image.mimeType};base64,${image.base64}`,cleanUrl:cleanImageBase64,textStyle:settings.textStyle}});
+      return;
+    }
     let visual = {
       pageStyle: { isMonochromePage: false, monochromeConfidence: 0 },
       bubbleBackgroundLuminance: {},
@@ -111,6 +128,7 @@ async function runTranslationFlow(tabId, frameId, imageUrl) {
     await send({
       action: "TRANSLATION_SUCCESS",
       bubbles: enrichedBubbles,
+      targetIdentity, sourceRevision,
       cleanMode: settings.cleanMode,
       cleanImageBase64,
       cleanJobId,
@@ -414,12 +432,14 @@ async function checkPublishedUpdates() {
         }
 
         try {
+          if (SuperKPolicy.inspectExtensionOutput(update,true).status !== "eligible") throw new Error("Publication review is unavailable or stale");
           // 1. Update cache in extension local storage
           const storageKey = `superk_trans_${update.pageUrl}`;
           await chrome.storage?.local?.set?.({
             [storageKey]: {
               imageUrl: update.pageUrl,
               bubbles: update.bubbles,
+              targetIdentity: update.targetIdentity, sourceRevision: update.sourceRevision, backgroundState: update.backgroundState, backgroundRevision: update.backgroundRevision,
               cleanMode: "inpainting",
               cleanImageBase64: update.cleanUrl || null,
               textStyle: update.textStyle,
@@ -437,6 +457,7 @@ async function checkPublishedUpdates() {
                   pageUrl: update.pageUrl,
                   originUrl: update.originUrl,
                   bubbles: update.bubbles,
+                  targetIdentity: update.targetIdentity, sourceRevision: update.sourceRevision, backgroundState: update.backgroundState, backgroundRevision: update.backgroundRevision,
                   textStyle: update.textStyle,
                   cleanUrl: update.cleanUrl,
                 }).catch(() => {});

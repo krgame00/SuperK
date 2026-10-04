@@ -1,6 +1,10 @@
 document.addEventListener('DOMContentLoaded', async () => {
   const ids = ['translationMode', 'serverUrl', 'pairingToken', 'apiKey', 'targetLang', 'modelPreference', 'cleanMode'];
   const fields = Object.fromEntries(ids.map(id => [id, document.getElementById(id)]));
+  fields.targetLang.textContent = '';
+  for (const target of SuperKPolicy.TARGET_LANGUAGES) {
+    const option = document.createElement('option'); option.value=target.id; option.textContent=target.label; fields.targetLang.append(option);
+  }
   const allowPreview = document.getElementById('allowPreviewModels');
   const refreshModels = document.getElementById('btnRefreshModels');
   const status = document.getElementById('statusBadge');
@@ -98,7 +102,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!['inpainting', 'solid', 'stroke'].includes(settings.cleanMode)) settings.cleanMode = 'inpainting';
     for (const id of ids) {
       if (id === 'modelPreference') continue;
-      fields[id].value = settings[id];
+      fields[id].value = id === "targetLang" ? (SuperKPolicy.createPageTargetIdentity(settings[id])?.targetId || "") : settings[id];
     }
     setModelOptions([], settings.modelPreference || 'auto');
     allowPreview.checked = settings.allowPreviewModels === true;
@@ -121,6 +125,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     save.disabled = true;
     try {
       const settings = Object.fromEntries(ids.map(id => [id, fields[id].value.trim()]));
+      if (!SuperKPolicy.createPageTargetIdentity(settings.targetLang)) throw new Error("Choose a supported target writing system");
       settings.allowPreviewModels = allowPreview.checked;
       if (settings.translationMode === 'server') settings.serverUrl = SuperKServer.normalizeUrl(settings.serverUrl);
       if (settings.translationMode === 'direct' && !settings.apiKey) throw new Error('กรุณากรอก Gemini API Key');

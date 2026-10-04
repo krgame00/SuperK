@@ -1,3 +1,4 @@
+import {webcrypto} from 'node:crypto';
 // @vitest-environment node
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -17,7 +18,8 @@ function setup(options: {
   let click: (info: unknown, tab: unknown) => Promise<void>;
   const sendMessage = vi.fn().mockResolvedValue({});
   let directCallCount = 0;
-  const fetch = vi.fn(async (url: string) => {
+  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes("/api/translation-review")) return Response.json({reviews:JSON.parse(String(init?.body)).items.map((item:any)=>({id:item.id,status:"ok"}))});
     if (url === 'https://manga.test/page.png') return new Response(new Uint8Array([0, 127, 255]), {
       status: options.failImage ? 403 : 200, headers: { 'Content-Type': 'image/png' },
     });
@@ -54,7 +56,7 @@ function setup(options: {
       if (options.serverTranslateFails) {
         return Response.json({ error: 'Shared router unavailable' }, { status: 503 });
       }
-      const text = JSON.stringify({ bubbles: [{ t: 'สวัสดี', box: [10, 20, 100, 200] }] });
+      const text = JSON.stringify({ bubbles: [{ t: 'สวัสดี', original_text:'Hello', box: [10, 20, 100, 200] }] });
       return Response.json({ text });
     }
     if ((url as string).includes(':generateContent')) {
@@ -62,12 +64,12 @@ function setup(options: {
         const item = options.directResponses[directCallCount++];
         return Response.json(item.data ?? {}, { status: item.status ?? 200 });
       }
-      const text = JSON.stringify({ bubbles: [{ t: 'สวัสดี', box: [10, 20, 100, 200] }] });
+      const text = JSON.stringify({ bubbles: [{ t: 'สวัสดี', original_text:'Hello', box: [10, 20, 100, 200] }] });
       return Response.json({ candidates: [{ content: { parts: [{ text }] } }] });
     }
     if (options.failServer) return Response.json({ error: 'Missing server key' }, { status: 500 });
 
-    const text = JSON.stringify({ bubbles: [{ t: 'สวัสดี', box: [10, 20, 100, 200] }] });
+    const text = JSON.stringify({ bubbles: [{ t: 'สวัสดี', original_text:'Hello', box: [10, 20, 100, 200] }] });
     return Response.json({ text });
   });
   const clearInterval = vi.fn();
@@ -80,9 +82,9 @@ function setup(options: {
       ...(options.direct ? { translationMode: 'direct', apiKey: 'test-key', modelPreference: options.modelPreference || 'auto' } : {}),
     })) } },
   };
-  const context = vm.createContext({ chrome, fetch, console, URL, Blob, FormData, Uint8Array, btoa, atob, AbortSignal,
-    setInterval: vi.fn(() => 1), clearInterval });
-  context.importScripts = (file: string) => vm.runInContext(read(file), context);
+  const context = vm.createContext({ crypto:webcrypto, chrome, fetch, console, URL, Blob, FormData, Uint8Array, btoa, atob, AbortSignal, AbortController,
+    setTimeout, clearTimeout, DOMException, Response, setInterval: vi.fn(() => 1), clearInterval });
+  context.importScripts = (...files: string[]) => files.forEach(file=>vm.runInContext(read(file), context));
   vm.runInContext(read('background.js'), context);
   return { context, fetch, sendMessage, clearInterval, chrome,
     run: () => click({ menuItemId: 'superk-translate-image', srcUrl: 'https://manga.test/page.png', frameId: 7 }, { id: 1 }),
@@ -102,7 +104,7 @@ describe('Chrome extension translation workflow', () => {
     });
     expect(app.sendMessage).toHaveBeenLastCalledWith(1, expect.objectContaining({
       action: 'TRANSLATION_SUCCESS',
-      bubbles: [expect.objectContaining({ t: 'สวัสดี', box: [10, 20, 100, 200] })],
+      bubbles: [expect.objectContaining({ t: 'สวัสดี', original_text:'Hello', box: [10, 20, 100, 200] })],
       pageStyle: expect.objectContaining({
         isMonochromePage: expect.any(Boolean),
         monochromeConfidence: expect.any(Number),
@@ -159,7 +161,7 @@ describe('Chrome extension translation workflow', () => {
       direct: true,
       serverTranslateUnreachable: true,
       directResponses: [
-        { status: 200, data: { candidates: [{ content: { parts: [{ text: JSON.stringify({ bubbles: [{ t: 'ผลลัพธ์ออฟไลน์', box: [0, 0, 100, 100] }] }) }] } }] } },
+        { status: 200, data: { candidates: [{ content: { parts: [{ text: JSON.stringify({ bubbles: [{ t: 'ผลลัพธ์ออฟไลน์', original_text:'offline source', box: [0, 0, 100, 100] }] }) }] } }] } },
       ],
     });
     await app.run();
@@ -175,7 +177,7 @@ describe('Chrome extension translation workflow', () => {
 
     expect(app.sendMessage).toHaveBeenLastCalledWith(1, expect.objectContaining({
       action: 'TRANSLATION_SUCCESS',
-      bubbles: [expect.objectContaining({ t: 'ผลลัพธ์ออฟไลน์', box: [0, 0, 100, 100] })],
+      bubbles: [expect.objectContaining({ t: 'ผลลัพธ์ออฟไลน์', original_text:'offline source', box: [0, 0, 100, 100] })],
     }), { frameId: 7 });
   });
 

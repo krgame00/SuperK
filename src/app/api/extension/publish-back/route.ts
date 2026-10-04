@@ -1,10 +1,11 @@
+import {inspectExtensionOutput,type ExtensionEvidence} from '@/lib/extension/strictParity';
 import { NextRequest, NextResponse } from "next/server";
 import { requirePairingAuth } from "@/lib/server/pairing";
 
-export interface PublishBackPayload {
+export interface PublishBackPayload extends ExtensionEvidence {
   pageUrl: string;
   originUrl?: string;
-  bubbles: unknown[];
+  bubbles: ExtensionEvidence["bubbles"];
   textStyle?: Record<string, unknown>;
   cleanUrl?: string;
 }
@@ -87,6 +88,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid payload: pageUrl required" }, { status: 400 });
     }
 
+    const eligibility = inspectExtensionOutput(body, true);
+    if (eligibility.status !== "eligible") return NextResponse.json({error:"Publication requires current source, target, contextual and background review",eligibility},{status:409,headers:buildCorsHeaders(origin)});
     globalSequenceId += 1;
     const seq = globalSequenceId;
     const updatedAt = Date.now();
@@ -131,6 +134,7 @@ export async function GET(request: NextRequest) {
     if (!record) {
       return NextResponse.json({ error: "Published update not found" }, { status: 404 });
     }
+    if (inspectExtensionOutput(record,true).status !== "eligible") return NextResponse.json({error:"Publication review is stale"},{status:409,headers:buildCorsHeaders(origin)});
     return NextResponse.json({ ...record, epoch: serverEpoch }, { headers: buildCorsHeaders(origin) });
   }
 
@@ -138,6 +142,7 @@ export async function GET(request: NextRequest) {
   const since = epochChanged ? 0 : (sinceParam ? parseInt(sinceParam, 10) : 0);
   const sinceSeq = epochChanged ? 0 : (sinceSeqParam ? parseInt(sinceSeqParam, 10) : 0);
   const updates = Array.from(publishedMap.values())
+    .filter(record => inspectExtensionOutput(record,true).status === "eligible")
     .filter((record) => {
       if (sinceSeq > 0) return record.seq > sinceSeq;
       if (since > 0) return record.updatedAt > since;

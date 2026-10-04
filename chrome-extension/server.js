@@ -87,7 +87,28 @@ globalThis.SuperKServer = {
     return models.flatMap(model => model.keys.map(key => ({ model: model.id, ...key })));
   },
 
+  async reviewRequest(url, init, settings) {
+    const headers = {'Content-Type':'application/json'};
+    if (settings.pairingToken) headers.Authorization = `Bearer ${settings.pairingToken}`;
+    try { return await fetch(`${this.normalizeUrl(settings.serverUrl)}/api/translation-review`, {...init, headers,
+      body:JSON.stringify({...JSON.parse(init.body),apiKey:settings.apiKey || '',modelPreference:settings.modelPreference,allowPreview:settings.allowPreviewModels===true})});
+    } catch (error) {
+      if (settings.translationMode !== 'direct' || init.signal?.aborted) throw error;
+      const payload=JSON.parse(init.body);
+      const routes=await this.discoverGeminiRoutes(settings.apiKey,{modelPreference:settings.modelPreference||'auto',allowPreview:settings.allowPreviewModels===true});
+      const route=routes[0]; if (!route) throw error;
+      const response=await fetch('https://generativelanguage.googleapis.com/v1beta/interactions',{
+        method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':route.apiKey},signal:init.signal,
+        body:JSON.stringify({model:route.model,store:false,input:SuperKPolicy.buildQualityReviewPrompt(payload.items,payload.targetLang,payload.glossary||[])})});
+      if (!response.ok) return response;
+      const data=await response.json();
+      const text=(data.steps||[]).filter(step=>step.type==='model_output').flatMap(step=>step.content||[]).filter(part=>part.type==='text').map(part=>part.text).join('');
+      return new Response(JSON.stringify(JSON.parse(text.replace(/```json|```/gi,'').trim())),{status:200,headers:{'Content-Type':'application/json'}});
+    }
+  },
+
   async translate(image, settings) {
+    if (!globalThis.SuperKPolicy?.createPageTargetIdentity(settings.targetLang)) throw new Error('Choose a supported target writing system');
     const base = this.normalizeUrl(settings.serverUrl);
     let response;
     const headers = { 'Content-Type': 'application/json' };

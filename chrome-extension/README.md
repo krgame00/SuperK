@@ -48,3 +48,14 @@ node node_modules/typescript/bin/tsc --noEmit
 ```
 
 การเรียก API ข้ามโดเมนใช้ service worker และ host permissions ตาม [เอกสาร Chrome](https://developer.chrome.com/docs/extensions/develop/concepts/network-requests) ไม่ต้องเปิด CORS ของ backend ให้ทุกเว็บไซต์
+
+Strict policy bundle: run `node scripts/build-extension-policy.mjs` to regenerate
+`policy.js` from `policy-entry.ts` and the canonical TypeScript language/review
+modules. Packaging rebuilds this bundle and includes it by explicit allowlist.
+The worker, popup and injected reader load it before translation code. Legacy
+saved copies remain stored but require current target/source/review evidence
+before reading. Blocked jobs offer source-backed review in SuperK. Publication
+requires background approval; generated-text approval alone is insufficient.
+Persisted proportional float layout snapshots are consumed when their text,
+font, multiplier and frame identity match. Browser font availability is reported
+as fallback when it cannot verify the persisted font.

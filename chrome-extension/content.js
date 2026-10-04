@@ -16,8 +16,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       message.cleanMode,
       message.cleanImageBase64,
       message.textStyle,
-      message.pageStyle
+      message.pageStyle, message
     );
+  } else if (message.action === "TRANSLATION_REVIEW_REQUIRED") {
+    handleTranslationError(message.imageUrl,'ตรวจจากต้นฉบับใน SuperK ก่อนอ่านคำแปล');
+    const badge=document.getElementById(`superk-badge-${hashCode(message.imageUrl)}`);
+    if (badge) {
+      const button=document.createElement('button');button.textContent='ตรวจจากต้นฉบับใน SuperK';
+      button.onclick=()=>chrome.runtime.sendMessage({action:'OPEN_EDITOR',payload:{...message.payload,originUrl:window.location.href}});
+      badge.append(button);
+    }
   } else if (message.action === "TRANSLATION_ERROR") {
     handleTranslationError(message.imageUrl, message.error);
   } else if (message.action === "UPDATE_OVERLAY" && message.pageUrl) {
@@ -25,7 +33,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       message.pageUrl,
       message.bubbles,
       message.cleanUrl,
-      message.textStyle
+      message.textStyle, message
     );
   }
 });
@@ -140,7 +148,10 @@ function handleTranslationStart(imageUrl) {
 }
 
 // 2. Handle Translation Success (Render Text Overlay)
-function handleTranslationSuccess(imageUrl, bubbles, cleanMode, cleanImageBase64, textStyle, pageStyle) {
+function handleTranslationSuccess(imageUrl, bubbles, cleanMode, cleanImageBase64, textStyle, pageStyle, evidence) {
+  if (!globalThis.SuperKPolicy || SuperKPolicy.inspectExtensionOutput({...evidence,bubbles}).status !== "eligible") {
+    handleTranslationError(imageUrl,"Saved translation needs current source-backed review in SuperK"); return;
+  }
   const img = findImageElement(imageUrl);
   if (!img) return;
 
@@ -355,7 +366,8 @@ function fitTextInBubble(text, width, height, fontFamily, fontSizeMultiplier = 1
 
   // 2. Render Thai text bubbles on top of the clean canvas
   bubbles.forEach((b) => {
-    if (!b.t || !b.box || b.box.length !== 4) return;
+    const displayedText = SuperKPolicy.extensionDisplayedText(b);
+    if (b.deleted || !displayedText || !b.box || b.box.length !== 4) return;
     
     let rawYmin = Math.min(b.box[0], b.box[2]);
     let rawXmin = Math.min(b.box[1], b.box[3]);
@@ -367,7 +379,14 @@ function fitTextInBubble(text, width, height, fontFamily, fontSizeMultiplier = 1
     const origX = offsetX + (rawXmin / 1000) * renderW;
     const origY = offsetY + (rawYmin / 1000) * renderH;
 
-    const fit = fitTextInBubble(b.t, origW, origH, fontFamily, fontSizeMultiplier);
+    let fit = fitTextInBubble(displayedText, origW, origH, fontFamily, fontSizeMultiplier);
+    const snapshot = b.layoutSnapshot || b.layoutAdjustment?.layoutSnapshot;
+    const hasSnapshot = snapshot?.text === displayedText && snapshot.fontFamily === fontFamily && snapshot.globalMult === fontSizeMultiplier && snapshot.bubbleMult === (b.fontSizeMultiplier || 1) && (!b.layoutAdjustment || (b.layoutAdjustment.bw === snapshot.frameWidthPx && b.layoutAdjustment.bh === snapshot.frameHeightPx)) && Array.isArray(snapshot.lines) && snapshot.lines.length > 0 && snapshot.lines.length <= 400 &&
+      [snapshot.fontSizePx,snapshot.lineHeightPx,snapshot.frameWidthPx,snapshot.frameHeightPx].every(n=>typeof n==='number' && Number.isFinite(n) && n>0);
+    if (hasSnapshot) {
+      const scale = origW / snapshot.frameWidthPx;
+      fit = {fontSize:snapshot.fontSizePx * scale,lineHeight:snapshot.lineHeightPx * scale,lines:snapshot.lines};
+    }
     const bubbleProfile = b.styleProfile || {};
     const category = bubbleProfile.category || b.styleCategory || 'dialogue';
     const isManual = bubbleProfile.ownershipMode === 'manual' || bubbleProfile.source === 'manual';
@@ -419,7 +438,7 @@ function fitTextInBubble(text, width, height, fontFamily, fontSizeMultiplier = 1
       pointer-events: auto;
       cursor: move;
       color: ${bubbleTextColor};
-      font-family: ${fontFamily};
+      font-family: ${hasSnapshot ? snapshot.fontFamily : fontFamily};
       font-weight: bold;
       font-size: ${fit.fontSize}px;
       line-height: ${fit.lineHeight}px;
@@ -434,7 +453,10 @@ function fitTextInBubble(text, width, height, fontFamily, fontSizeMultiplier = 1
     `;
 
     bubbleEl.textContent = fit.lines.join('\n');
-    bubbleEl.contentEditable = "true";
+    bubbleEl.contentEditable = "false";
+    if (!hasSnapshot || !document.fonts?.check?.(`bold ${fit.fontSize}px ${snapshot.fontFamily}`)) bubbleEl.dataset.sourceSizeStatus = "fallback";
+    else bubbleEl.dataset.sourceSizeStatus = "resolved-layout";
+    if (bubbleEl.dataset.sourceSizeStatus === "fallback") bubbleEl.title = "ยังเทียบขนาดต้นฉบับไม่ได้ — เปิดใน SuperK เพื่อตรวจรูปแบบตัวอักษร";
 
     // Enable simple drag to reposition
     makeDraggable(bubbleEl);
@@ -475,6 +497,7 @@ function fitTextInBubble(text, width, height, fontFamily, fontSizeMultiplier = 1
         chrome.runtime.sendMessage({
           action: 'OPEN_EDITOR',
           payload: {
+            ...evidence,
             pageUrl: imageUrl,
             cleanUrl: cleanImageBase64,
             bubbles,
@@ -505,6 +528,7 @@ function fitTextInBubble(text, width, height, fontFamily, fontSizeMultiplier = 1
   if (typeof chrome !== 'undefined' && chrome?.storage?.local?.set) {
     chrome.storage.local.set({
       [storageKey]: {
+        ...evidence,
         imageUrl,
         bubbles,
         cleanMode,
@@ -584,7 +608,8 @@ function handleTranslationError(imageUrl, errorMsg) {
 }
 
 // 4. Handle Published Update from SuperK Editor
-function handlePublishedUpdate(pageUrl, bubbles, cleanUrl, textStyle) {
+function handlePublishedUpdate(pageUrl, bubbles, cleanUrl, textStyle, evidence) {
+  if (!globalThis.SuperKPolicy || SuperKPolicy.inspectExtensionOutput({...evidence,bubbles},true).status !== "eligible") { handleTranslationError(pageUrl,"Publication needs current review"); return; }
   const img = findImageElement(pageUrl);
   if (!img) return;
 
@@ -596,7 +621,7 @@ function handlePublishedUpdate(pageUrl, bubbles, cleanUrl, textStyle) {
     bubbles,
     "inpainting",
     cleanUrl || null,
-    textStyle
+    textStyle, undefined, evidence
   );
 
   showToast(img, "✨ อัปเดตคำแปลจาก SuperK เรียบร้อยแล้ว!");
@@ -722,7 +747,7 @@ function restoreSavedTranslations() {
           saved.cleanMode,
           saved.cleanImageBase64,
           saved.textStyle,
-          saved.pageStyle
+          saved.pageStyle, saved
         );
       }
     }).catch(() => {});

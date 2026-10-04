@@ -8,11 +8,13 @@ it('loads the default backend and saves a normalized URL without requiring a Gem
   document.body.innerHTML = html.match(/<body>([\s\S]*)<\/body>/)![1];
   const set = vi.fn().mockResolvedValue(undefined);
   vi.stubGlobal('chrome', { storage: { sync: { get: async (defaults: object) => defaults, set } } });
+  window.eval(readFileSync('chrome-extension/policy.js', 'utf8'));
   window.eval(readFileSync('chrome-extension/server.js', 'utf8'));
   // Register exactly once, then trigger the popup's normal initialization.
   window.eval(readFileSync('chrome-extension/popup.js', 'utf8'));
   document.dispatchEvent(new Event('DOMContentLoaded'));
   await vi.waitFor(() => expect((document.getElementById('serverUrl') as HTMLInputElement).value).toBe('http://127.0.0.1:3000'));
+  expect(document.querySelectorAll('#targetLang option').length).toBeGreaterThan(80);
   expect((document.getElementById('apiKey') as HTMLInputElement).required).toBe(false);
   (document.getElementById('serverUrl') as HTMLInputElement).value = 'https://superk.example/';
   document.getElementById('settingsForm')!.dispatchEvent(new Event('submit', { cancelable: true }));
@@ -23,5 +25,6 @@ it('loads the default backend and saves a normalized URL without requiring a Gem
   mode.value = 'direct'; mode.dispatchEvent(new Event('change'));
   expect(document.getElementById('serverSettings')!.hidden).toBe(true);
   expect(document.getElementById('directSettings')!.hidden).toBe(false);
+  expect(document.querySelectorAll('#targetLang option').length).toBeGreaterThan(80);
   expect((document.getElementById('apiKey') as HTMLInputElement).required).toBe(true);
 });

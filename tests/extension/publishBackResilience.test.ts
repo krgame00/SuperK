@@ -1,3 +1,6 @@
+import * as extensionPolicy from '@/lib/extension/strictParity';
+import {withReviewIdentity} from '@/lib/translation/qualityReview';
+const evidence=(t:string)=>({targetIdentity:extensionPolicy.createPageTargetIdentity('en'),sourceRevision:'pixels',backgroundState:'approved',backgroundRevision:'clean',bubbles:[{t,original_text:'source',box:[0,0,10,10],translationReview:withReviewIdentity({status:'ok',sourceText:'source',reviewedText:t},'en','pixels')}]});
 import { readFileSync } from "node:fs";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
@@ -72,6 +75,7 @@ describe("Publish-Back Sync Resiliency & Epoch Recovery (Ticket PR-2)", () => {
       },
     };
 
+    (globalThis as any).SuperKPolicy=extensionPolicy;
     // Load background.js
     // The service worker importScripts server.js (loadExtensionSettings);
     // the ESM import below does not, so load it first.
@@ -100,8 +104,8 @@ describe("Publish-Back Sync Resiliency & Epoch Recovery (Ticket PR-2)", () => {
       json: async () => ({
         epoch: "epoch_A",
         updates: [
-          { seq: 1, pageUrl: "https://example.com/p1.png", bubbles: [{ t: "A1" }], updatedAt: 100 },
-          { seq: 2, pageUrl: "https://example.com/p2.png", bubbles: [{ t: "A2" }], updatedAt: 200 },
+          { seq: 1, pageUrl: "https://example.com/p1.png", ...evidence("A1"), updatedAt: 100 },
+          { seq: 2, pageUrl: "https://example.com/p2.png", ...evidence("A2"), updatedAt: 200 },
         ],
       }),
     });
@@ -126,7 +130,7 @@ describe("Publish-Back Sync Resiliency & Epoch Recovery (Ticket PR-2)", () => {
       json: async () => ({
         epoch: "epoch_B",
         updates: [
-          { seq: 1, pageUrl: "https://example.com/b1.png", bubbles: [{ t: "B1" }], updatedAt: 300 },
+          { seq: 1, pageUrl: "https://example.com/b1.png", ...evidence("B1"), updatedAt: 300 },
         ],
       }),
     });
@@ -153,7 +157,7 @@ describe("Publish-Back Sync Resiliency & Epoch Recovery (Ticket PR-2)", () => {
         json: async () => ({
           epoch: "epoch_A",
           updates: [
-            { seq: 3, pageUrl: "https://example.com/p3.png", bubbles: [{ t: "A3" }], updatedAt: 400 },
+            { seq: 3, pageUrl: "https://example.com/p3.png", ...evidence("A3"), updatedAt: 400 },
           ],
         }),
       };
@@ -179,7 +183,7 @@ describe("Publish-Back Sync Resiliency & Epoch Recovery (Ticket PR-2)", () => {
       json: async () => ({
         epoch: "epoch_run_1",
         updates: [
-          { seq: 5, pageUrl: "https://example.com/page-x.png", bubbles: [{ t: "Old Epoch" }], updatedAt: 100 },
+          { seq: 5, pageUrl: "https://example.com/page-x.png", ...evidence("Old Epoch"), updatedAt: 100 },
         ],
       }),
     });
@@ -197,7 +201,7 @@ describe("Publish-Back Sync Resiliency & Epoch Recovery (Ticket PR-2)", () => {
         epoch: "epoch_run_2",
         epochChanged: true,
         updates: [
-          { seq: 1, pageUrl: "https://example.com/page-restarted.png", bubbles: [{ t: "Restarted Server Item" }], updatedAt: 200 },
+          { seq: 1, pageUrl: "https://example.com/page-restarted.png", ...evidence("Restarted Server Item"), updatedAt: 200 },
         ],
       }),
     });
@@ -234,7 +238,7 @@ describe("Publish-Back Sync Resiliency & Epoch Recovery (Ticket PR-2)", () => {
         json: async () => ({
           epoch: "epoch_persisted",
           updates: [
-            { seq: 11, pageUrl: "https://example.com/p11.png", bubbles: [{ t: "P11" }], updatedAt: 100000 },
+            { seq: 11, pageUrl: "https://example.com/p11.png", ...evidence("P11"), updatedAt: 100000 },
           ],
         }),
       };
@@ -267,9 +271,9 @@ describe("Publish-Back Sync Resiliency & Epoch Recovery (Ticket PR-2)", () => {
       json: async () => ({
         epoch: "epoch_order",
         updates: [
-          { seq: 4, pageUrl: "https://example.com/p4.png", bubbles: [{ t: "Four" }], updatedAt: 400 },
-          { seq: 2, pageUrl: "https://example.com/p2.png", bubbles: [{ t: "Two Dupe" }], updatedAt: 200 },
-          { seq: 3, pageUrl: "https://example.com/p3.png", bubbles: [{ t: "Three" }], updatedAt: 300 },
+          { seq: 4, pageUrl: "https://example.com/p4.png", ...evidence("Four"), updatedAt: 400 },
+          { seq: 2, pageUrl: "https://example.com/p2.png", ...evidence("Two Dupe"), updatedAt: 200 },
+          { seq: 3, pageUrl: "https://example.com/p3.png", ...evidence("Three"), updatedAt: 300 },
         ],
       }),
     });
@@ -308,9 +312,9 @@ describe("Publish-Back Sync Resiliency & Epoch Recovery (Ticket PR-2)", () => {
       json: async () => ({
         epoch: "epoch_err",
         updates: [
-          { seq: 1, pageUrl: "https://example.com/ok.png", bubbles: [{ t: "OK" }], updatedAt: 100 },
-          { seq: 2, pageUrl: "https://example.com/fail.png", bubbles: [{ t: "FAIL" }], updatedAt: 200 },
-          { seq: 3, pageUrl: "https://example.com/after.png", bubbles: [{ t: "AFTER" }], updatedAt: 300 },
+          { seq: 1, pageUrl: "https://example.com/ok.png", ...evidence("OK"), updatedAt: 100 },
+          { seq: 2, pageUrl: "https://example.com/fail.png", ...evidence("FAIL"), updatedAt: 200 },
+          { seq: 3, pageUrl: "https://example.com/after.png", ...evidence("AFTER"), updatedAt: 300 },
         ],
       }),
     });

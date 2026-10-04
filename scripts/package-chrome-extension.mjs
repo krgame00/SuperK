@@ -1,3 +1,4 @@
+import './build-extension-policy.mjs';
 import { readFile, readdir, mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import JSZip from 'jszip';
@@ -5,7 +6,7 @@ import JSZip from 'jszip';
 const source = new URL('../chrome-extension/', import.meta.url);
 const zip = new JSZip();
 // Explicit allowlist: never include app environment files or local credentials.
-const files = ['manifest.json', 'background.js', 'server.js', 'content.js', 'content.css', 'popup.html', 'popup.js', 'README.md'];
+const files = ['manifest.json', 'background.js', 'server.js', 'policy.js', 'content.js', 'content.css', 'popup.html', 'popup.js', 'README.md'];
 for (const icon of await readdir(new URL('icons/', source))) {
   if (icon.endsWith('.png')) files.push(`icons/${icon}`);
 }
