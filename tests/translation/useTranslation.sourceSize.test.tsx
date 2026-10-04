@@ -30,7 +30,7 @@ beforeEach(()=>{
     throw new Error(`Unexpected fetch ${input}`);
   });
 });
-afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals();});
+afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals();vi.unstubAllEnvs();});
 test('public new translation action measures pre-clean original, persists automatic size before offscreen rendering',async()=>{
   const {result}=renderHook(()=>useTranslation({currentPage:0,pages:['blob:original'],viewMode:'single',
     preparePageForTranslation:async()=>({recognitionUrl:'blob:scoped',backgroundUrl:'blob:clean'})}));
@@ -39,4 +39,67 @@ test('public new translation action measures pre-clean original, persists automa
   expect(bubbles?.[0].sourceSizing).toMatchObject({mode:'auto',status:'matched',evidence:{bodyHeightPx:10,sourceRevision:expect.stringMatching(/^100x40:/)}});
   expect(bubbles![0].targetFontSize! * bubbles![0].sourceSizing!.font!.bodyHeightPx / bubbles![0].sourceSizing!.font!.referencePx).toBe(10);
   expect(imageSources).toContain('blob:original');
+});
+
+test.each(['abort','replace','revision'] as const)('source preparation discards pending work on %s',async(change)=>{
+  let release!:()=>void;
+  let entered!:()=>void;
+  const started=new Promise<void>(resolve=>{entered=resolve;});
+  const pending=new Promise<void>(resolve=>{release=resolve;});
+  Object.defineProperty(document,'fonts',{configurable:true,value:{load:vi.fn(()=>{entered();return pending;}),check:()=>true}});
+  const {result,rerender}=renderHook(({pages})=>useTranslation({currentPage:0,pages,viewMode:'single',
+    preparePageForTranslation:async()=>({recognitionUrl:'blob:scoped',backgroundUrl:'blob:clean'})}),{initialProps:{pages:['blob:original']}});
+  let work!:Promise<boolean>;
+  await act(async()=>{work=result.current.handleTranslate();await started;});
+  act(()=>{
+    if(change==='abort') result.current.cancelTranslateAll();
+    else if(change==='revision') result.current.invalidatePageTranslation('blob:original');
+    else rerender({pages:['blob:replacement']});
+  });
+  await act(async()=>{release();await work;});
+  expect(vi.mocked(applyTranslationOverlay).mock.calls.filter(c=>c[1]==='offscreen')).toHaveLength(0);
+  expect(result.current.bubbleCacheRef.current.has('blob:original')).toBe(false);
+  expect(result.current.translatedImageCacheRef.current.has('blob:original')).toBe(false);
+});
+
+test('crop source preparation discards a removed page during font loading',async()=>{
+  let release!:()=>void;
+  let entered!:()=>void;
+  const started=new Promise<void>(resolve=>{entered=resolve;});
+  const pending=new Promise<void>(resolve=>{release=resolve;});
+  Object.defineProperty(document,'fonts',{configurable:true,value:{load:vi.fn(()=>{entered();return pending;}),check:()=>true}});
+  const {result,rerender}=renderHook(({pages})=>useTranslation({currentPage:0,pages,viewMode:'single',
+    preparePageForTranslation:async()=>({recognitionUrl:'blob:scoped',backgroundUrl:'blob:clean'})}),{initialProps:{pages:['blob:original']}});
+  let work!:Promise<void>;
+  await act(async()=>{work=result.current.translateCrop({x:0,y:0,w:100,h:40},'crop',100,40);await started;});
+  act(()=>rerender({pages:['blob:replacement']}));
+  await act(async()=>{release();await work;});
+  expect(applyTranslationOverlay).not.toHaveBeenCalled();
+  expect(result.current.bubbleCacheRef.current.has('blob:original')).toBe(false);
+  expect(result.current.translatedImageCacheRef.current.has('blob:original')).toBe(false);
+});
+
+test('original image wait discards work aborted before pixel preparation',async()=>{
+  vi.stubEnv('NODE_ENV','production');
+  let release!:()=>void;
+  let entered!:()=>void;
+  const started=new Promise<void>(resolve=>{entered=resolve;});
+  vi.stubGlobal('Image',class {
+    naturalWidth=100;naturalHeight=40;width=100;height=40;complete=false;
+    onload:(()=>void)|null=null;onerror:(()=>void)|null=null;
+    set src(value:string) {
+      if(value==='blob:original') {release=()=>this.onload?.();entered();}
+      else queueMicrotask(()=>this.onload?.());
+    }
+  });
+  const {result}=renderHook(()=>useTranslation({currentPage:0,pages:['blob:original'],viewMode:'single',
+    preparePageForTranslation:async()=>({recognitionUrl:'blob:scoped',backgroundUrl:'blob:clean'})}));
+  let work!:Promise<boolean>;
+  await act(async()=>{work=result.current.handleTranslate();await started;});
+  act(()=>result.current.cancelTranslateAll());
+  await act(async()=>{release();await work;});
+  expect(document.fonts.load).not.toHaveBeenCalled();
+  expect(vi.mocked(applyTranslationOverlay).mock.calls.filter(c=>c[1]==='offscreen')).toHaveLength(0);
+  expect(result.current.bubbleCacheRef.current.has('blob:original')).toBe(false);
+  expect(result.current.translatedImageCacheRef.current.has('blob:original')).toBe(false);
 });

@@ -62,9 +62,13 @@ export async function prepareNewSourceSizing(bubbles:TranslatedBubble[], image:H
     }
   } catch {
     for(const bubble of fresh) {
-      if(bubble.sourceSizing) continue;
+      const previous=bubble.sourceSizing;
+      if(previous?.baseFontSizePx!==undefined) {
+        if(bubble.targetFontSize===previous.baseFontSizePx) delete bubble.targetFontSize;
+        if(bubble.layoutAdjustment?.targetFontSize===previous.baseFontSizePx) delete bubble.layoutAdjustment.targetFontSize;
+      }
       bubble.sourceSizing={mode:'auto',status:'fallback',fallbackLabel:SOURCE_SIZE_FALLBACK_LABEL,
-        evidence:{policyVersion:SOURCE_SIZE_POLICY,sourceRevision:revision,regionKey:sourceRegionKey(bubble.box),
+        evidence:{policyVersion:SOURCE_SIZE_POLICY,sourceRevision:'original-pixels-unavailable',regionKey:sourceRegionKey(bubble.box),
           rect:normalizeBubbleBox(bubble.box??[],width,height),pixelRevision:'unavailable',quality:'unreliable',confidence:0,
           reason:'original-pixels-unavailable',glyphCount:0,lineCount:0}} satisfies SourceSizing;
     }

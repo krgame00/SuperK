@@ -772,9 +772,15 @@ export function useTranslation({
     await clearProjectSession();
   };
 
-  const sizeNewTranslatedBubbles = async (bubbles: TranslatedBubble[], originalUrl: string) => {
+  const sizeNewTranslatedBubbles = async (bubbles: TranslatedBubble[], originalUrl: string, signal?: AbortSignal) => {
+    const revision = pageRevisionsRef.current.get(originalUrl);
+    const ownsPage = () => !signal?.aborted && pagesRef.current.includes(originalUrl)
+      && pageRevisionsRef.current.get(originalUrl) === revision;
+    if (!ownsPage()) return false;
     const original = await waitForImageReady(originalUrl, 2000).catch(() => document.createElement('img'));
+    if (!ownsPage()) return false;
     await prepareNewSourceSizing(bubbles, original, textStyleRef.current.fontFamily || 'Itim, sans-serif');
+    return ownsPage();
   };
 
   const translateCrop = async (cropBox: { x: number, y: number, w: number, h: number }, cropBase64: string, fullWidth: number, fullHeight: number) => {
@@ -824,7 +830,7 @@ export function useTranslation({
         newBubbles,
         pages[currentPage],
       );
-      await sizeNewTranslatedBubbles(coloredNewBubbles, pages[currentPage]);
+      if (!await sizeNewTranslatedBubbles(coloredNewBubbles, pages[currentPage])) return;
       const updatedBubbles = [...activeBubbles, ...coloredNewBubbles];
       bubbleCacheRef.current.set(pages[currentPage], updatedBubbles);
       markPageDirty(pages[currentPage]);
@@ -1250,7 +1256,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           styledBubbles,
           recognitionUrl,
         );
-        await sizeNewTranslatedBubbles(coloredBubbles.filter(bubble => !bubble.isManual), pageUrl);
+        if (!await sizeNewTranslatedBubbles(coloredBubbles.filter(bubble => !bubble.isManual), pageUrl, signal)) return false;
         await renderAndCacheTranslation(
           coloredBubbles,
           backgroundUrl,
@@ -1451,7 +1457,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         styledBubbles,
         recognitionUrl,
       );
-      await sizeNewTranslatedBubbles(coloredBubbles.filter(bubble => !bubble.isManual), pageUrl);
+      if (!await sizeNewTranslatedBubbles(coloredBubbles.filter(bubble => !bubble.isManual), pageUrl, signal)) return false;
       await renderAndCacheTranslation(
         coloredBubbles,
         backgroundUrl,
