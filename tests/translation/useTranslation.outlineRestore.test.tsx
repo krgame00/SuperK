@@ -9,7 +9,7 @@ import type { TextStyleProfile } from "@/lib/colorMatching/types";
 vi.mock("@/lib/translationOverlay", () => ({ applyTranslationOverlay: vi.fn() }));
 vi.mock("@/lib/projectStore", () => ({ deleteAsset: vi.fn(), saveProjectSession: vi.fn().mockResolvedValue(undefined),
   loadProjectSession: vi.fn(), clearProjectSession: vi.fn() }));
-vi.mock("@/lib/colorMatching/canvasSampler", () => ({ sampleBubbleRegion: vi.fn() }));
+vi.mock("@/lib/colorMatching/canvasSampler", async (importOriginal) => ({ ...await importOriginal<typeof import('@/lib/colorMatching/canvasSampler')>(), sampleBubbleRegion: vi.fn() }));
 vi.mock("@/lib/colorMatching/sampleTextColors", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/colorMatching/sampleTextColors")>(), extractTextColors: vi.fn(),
 }));

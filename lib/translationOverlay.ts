@@ -1,4 +1,5 @@
 import { undoManager } from "./undoManager";
+import { calibrateOutputBodyMetric, resolveSourceFontSize, sourceRegionKey, SOURCE_SIZE_POLICY, SOURCE_SIZE_FALLBACK_LABEL, type SourceSizing } from './sourceTextSize';
 import { measureTextSelection, rotateLocalPoint, type SelectionRect } from "./textSelectionBounds";
 import { guardQualityReview, unavailableReview, invalidateQualityReview, isReviewCurrent } from "./translation/qualityReview";
 import { countForeignScriptChars, isThaiTargetLanguage } from "./thaiSpellcheck";
@@ -100,6 +101,8 @@ export interface TranslatedBubble {
   fontSizeMultiplier?: number;
   /** locked base font size for width reflow and editing */
   targetFontSize?: number;
+  /** Persisted original-pixel measurement, distinct from style and saved manual sizes. */
+  sourceSizing?: SourceSizing;
   /** minimum frame height preserved by content-driven width reflow */
   manualMinHeightPx?: number;
   /** persisted interactive layout; source of truth for move/resize/rotation */
@@ -743,8 +746,10 @@ export const applyTranslationOverlay = async (
 
     const currentTextStyle = textStyleRef?.current || { fontFamily: "Itim, sans-serif", textColor: "#000000", textOutline: "#FFFFFF", fontSizeMultiplier: 1.0 };
     const resolvedFontFam = resolveCanvasFontFamily(currentTextStyle.fontFamily);
+    let sourceFontLoaded = false;
     try {
       await document.fonts.load(`bold 16px ${resolvedFontFam}`);
+      sourceFontLoaded = typeof document.fonts.check === 'function' && document.fonts.check(`bold 100px ${resolvedFontFam}`);
     } catch {
       // Font loading is best-effort; measurement falls back below.
     }
@@ -1023,6 +1028,15 @@ export const applyTranslationOverlay = async (
         overflowNotice.hidden = !layoutOverflow;
         wrapper.title = layoutOverflow ? "ข้อความล้นพื้นที่หน้า กรุณาขยายพื้นที่หรือแก้ข้อความ" : "";
         wrapper.setAttribute("aria-label", layoutOverflow ? `${baseAriaLabel}; ข้อความล้นพื้นที่หน้า` : baseAriaLabel);
+        const sizingNotice = b.sourceSizing?.status === 'fallback' ? b.sourceSizing.fallbackLabel : b.sourceSizing?.readabilityWarning;
+        if (b.sourceSizing) {
+          wrapper.dataset.sourceSizingStatus = b.sourceSizing.status;
+          wrapper.dataset.sourceSizingMode = b.sourceSizing.mode;
+        }
+        if (sizingNotice) {
+          wrapper.title = [wrapper.title, sizingNotice].filter(Boolean).join('; ');
+          wrapper.setAttribute('aria-label', `${wrapper.getAttribute('aria-label')}; ${sizingNotice}`);
+        }
         wrapper.style.left = `${(currentBx / iw) * 100}%`;
         wrapper.style.top = `${(currentBy / ih) * 100}%`;
         wrapper.style.width = `${(currentBw / iw) * 100}%`;
@@ -1035,6 +1049,28 @@ export const applyTranslationOverlay = async (
         const currentStyle = textStyleRef?.current || ts;
         const text = (b.t || b.translated || "").trim();
         const currentFontFam = resolveCanvasFontFamily(currentStyle.fontFamily);
+        const autoSizing = b.sourceSizing?.mode === 'auto' ? b.sourceSizing : undefined;
+        const discardDerivedSize = () => {
+          if (b.targetFontSize === autoSizing?.baseFontSizePx) delete b.targetFontSize;
+          if (adj?.targetFontSize === autoSizing?.baseFontSizePx) delete adj.targetFontSize;
+          if (legacyAdj?.targetFontSize === autoSizing?.baseFontSizePx) delete legacyAdj.targetFontSize;
+        };
+        if (autoSizing) {
+          const evidence = autoSizing.evidence;
+          if (evidence.regionKey !== sourceRegionKey(b.box) || evidence.policyVersion !== SOURCE_SIZE_POLICY) {
+            b.sourceSizing = { mode: 'auto', status: 'fallback',
+              evidence: { ...evidence, quality: 'unreliable', confidence: 0, reason: 'stale-source-region-or-policy' },
+              fallbackLabel: SOURCE_SIZE_FALLBACK_LABEL };
+            discardDerivedSize();
+          } else if (autoSizing.font?.family !== currentFontFam || autoSizing.font?.textKey !== text || !sourceFontLoaded) {
+            const metricContext = bCanvas.getContext('2d');
+            if (metricContext) {
+              b.sourceSizing = resolveSourceFontSize(evidence, calibrateOutputBodyMetric(metricContext, evidence, currentFontFam, text, sourceFontLoaded));
+              if (b.sourceSizing.status === 'matched') b.targetFontSize = b.sourceSizing.baseFontSizePx;
+              else discardDerivedSize();
+            }
+          }
+        }
         const bubbleMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
         const lockedFs = typeof b.targetFontSize === "number" && Number.isFinite(b.targetFontSize) && b.targetFontSize > 0
           ? b.targetFontSize
@@ -1045,9 +1081,9 @@ export const applyTranslationOverlay = async (
         let legacyFit: BubbleTextFit | null = null;
 
         if (text && typeof lockedFs === "number") {
-          const effectiveFs = Math.max(8, Math.round(
-            lockedFs * (currentStyle.fontSizeMultiplier || 1.0) * bubbleMult,
-          ));
+          const matchedAuto = b.sourceSizing?.mode === 'auto' && b.sourceSizing.status === 'matched';
+          const scaledFs = lockedFs * (currentStyle.fontSizeMultiplier || 1.0) * bubbleMult;
+          const effectiveFs = matchedAuto ? scaledFs : Math.max(8, Math.round(scaledFs));
           const savedManualMinimum = manualMinHeightPx
             ?? adj?.manualMinHeightPx
             ?? (adj ? currentBh : 25);
@@ -2662,3 +2698,4 @@ export const applyTranslationOverlay = async (
     .then(paintWhenReady)
     .catch(paintWhenReady);
 };
+

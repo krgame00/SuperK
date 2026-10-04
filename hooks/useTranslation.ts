@@ -12,6 +12,7 @@ import {
 } from "@/lib/translation/requestError";
 import { applyTranslationOverlay } from "@/lib/translationOverlay";
 import type { TranslatedBubble } from "@/lib/translationOverlay";
+import { prepareNewSourceSizing } from '@/lib/sourceTextSizeClient';
 import {
   saveProjectSession,
   loadProjectSession,
@@ -771,6 +772,11 @@ export function useTranslation({
     await clearProjectSession();
   };
 
+  const sizeNewTranslatedBubbles = async (bubbles: TranslatedBubble[], originalUrl: string) => {
+    const original = await waitForImageReady(originalUrl, 2000).catch(() => document.createElement('img'));
+    await prepareNewSourceSizing(bubbles, original, textStyleRef.current.fontFamily || 'Itim, sans-serif');
+  };
+
   const translateCrop = async (cropBox: { x: number, y: number, w: number, h: number }, cropBase64: string, fullWidth: number, fullHeight: number) => {
     setIsTranslating(true);
     setTranslationResult("กำลังแปลเฉพาะจุดที่เลือก...");
@@ -818,6 +824,7 @@ export function useTranslation({
         newBubbles,
         pages[currentPage],
       );
+      await sizeNewTranslatedBubbles(coloredNewBubbles, pages[currentPage]);
       const updatedBubbles = [...activeBubbles, ...coloredNewBubbles];
       bubbleCacheRef.current.set(pages[currentPage], updatedBubbles);
       markPageDirty(pages[currentPage]);
@@ -1243,6 +1250,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           styledBubbles,
           recognitionUrl,
         );
+        await sizeNewTranslatedBubbles(coloredBubbles.filter(bubble => !bubble.isManual), pageUrl);
         await renderAndCacheTranslation(
           coloredBubbles,
           backgroundUrl,
@@ -1443,6 +1451,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         styledBubbles,
         recognitionUrl,
       );
+      await sizeNewTranslatedBubbles(coloredBubbles.filter(bubble => !bubble.isManual), pageUrl);
       await renderAndCacheTranslation(
         coloredBubbles,
         backgroundUrl,

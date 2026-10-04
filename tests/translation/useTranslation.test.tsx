@@ -10,7 +10,8 @@ import { sampleBubbleRegion } from "@/lib/colorMatching/canvasSampler";
 import { saveProjectSession } from "@/lib/projectStore";
 import { applyTranslationOverlay } from "@/lib/translationOverlay";
 
-vi.mock("@/lib/colorMatching/canvasSampler", () => ({
+vi.mock("@/lib/colorMatching/canvasSampler", async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/colorMatching/canvasSampler')>(),
   sampleBubbleRegion: vi.fn(() => null),
 }));
 
