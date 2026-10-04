@@ -30,7 +30,7 @@ vi.mock("@/lib/translationOverlay", () => ({
 vi.mock("@/lib/export/readabilityScan", () => ({ scanPageGeometry: vi.fn() }));
 vi.mock("@/components/cleaning/MaskLegend", () => ({ MaskLegend: () => null }));
 vi.mock("@/components/cleaning/CleaningToolbar", () => ({
-  CleaningToolbar: vi.fn(({ hasTranslated, layer, onClean, onEditMask, onLayerChange }: ComponentProps<typeof import("@/components/cleaning/CleaningToolbar").CleaningToolbar>) => (
+  CleaningToolbar: vi.fn(({ hasTranslated, layer, onClean, onEditMask, onLayerChange, children }: ComponentProps<typeof import("@/components/cleaning/CleaningToolbar").CleaningToolbar>) => (
     <section aria-label="Cleaning toolbar" data-has-translated={String(hasTranslated)} data-layer={layer}>
       <button type="button" onClick={onClean}>Clean current page</button>
       <button type="button" onClick={onEditMask}>Edit mask</button>
@@ -40,6 +40,7 @@ vi.mock("@/components/cleaning/CleaningToolbar", () => ({
           Layer {nextLayer}
         </button>
       ))}
+      {children}
     </section>
   )),
 }));

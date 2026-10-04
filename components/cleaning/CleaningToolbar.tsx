@@ -19,19 +19,21 @@ interface CleaningToolbarProps {
   position?: "top" | "bottom";
   onTogglePosition?: () => void;
   onCollapse?: () => void;
+  children?: React.ReactNode;
 }
 
 const primaryLayers: Array<{
   value: Exclude<WorkspaceLayer, "mask">;
   label: string;
+  shortLabel: string;
 }> = [
-  { value: "original", label: "Original" },
-  { value: "clean", label: "Clean" },
-  { value: "translated", label: "Translated" },
+  { value: "original", label: "Original", shortLabel: "Orig" },
+  { value: "clean", label: "Clean", shortLabel: "Clean" },
+  { value: "translated", label: "Translated", shortLabel: "Trans" },
 ];
 
 const tabBaseClass =
-  "relative h-8 rounded-md px-3 text-xs font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-35 select-none";
+  "relative h-7.5 sm:h-8 rounded-md px-2 sm:px-2.5 text-xs font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-35 select-none shrink-0";
 
 export function CleaningToolbar({
   hasPage,
@@ -47,6 +49,7 @@ export function CleaningToolbar({
   position = "top",
   onTogglePosition,
   onCollapse,
+  children,
 }: CleaningToolbarProps) {
   const isRunning = Boolean(progress);
   return (
@@ -54,26 +57,28 @@ export function CleaningToolbar({
       aria-label="เครื่องมือคลีนข้อความ"
       className={
         className ??
-        "flex w-full max-w-4xl flex-wrap items-center justify-between gap-2 rounded-xl border border-border/70 bg-surface/90 px-3 py-1.5 shadow-md backdrop-blur-md transition-all"
+        "flex flex-nowrap w-full max-w-5xl items-center justify-between gap-1.5 sm:gap-2 rounded-xl border border-border/70 bg-surface/90 px-2 sm:px-3 py-1.5 shadow-md backdrop-blur-md transition-all overflow-x-auto no-scrollbar"
       }
     >
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
+      <div className="flex flex-nowrap min-w-0 items-center gap-1.5 sm:gap-2 shrink-0">
         <button
           type="button"
           onClick={onClean}
           disabled={!hasPage || isRunning}
           title="คลีนข้อความออกจากภาพ (Inpainting)"
-          className="inline-flex h-8.5 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-semibold text-primary-content shadow-xs transition-all duration-150 hover:bg-primary-hover active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label="คลีนข้อความ"
+          className="inline-flex h-7.5 sm:h-8 items-center gap-1 sm:gap-1.5 rounded-lg bg-primary px-2.5 sm:px-3 text-xs font-semibold text-primary-content shadow-xs transition-all duration-150 hover:bg-primary-hover active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-40 shrink-0 whitespace-nowrap"
         >
           {isRunning ? (
             <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent motion-reduce:animate-none" />
           ) : (
             <Eraser className="h-3.5 w-3.5" aria-hidden="true" />
           )}
-          <span>คลีนข้อความ</span>
+          <span className="hidden sm:inline">คลีนข้อความ</span>
+          <span className="sm:hidden">คลีน</span>
         </button>
         {progress && (
-          <p className="text-xs font-medium text-foreground flex items-center gap-1.5 bg-surface-hover/80 px-2.5 py-1 rounded-md" aria-live="polite">
+          <p className="text-xs font-medium text-foreground flex items-center gap-1.5 bg-surface-hover/80 px-2 py-0.5 rounded-md shrink-0" aria-live="polite">
             <span className="inline-block w-2 h-2 rounded-full bg-primary animate-pulse" />
             <span>{stageLabel(progress.stage)} · {progress.completedRegions}/{progress.totalRegions} · {(progress.elapsedMs / 1000).toFixed(1)}s</span>
           </p>
@@ -88,11 +93,16 @@ export function CleaningToolbar({
             {error.message || "การคลีนภาพล้มเหลว กรุณาลองใหม่อีกครั้ง"}
           </p>
         )}
+        {children && (
+          <div className="flex flex-nowrap items-center gap-1.5 sm:gap-2 border-l border-border/80 pl-1.5 sm:pl-2 shrink-0">
+            {children}
+          </div>
+        )}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-nowrap items-center gap-1.5 sm:gap-2 shrink-0">
         <div
-          className="inline-flex items-center gap-1 rounded-lg bg-background/90 p-1 border border-border/80"
+          className="inline-flex items-center gap-0.5 sm:gap-1 rounded-lg bg-background/90 p-0.5 sm:p-1 border border-border/80 shrink-0"
           role="tablist"
           aria-label="เลือกเลเยอร์ภาพหลัก"
         >
@@ -106,6 +116,7 @@ export function CleaningToolbar({
                 key={item.value}
                 type="button"
                 role="tab"
+                aria-label={item.label}
                 aria-selected={isSelected}
                 onClick={() => onLayerChange(item.value)}
                 disabled={isDisabled}
@@ -115,7 +126,8 @@ export function CleaningToolbar({
                     : "text-muted hover:text-foreground hover:bg-surface-hover/80"
                 }`}
               >
-                {item.label}
+                <span className="hidden sm:inline">{item.label}</span>
+                <span className="sm:hidden">{item.shortLabel}</span>
               </button>
             );
           })}
@@ -123,6 +135,7 @@ export function CleaningToolbar({
             key="mask"
             type="button"
             role="tab"
+            aria-label="Mask"
             aria-selected={layer === "mask"}
             onClick={() => onLayerChange("mask")}
             disabled={!hasResult}
@@ -141,21 +154,22 @@ export function CleaningToolbar({
           onClick={onEditMask}
           disabled={!hasResult}
           aria-label="เปิดหน้าต่างแก้ไข Mask"
-          className="inline-flex h-8.5 items-center gap-1.5 rounded-lg border border-border/80 bg-surface px-3 text-xs font-medium text-foreground transition-all duration-150 hover:bg-surface-hover hover:text-white active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-35"
+          className="inline-flex h-7.5 sm:h-8 items-center gap-1 sm:gap-1.5 rounded-lg border border-border/80 bg-surface px-2 sm:px-3 text-xs font-medium text-foreground transition-all duration-150 hover:bg-surface-hover hover:text-white active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-35 shrink-0"
         >
-          <Brush className="h-3.5 w-3.5 text-muted" aria-hidden="true" />
-          <span>แก้ Mask</span>
+          <Brush className="h-3.5 w-3.5 text-muted shrink-0" aria-hidden="true" />
+          <span className="hidden md:inline">แก้ Mask</span>
+          <span className="md:hidden">Mask</span>
         </button>
 
         {(onTogglePosition || onCollapse) && (
-          <div className="flex items-center gap-1 border-l border-border/80 pl-1.5 ml-0.5">
+          <div className="flex items-center gap-0.5 sm:gap-1 border-l border-border/80 pl-1 sm:pl-1.5 shrink-0">
             {onTogglePosition && (
               <button
                 type="button"
                 onClick={onTogglePosition}
                 title={position === "top" ? "ย้ายแถบไปด้านล่าง" : "ย้ายแถบไปด้านบน"}
                 aria-label={position === "top" ? "ย้ายแถบไปด้านล่าง" : "ย้ายแถบไปด้านบน"}
-                className="inline-flex h-8.5 w-8.5 items-center justify-center rounded-lg border border-border/80 bg-surface text-muted transition-all duration-150 hover:bg-surface-hover hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background cursor-pointer"
+                className="inline-flex h-7.5 w-7.5 sm:h-8 sm:w-8 items-center justify-center rounded-lg border border-border/80 bg-surface text-muted transition-all duration-150 hover:bg-surface-hover hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background cursor-pointer shrink-0"
               >
                 {position === "top" ? (
                   <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
@@ -171,12 +185,12 @@ export function CleaningToolbar({
                 onClick={onCollapse}
                 title="ย่อแถบเครื่องมือ (กด B)"
                 aria-label="ย่อแถบเครื่องมือ"
-                className="inline-flex h-8.5 w-8.5 items-center justify-center rounded-lg border border-border/80 bg-surface text-muted transition-all duration-150 hover:bg-surface-hover hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background cursor-pointer"
+                className="inline-flex h-7.5 w-7.5 sm:h-8 sm:w-8 items-center justify-center rounded-lg border border-border/80 bg-surface text-muted transition-all duration-150 hover:bg-surface-hover hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background cursor-pointer shrink-0"
               >
                 {position === "top" ? (
-                  <ChevronUp className="h-4 w-4" aria-hidden="true" />
+                  <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
                 ) : (
-                  <ChevronDown className="h-4 w-4" aria-hidden="true" />
+                  <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
                 )}
               </button>
             )}

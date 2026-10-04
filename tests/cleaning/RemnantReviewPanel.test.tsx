@@ -220,4 +220,34 @@ describe("RemnantReviewPanel", () => {
     const { container } = render(<RemnantReviewPanel regions={[region]} />);
     expect(container).toBeEmptyDOMElement();
   });
+
+  test("allows user to collapse and expand the side panel", () => {
+    render(<RemnantReviewPanel inspection={inspected([candidate()])} regions={[region]} />);
+    const panel = screen.getByTestId("remnant-review-findings");
+    expect(panel).toHaveClass("right-3");
+    expect(screen.getByTestId("remnant-candidate-rem-1")).toBeInTheDocument();
+
+    // Collapse
+    fireEvent.click(screen.getByRole("button", { name: "ย่อพาเนล" }));
+    expect(screen.queryByTestId("remnant-candidate-rem-1")).not.toBeInTheDocument();
+    expect(screen.getByText(/จุดสงสัย 1 จุด/)).toBeInTheDocument();
+
+    // Expand
+    fireEvent.click(screen.getByRole("button", { name: "ขยายพาเนล" }));
+    expect(screen.getByTestId("remnant-candidate-rem-1")).toBeInTheDocument();
+  });
+
+  test("allows user to switch side between right and left", () => {
+    render(<RemnantReviewPanel inspection={inspected([candidate()])} regions={[region]} />);
+    const panel = screen.getByTestId("remnant-review-findings");
+    expect(panel).toHaveClass("right-3");
+
+    // Switch to left
+    fireEvent.click(screen.getByRole("button", { name: "สลับพาเนลไปฝั่งซ้าย" }));
+    expect(panel).toHaveClass("left-3");
+
+    // Switch back to right
+    fireEvent.click(screen.getByRole("button", { name: "สลับพาเนลไปฝั่งขวา" }));
+    expect(panel).toHaveClass("right-3");
+  });
 });

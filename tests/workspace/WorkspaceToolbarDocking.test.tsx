@@ -87,6 +87,7 @@ vi.mock("@/components/cleaning/CleaningToolbar", () => ({
       position,
       onTogglePosition,
       onCollapse,
+      children,
     }: ComponentProps<typeof CleaningToolbar>) => (
       <section
         aria-label="Cleaning toolbar"
@@ -105,6 +106,7 @@ vi.mock("@/components/cleaning/CleaningToolbar", () => ({
             Collapse toolbar
           </button>
         )}
+        {children}
       </section>
     ),
   ),

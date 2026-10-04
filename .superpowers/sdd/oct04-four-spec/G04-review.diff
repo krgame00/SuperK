@@ -1,0 +1,2511 @@
+0f3af12 feat: bind background review and export to current evidence
+ hooks/useTranslation.ts                            | 137 ++++++-
+ lib/export/reviewGate.ts                           | 120 +++++-
+ src/app/page.tsx                                   | 374 ++++++++++++------
+ tests/export/reviewGate.g04.test.ts                | 288 ++++++++++++++
+ tests/workflow/workspaceExportEligibility.test.tsx | 436 +++++++++++++++++++++
+ 5 files changed, 1216 insertions(+), 139 deletions(-)
+diff --git a/hooks/useTranslation.ts b/hooks/useTranslation.ts
+index 28b4835..33d9e93 100644
+--- a/hooks/useTranslation.ts
++++ b/hooks/useTranslation.ts
+@@ -6,20 +6,22 @@ import {
+   isUserCancelledError,
+   readTranslationResponse,
+   shouldAutoRetryTranslation,
+   TranslationRequestError,
+   type TranslationObservabilityMeta,
+   DEFAULT_QUOTA_COOLDOWN_MS,
+ } from "@/lib/translation/requestError";
+ import { applyTranslationOverlay } from "@/lib/translationOverlay";
+ import type { TranslatedBubble } from "@/lib/translationOverlay";
+ import { prepareNewSourceSizing } from '@/lib/sourceTextSizeClient';
++import { manualSourceSizing } from '@/lib/sourceTextSize';
++import { isManualSized, resetSizingToAuto, restoreSizing, snapshotSizing, type SizeSnapshot } from '@/lib/savedTextSizing';
+ import {
+   saveProjectSession,
+   loadProjectSession,
+   clearProjectSession,
+   deleteAsset,
+ } from "@/lib/projectStore";
+ import { LRUMap } from "@/lib/lruMap";
+ import { resolveTranslationOutcome } from "@/lib/translationPipeline";
+ import { parseLLMJSON } from "@/lib/parseLLMJSON";
+ import { deduplicateTranslations, excludeDeletedTranslations, findMissingTranslationRegions, recoverMissingTranslations } from "@/lib/translation/completeness";
+@@ -104,30 +106,32 @@ export interface LegacyTargetPage {
+ 
+ export interface WholeBookRepairSummary {
+   pagesRepaired: number;
+   pointsRepaired: number;
+   cancelled: boolean;
+   unresolved: Array<{ pageIndex: number; pageUrl: string; points: number }>;
+   skipped: Array<{ pageIndex: number; pageUrl: string; reason: "target-unconfirmed" }>;
+ }
+ 
+ export interface PreparedTranslationPage {
++  sourceFingerprint?: string;
+   cleaningMode?: CleaningMode;
+   textScope?: TranslationScope;
+   recognitionUrl: string;
+   backgroundUrl: string;
+   maskUrl?: string;
+   preparedIdentity?: string;
+   awaitingReview?: boolean;
+ }
+ 
+ interface UseTranslationProps {
++  pageSourceFingerprints?: Map<string,string>;
+   currentPage: number;
+   pages: string[];
+   /** Stable identities matching `pages` order, used for compact persistence. */
+   pageIds?: (string | undefined)[];
+   /** Display names matching `pages` order, persisted with saved sessions. */
+   pageNames?: string[];
+   pageExportSources?: PageExportSource[];
+   /** Origin URLs matching `pages` order, persisted with saved sessions. */
+   pageOriginUrls?: (string | undefined)[];
+   viewMode: "single" | "scroll";
+@@ -282,30 +286,36 @@ export const enrichBubblesWithColorProfiles = async (
+         b.styleProfile.monochromeConfidence = pageAnalysis.confidence;
+       }
+     }
+   } catch (err) {
+     console.warn("Failed to sample color profiles for bubbles:", err);
+   }
+   return bubbles;
+ };
+ 
+ export function useTranslation({
++  pageSourceFingerprints,
+   currentPage,
+   pages,
+   pageIds,
+   pageNames,
+   pageExportSources,
+   pageOriginUrls,
+   viewMode,
+   preparePageForTranslation,
+   onPageDirtied,
+ }: UseTranslationProps) {
++  const preparedSourceFingerprintsRef = useRef(new Map<string,string>());
++  const suppliedSourceFingerprintsRef = useRef(pageSourceFingerprints);
++  suppliedSourceFingerprintsRef.current = pageSourceFingerprints;
++  const getPageSourceRevision = useCallback((pageUrl:string):string|undefined=>
++    suppliedSourceFingerprintsRef.current?.get(pageUrl) ?? preparedSourceFingerprintsRef.current.get(pageUrl),[]);
+   const [isTranslatingAll, setIsTranslatingAll] = useState(false);
+   const [translateAllProgress, setTranslateAllProgress] = useState<{
+     current: number;
+     total: number;
+     status: "cleaning" | "translating" | "waiting" | "cooldown";
+     message: string;
+     startTime: number;
+     elapsedMs: number;
+     pageElapsedMs: number;
+     lastPageDurationMs?: number;
+@@ -423,21 +433,21 @@ export function useTranslation({
+   const targetLangRef = useRef(targetLang);
+   targetLangRef.current = targetLang;
+   const [sourceLang, setSourceLang] = useState("auto");
+   const [modelPreference, setModelPreference] = useState("auto");
+   const [allowPreviewModels, setAllowPreviewModelsState] = useState<boolean>(() => {
+     if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
+       return localStorage.getItem("gemini_allow_preview_models") === "true";
+     }
+     return false;
+   });
+-  const [textStyle, setTextStyle] = useState({
++  const [textStyle, setTextStyleState] = useState({
+     fontFamily: "Itim, sans-serif",
+     textColor: "#000000",
+     textOutline: "#FFFFFF",
+     fontSizeMultiplier: 1.0
+   });
+   const textStyleRef = useRef(textStyle);
+ 
+   const [nsfwBypassMode, setNsfwBypassMode] = useState(false);
+   const [isTranslating, setIsTranslating] = useState(false);
+   const [translationResult, setTranslationResult] = useState<string | null>(null);
+@@ -480,20 +490,31 @@ export function useTranslation({
+   const activePageRef = useRef("");
+   useEffect(() => {
+     if (pages.length > 0) {
+       activePageRef.current = pages[currentPage];
+     }
+   }, [currentPage, pages]);
+ 
+   // Per-page bubble cache, keyed by image data URL so it survives reordering
+   const bubbleCacheRef = useRef<Map<string, TranslatedBubble[]>>(new Map());
+   const pageTargetCacheRef = useRef<Map<string, PageTargetIdentity>>(new Map());
++  const renderedOutputEvidenceRef = useRef(new Map<string,{url:string;signature:string;backgroundUrl:string}>());
++  const renderedSignature = useCallback((pageUrl:string,bubbles:TranslatedBubble[],backgroundUrl:string)=>JSON.stringify([
++    getPageSourceRevision(pageUrl)??null,pageTargetCacheRef.current.get(pageUrl)??null,LANGUAGE_POLICY_VERSION,
++    backgroundUrl,textStyleRef.current,bubbles.map(({render,...bubble})=>{void render;return bubble;}),
++  ]),[getPageSourceRevision]);
++  const getCurrentRenderedOutput = useCallback((pageUrl:string)=>{
++    const evidence = renderedOutputEvidenceRef.current.get(pageUrl);
++    const bubbles = bubbleCacheRef.current.get(pageUrl);
++    if (!evidence || !bubbles || translatedImageCacheRef.current.get(pageUrl) !== evidence.url || evidence.signature !== renderedSignature(pageUrl,bubbles,evidence.backgroundUrl)) return undefined;
++    return {url:evidence.url,signature:evidence.signature};
++  },[renderedSignature]);
+   const getPageTargetLanguage = useCallback((pageUrl: string) => {
+     const identity = pageTargetCacheRef.current.get(pageUrl);
+     return identity?.policyVersion === LANGUAGE_POLICY_VERSION ? identity.targetId : undefined;
+   }, []);
+   // Per-page final translated image dataUrl cache — LRU-bounded so very long
+   // books don't hold every rendered page in memory; exports re-render evicted
+   // pages from the bubble cache on demand.
+   const translatedImageCacheRef = useRef<LRUMap<string, string>>(
+     new LRUMap<string, string>(TRANSLATED_IMAGE_CACHE_LIMIT),
+   );
+@@ -509,27 +530,55 @@ export function useTranslation({
+ 
+   const onPageDirtiedRef = useRef(onPageDirtied);
+   useEffect(() => {
+     onPageDirtiedRef.current = onPageDirtied;
+   }, [onPageDirtied]);
+ 
+   const markPageDirty = useCallback((pageUrl: string, evictRenderCache: boolean = true) => {
+     const nextRev = (pageRevisionsRef.current.get(pageUrl) ?? 0) + 1;
+     pageRevisionsRef.current.set(pageUrl, nextRev);
+     if (evictRenderCache) {
++      renderedOutputEvidenceRef.current.delete(pageUrl);
+       translatedImageCacheRef.current.delete(pageUrl);
+       setTranslatedImages(new Map(translatedImageCacheRef.current));
+     }
+     setCacheRevision((rev) => rev + 1);
+     onPageDirtiedRef.current?.(pageUrl);
+   }, []);
+ 
++  const setTextStyle = useCallback((update: typeof textStyle | ((previous: typeof textStyle)=>typeof textStyle))=>{
++    const before = textStyleRef.current;
++    const after = typeof update === 'function' ? update(before) : update;
++    textStyleRef.current = after;
++    setTextStyleState(after);
++    if (before.fontSizeMultiplier === after.fontSizeMultiplier) return;
++    const entries: Array<{pageUrl:string;bubble:TranslatedBubble;before:SizeSnapshot;after:SizeSnapshot}> = [];
++    for (const [pageUrl,bubbles] of bubbleCacheRef.current) {
++      for (const bubble of bubbles) {
++        if (bubble.deleted) continue;
++        const snapshot = snapshotSizing(bubble);
++        bubble.sourceSizing = manualSourceSizing(bubble.sourceSizing,bubble.box);
++        delete bubble.layoutSnapshot;
++        entries.push({pageUrl,bubble,before:snapshot,after:snapshotSizing(bubble)});
++      }
++      markPageDirty(pageUrl);
++    }
++    const apply = (side:'before'|'after',multiplier:number)=>{
++      const style = {...textStyleRef.current,fontSizeMultiplier:multiplier};
++      textStyleRef.current = style;setTextStyleState(style);
++      const touched = new Set<string>();
++      for (const entry of entries) {restoreSizing(entry.bubble,entry[side]);entry.bubble.render?.();touched.add(entry.pageUrl);}
++      touched.forEach(url=>markPageDirty(url));
++    };
++    undoManager.push({label:'ปรับขนาดข้อความทั้งหมด',undo:()=>apply('before',before.fontSizeMultiplier),redo:()=>apply('after',after.fontSizeMultiplier)});
++  }, [markPageDirty]);
++
+   const getPageRevision = useCallback((pageUrl: string): number => {
+     return pageRevisionsRef.current.get(pageUrl) ?? 0;
+   }, []);
+ 
+   const getPageSignature = useCallback((pageUrl: string): string => {
+     const rev = pageRevisionsRef.current.get(pageUrl) ?? 0;
+     return `rev-${rev}`;
+   }, []);
+   const [translatedImages, setTranslatedImages] = useState<Map<string, string>>(
+     new Map(),
+@@ -924,20 +973,23 @@ export function useTranslation({
+   };
+ 
+   const renderAndCacheTranslation = useCallback(
+     async (
+       bubbles: TranslatedBubble[],
+       backgroundUrl: string,
+       pageUrl: string,
+       pageIndex: number,
+       targetIdentity = pageTargetCacheRef.current.get(pageUrl),
+     ): Promise<void> => {
++      const startRevision = getPageRevision(pageUrl);
++      const startStyle = JSON.stringify(textStyleRef.current);
++      const startText = JSON.stringify(bubbles.map(b=>[b.t,b.translated,b.original_text,b.deleted,b.styleProfile]));
+       const renderTarget = targetIdentity?.policyVersion === LANGUAGE_POLICY_VERSION ? targetIdentity.targetId : undefined;
+       const offscreenContainer = document.createElement("div");
+       offscreenContainer.dataset.translationOffscreen = pageUrl;
+       offscreenContainer.style.cssText =
+         "position:fixed;left:-100000px;top:0;pointer-events:none;";
+       const image = document.createElement("img");
+       image.src = backgroundUrl;
+       offscreenContainer.appendChild(image);
+       document.body.appendChild(offscreenContainer);
+ 
+@@ -948,23 +1000,29 @@ export function useTranslation({
+           const rejectOnce = (error: unknown) => {
+             if (settled) return;
+             settled = true;
+             cleanup();
+             reject(error);
+           };
+           const complete = (dataUrl: string) => {
+             if (settled) return;
+             settled = true;
+             cleanup();
++            if (!pagesRef.current.includes(pageUrl) || getPageRevision(pageUrl) !== startRevision ||
++              JSON.stringify(textStyleRef.current) !== startStyle ||
++              JSON.stringify(bubbles.map(b=>[b.t,b.translated,b.original_text,b.deleted,b.styleProfile])) !== startText) {
++              resolve();return;
++            }
+             bubbleCacheRef.current.set(pageUrl, bubbles);
+             if (targetIdentity) pageTargetCacheRef.current.set(pageUrl, targetIdentity);
+             translatedImageCacheRef.current.set(pageUrl, dataUrl);
++            renderedOutputEvidenceRef.current.set(pageUrl,{url:dataUrl,backgroundUrl,signature:renderedSignature(pageUrl,bubbles,backgroundUrl)});
+             markPageDirty(pageUrl, false);
+             setTranslatedImages(new Map(translatedImageCacheRef.current));
+             setCacheRevision((revision) => revision + 1);
+             resolve();
+           };
+           const watchdog = setTimeout(
+             () => rejectOnce(new Error("สร้างภาพคำแปลไม่สำเร็จ")),
+             30_000,
+           );
+           void Promise.resolve()
+@@ -1001,21 +1059,21 @@ export function useTranslation({
+           setTranslationResult,
+           undefined,
+           textStyleRef,
+           undefined,
+           pageUrl,
+           () => markPageDirty(pageUrl),
+           renderTarget,
+         );
+       }
+     },
+-    [viewMode, markPageDirty],
++    [viewMode, markPageDirty,getPageRevision,renderedSignature],
+   );
+ 
+ async function readBlobAsDataUrl(blob: Blob): Promise<string> {
+   if (typeof blob.arrayBuffer === "function") {
+     const buffer = await blob.arrayBuffer();
+     const mimeType = blob.type && blob.type.startsWith("image/") ? blob.type : "image/jpeg";
+     if (typeof Buffer !== "undefined") {
+       return `data:${mimeType};base64,${Buffer.from(buffer).toString("base64")}`;
+     }
+     const bytes = new Uint8Array(buffer);
+@@ -1072,34 +1130,35 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
+     forceNsfwBypass: boolean = false,
+     isAutoRetry: boolean = false,
+     signal?: AbortSignal,
+     requestedTarget = targetLangRef.current,
+   ): Promise<boolean> => {
+     const jobTargetIdentity = createPageTargetIdentity(requestedTarget);
+     if (!jobTargetIdentity) throw new Error("กรุณาเลือกภาษาปลายทางที่รองรับพร้อมรูปแบบอักษร");
+     try {
+       const targetLang = jobTargetIdentity.targetId;
+       const { backgroundUrl, textScope } = preparedPage;
++      if (preparedPage.sourceFingerprint) preparedSourceFingerprintsRef.current.set(pageUrl,preparedPage.sourceFingerprint);
+       const recognitionUrl = preparedPage.recognitionUrl;
+       const resImg = await fetch(recognitionUrl, signal ? { signal } : undefined);
+       if (!resImg.ok) throw new Error(`ไม่สามารถโหลดรูปภาพได้ (HTTP ${resImg.status})`);
+       const blob = await resImg.blob();
+       const actualMimeType = blob.type && blob.type.startsWith('image/') ? blob.type : "image/jpeg";
+       const base64 = await readBlobAsBase64(blob);
+ 
+       const reviewPage = async (bubbles: TranslatedBubble[]) => {
+         if (activePageRef.current === pageUrl && bubbles.some(b => !b.isManual && !b.deleted)) {
+           setTranslationResult("กำลังตรวจความหมายและสำนวนคำแปล…");
+         }
+         return reviewTranslatedBubbles(bubbles,{targetLang,apiKey:userApiKey,modelPreference,
+           allowPreview:allowPreviewModels,glossary,signal,
+-          sourceRevision:String(getPageRevision(pageUrl)),repairContamination:true});
++          sourceRevision:getPageSourceRevision(pageUrl),repairContamination:true});
+       };
+       const unresolvedScriptWarning = (bubbles: TranslatedBubble[]) => {
+         const points = bubbles.flatMap((bubble,index) => {
+           if (bubble.deleted) return [];
+           const foreign = inspectTargetText(bubble.t || bubble.translated || "", targetLang).offendingCharacters;
+           return foreign.length ? [`#${index+1}: ${formatOffendingCharacters(foreign)}`] : [];
+         });
+         return points.length ? `⚠️ ยังมีตัวอักษรภาษาอื่นปน ${points.length} จุด (${points.slice(0,5).join(" · ")}) เปิดแก้ไขข้อความเพื่อเทียบต้นฉบับ` : null;
+       };
+ 
+@@ -2439,58 +2498,61 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
+         }
+         const inspection = inspectTargetText(text, targetId);
+         if (inspection.status === "blocked") {
+           scriptIssues.push({
+             index, pointId, kind: "script", hasSource, humanConfirmable: false,
+             characters: formatOffendingCharacters(inspection.offendingCharacters), reason: inspection.reason,
+           });
+           return;
+         }
+         const review = bubble.translationReview;
+-        if (!review || !isReviewCurrent(bubble, targetId) || !["ok", "accepted", "dismissed"].includes(review.status)) {
++        const sourceRevision = getPageSourceRevision(pageUrl);
++        if (!sourceRevision || !review || !isReviewCurrent(bubble, targetId,sourceRevision) || !["ok", "accepted", "dismissed"].includes(review.status)) {
+           unverified.push({
+-            index, pointId, kind: "unverified", hasSource, humanConfirmable: hasSource,
++            index, pointId, kind: "unverified", hasSource, humanConfirmable: hasSource && !!sourceRevision,
+             status: review?.status ?? "unavailable", reason: review?.reason,
+           });
+         }
+       });
+       if (scriptIssues.length > 0 || unverified.length > 0) {
+         reports.push({ pageUrl, pageIndex, pageTotal: bubbles.length, targetId, targetUnconfirmed: !targetId, scriptIssues, unverified });
+       }
+     });
+     return reports;
+-  }, [getPageTargetLanguage]);
++  }, [getPageTargetLanguage,getPageSourceRevision]);
+ 
+   // Explicit source-backed human confirmation for points whose script passes
+   // but contextual AI verification is unavailable (or metadata is absent/stale).
+   // Detectable script failures can never be confirmed, dismissed or accepted past.
+   const confirmPointReview = useCallback((pageUrl: string, pointIndex: number): boolean => {
+     const bubbles = bubbleCacheRef.current.get(pageUrl)
+       ?? (activePageRef.current === pageUrl ? activeBubbles : undefined);
+     const bubble = bubbles?.[pointIndex];
+     if (!bubble || bubble.deleted) return false;
+     const targetId = getPageTargetLanguage(pageUrl);
+     if (!targetId) return false;
++    const sourceRevision = getPageSourceRevision(pageUrl);
++    if (!sourceRevision) return false;
+     const text = bubble.t || bubble.translated || "";
+     const source = typeof bubble.original_text === "string" ? bubble.original_text : "";
+     if (!source.trim()) return false;
+     if (inspectTargetText(text, targetId).status === "blocked") return false;
+     // Review evidence changed: reset export confirmations but keep the render cache.
+     markPageDirty(pageUrl, false);
+     bubble.translationReview = withReviewIdentity(
+       { status: "accepted", sourceText: source, reviewedText: text, reason: "ผู้ใช้ยืนยันกับต้นฉบับแล้ว" },
+       targetId,
+-      String(getPageRevision(pageUrl)),
++      sourceRevision,
+     );
+     setCacheRevision((revision) => revision + 1);
+     return true;
+-  }, [activeBubbles, getPageTargetLanguage, getPageRevision, markPageDirty]);
++  }, [activeBubbles, getPageTargetLanguage, getPageSourceRevision, markPageDirty]);
+ 
+   // Undo/Redo payloads for the whole-book repair: exact pre-repair and
+   // post-repair text plus review evidence per affected point only.
+   interface RepairEntry { pageUrl: string; index: number; text: string; review?: TranslationReview }
+   const applyRepairEntries = useCallback((entries: RepairEntry[]) => {
+     const touchedPages = new Set<string>();
+     for (const entry of entries) {
+       const bubble = bubbleCacheRef.current.get(entry.pageUrl)?.[entry.index];
+       if (!bubble) continue;
+       bubble.t = entry.text;
+@@ -2562,21 +2624,21 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
+         try {
+           reviewed = await reviewTranslatedBubbles(
+             affected.map(({ bubble }) => bubble),
+             {
+               targetLang: targetId,
+               apiKey: userApiKey,
+               modelPreference,
+               allowPreview: allowPreviewModels,
+               glossary,
+               signal: controller.signal,
+-              sourceRevision: String(getPageRevision(pageUrl)),
++              sourceRevision: getPageSourceRevision(pageUrl),
+               repairContamination: true,
+             },
+           );
+         } catch (error) {
+           if (isUserCancelledError(error)) {
+             summary.cancelled = true;
+             break;
+           }
+           // A failed round keeps every explicit snapshot; nothing is applied for this page.
+           continue;
+@@ -2625,21 +2687,21 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
+       }
+       return summary;
+     } finally {
+       bookRepairAbortRef.current = null;
+       translationOperationLockRef.current = false;
+       setIsRepairingBook(false);
+     }
+   }, [
+     allowPreviewModels,
+     applyRepairEntries,
+-    getPageRevision,
++    getPageSourceRevision,
+     getPageTargetLanguage,
+     glossary,
+     isTranslating,
+     isTranslatingAll,
+     markPageDirty,
+     modelPreference,
+     renderAndCacheTranslation,
+     userApiKey,
+   ]);
+ 
+@@ -2713,20 +2775,70 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
+     const currentKey = pages[currentPage];
+     const currentRendered = currentKey ? translatedImageCacheRef.current.get(currentKey) : undefined;
+     translatedImageCacheRef.current.clear();
+     if (currentKey && currentRendered) {
+       translatedImageCacheRef.current.set(currentKey, currentRendered);
+     }
+     setTranslatedImages(new Map(translatedImageCacheRef.current));
+     setCacheRevision((rev) => rev + 1);
+   }, [pages, currentPage]);
+ 
++  const resizeSavedText = useCallback(async (options: {scope: 'point'|'page'|'book';pageUrl?: string;pointIndex?: number;returnToAuto?: boolean}): Promise<number> => {
++    if (translationOperationLockRef.current || isTranslating || isTranslatingAll) return 0;
++    if (options.returnToAuto && (options.scope !== 'point' || options.pointIndex === undefined)) return 0;
++    const urls = options.scope === 'book' ? [...pagesRef.current] : [options.pageUrl ?? pagesRef.current[currentPage]];
++    const entries: Array<{pageUrl:string;index:number;before:SizeSnapshot;after:SizeSnapshot}> = [];
++    translationOperationLockRef.current = true;
++    try {
++      for (const pageUrl of urls) {
++        if (!pageUrl || !pagesRef.current.includes(pageUrl)) continue;
++        const bubbles = bubbleCacheRef.current.get(pageUrl);
++        if (!bubbles) continue;
++        const revision = getPageRevision(pageUrl);
++        const selected = bubbles.map((bubble,index)=>({bubble,index})).filter(({bubble,index})=>!bubble.deleted &&
++          (options.scope !== 'point' || index === options.pointIndex) && (options.returnToAuto || !isManualSized(bubble)));
++        if (!selected.length) continue;
++        const prepared = selected.map(({bubble,index})=>{
++          const copy = {...bubble,...snapshotSizing(bubble)};
++          resetSizingToAuto(copy);
++          return {copy,bubble,index,before:snapshotSizing(bubble)};
++        });
++        const image = await waitForImageReady(pageUrl);
++        const byIndex = new Map(prepared.map(p=>[p.index,p.copy]));
++        const context = bubbles.map((bubble,index)=>byIndex.get(index) ?? {...bubble});
++        await prepareNewSourceSizing(context,image,textStyleRef.current.fontFamily,new Set(prepared.map(p=>p.copy)));
++        if (!pagesRef.current.includes(pageUrl) || bubbleCacheRef.current.get(pageUrl) !== bubbles || getPageRevision(pageUrl) !== revision) continue;
++        for (const item of prepared) {
++          restoreSizing(item.bubble,snapshotSizing(item.copy));
++          entries.push({pageUrl,index:item.index,before:item.before,after:snapshotSizing(item.bubble)});
++          item.bubble.render?.();
++        }
++        markPageDirty(pageUrl);
++      }
++      if (entries.length) {
++        const apply = (side:'before'|'after')=>{
++          const touched = new Set<string>();
++          for (const entry of entries) {
++            const bubble = bubbleCacheRef.current.get(entry.pageUrl)?.[entry.index];
++            if (!bubble) continue;
++            restoreSizing(bubble,entry[side]);bubble.render?.();touched.add(entry.pageUrl);
++          }
++          touched.forEach(url=>markPageDirty(url));
++          setActiveBubbles(previous=>[...previous]);
++        };
++        undoManager.push({label:'เทียบขนาดต้นฉบับ',undo:()=>apply('before'),redo:()=>apply('after')});
++        setActiveBubbles(previous=>[...previous]);
++      }
++      return entries.length;
++    } finally {translationOperationLockRef.current = false;}
++  }, [currentPage,getPageRevision,isTranslating,isTranslatingAll,markPageDirty]);
++
+   return {
+     targetLang, setTargetLang,
+     sourceLang, setSourceLang,
+     modelPreference, setModelPreference,
+     allowPreviewModels,
+     setAllowPreviewModels: (enabled: boolean) => {
+       setAllowPreviewModelsState(enabled);
+       if (typeof localStorage !== "undefined") {
+         localStorage.setItem("gemini_allow_preview_models", String(enabled));
+       }
+@@ -2743,21 +2855,21 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
+     handleTranslateAll,
+     cancelTranslateAll,
+     translateCrop,
+     activeBubbles, setActiveBubbles,
+     cacheRevision,
+     translatedImages,
+     translatedImageCacheRef,
+     bubbleCacheRef,
+     pageTargetCacheRef,
+     getPageTargetLanguage,
+-    inspectPageOutputEligibility: (pageUrl: string) => inspectPageOutputEligibility({targetIdentity:pageTargetCacheRef.current.get(pageUrl),points:(bubbleCacheRef.current.get(pageUrl) ?? []).map((bubble,index)=>({id:String(index),text:bubble.t || bubble.translated || "",sourceText:bubble.original_text,deleted:bubble.deleted})),sourceRevision:String(getPageRevision(pageUrl))}),
++    inspectPageOutputEligibility: (pageUrl: string) => inspectPageOutputEligibility({targetIdentity:pageTargetCacheRef.current.get(pageUrl),points:(bubbleCacheRef.current.get(pageUrl) ?? []).map((bubble,index)=>({id:String(index),text:bubble.t || bubble.translated || "",sourceText:bubble.original_text,deleted:bubble.deleted})),sourceRevision:getPageSourceRevision(pageUrl)}),
+     textStyleRef,
+     userApiKey,
+     setUserApiKey: (key: string) => {
+       setUserApiKey(key);
+       if (typeof localStorage !== "undefined") {
+         if (key) localStorage.setItem("gemini_api_key", key);
+         else localStorage.removeItem("gemini_api_key");
+       }
+     },
+     glossary,
+@@ -2785,12 +2897,15 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
+     inspectReviewIssues,
+     confirmPointReview,
+     repairWholeBook,
+     cancelWholeBookRepair,
+     isRepairingBook,
+     replaceBubbleText,
+     markPageDirty,
+     getPageRevision,
+     getPageSignature,
+     flushMemory,
++    resizeSavedText,
++    getPageSourceRevision,
++    getCurrentRenderedOutput,
+   };
+ }
+diff --git a/lib/export/reviewGate.ts b/lib/export/reviewGate.ts
+index e08ba86..9b6f955 100644
+--- a/lib/export/reviewGate.ts
++++ b/lib/export/reviewGate.ts
+@@ -1,26 +1,39 @@
+ import { normalizePageExportSource, type PageExportSource } from "./pageSource";
+ import type { PageCleaningResult } from "@/hooks/useCleaning";
+ import type { TranslatedBubble } from "@/lib/translationOverlay";
+ import { translationScope } from "@/lib/cleaning/textAuthorization";
++import { backgroundEligibilityState, type BackgroundInspectionResult } from "@/lib/cleaning/backgroundRemnantInspection";
+ import { findMissingTranslationRegions } from "@/lib/translation/completeness";
+-import { needsQualityReview } from "@/lib/translation/qualityReview";
++import { needsQualityReview, isReviewCurrent } from "@/lib/translation/qualityReview";
++import { LANGUAGE_POLICY_VERSION } from "@/lib/languagePolicy";
++import { inspectPageOutputEligibility, type PageTargetIdentity } from "@/lib/translation/pageEligibility";
+ 
+ export interface PageReviewInfo {
+   pageIndex: number;
+   pageUrl: string;
+   pageName: string;
+   hasUncertainCleaning: boolean;
+   hasUncertainTranslation: boolean;
+   missingTranslationCount: number;
+   missingTranslationSignature: string;
+   isConfirmed: boolean;
++  /** Deterministic excluded-script failures. Never confirmable — repair the text. */
++  scriptIssueCount: number;
++  /** Points whose review evidence is absent, stale or unresolved. Needs explicit per-point confirmation. */
++  unverifiedReviewCount: number;
++  /** Translated page without a confirmed target identity. */
++  targetUnconfirmed: boolean;
++  /** Background-remnant finding (R01 boundary), decoupled from generated-text approval. */
++  backgroundBlocked: boolean;
++  /** True when at least one blocker above exists: page confirmation can never clear these. */
++  hasHardBlockers: boolean;
+ }
+ 
+ function missingRegions(cleaning?: PageCleaningResult | null, bubbles?: TranslatedBubble[] | null): number[][] {
+   return cleaning ? findMissingTranslationRegions(bubbles ?? [], translationScope(cleaning)) : [];
+ }
+ 
+ function regionSignature(regions: number[][]): string {
+   return JSON.stringify(regions.map(box => [...box]).sort((a, b) =>
+     a[0] - b[0] || a[1] - b[1] || a[2] - b[2] || a[3] - b[3]));
+ }
+@@ -63,68 +76,165 @@ export function isPageTranslationUncertain(
+   return bubbles.some(
+     (b) =>
+       needsQualityReview(b) ||
+       (!b.deleted && (b.needsReview === true ||
+       b.isLowConfidence === true ||
+       (typeof b.confidence === "number" && b.confidence < 0.6))),
+   );
+ }
+ 
+ /**
+- * Evaluates whether a page requires human review confirmation before export.
++ * Checks if a page requires human review confirmation before export.
+  */
+ export function doesPageRequireReview(
+   cleaningResult?: PageCleaningResult | null,
+   bubbles?: TranslatedBubble[] | null,
+ ): boolean {
+   return isPageCleaningUncertain(cleaningResult) || isPageTranslationUncertain(bubbles) ||
+     missingRegions(cleaningResult, bubbles).length > 0;
+ }
+ 
++export interface PageOutputBlockers {
++  targetUnconfirmed: boolean;
++  scriptIssueCount: number;
++  unverifiedReviewCount: number;
++  backgroundBlocked: boolean;
++}
++
++/**
++ * The shared output-eligibility rule, recomputed locally from raw text at every
++ * output boundary. Existing approvals never bypass this result:
++ * - deterministic script failures are re-detected from the raw lettering, so old
++ *   accepted/dismissed states and page confirmations cannot bypass them;
++ * - points with absent/stale/unresolved review evidence (legacy and manual
++ *   points included) stay unresolved until explicit per-point confirmation;
++ * - a translated page without a confirmed target identity is blocked;
++ * - a background-remnant inspection result (lib/cleaning/backgroundRemnantInspection)
++ *   feeds the same boundary and is never resolved by generated-text approval.
++ */
++export function getPageOutputBlockers(
++  bubbles?: TranslatedBubble[] | null,
++  targetIdentity?: PageTargetIdentity | string,
++  backgroundInspection?: BackgroundInspectionResult,
++  sourceRevision?: string,
++): PageOutputBlockers {
++  const identity = typeof targetIdentity === "string" ? undefined : targetIdentity;
++  const targetId = identity?.targetId;
++  const active = (bubbles ?? []).filter(
++    (bubble) => !bubble.deleted && (bubble.t || bubble.translated || "").length > 0,
++  );
++  const backgroundState = backgroundInspection ? backgroundEligibilityState(backgroundInspection) : undefined;
++  const blockers: PageOutputBlockers = {
++    // Without a confirmed target no per-point check means anything yet.
++    targetUnconfirmed: active.length > 0 && (!identity || identity.policyVersion !== LANGUAGE_POLICY_VERSION),
++    scriptIssueCount: 0,
++    unverifiedReviewCount: 0,
++    backgroundBlocked: !backgroundState || backgroundState === "unresolved" || backgroundState === "unavailable",
++  };
++  if (!targetId || active.length === 0) return blockers;
++  const eligibility = inspectPageOutputEligibility({
++    targetIdentity: identity,
++    points: active.map((bubble, pointIndex) => ({
++      id: String(pointIndex),
++      text: bubble.t || bubble.translated || "",
++      sourceText: typeof bubble.original_text === "string" ? bubble.original_text : undefined,
++    })),
++    // Contextual review is enforced per point below; background evidence is
++    // required whenever an inspection result was produced for the page.
++    requirements: { contextual: false, background: backgroundInspection !== undefined },
++    ...(backgroundState ? { backgroundState } : {}),
++  });
++  blockers.targetUnconfirmed ||= eligibility.reasons.some(reason => ["target-unconfirmed", "unsupported-target", "policy-changed"].includes(reason));
++  blockers.scriptIssueCount = eligibility.pointIssues.length;
++  blockers.unverifiedReviewCount = active.filter((bubble) => {
++    const review = bubble.translationReview;
++    // Stable original-image identity is distinct from edit-bumped page revisions.
++    // Old or unbound evidence requires an explicit review against the current source.
++    return !sourceRevision || !review || review.policyVersion !== LANGUAGE_POLICY_VERSION || !isReviewCurrent(bubble, targetId, sourceRevision) ||
++      !["ok", "accepted", "dismissed"].includes(review.status);
++  }).length;
++  return blockers;
++}
++
++export interface PageEligibilityGateOptions {
++  /** Legacy target IDs never provide policy evidence; retained for old callers to fail closed. */
++  targetIds?: Map<string, string | undefined>;
++  targetIdentities?: Map<string, PageTargetIdentity | undefined>;
++  sourceRevisions?: Map<string, string | undefined>;
++  /** Background-remnant inspection per page URL, produced by the R01 evidence pipeline. */
++  backgroundInspections?: Map<string, BackgroundInspectionResult>;
++}
++
+ /**
+  * Filters the list of pages to find any that require human confirmation but have not yet been confirmed.
++ *
++ * Omission and low-confidence warnings are confirmable through the bound
++ * omission signature; deterministic script failures, unresolved review evidence,
++ * unconfirmed targets and background-remnant findings (`hasHardBlockers`) are
++ * listed until repaired, explicitly substituted with the original image
++ * (`exportSource: "original"`) or explicitly excluded (`exportExcluded`).
+  */
+ export function getUnconfirmedPages(
+-  pages: { url: string; name: string; exportSource?: PageExportSource }[],
++  pages: { url: string; name: string; exportSource?: PageExportSource; exportExcluded?: boolean }[],
+   confirmedPages: Set<string>,
+   cleaningResultsByPage: Map<string, PageCleaningResult>,
+   bubblesByPage: Map<string, TranslatedBubble[]>,
+   targetIndices?: number[],
+   confirmedMissingTranslations?: Map<string, string>,
++  options?: PageEligibilityGateOptions,
+ ): PageReviewInfo[] {
+   const indices = targetIndices ?? pages.map((_, i) => i);
+   const unconfirmed: PageReviewInfo[] = [];
+ 
+   for (const idx of indices) {
+     const page = pages[idx];
+     if (!page) continue;
++    // An explicitly excluded page is not silently omitted: the export reports it.
++    if (page.exportExcluded) continue;
+     const source = normalizePageExportSource(page.exportSource);
+     if (source === "original") continue;
+     const cleaning = cleaningResultsByPage.get(page.url);
+     const bubbles = source === "translated" ? bubblesByPage.get(page.url) : undefined;
+ 
++    const blockers = getPageOutputBlockers(
++      bubbles,
++      options?.targetIdentities?.get(page.url),
++      options?.backgroundInspections?.get(page.url),
++      options?.sourceRevisions?.get(page.url),
++    );
++    blockers.backgroundBlocked ||= !cleaning?.cleanUrl;
++    const hasHardBlockers = blockers.targetUnconfirmed || blockers.scriptIssueCount > 0 ||
++      blockers.unverifiedReviewCount > 0 || blockers.backgroundBlocked;
++
+     const hasUncertainCleaning = isPageCleaningUncertain(cleaning);
+     const hasUncertainTranslation = isPageTranslationUncertain(bubbles);
+     const missing = source === "translated" ? missingRegions(cleaning, bubbles) : [];
+     const signature = source === "translated" ? missingTranslationSignature(cleaning, bubbles) : "clean";
+     const hasSemanticReview = (bubbles ?? []).some(needsQualityReview);
+ 
+-    if (hasUncertainCleaning || hasUncertainTranslation || missing.length > 0) {
+-      const isConfirmed = confirmedPages.has(page.url) && ((missing.length === 0 && !hasSemanticReview) ||
++    if (hasHardBlockers || hasUncertainCleaning || hasUncertainTranslation || missing.length > 0) {
++      // Hard blockers can never be confirmed away; the signature-bound
++      // confirmation only covers omissions and low-confidence warnings.
++      const isConfirmed = !hasHardBlockers && confirmedPages.has(page.url) && ((missing.length === 0 && !hasSemanticReview) ||
+         confirmedMissingTranslations?.get(page.url) === signature);
+       if (!isConfirmed) {
+         unconfirmed.push({
+           pageIndex: idx,
+           pageUrl: page.url,
+           pageName: page.name || `Page ${idx + 1}`,
+           hasUncertainCleaning,
+           hasUncertainTranslation,
+           missingTranslationCount: missing.length,
+           missingTranslationSignature: signature,
+           isConfirmed,
++          scriptIssueCount: blockers.scriptIssueCount,
++          unverifiedReviewCount: blockers.unverifiedReviewCount,
++          targetUnconfirmed: blockers.targetUnconfirmed,
++          backgroundBlocked: blockers.backgroundBlocked,
++          hasHardBlockers,
+         });
+       }
+     }
+   }
+ 
+   return unconfirmed;
+ }
+diff --git a/src/app/page.tsx b/src/app/page.tsx
+index e0b6ff8..cb94d06 100644
+--- a/src/app/page.tsx
++++ b/src/app/page.tsx
+@@ -3,34 +3,35 @@
+ import { PageReviewNotice } from "@/components/cleaning/PageReviewNotice";
+ import { translationScope } from "@/lib/cleaning/textAuthorization";
+ 
+ import { useState, useMemo, useRef, useEffect, useCallback, type SetStateAction } from "react";
+ import { getWorkspacePrimaryAction } from "@/lib/workspacePrimaryAction";
+ import { useTranslation } from "@/hooks/useTranslation";
+ import { resolveTargetLanguage } from "@/lib/languagePolicy";
+ import { jsPDF } from "jspdf";
+ import { Toaster } from "react-hot-toast";
+ import {
+-  downloadTranslatedImage,
+   applyTranslationOverlay,
+   type TranslatedBubble,
+ } from "@/lib/translationOverlay";
+ import { Upload, Download, Flame, Eye, EyeOff, Undo2, Redo2, GalleryVertical, RectangleHorizontal, Menu, X, Settings, FileArchive, BookOpen, FileText, Sparkles, Loader2, Check, AlertCircle, RefreshCw, ArrowDown, ArrowUp, ChevronDown, ChevronUp, Eraser, Paintbrush, RotateCcw, ScanSearch } from "lucide-react";
+ import { undoManager } from "@/lib/undoManager";
+ import JSZip from "jszip";
+ import { findRecoveredRegionId, useCleaning } from "@/hooks/useCleaning";
+ import {
+   CleaningToolbar,
+   stageLabel,
+   type WorkspaceLayer,
+ } from "@/components/cleaning/CleaningToolbar";
+ import { MaskEditor } from "@/components/cleaning/MaskEditor";
++import { RemnantReviewPanel } from "@/components/cleaning/RemnantReviewPanel";
++import type { PixelRect } from "@/lib/cleaning/types";
+ import type {
+   CleanerOverride,
+   CleaningRegion,
+   ManualRegionAction,
+ } from "@/lib/cleaning/types";
+ import { PageViewer } from "@/components/workspace/PageViewer";
+ import { PageFilmstrip } from "@/components/workspace/PageFilmstrip";
+ import { SettingsModal } from "@/components/workspace/SettingsModal";
+ import { WorkspaceExportMenu } from "@/components/workspace/WorkspaceExportMenu";
+ import { WorkspacePrimaryAction } from "@/components/workspace/WorkspacePrimaryAction";
+@@ -38,40 +39,40 @@ import { WorkspaceAdvancedTools } from "@/components/workspace/WorkspaceAdvanced
+ import { ExportReportModal, type ExportReportRow } from "@/components/workspace/ExportReportModal";
+ import { normalizePageExportSource, resolvePageExportUrl, exportImageBlob, exportImageFilename, type PageExportSource } from "@/lib/export/pageSource";
+ import { scanPageGeometry, type PageGeometryResult, type ReadabilityFinding } from "@/lib/export/readabilityScan";
+ import { readabilityAcknowledgmentKey, type ReadabilityPageSnapshot } from "@/lib/export/readabilityAcknowledgment";
+ import {
+   generateArchiveFilename,
+   generateComicInfoXml,
+   generateStripFilename,
+ } from "@/lib/export/exportManager";
+ import {
+-  shouldReuseCachedTranslatedRender,
+ } from "@/lib/export/renderFreshness";
+ import {
+   getAskExportDirectory,
+   getOrPickExportDirectory,
+   isDirectoryPickerSupported,
+   pickExportDirectory,
+   saveBlob,
+   type DirectoryHandleLike,
+ } from "@/lib/export/saveLocation";
+ import { blobToDataUrl } from "@/lib/projectStore";
+ import { pageBlobStore } from "@/lib/lifecycle/pageBlobStore";
+ import { workspaceResourceManager } from "@/lib/lifecycle/workspaceResourceManager";
+ import {
+   FindReplaceDialog,
+   type ReplaceOptions,
+ } from "@/components/editing/FindReplaceDialog";
+ import { KeyboardShortcutsDialog } from "@/components/editing/KeyboardShortcutsDialog";
+ import {
+   doesPageRequireReview,
++  getPageOutputBlockers,
+   getUnconfirmedPages,
+   missingTranslationSignature,
+   type PageReviewInfo,
+ } from "@/lib/export/reviewGate";
+ import {
+   TranslationDiagnosticModal,
+   type CleanerRecoveryViewState,
+ } from "@/components/workspace/TranslationDiagnosticModal";
+ import { recoverDesktopCleaner } from "@/lib/desktopBridge";
+ 
+@@ -113,21 +114,21 @@ function formatStopwatchTime(elapsedMs: number): string {
+   const totalMinutes = Math.floor(totalSeconds / 60);
+   const minutes = totalMinutes % 60;
+   const hours = Math.floor(totalMinutes / 60);
+ 
+   if (hours > 0) {
+     return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${tenths}`;
+   }
+   return `${String(totalMinutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${tenths}`;
+ }
+ 
+-type WorkspaceExportPage = { id?: string; url: string; name: string; originUrl?: string; exportSource?: PageExportSource };
++type WorkspaceExportPage = { id?: string; url: string; name: string; originUrl?: string; exportSource?: PageExportSource; exportExcluded?: boolean };
+ 
+ export default function WorkspacePage() {
+ 
+   const [pages, setPages] = useState<WorkspaceExportPage[]>([]);
+   const [currentPage, setCurrentPageState] = useState(0);
+   const exportSnapshotRef = useRef<{ pages: WorkspaceExportPage[]; currentPage: number } | null>(null);
+   const [isChoosingExport, setIsChoosingExport] = useState(false);
+   const setCurrentPage = useCallback((updater: SetStateAction<number>) => {
+     if (!exportSnapshotRef.current) setCurrentPageState(updater);
+   }, []);
+@@ -136,20 +137,21 @@ export default function WorkspacePage() {
+   const pendingReviewIndicesRef = useRef<number[] | undefined>(undefined);
+   const [unconfirmedReviewPages, setUnconfirmedReviewPages] = useState<PageReviewInfo[] | null>(null);
+   const [pendingExportAction, setPendingExportAction] = useState<(() => void) | null>(null);
+   const [isDragging, setIsDragging] = useState(false);
+   const [workspaceLayer, setWorkspaceLayer] =
+     useState<WorkspaceLayer>("original");
+   const [viewLayout, setViewLayout] = useState<'single' | 'scroll'>('single');
+   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+   const [isThumbnailsCollapsed, setIsThumbnailsCollapsed] = useState(false);
+   const [isMaskEditorOpen, setIsMaskEditorOpen] = useState(false);
++  const [maskFocusRect, setMaskFocusRect] = useState<PixelRect>();
+   const uiOperationLockRef = useRef(false);
+   const dirtyExportPagesRef = useRef<Set<string>>(new Set());
+   const [isUiOperationBusy, setIsUiOperationBusy] = useState(false);
+   const [brokenPages, setBrokenPages] = useState<Set<string>>(new Set());
+ 
+   // Settings Modal State
+   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+   const [settingsFocusTarget, setSettingsFocusTarget] = useState<"apiKey" | null>(null);
+   const [apiKeyRecoveryGroupId, setApiKeyRecoveryGroupId] = useState<string | null>(null);
+   const [apiKeyReadyByGroup, setApiKeyReadyByGroup] = useState<Record<string, boolean>>({});
+@@ -259,20 +261,24 @@ export default function WorkspacePage() {
+   const pageNames = useMemo(() => pages.map(p => p.name), [pages]);
+   const {
+     cleanPage,
+     cleanCurrentPage,
+     retryRegion,
+     resolveMaskRegion,
+     currentResult: currentCleaningResult,
+     progress: cleaningProgress,
+     error: cleaningError,
+     resultsByPage: cleaningResultsByPage,
++    getCurrentRemnantReview,
++    currentRemnantReview,
++    confirmArtworkCandidate,
++    recheckPageRemnants,
+   } = useCleaning({ pages: pageUrls, pageIds, currentPage });
+ 
+   useEffect(() => {
+     if (!cleaningResultsByPage) return;
+     for (let i = 0; i < pages.length; i++) {
+       const page = pages[i];
+       const pageId = page.id || `page_${i}`;
+       const cleanRes = cleaningResultsByPage?.get?.(page.url);
+       if (cleanRes) {
+         if (!workspaceResourceManager.hasResource(pageId, "clean") && cleanRes.cleanUrl) {
+@@ -363,20 +369,21 @@ export default function WorkspacePage() {
+       workspaceResourceManager.registerResource(pageId, "clean", result.cleanUrl, 1024 * 1024);
+       if (result.maskUrl) {
+         workspaceResourceManager.registerResource(pageId, "mask", result.maskUrl, 256 * 1024);
+       }
+       return {
+         recognitionUrl: pageUrl,
+         textScope: translationScope(result),
+         backgroundUrl: result.cleanUrl,
+         maskUrl: result.maskUrl,
+         preparedIdentity: result.preparedIdentity,
++        sourceFingerprint: result.sourceFingerprint,
+         awaitingReview: result.awaitingReview === true,
+         cleaningMode: result.cleaningMode,
+       };
+     },
+     [cleanPage, pages],
+   );
+ 
+   const {
+     isTranslating,
+     translationResult,
+@@ -437,20 +444,21 @@ export default function WorkspacePage() {
+     replaceBubbleText,
+     getPageSignature,
+     cacheRevision: translationCacheRevision,
+   } = useTranslation({
+     currentPage,
+     pages: pageUrls,
+     pageIds,
+     pageNames,
+     pageOriginUrls: pages.map((p) => p.originUrl),
+     pageExportSources: pages.map((p) => normalizePageExportSource(p.exportSource)),
++    pageSourceFingerprints: new Map([...cleaningResultsByPage].flatMap(([url, result]) => result.sourceFingerprint ? [[url, result.sourceFingerprint] as const] : [])),
+     viewMode: "single",
+     preparePageForTranslation,
+     onPageDirtied: (pageUrl) => {
+       dirtyExportPagesRef.current.add(pageUrl);
+       setConfirmedPages((prev) => {
+         if (!prev.has(pageUrl)) return prev;
+         const next = new Set(prev);
+         next.delete(pageUrl);
+         return next;
+       });
+@@ -1206,38 +1214,65 @@ export default function WorkspacePage() {
+       }
+     });
+   };
+ 
+   const [isPublishingBack, setIsPublishingBack] = useState(false);
+ 
+   const handlePublishBackToReadingView = async () => {
+     const page = pages[currentPage];
+     if (!page || !page.originUrl) return;
+ 
++    // Publication shares the export eligibility boundary: deterministic script
++    // failures, unresolved review evidence, unconfirmed targets and unresolved
++    // background-remnant findings block publish-back; generated-text approval
++    // cannot clear them. Recomputed from raw text at each attempt.
++    const blockers = getPageOutputBlockers(
++      bubbleCacheRef.current.get(page.url) ?? activeBubbles,
++      pageTargetCacheRef.current.get(page.url),
++      getCurrentRemnantReview?.(page.url)?.inspection,
++      cleaningResultsByPage.get(page.url)?.sourceFingerprint,
++    );
++    if (blockers.targetUnconfirmed || blockers.scriptIssueCount > 0 ||
++        blockers.unverifiedReviewCount > 0 || blockers.backgroundBlocked) {
++      const details = [
++        blockers.targetUnconfirmed ? "ยังไม่ยืนยันภาษาของหน้า" : null,
++        blockers.scriptIssueCount > 0 ? `ตัวอักษรภาษาอื่นปน ${blockers.scriptIssueCount} จุด` : null,
++        blockers.unverifiedReviewCount > 0 ? `ยังไม่ได้ตรวจกับต้นฉบับ ${blockers.unverifiedReviewCount} จุด` : null,
++        blockers.backgroundBlocked ? "พบร่องรอยต้องตรวจในภาพพื้นหลัง" : null,
++      ].filter(Boolean).join(", ");
++      (await import("react-hot-toast")).default(
++        `❌ ยังส่งกลับหน้าอ่านไม่ได้: ${details} — เปิด เครื่องมือ > ตรวจคำแปลทั้งเล่ม เพื่อตรวจและยืนยันก่อน`,
++        { duration: 6000 },
++      );
++      return;
++    }
++
++    const publicationSignature = exportInputSignature(page.url);
+     setIsPublishingBack(true);
+     try {
+       let cleanUrl = cleaningResultsByPage.get(page.url)?.cleanUrl || translatedImages.get(page.url);
+       if (cleanUrl && cleanUrl.startsWith("blob:")) {
+         try {
+           const blobRes = await fetch(cleanUrl);
+           const blob = await blobRes.blob();
+           cleanUrl = await new Promise<string>((resolve, reject) => {
+             const reader = new FileReader();
+             reader.onloadend = () => resolve(reader.result as string);
+             reader.onerror = reject;
+             reader.readAsDataURL(blob);
+           });
+         } catch (blobErr) {
+           console.warn("Failed to convert blob cleanUrl to base64 data URL for publish-back:", blobErr);
+         }
+       }
+       const pairingToken = await fetchExtensionPairingToken();
++      if (publicationSignature !== exportInputSignature(page.url) || collectExportReviewPages([{...page, exportSource:"translated"}], [0]).length > 0) throw new Error("หลักฐานเปลี่ยนระหว่างส่งกลับ กรุณาตรวจหน้าอีกครั้ง");
+       const res = await fetch("/api/extension/publish-back", {
+         method: "POST",
+         headers: {
+           "Content-Type": "application/json",
+           ...(pairingToken ? { Authorization: `Bearer ${pairingToken}` } : {}),
+         },
+         body: JSON.stringify({
+           pageUrl: page.url,
+           originUrl: page.originUrl,
+           bubbles: activeBubbles,
+@@ -1254,105 +1289,76 @@ export default function WorkspacePage() {
+       toast.success("🚀 ส่งคำแปลที่ปรับแต่งกลับไปยังหน้าอ่านแล้ว!");
+     } catch (err) {
+       console.error("Failed to publish back to reading view:", err);
+       const toast = (await import("react-hot-toast")).default;
+       toast.error("ส่งกลับหน้าอ่านไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
+     } finally {
+       setIsPublishingBack(false);
+     }
+   };
+ 
+-  const handleDownloadAll = async (format: "zip" | "cbz" | "pdf" | "strip" = "zip") => {
+-    if (pages.length === 0) return;
+-
+-    const unconfirmed = getUnconfirmedPages(
+-      exportSnapshotRef.current?.pages ?? pages,
++  // Shared output-eligibility gate: every translated export path evaluates this
++  // BEFORE choosing the live canvas, a cached raster or a fresh offscreen render.
++  // The eligibility result is recomputed from raw text at each attempt, so old
++  // accepted/dismissed states and generic page confirmations cannot bypass it.
++  const collectExportReviewPages = useCallback((snapshotPages: WorkspaceExportPage[], targetIndices?: number[]) => {
++    return getUnconfirmedPages(
++      snapshotPages,
+       confirmedPages,
+       cleaningResultsByPage,
+       bubbleCacheRef.current,
+-      undefined,
++      targetIndices,
+       confirmedMissingTranslationsRef.current,
++      {
++        targetIdentities: pageTargetCacheRef.current,
++        sourceRevisions: new Map(snapshotPages.map((page) => [page.url, cleaningResultsByPage.get(page.url)?.sourceFingerprint])),
++        backgroundInspections: new Map(snapshotPages.flatMap((page) => {
++          const review = getCurrentRemnantReview?.(page.url);
++          return review ? [[page.url, review.inspection] as const] : [];
++        })),
++      },
+     );
+-    if (unconfirmed.length > 0) {
+-      pendingReviewIndicesRef.current = undefined;
+-      setUnconfirmedReviewPages(unconfirmed);
+-      setPendingExportAction(() => () => void executeDownloadAll(format));
+-      return;
+-    }
+-
+-    await executeDownloadAll(format);
+-  };
+-
+-  const executeDownloadAll = async (format: "zip" | "cbz" | "pdf" | "strip" = "zip") => {
+-    const pages = exportSnapshotRef.current?.pages ?? [];
+-    if (pages.length === 0) return;
+-    const currentPage = exportSnapshotRef.current?.currentPage ?? 0;
+-    setIsChoosingExport(false);
+-    setIsZipping(true);
+-
+-    // Optional destination-folder picker (Chrome/Edge). Unavailable browsers
+-    // or a dismissed dialog fall back to the normal download flow.
+-    let destDir: DirectoryHandleLike | null = null;
+-    if (getAskExportDirectory()) {
+-      if (!isDirectoryPickerSupported()) {
+-        import("react-hot-toast").then((m) =>
+-          m.default("เบราว์เซอร์นี้ไม่รองรับการเลือกโฟลเดอร์ จะดาวน์โหลดตามค่าตั้งต้นแทน", { duration: 3000 }),
+-        );
+-      } else {
+-        destDir = await getOrPickExportDirectory();
+-        if (!destDir) {
+-          setIsZipping(false);
+-      exportSnapshotRef.current = null;
+-          return;
+-        }
+-      }
+-    }
++  }, [confirmedPages, cleaningResultsByPage, pageTargetCacheRef, getCurrentRemnantReview, bubbleCacheRef]);
++
++  // Explicit original-image substitution for one affected page, scoped to the
++  // pending export snapshot. The exported bytes become the page's original.
++  const substituteExportPageWithOriginal = useCallback((pageUrl: string) => {
++    const snapshot = exportSnapshotRef.current;
++    if (!snapshot) return;
++    snapshot.pages = snapshot.pages.map((page) => page.url === pageUrl ? { ...page, exportSource: "original" as const } : page);
++    setUnconfirmedReviewPages(collectExportReviewPages(snapshot.pages, pendingReviewIndicesRef.current));
++  }, [collectExportReviewPages]);
++
++  // Explicit exclusion of one affected page from a pending book export. Ordering
++  // and numbering are preserved and the exclusion is reported, never silent.
++  const excludeExportPage = useCallback((pageUrl: string) => {
++    const snapshot = exportSnapshotRef.current;
++    if (!snapshot) return;
++    snapshot.pages = snapshot.pages.map((page) => page.url === pageUrl ? { ...page, exportExcluded: true } : page);
++    const remainingIndices = pendingReviewIndicesRef.current?.filter((index) => snapshot.pages[index]?.url !== pageUrl);
++    setUnconfirmedReviewPages(collectExportReviewPages(snapshot.pages, remainingIndices));
++  }, [collectExportReviewPages]);
++
++  // Review evidence changed while the dialog is open (per-point confirmation,
++  // target confirmation, text repair): refresh the listed rows so a repaired
++  // page can be released without reopening the export.
++  useEffect(() => {
++    if (!unconfirmedReviewPages || !exportSnapshotRef.current) return;
++    setUnconfirmedReviewPages(collectExportReviewPages(exportSnapshotRef.current.pages, pendingReviewIndicesRef.current));
++  }, [translationCacheRevision, collectExportReviewPages]);
+ 
+-    const failedExportPages: number[] = [];
+-    const exportErrors: string[] = [];
+-    const reportRenderFailures = () => {
+-      setTranslationResult(
+-        `❌ Export ไม่สำเร็จที่หน้า ${failedExportPages.join(", ")} ${exportErrors.join("; ")} — ลองใหม่อีกครั้ง`,
+-      );
+-      setTimeout(() => setTranslationResult(null), 5000);
+-    };
++  const exportInputSignature = (pageUrl: string) => JSON.stringify([pageTargetCacheRef.current.get(pageUrl), bubbleCacheRef.current.get(pageUrl), textStyleRef.current, getCurrentRemnantReview?.(pageUrl)?.inspection.revisionKey, cleaningResultsByPage.get(pageUrl)?.sourceFingerprint, cleaningResultsByPage.get(pageUrl)?.cleanUrl]);
+ 
+-    const renderTranslatedDataUrl = async (pageUrl: string, index: number): Promise<string | null> => {
++    const renderExportImage = async (pageUrl: string, index: number, pages: WorkspaceExportPage[]): Promise<string | null> => {
++      if (collectExportReviewPages(pages, [index]).length) throw new Error("กรุณาตรวจหลักฐานหน้านี้ใหม่ เลือกต้นฉบับ หรือข้ามหน้า");
++      const beforeSignature = exportInputSignature(pageUrl);
+       const pageId = pages[index]?.id || `page_${index}`;
+-      if (
+-        index === currentPage &&
+-        workspaceLayer === "translated" &&
+-        activeBubbles.length > 0
+-      ) {
+-        const currentDataUrl = downloadTranslatedImage("single", index, "", true);
+-        if (currentDataUrl) {
+-          const currentSig = getPageSignature?.(pageUrl) ?? "rev-0";
+-          workspaceResourceManager.registerRenderedImage(
+-            pageId,
+-            currentSig,
+-            currentDataUrl,
+-            Math.round(currentDataUrl.length * 0.75),
+-          );
+-          translatedImageCacheRef.current.set(pageUrl, currentDataUrl);
+-          dirtyExportPagesRef.current.delete(pageUrl);
+-          return currentDataUrl;
+-        }
+-      }
+-
+-      const isExportDirty = dirtyExportPagesRef.current.has(pageUrl);
+-      if (
+-        shouldReuseCachedTranslatedRender(isExportDirty) &&
+-        translatedImageCacheRef.current.has(pageUrl)
+-      ) {
+-        return translatedImageCacheRef.current.get(pageUrl) as string;
+-      }
+-
+       const bubbles = bubbleCacheRef.current.get(pageUrl);
+       // Spilled-render reuse is intentionally not consulted here: a bubble-free
+       // page's translated output is its cleaned background, and a page with
+       // bubbles must re-render from those bubbles instead of stale pixels.
+ 
+       if (bubbles && bubbles.length > 0) {
+         setTranslationResult(`⏳ กำลังเตรียมรูปภาพหน้า ${index + 1}/${pages.length}...`);
+         try {
+           return await new Promise<string>((resolve, reject) => {
+             const offscreenContainer = document.getElementById("offscreen-container");
+@@ -1381,22 +1387,23 @@ export default function WorkspacePage() {
+                 () => fail("หมดเวลา"),
+                 Math.min(30_000, 2_000 + Math.round(megapixels * 1_000)),
+               );
+               applyTranslationOverlay(
+                 bubbles,
+                 "offscreen",
+                 -1,
+                 () => {},
+                 (renderedUrl) => {
+                   clearTimeout(timeout);
+-                  translatedImageCacheRef.current.set(pageUrl, renderedUrl);
+                   const approxBytes = Math.round(renderedUrl.length * 0.75);
++                  if (collectExportReviewPages(pages, [index]).length || beforeSignature !== exportInputSignature(pageUrl)) { reject(new Error("ข้อความหรือหลักฐานเปลี่ยนระหว่างเรนเดอร์ กรุณาลองส่งออกใหม่")); return; }
++                  translatedImageCacheRef.current.set(pageUrl, renderedUrl);
+                   const freshSig = getPageSignature?.(pageUrl) ?? "rev-0";
+                   workspaceResourceManager.registerRenderedImage(
+                     pageId,
+                     freshSig,
+                     renderedUrl,
+                     approxBytes,
+                   );
+                   dirtyExportPagesRef.current.delete(pageUrl);
+                   resolve(renderedUrl);
+                 },
+@@ -1413,38 +1420,93 @@ export default function WorkspacePage() {
+           });
+         } catch (err) {
+           console.warn(`Offscreen render failed for page ${index + 1}`, err);
+           return null;
+         }
+       }
+       // A bubble-free page has no translation layer to rasterize: its
+       // translated output is the cleaned background, else the untouched page.
+       return (
+         cleaningResultsByPage.get(pageUrl)?.cleanUrl ??
+-        translatedImageCacheRef.current.get(pageUrl) ??
+         pageUrl
+       );
+     };
+ 
++  const handleDownloadAll = async (format: "zip" | "cbz" | "pdf" | "strip" = "zip") => {
++    if (pages.length === 0) return;
++
++    const unconfirmed = collectExportReviewPages(exportSnapshotRef.current?.pages ?? pages);
++    if (unconfirmed.length > 0) {
++      pendingReviewIndicesRef.current = undefined;
++      setUnconfirmedReviewPages(unconfirmed);
++      setPendingExportAction(() => () => void executeDownloadAll(format));
++      return;
++    }
++
++    await executeDownloadAll(format);
++  };
++
++  const executeDownloadAll = async (format: "zip" | "cbz" | "pdf" | "strip" = "zip") => {
++    const pages = exportSnapshotRef.current?.pages ?? [];
++    if (pages.length === 0) return;
++    const outputSignatures = new Map(pages.map(page => [page.url, exportInputSignature(page.url)]));
++    const assertCurrentOutput = () => {
++      if (collectExportReviewPages(pages).length || pages.some(page => !page.exportExcluded && normalizePageExportSource(page.exportSource) !== "original" && outputSignatures.get(page.url) !== exportInputSignature(page.url))) throw new Error("หลักฐานหรือข้อความเปลี่ยนระหว่างส่งออก กรุณาตรวจหน้าและส่งออกใหม่");
++    };
++    setIsChoosingExport(false);
++    setIsZipping(true);
++
++    // Optional destination-folder picker (Chrome/Edge). Unavailable browsers
++    // or a dismissed dialog fall back to the normal download flow.
++    let destDir: DirectoryHandleLike | null = null;
++    if (getAskExportDirectory()) {
++      if (!isDirectoryPickerSupported()) {
++        import("react-hot-toast").then((m) =>
++          m.default("เบราว์เซอร์นี้ไม่รองรับการเลือกโฟลเดอร์ จะดาวน์โหลดตามค่าตั้งต้นแทน", { duration: 3000 }),
++        );
++      } else {
++        destDir = await getOrPickExportDirectory();
++        if (!destDir) {
++          setIsZipping(false);
++      exportSnapshotRef.current = null;
++          return;
++        }
++      }
++    }
++
++    const failedExportPages: number[] = [];
++    const exportErrors: string[] = [];
++    // Explicit exclusions from the review dialog are reported, never silent.
++    const excludedCount = pages.filter((page) => page.exportExcluded).length;
++    const excludedNote = excludedCount > 0 ? ` — ตัด ${excludedCount} หน้าออกตามที่เลือก` : "";
++    const reportRenderFailures = () => {
++      setTranslationResult(
++        `❌ Export ไม่สำเร็จที่หน้า ${failedExportPages.join(", ")} ${exportErrors.join("; ")} — ลองใหม่อีกครั้ง`,
++      );
++      setTimeout(() => setTranslationResult(null), 5000);
++    };
++
+     const getExportDataUrl = async (pageUrl: string, index: number): Promise<string> => {
++      if (collectExportReviewPages(pages, [index]).length) throw new Error("กรุณาตรวจหลักฐานหน้านี้ใหม่ เลือกต้นฉบับ หรือข้ามหน้า");
+       const selectedUrl = await resolvePageExportUrl(pages[index], cleaningResultsByPage.get(pageUrl)?.cleanUrl,
+-        () => renderTranslatedDataUrl(pageUrl, index));
++        () => renderExportImage(pageUrl, index, pages));
+       return selectedUrl.startsWith("data:") ? selectedUrl : blobToDataUrl(await exportImageBlob(selectedUrl));
+     };
+ 
+     if (format === "strip") {
+       try {
+         setTranslationResult(`⏳ กำลังโหลดและรวมภาพแบบ Webtoon Strip...`);
+         const loadedImages: HTMLImageElement[] = [];
+         const targetWidth = 1200;
+ 
+         for (let i = 0; i < pages.length; i++) {
++          if (pages[i].exportExcluded) continue;
+           try {
+             const dataUrl = await getExportDataUrl(pages[i].url, i);
+             if (!dataUrl) {
+               failedExportPages.push(i + 1);
+               continue;
+             }
+             const img = new Image();
+             img.src = dataUrl;
+             await new Promise<void>((resolve) => {
+               const timer = setTimeout(() => resolve(), 3000);
+@@ -1488,20 +1550,21 @@ export default function WorkspacePage() {
+           let yOffset = 0;
+           for (const item of chunk) {
+             ctx.drawImage(item.img, 0, yOffset, targetWidth, item.height);
+             yOffset += item.height;
+           }
+ 
+           const stripFilename = generateStripFilename(index, chunkIndex > 1 ? chunkIndex : 1, pages);
+           const blob = await new Promise<Blob>((resolve, reject) => {
+             stripCanvas.toBlob(result => result ? resolve(result) : reject(new Error("ไม่สามารถสร้างภาพ Strip")), "image/jpeg", 0.92);
+           });
++          assertCurrentOutput();
+           const savedName = await saveBlob(blob, stripFilename, destDir);
+           if (savedName && savedName !== stripFilename) {
+             const toast = (await import("react-hot-toast")).default;
+             toast.success(`บันทึกเป็น "${savedName}" (พบไฟล์ชื่อซ้ำ)`);
+           }
+         };
+ 
+         for (const img of loadedImages) {
+           const scaledHeight = Math.round((targetWidth / img.naturalWidth) * img.naturalHeight);
+           if (currentHeight + scaledHeight > MAX_STRIP_HEIGHT && currentChunk.length > 0) {
+@@ -1511,39 +1574,40 @@ export default function WorkspacePage() {
+           }
+           currentChunk.push({ img, height: scaledHeight });
+           currentHeight += scaledHeight;
+         }
+ 
+         if (currentChunk.length > 0) {
+           await exportChunk(currentChunk, chunkIndex);
+         }
+ 
+         const folderLabel = destDir?.name ? ` ใน "${destDir.name}"` : "";
+-        setTranslationResult(`✅ ดาวน์โหลด Webtoon Strip${folderLabel} สำเร็จ! (${loadedImages.length} หน้า)`);
++        setTranslationResult(`✅ ดาวน์โหลด Webtoon Strip${folderLabel} สำเร็จ! (${loadedImages.length} หน้า)${excludedNote}`);
+         setTimeout(() => setTranslationResult(null), 3000);
+       } catch (e) {
+         console.error("Failed to generate long strip", e);
+         setTranslationResult(`❌ เกิดข้อผิดพลาดในการรวมภาพ Webtoon Strip`);
+         setTimeout(() => setTranslationResult(null), 3000);
+       } finally {
+         setIsZipping(false);
+       exportSnapshotRef.current = null;
+       }
+       return;
+     }
+ 
+     if (format === "pdf") {
+       try {
+         const pdf = new jsPDF({ orientation: "portrait", unit: "px" });
+         let addedCount = 0;
+ 
+         for (let i = 0; i < pages.length; i++) {
++          if (pages[i].exportExcluded) continue;
+           try {
+             const dataUrl = await getExportDataUrl(pages[i].url, i);
+             if (!dataUrl) {
+               failedExportPages.push(i + 1);
+               continue;
+             }
+ 
+             const img = new Image();
+             img.src = dataUrl;
+             await new Promise<void>((resolve) => {
+@@ -1583,27 +1647,28 @@ export default function WorkspacePage() {
+         }
+ 
+         if (failedExportPages.length > 0) {
+           reportRenderFailures();
+           return;
+         }
+ 
+         if (addedCount > 0) {
+           const pdfFilename = generateArchiveFilename("pdf", pages);
+           setTranslationResult(`⏳ กำลังบันทึก PDF...`);
++          assertCurrentOutput();
+           const savedName = await saveBlob(pdf.output("blob"), pdfFilename, destDir);
+           const wasRenamed = savedName !== pdfFilename;
+           const folderLabel = destDir?.name ? ` ใน "${destDir.name}"` : "";
+           setTranslationResult(
+             wasRenamed
+               ? `✅ บันทึก ${savedName}${folderLabel} สำเร็จ! (พบชื่อซ้ำ จึงเปลี่ยนชื่อให้อัตโนมัติ)`
+-              : `✅ ดาวน์โหลด PDF${folderLabel} สำเร็จ! (${addedCount} หน้า)`
++              : `✅ ดาวน์โหลด PDF${folderLabel} สำเร็จ! (${addedCount} หน้า)${excludedNote}`
+           );
+           if (wasRenamed) {
+             import("react-hot-toast").then((m) =>
+               m.default.success(`บันทึกเป็น "${savedName}"${folderLabel} (พบไฟล์ชื่อซ้ำ)`),
+             );
+           }
+         } else {
+           setTranslationResult(`❌ ไม่พบรูปภาพที่สมบูรณ์สำหรับสร้าง PDF`);
+         }
+         setTimeout(() => setTranslationResult(null), 3000);
+@@ -1615,23 +1680,25 @@ export default function WorkspacePage() {
+         setIsZipping(false);
+       exportSnapshotRef.current = null;
+       }
+       return;
+     }
+ 
+     const zip = new JSZip();
+     let zipAddedCount = 0;
+ 
+     for (let i = 0; i < pages.length; i++) {
++      if (pages[i].exportExcluded) continue;
+       try {
++        if (collectExportReviewPages(pages, [i]).length) throw new Error("กรุณาตรวจหลักฐานหน้านี้ใหม่ เลือกต้นฉบับ หรือข้ามหน้า");
+         const selectedUrl = await resolvePageExportUrl(pages[i], cleaningResultsByPage.get(pages[i].url)?.cleanUrl,
+-          () => renderTranslatedDataUrl(pages[i].url, i));
++          () => renderExportImage(pages[i].url, i, pages));
+         const blob = await exportImageBlob(selectedUrl);
+         const filename = exportImageFilename(pages[i].name, i, blob.type);
+         // ArrayBuffer keeps raw original/clean bytes and includes blob URLs.
+         const bytes = await new Promise<ArrayBuffer>((resolve, reject) => {
+           const reader = new FileReader(); reader.onload = () => resolve(reader.result as ArrayBuffer);
+           reader.onerror = () => reject(reader.error); reader.readAsArrayBuffer(blob);
+         });
+         zip.file(filename, bytes);
+         zipAddedCount++;
+       } catch (err) {
+@@ -1660,27 +1727,28 @@ export default function WorkspacePage() {
+               const languages = [...new Set(targets.map(target => target!.split("-")[0]))];
+               return languages.length === 1 ? languages[0] : "mul";
+             })(),
+           });
+           zip.file("ComicInfo.xml", xml);
+         }
+ 
+         const archiveFilename = generateArchiveFilename(format, pages);
+         setTranslationResult(`⏳ กำลังสร้างไฟล์ ${format.toUpperCase()}...`);
+         const content = await zip.generateAsync({ type: "blob" });
++        assertCurrentOutput();
+         const savedName = await saveBlob(content, archiveFilename, destDir);
+         const wasRenamed = savedName !== archiveFilename;
+         const folderLabel = destDir?.name ? ` ใน "${destDir.name}"` : "";
+         setTranslationResult(
+           wasRenamed
+             ? `✅ บันทึก ${savedName}${folderLabel} สำเร็จ! (พบชื่อซ้ำ จึงเปลี่ยนชื่อให้อัตโนมัติ)`
+-            : `✅ ดาวน์โหลด ${format.toUpperCase()}${folderLabel} สำเร็จ! (${zipAddedCount} หน้า)`
++            : `✅ ดาวน์โหลด ${format.toUpperCase()}${folderLabel} สำเร็จ! (${zipAddedCount} หน้า)${excludedNote}`
+         );
+         if (wasRenamed) {
+           import("react-hot-toast").then((m) =>
+             m.default.success(`บันทึกเป็น "${savedName}"${folderLabel} (พบไฟล์ชื่อซ้ำ)`),
+           );
+         }
+       } else {
+         setTranslationResult(`❌ ไม่พบรูปภาพที่สมบูรณ์สำหรับสร้าง ${format.toUpperCase()}`);
+       }
+       setTimeout(() => setTranslationResult(null), 3000);
+@@ -1688,62 +1756,53 @@ export default function WorkspacePage() {
+       console.error(`Failed to generate ${format}`, e);
+       setTranslationResult(`❌ เกิดข้อผิดพลาดในการสร้าง ${format.toUpperCase()}`);
+       setTimeout(() => setTranslationResult(null), 3000);
+     } finally {
+       setIsZipping(false);
+       exportSnapshotRef.current = null;
+     }
+   };
+ 
+   const saveCurrentPageImage = async () => {
+-    const unconfirmed = getUnconfirmedPages(
++    const unconfirmed = collectExportReviewPages(
+       exportSnapshotRef.current?.pages ?? pages,
+-      confirmedPages,
+-      cleaningResultsByPage,
+-      bubbleCacheRef.current,
+       [exportSnapshotRef.current?.currentPage ?? currentPage],
+-      confirmedMissingTranslationsRef.current,
+     );
+     if (unconfirmed.length > 0) {
+       pendingReviewIndicesRef.current = [exportSnapshotRef.current?.currentPage ?? currentPage];
+       setUnconfirmedReviewPages(unconfirmed);
+       setPendingExportAction(() => () => void executeSaveCurrentPageImage());
+       return;
+     }
+ 
+     await executeSaveCurrentPageImage();
+   };
+ 
+   const executeSaveCurrentPageImage = async () => {
+     const pages = exportSnapshotRef.current?.pages ?? [];
+     const currentPage = exportSnapshotRef.current?.currentPage ?? 0;
+     setIsChoosingExport(false);
+     setIsZipping(true);
+     try {
+       const page = pages[currentPage];
+       if (!page) return;
+-      const url = await resolvePageExportUrl(page, cleaningResultsByPage.get(page.url)?.cleanUrl, async () => {
+-        const bubbles = (bubbleCacheRef.current.get(page.url) ?? []).filter((b) => !b.deleted);
+-        if (bubbles.length === 0) {
+-          // A bubble-free page has no translation layer: its translated
+-          // output is the cleaned background, else the untouched page.
+-          return cleaningResultsByPage.get(page.url)?.cleanUrl ?? page.url;
+-        }
+-        return downloadTranslatedImage("single", currentPage, "", true);
+-      });
++      if (collectExportReviewPages(pages, [currentPage]).length) throw new Error("หน้านี้ยังต้องตรวจคำแปลหรือภาพพื้นหลัง กรุณาตรวจใหม่ เลือกต้นฉบับ หรือข้ามหน้า");
++      const beforeSignature = exportInputSignature(page.url);
++      const url = await resolvePageExportUrl(page, cleaningResultsByPage.get(page.url)?.cleanUrl, () => renderExportImage(page.url, currentPage, pages));
+       const blob = await exportImageBlob(url);
+       const filename = exportImageFilename(page.name, currentPage, blob.type);
+       let directory: DirectoryHandleLike | null = null;
+       if (getAskExportDirectory() && isDirectoryPickerSupported()) {
+         directory = await getOrPickExportDirectory();
+         if (!directory) return;
+       }
++      if (collectExportReviewPages(pages, [currentPage]).length || (normalizePageExportSource(page.exportSource) !== "original" && beforeSignature !== exportInputSignature(page.url))) throw new Error("หลักฐานเปลี่ยนระหว่างส่งออก กรุณาตรวจหน้าอีกครั้ง");
+       await saveBlob(blob, filename, directory);
+       setTranslationResult(`✅ บันทึก ${filename} สำเร็จ!`);
+     } catch (error) {
+       setTranslationResult(`❌ ส่งออกไม่สำเร็จ: ${error instanceof Error ? error.message : String(error)}`);
+     } finally { setIsZipping(false); exportSnapshotRef.current = null; }
+   };
+ 
+   const requestSinglePageExport = async () => {
+     if (isChoosingExport || isZipping) return;
+     exportSnapshotRef.current = { pages: pages.map(p => ({ ...p })), currentPage };
+@@ -3024,28 +3083,40 @@ export default function WorkspacePage() {
+           if (exportSnapshotRef.current) return;
+           workspaceResourceManager.clear();
+           setPages([]);
+           setCurrentPage(0);
+           clearSavedSession();
+         }}
+         isCollapsed={isThumbnailsCollapsed}
+         onToggleCollapse={() => setIsThumbnailsCollapsed(!isThumbnailsCollapsed)}
+         isFocusMode={isFocusMode}
+       />
++                    <RemnantReviewPanel
++                      inspection={currentRemnantReview?.inspection}
++                      regions={currentCleaningResult?.regions ?? []}
++                      onOpenMask={(candidate) => {
++                        setMaskFocusRect(candidate.rect);
++                        setIsMaskEditorOpen(true);
++                      }}
++                      onConfirmArtwork={(candidate) => { if (currentPageUrl) confirmArtworkCandidate(currentPageUrl, candidate.id); }}
++                      onRecheck={() => { if (currentPageUrl) void recheckPageRemnants(currentPageUrl); }}
++                    />
++
+       {isMaskEditorOpen && currentCleaningResult && pages[currentPage] && (
+         <MaskEditor
+           sourceUrl={pages[currentPage].url}
+           cleanUrl={currentCleaningResult.cleanUrl}
+           proposalMaskUrl={currentCleaningResult.reviewMaskUrl}
+           maskUrl={currentCleaningResult.maskUrl}
+           regions={currentCleaningResult.regions}
+-          onClose={() => setIsMaskEditorOpen(false)}
++          focusRect={maskFocusRect}
++          onClose={() => { setIsMaskEditorOpen(false); setMaskFocusRect(undefined); }}
+           onRetry={handleRetryRegion}
+           onResolveRegion={resolveMaskRegion}
+           onRefreshProposal={refreshMaskProposal}
+         />
+       )}
+ 
+       <SettingsModal
+         isOpen={isSettingsOpen}
+         onClose={() => setIsSettingsOpen(false)}
+         sourceLang={sourceLang}
+@@ -3252,130 +3323,187 @@ export default function WorkspacePage() {
+                 onClick={() => setReviewIssues(null)}
+                 className="px-4 py-2 rounded-xl border border-border hover:bg-surface text-xs font-semibold text-muted hover:text-foreground transition-colors cursor-pointer"
+               >
+                 ปิด
+               </button>
+             </div>
+           </div>
+         </div>
+       )}
+ 
+-      {/* ── Human Review Confirmation Gate Modal (Ticket 07) ── */}
+-      {unconfirmedReviewPages && unconfirmedReviewPages.length > 0 && (
++      {/* ── Human Review Confirmation Gate Modal (Ticket 07 + output eligibility) ── */}
++      {unconfirmedReviewPages && (unconfirmedReviewPages.length > 0 || pendingExportAction) && (
+         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+           <div className="bg-surface border border-border shadow-2xl rounded-2xl max-w-lg w-full p-5 flex flex-col gap-4">
+             <div className="flex items-start gap-3">
+               <div className="p-2.5 rounded-xl bg-amber-500/15 text-amber-500 text-xl flex-shrink-0">
+                 ⚠️
+               </div>
+               <div className="flex-1 min-w-0">
+                 <h3 className="text-base font-bold text-foreground">
+                   มีหน้าที่ต้องได้รับการยืนยันก่อน Export
+                 </h3>
+                 <p className="text-xs text-muted mt-1 leading-relaxed">
+                   พบหน้าที่การคลีนหรือการแปลมีความมั่นใจต่ำ หรือมีบริเวณข้อความที่ตรวจพบแต่ยังไม่มีคำแปล ตรวจสอบหน้าที่ระบุ หรือยืนยันเพื่อส่งออกพร้อมคำแปลที่มีอยู่
++                  หน้าที่ตรวจพบตัวอักษรภาษาอื่นหรือยังไม่ได้ตรวจกับต้นฉบับยืนยันผ่านไม่ได้ ต้องแก้ไข ส่งออกเป็นภาพต้นฉบับ หรือตัดออกจากการส่งออกอย่างชัดเจน
+                 </p>
+               </div>
+             </div>
+ 
+             <div className="max-h-60 overflow-y-auto border border-border/60 rounded-xl divide-y divide-border/40 bg-background/50">
+               {unconfirmedReviewPages.map((p) => (
+                 <div key={p.pageUrl} className="flex items-center justify-between p-3 text-xs">
+                   <div className="flex flex-wrap items-center gap-2 min-w-0">
+                     <span className="font-semibold text-foreground">
+                       หน้า {p.pageIndex + 1}
+                     </span>
+                     <span className="text-muted truncate max-w-[150px]">
+                       ({p.pageName})
+                     </span>
+                     <div className="flex flex-wrap items-center gap-1">
++                      {p.scriptIssueCount > 0 && (
++                        <span className="px-1.5 py-0.5 rounded bg-red-500/15 text-red-500 text-[10px] font-medium">
++                          ตัวอักษรภาษาอื่นปน {p.scriptIssueCount} จุด (ยืนยันผ่านไม่ได้)
++                        </span>
++                      )}
++                      {p.unverifiedReviewCount > 0 && (
++                        <span className="px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-500 text-[10px] font-medium">
++                          ยังไม่ได้ตรวจกับต้นฉบับ {p.unverifiedReviewCount} จุด
++                        </span>
++                      )}
++                      {p.targetUnconfirmed && (
++                        <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 text-[10px] font-medium">
++                          ยังไม่ยืนยันภาษาของหน้า
++                        </span>
++                      )}
++                      {p.backgroundBlocked && (
++                        <span className="px-1.5 py-0.5 rounded bg-red-500/15 text-red-500 text-[10px] font-medium">
++                          พบร่องรอยต้องตรวจในภาพพื้นหลัง
++                        </span>
++                      )}
+                       {p.missingTranslationCount > 0 && (
+                         <span className="px-1.5 py-0.5 rounded bg-red-500/15 text-red-500 text-[10px] font-medium">
+                           ยังไม่มีคำแปล {p.missingTranslationCount} บริเวณ
+                         </span>
+                       )}
+                       {p.hasUncertainCleaning && (
+                         <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 text-[10px] font-medium">
+                           การคลีนไม่แน่นอน
+                         </span>
+                       )}
+                       {p.hasUncertainTranslation && (
+                         <span className="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-500 text-[10px] font-medium">
+                           คำแปลควรตรวจสอบ
+                         </span>
+                       )}
+                     </div>
+                   </div>
+-                  <button
+-                    type="button"
+-                    onClick={() => {
+-                      exportSnapshotRef.current = null;
+-                      setIsChoosingExport(false);
+-                      setCurrentPage(p.pageIndex);
+-                      setUnconfirmedReviewPages(null);
+-                      setPendingExportAction(null);
+-                    }}
+-                    className="px-2 py-1 rounded border border-border hover:bg-surface text-[11px] font-medium transition-colors cursor-pointer"
+-                  >
+-                    ไปที่หน้านี้
+-                  </button>
++                  <div className="flex items-center gap-1.5 flex-shrink-0">
++                    {p.hasHardBlockers && (
++                      <button
++                        type="button"
++                        onClick={() => substituteExportPageWithOriginal(p.pageUrl)}
++                        className="px-2 py-1 rounded border border-border hover:bg-surface text-[11px] font-medium transition-colors cursor-pointer"
++                      >
++                        ส่งออกเป็นต้นฉบับ
++                      </button>
++                    )}
++                    {p.hasHardBlockers && pendingReviewIndicesRef.current === undefined && (
++                      <button
++                        type="button"
++                        onClick={() => excludeExportPage(p.pageUrl)}
++                        className="px-2 py-1 rounded border border-border hover:bg-surface text-[11px] font-medium transition-colors cursor-pointer"
++                      >
++                        ตัดหน้านี้ออก
++                      </button>
++                    )}
++                    <button
++                      type="button"
++                      onClick={() => {
++                        exportSnapshotRef.current = null;
++                        setIsChoosingExport(false);
++                        setCurrentPage(p.pageIndex);
++                        setUnconfirmedReviewPages(null);
++                        setPendingExportAction(null);
++                      }}
++                      className="px-2 py-1 rounded border border-border hover:bg-surface text-[11px] font-medium transition-colors cursor-pointer"
++                    >
++                      ไปที่หน้านี้
++                    </button>
++                  </div>
+                 </div>
+               ))}
+             </div>
+ 
++            {unconfirmedReviewPages.length === 0 && (
++              <p className="text-xs text-muted">
++                ทุกหน้าที่ได้รับผลกระทบถูกเลือกส่งออกเป็นต้นฉบับหรือตัดออกจากการส่งออกแล้ว
++              </p>
++            )}
++
+             <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-border/50">
+               <button
+                 type="button"
+                 onClick={() => {
+                   setUnconfirmedReviewPages(null);
+                   setPendingExportAction(null);
+                   setIsChoosingExport(false);
+                   exportSnapshotRef.current = null;
+                 }}
+                 className="px-4 py-2 rounded-xl border border-border hover:bg-surface text-xs font-semibold text-muted hover:text-foreground transition-colors cursor-pointer"
+               >
+                 ยกเลิก
+               </button>
++              {unconfirmedReviewPages.some((p) => p.hasHardBlockers) && (
++                <p className="text-[11px] text-muted max-w-[220px] text-right">
++                  หน้าที่ติดสถานะยืนยันผ่านไม่ได้ต้องแก้ไข ส่งออกเป็นต้นฉบับ หรือตัดออกก่อน
++                </p>
++              )}
+               <button
+                 type="button"
++                disabled={unconfirmedReviewPages.some((p) => p.hasHardBlockers)}
+                 onClick={() => {
+-                  const currentReview = getUnconfirmedPages(
+-                    exportSnapshotRef.current?.pages ?? pages, confirmedPages, cleaningResultsByPage, bubbleCacheRef.current,
+-                    pendingReviewIndicesRef.current, confirmedMissingTranslationsRef.current,
++                  const currentReview = collectExportReviewPages(
++                    exportSnapshotRef.current?.pages ?? pages, pendingReviewIndicesRef.current,
+                   );
+                   const shown = new Map(unconfirmedReviewPages.map(p => [p.pageUrl, p]));
+                   const hasNewWarning = currentReview.some(p => {
+                     const previous = shown.get(p.pageUrl);
+                     return !previous || previous.missingTranslationSignature !== p.missingTranslationSignature ||
+                       previous.hasUncertainCleaning !== p.hasUncertainCleaning ||
+-                      previous.hasUncertainTranslation !== p.hasUncertainTranslation;
++                      previous.hasUncertainTranslation !== p.hasUncertainTranslation ||
++                      previous.hasHardBlockers !== p.hasHardBlockers ||
++                      previous.scriptIssueCount !== p.scriptIssueCount ||
++                      previous.unverifiedReviewCount !== p.unverifiedReviewCount ||
++                      previous.targetUnconfirmed !== p.targetUnconfirmed ||
++                      previous.backgroundBlocked !== p.backgroundBlocked;
+                   });
+                   if (hasNewWarning) {
+                     setUnconfirmedReviewPages(currentReview);
+                     return;
+                   }
+                   unconfirmedReviewPages.forEach(p => {
+                     confirmedMissingTranslationsRef.current.set(p.pageUrl, p.missingTranslationSignature);
+                   });
+                   setConfirmedPages((prev) => {
+                     const next = new Set(prev);
+                     unconfirmedReviewPages.forEach((p) => next.add(p.pageUrl));
+                     return next;
+                   });
+                   const action = pendingExportAction;
+                   setUnconfirmedReviewPages(null);
+                   setPendingExportAction(null);
+                   action?.();
+                 }}
+-                className="px-4 py-2 rounded-xl bg-primary hover:bg-primary-hover text-primary-content text-xs font-semibold shadow-md transition-colors cursor-pointer"
++                className="px-4 py-2 rounded-xl bg-primary hover:bg-primary-hover text-primary-content text-xs font-semibold shadow-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+               >
+-                ยืนยันทุกหน้าและดำเนินการ Export
++                {unconfirmedReviewPages.length === 0 ? "ดำเนินการ Export ต่อ" : "ยืนยันทุกหน้าและดำเนินการ Export"}
+               </button>
+             </div>
+           </div>
+         </div>
+       )}
+ 
+       <ExportReportModal
+         isOpen={isExportReportOpen}
+         rows={exportReportRows}
+         onClose={() => { if (isZipping) return; closeExportReport(); exportSnapshotRef.current = null; }}
+diff --git a/tests/export/reviewGate.g04.test.ts b/tests/export/reviewGate.g04.test.ts
+new file mode 100644
+index 0000000..91f38dd
+--- /dev/null
++++ b/tests/export/reviewGate.g04.test.ts
+@@ -0,0 +1,288 @@
++import { describe, expect, it } from "vitest";
++
++import {
++  getUnconfirmedPages as scanPages,
++  getPageOutputBlockers as scanBlockers,
++} from "@/lib/export/reviewGate";
++import { withReviewIdentity, type TranslationReview } from "@/lib/translation/qualityReview";
++import {
++  applyArtworkConfirmations,
++  backgroundEligibilityState,
++  confirmCandidateArtwork,
++  inspectBackgroundRemnants,
++} from "@/lib/cleaning/backgroundRemnantInspection";
++import type { TranslatedBubble } from "@/lib/translationOverlay";
++
++// ── Fixtures ────────────────────────────────────────────────────────────────
++
++const acceptedReview = (source: string, text: string): TranslationReview =>
++  withReviewIdentity({ status: "accepted", sourceText: source, reviewedText: text }, "th", "src-1");
++
++/** Old accepted snapshot that exactly matches the (contaminated) raw text: the pre-G04 bypass state. */
++const oldAcceptedContaminated = (): TranslatedBubble => ({
++  box: [0, 0, 100, 100],
++  t: "รอก่อนא",
++  original_text: "Wait.",
++  translationReview: acceptedReview("Wait.", "รอก่อนא"),
++});
++
++const cleanVerified = (): TranslatedBubble => ({
++  box: [0, 0, 100, 100],
++  t: "รอก่อน",
++  original_text: "Wait.",
++  translationReview: acceptedReview("Wait.", "รอก่อน"),
++});
++
++const manualUnverified = (): TranslatedBubble => ({
++  box: [0, 0, 100, 100],
++  t: "พิมพ์เอง",
++  original_text: "Typed.",
++});
++
++const page = (url: string, extra: Record<string, unknown> = {}) => ({ url, name: url, ...extra });
++const bubbles = (url: string, list: TranslatedBubble[]) => new Map([[url, list]]);
++
++// Synthetic background-remnant evidence (real R01 module, no mocks).
++const getPageOutputBlockers = (points: TranslatedBubble[], target: string) => scanBlockers(points, { targetId: target, policyVersion: acceptedReview("", "").policyVersion! }, cleanedBackground(), "src-1");
++const getUnconfirmedPages: typeof scanPages = (pages, confirmed, cleaning, points, indices, signatures, options) => scanPages(pages, confirmed, new Map(pages.map(p => [p.url, cleaning.get(p.url) ?? {cleanUrl:"clean",regions:[]} as never])), points, indices, signatures, { ...options, sourceRevisions: options?.sourceRevisions ?? new Map(pages.map(p => [p.url, "src-1"])), backgroundInspections: options?.backgroundInspections ?? new Map(pages.map(p => [p.url, cleanedBackground()])) });
++const SIZE = 32;
++const inkedPlane = () => {
++  const data = new Uint8Array(SIZE * SIZE).fill(255);
++  for (let y = 8; y < 16; y += 1) for (let x = 8; x < 16; x += 1) data[y * SIZE + x] = 0;
++  return { width: SIZE, height: SIZE, data };
++};
++const blankPlane = () => ({ width: SIZE, height: SIZE, data: new Uint8Array(SIZE * SIZE).fill(255) });
++const remnantRevisions = { sourceRevision: "src-1", backgroundRevision: "bg-1", removalRevision: "rm-1" };
++const removalRegions = [{ id: "reg-1", rect: { x: 6, y: 6, width: 12, height: 12 }, status: "ready" as const }];
++const inspectedRemnant = () =>
++  inspectBackgroundRemnants({
++    revisions: remnantRevisions,
++    originalPlane: inkedPlane(),
++    cleanPlane: inkedPlane(),
++    removalRegions,
++  });
++const cleanedBackground = () =>
++  inspectBackgroundRemnants({
++    revisions: remnantRevisions,
++    originalPlane: inkedPlane(),
++    cleanPlane: blankPlane(),
++    removalRegions,
++  });
++
++/** A page whose only problem is the given background inspection (clean verified text, confirmed page). */
++const backgroundOnlyPage = (inspection: ReturnType<typeof inspectedRemnant>) => {
++  const url = "bg-page";
++  return getUnconfirmedPages(
++    [page(url)],
++    new Set([url]),
++    new Map(),
++    bubbles(url, [cleanVerified()]),
++    undefined,
++    new Map([[url, "clean"]]),
++    { targetIdentities: new Map([[url, { targetId: "th", policyVersion: acceptedReview("", "").policyVersion! }]]), backgroundInspections: new Map([[url, inspection]]) },
++  );
++};
++
++// ── Deterministic script failures ───────────────────────────────────────────
++
++describe("G04 shared export eligibility gate", () => {
++  it("requires absent background evidence and rejects old saved policy", () => {
++    expect(scanBlockers([cleanVerified()], { targetId: "th", policyVersion: acceptedReview("", "").policyVersion! }).backgroundBlocked).toBe(true);
++    const result = getUnconfirmedPages([page("old")], new Set(["old"]), new Map(), bubbles("old", [cleanVerified()]), undefined, undefined, { targetIdentities: new Map([["old", { targetId: "th", policyVersion: "old" }]]) });
++    expect(result[0]?.targetUnconfirmed).toBe(true);
++  });
++  it("blocks a deterministic script failure even with an old accepted snapshot, page confirmation and a fresh omission signature", () => {
++    const url = "p1";
++    const result = getUnconfirmedPages(
++      [page(url)],
++      new Set([url]), // generic page confirmation already recorded
++      new Map(),
++      bubbles(url, [oldAcceptedContaminated()]),
++      undefined,
++      new Map([[url, "clean"]]), // omission signature acknowledged
++      { targetIdentities: new Map([[url, { targetId: "th", policyVersion: acceptedReview("", "").policyVersion! }]]) },
++    );
++    expect(result).toHaveLength(1);
++    expect(result[0]).toMatchObject({ pageUrl: url, scriptIssueCount: 1, hasHardBlockers: true });
++  });
++
++  it("cannot bypass a script failure through a dismissed state either", () => {
++    const url = "p1";
++    const dismissedBubble: TranslatedBubble = {
++      ...oldAcceptedContaminated(),
++      translationReview: withReviewIdentity({ status: "dismissed", sourceText: "Wait.", reviewedText: "รอก่อนא" }, "th"),
++    };
++    const result = getUnconfirmedPages(
++      [page(url)],
++      new Set([url]),
++      new Map(),
++      bubbles(url, [dismissedBubble]),
++      undefined,
++      undefined,
++      { targetIdentities: new Map([[url, { targetId: "th", policyVersion: acceptedReview("", "").policyVersion! }]]) },
++    );
++    expect(result[0]?.scriptIssueCount).toBe(1);
++    expect(result[0]?.hasHardBlockers).toBe(true);
++  });
++
++  it("reports the raw blockers so publication paths can gate without the full page scan", () => {
++    const blockers = getPageOutputBlockers([oldAcceptedContaminated()], "th");
++    expect(blockers).toEqual({ targetUnconfirmed: false, scriptIssueCount: 1, unverifiedReviewCount: 0, backgroundBlocked: false });
++    expect(getPageOutputBlockers([cleanVerified()], "th")).toMatchObject({ scriptIssueCount: 0, unverifiedReviewCount: 0 });
++  });
++
++  // ── Absent/stale review evidence (legacy & manual points) ─────────────────
++
++  it("blocks translated output whose points carry no review evidence, and page confirmation cannot clear it", () => {
++    const url = "legacy";
++    const confirmed = getUnconfirmedPages(
++      [page(url)],
++      new Set([url]),
++      new Map(),
++      bubbles(url, [manualUnverified()]),
++      undefined,
++      new Map([[url, "clean"]]),
++      { targetIdentities: new Map([[url, { targetId: "th", policyVersion: acceptedReview("", "").policyVersion! }]]) },
++    );
++    expect(confirmed).toHaveLength(1);
++    expect(confirmed[0]).toMatchObject({ unverifiedReviewCount: 1, hasHardBlockers: true, scriptIssueCount: 0 });
++  });
++
++  it("re-blocks when the accepted snapshot no longer describes the current text", () => {
++    const url = "stale";
++    const editedBubble: TranslatedBubble = {
++      ...cleanVerified(),
++      t: "รอก่อนนะ", // text edited after the snapshot was recorded
++    };
++    const result = getUnconfirmedPages(
++      [page(url)], new Set([url]), new Map(), bubbles(url, [editedBubble]), undefined,
++      new Map([[url, "clean"]]),
++      { targetIdentities: new Map([[url, { targetId: "th", policyVersion: acceptedReview("", "").policyVersion! }]]) },
++    );
++    expect(result[0]?.unverifiedReviewCount).toBe(1);
++    expect(result[0]?.hasHardBlockers).toBe(true);
++  });
++
++  it("resolves unverified points through explicit per-point confirmation and ignores revision-only bumps (G03 carry)", () => {
++    const url = "confirm";
++    // confirmPointReview binds the post-bump page revision; the gate must not
++    // staleness-check against a sourceRevision, only against exact text/source/target.
++    const confirmedBubble: TranslatedBubble = {
++      box: [0, 0, 100, 100],
++      t: "พิมพ์เอง",
++      original_text: "Typed.",
++      translationReview: {
++        ...acceptedReview("Typed.", "พิมพ์เอง"),
++        sourceRevision: "src-1",
++      },
++    };
++    const result = getUnconfirmedPages(
++      [page(url)], new Set(), new Map(), bubbles(url, [confirmedBubble]), undefined,
++      undefined,
++      { targetIdentities: new Map([[url, { targetId: "th", policyVersion: acceptedReview("", "").policyVersion! }]]) },
++    );
++    expect(result).toEqual([]);
++  });
++
++  it("excludes deleted and empty points from every eligibility check", () => {
++    const url = "deleted";
++    const result = getUnconfirmedPages(
++      [page(url)], new Set(), new Map(),
++      bubbles(url, [
++        { ...oldAcceptedContaminated(), deleted: true },
++        { ...manualUnverified(), t: "" },
++      ]),
++      undefined, undefined,
++      { targetIdentities: new Map([[url, { targetId: "th", policyVersion: acceptedReview("", "").policyVersion! }]]) },
++    );
++    expect(result).toEqual([]);
++  });
++
++  // ── Target identity ───────────────────────────────────────────────────────
++
++  it("blocks pages with translated text whose target identity is unconfirmed, until the target is confirmed", () => {
++    const url = "legacy-target";
++    const unconfirmed = getUnconfirmedPages(
++      [page(url)], new Set(), new Map(), bubbles(url, [cleanVerified()]),
++      undefined, undefined, { targetIdentities: new Map([[url, undefined]]) },
++    );
++    expect(unconfirmed).toHaveLength(1);
++    expect(unconfirmed[0]).toMatchObject({ targetUnconfirmed: true, hasHardBlockers: true });
++    // After the one-time legacy confirmation the page passes (review evidence is current).
++    const confirmed = getUnconfirmedPages(
++      [page(url)], new Set(), new Map(), bubbles(url, [cleanVerified()]),
++      undefined, undefined, { targetIdentities: new Map([[url, { targetId: "th", policyVersion: acceptedReview("", "").policyVersion! }]]) },
++    );
++    expect(confirmed).toEqual([]);
++  });
++
++  it("does not demand a target for pages without any translated text", () => {
++    const url = "blank";
++    const result = getUnconfirmedPages(
++      [page(url)], new Set(), new Map(), new Map(), undefined, undefined,
++      { targetIdentities: new Map([[url, undefined]]) },
++    );
++    expect(result).toEqual([]);
++  });
++
++  // ── Background-remnant boundary (R01), decoupled from generated-text approval ──
++
++  it("blocks export on an unresolved background-remnant finding even though the page and every point are confirmed", () => {
++    expect(backgroundEligibilityState(inspectedRemnant())).toBe("unresolved");
++    const result = backgroundOnlyPage(inspectedRemnant());
++    expect(result).toHaveLength(1);
++    expect(result[0]).toMatchObject({ backgroundBlocked: true, hasHardBlockers: true, scriptIssueCount: 0, unverifiedReviewCount: 0 });
++  });
++
++  it("blocks on unavailable background evidence instead of trusting the page", () => {
++    const missingClean = inspectBackgroundRemnants({
++      revisions: remnantRevisions,
++      originalPlane: inkedPlane(),
++      removalRegions,
++    });
++    expect(backgroundEligibilityState(missingClean)).toBe("unavailable");
++    expect(backgroundOnlyPage(missingClean)[0]?.backgroundBlocked).toBe(true);
++  });
++
++  it("passes a verified or human-confirmed background and keeps the boundary independent of text approval", () => {
++    expect(backgroundEligibilityState(cleanedBackground())).toBe("approved");
++    expect(backgroundOnlyPage(cleanedBackground())).toEqual([]);
++    const inspected = inspectedRemnant();
++    const confirmedResult = applyArtworkConfirmations(
++      inspected,
++      [confirmCandidateArtwork(inspected, inspected.candidates[0].id)!],
++    );
++    expect(backgroundEligibilityState(confirmedResult)).toBe("human-confirmed");
++    expect(backgroundOnlyPage(confirmedResult)).toEqual([]);
++  });
++
++  // ── Explicit substitution / exclusion ─────────────────────────────────────
++
++  it("lets an explicit original-image substitution and an explicit exclusion skip the translated gate", () => {
++    const original = page("sub", { exportSource: "original" });
++    const excluded = page("exc", { exportExcluded: true });
++    const result = getUnconfirmedPages(
++      [original, excluded], new Set(), new Map(),
++      bubbles("sub", [oldAcceptedContaminated()]),
++      undefined, undefined,
++      { targetIdentities: new Map([["sub", { targetId: "th", policyVersion: acceptedReview("", "").policyVersion! }], ["exc", { targetId: "th", policyVersion: acceptedReview("", "").policyVersion! }]]) },
++    );
++    expect(result).toEqual([]);
++  });
++
++  it("keeps listed pages in export order", () => {
++    const result = getUnconfirmedPages(
++      [page("a"), page("b"), page("c")], new Set(), new Map(),
++      bubbles("a", [oldAcceptedContaminated()]),
++      undefined, undefined,
++      { targetIdentities: new Map([["a", { targetId: "th", policyVersion: acceptedReview("", "").policyVersion! }], ["b", { targetId: "th", policyVersion: acceptedReview("", "").policyVersion! }], ["c", { targetId: "th", policyVersion: acceptedReview("", "").policyVersion! }]]) },
++    );
++    expect(result.map(row => row.pageUrl)).toEqual(["a"]);
++  });
++});
++
++it("G04 does not omit control-only lettering or stale source bindings", () => {
++ const point = {...cleanVerified(), t:"\u000b", translationReview: acceptedReview("Wait.", "\u000b")};
++ expect(getPageOutputBlockers([point], "th").scriptIssueCount).toBe(1);
++ expect(scanBlockers([cleanVerified()], {targetId:"th",policyVersion:acceptedReview("", "").policyVersion!},cleanedBackground(),"other-source").unverifiedReviewCount).toBe(1);
++});
+diff --git a/tests/workflow/workspaceExportEligibility.test.tsx b/tests/workflow/workspaceExportEligibility.test.tsx
+new file mode 100644
+index 0000000..56383f6
+--- /dev/null
++++ b/tests/workflow/workspaceExportEligibility.test.tsx
+@@ -0,0 +1,436 @@
++import {
++  act,
++  fireEvent,
++  render,
++  screen,
++  waitFor,
++} from "@testing-library/react";
++import type { ComponentProps } from "react";
++import { beforeEach, expect, test, vi } from "vitest";
++
++import { useCleaning } from "@/hooks/useCleaning";
++import { useTranslation } from "@/hooks/useTranslation";
++import WorkspacePage from "@/src/app/page";
++import { scanPageGeometry } from "@/lib/export/readabilityScan";
++import { downloadTranslatedImage, applyTranslationOverlay } from "@/lib/translationOverlay";
++import { inspectBackgroundRemnants } from "@/lib/cleaning/backgroundRemnantInspection";
++import { LANGUAGE_POLICY_VERSION } from "@/lib/languagePolicy";
++import { withReviewIdentity } from "@/lib/translation/qualityReview";
++
++vi.mock("@/hooks/useCleaning");
++vi.mock("@/hooks/useTranslation");
++vi.mock("react-hot-toast", () => ({
++  default: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() }),
++  Toaster: () => null,
++}));
++vi.mock("@/lib/translationOverlay", () => ({
++  applyTranslationOverlay: vi.fn(),
++  downloadTranslatedImage: vi.fn(),
++}));
++vi.mock("@/lib/export/readabilityScan", () => ({ scanPageGeometry: vi.fn() }));
++vi.mock("@/components/cleaning/MaskLegend", () => ({ MaskLegend: () => null }));
++vi.mock("@/components/cleaning/CleaningToolbar", () => ({
++  CleaningToolbar: vi.fn(({ hasTranslated, layer, onClean, onEditMask, onLayerChange }: ComponentProps<typeof import("@/components/cleaning/CleaningToolbar").CleaningToolbar>) => (
++    <section aria-label="Cleaning toolbar" data-has-translated={String(hasTranslated)} data-layer={layer}>
++      <button type="button" onClick={onClean}>Clean current page</button>
++      <button type="button" onClick={onEditMask}>Edit mask</button>
++      {(["original", "clean", "translated", "mask"] as const).map((nextLayer) => (
++        <button key={nextLayer} type="button" onClick={() => onLayerChange(nextLayer)}
++          disabled={nextLayer === "translated" && !hasTranslated}>
++          Layer {nextLayer}
++        </button>
++      ))}
++    </section>
++  )),
++}));
++vi.mock("@/components/cleaning/MaskEditor", () => ({
++  MaskEditor: vi.fn(() => <div role="dialog" aria-label="Mask editor" />),
++}));
++vi.mock("@/lib/export/saveLocation", async (importOriginal) => ({
++  ...await importOriginal<typeof import("@/lib/export/saveLocation")>(),
++  saveBlob: vi.fn().mockImplementation(async (_blob, name) => name),
++}));
++
++const PAGE_ONE_URL = "data:image/png;base64,cGFnZU9uZQ=="; // "pageOne"
++const PAGE_TWO_URL = "data:image/png;base64,cGFnZVR3bw=="; // "pageTwo"
++const STALE_RENDER_URL = "data:image/png;base64,U1RBTEU="; // "STALE"
++const PAGE_ONE_NAME = "page-one.png";
++
++const cleaningResult = {
++  sourceFingerprint: "src-1",
++  width: 100,
++  height: 100,
++  pageId: PAGE_ONE_URL,
++  cleanUrl: "data:image/png;base64,Q0xFQU4=",
++  maskUrl: "data:image/png;base64,TUFTSw==",
++  reviewMaskUrl: "data:image/png;base64,UkVWSUVX",
++  protectedMaskUrl: "data:image/png;base64,UFJPVEVDVEVE",
++  diffUrl: "data:image/png;base64,RElGRg==",
++  regions: [],
++};
++
++/** Old accepted snapshot that exactly matches the contaminated raw text — the pre-G04 bypass state. */
++const oldAcceptedContaminated = () => ({
++  box: [0, 0, 100, 100],
++  t: "รอก่อนא",
++  original_text: "Wait.",
++  translationReview: withReviewIdentity({ status: "accepted" as const, sourceText: "Wait.", reviewedText: "รอก่อนא" }, "th", "src-1"),
++});
++const cleanVerified = (text = "รอก่อน", source = "Wait.") => ({
++  box: [0, 0, 100, 100],
++  t: text,
++  original_text: source,
++  translationReview: withReviewIdentity({ status: "accepted" as const, sourceText: source, reviewedText: text }, "th", "src-1"),
++});
++
++let translationMockState: Record<string, unknown>;
++
++beforeEach(() => {
++  vi.restoreAllMocks();
++  vi.clearAllMocks();
++  vi.mocked(downloadTranslatedImage).mockReset();
++  vi.mocked(applyTranslationOverlay).mockReset();
++  vi.mocked(applyTranslationOverlay).mockImplementation((...args) => { args[4]?.("data:image/png;base64,UkVOREVSRUQ="); return true as never; });
++  const imageSrc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src")!;
++  vi.spyOn(HTMLImageElement.prototype, "src", "set").mockImplementation(function(this: HTMLImageElement, url) { imageSrc.set?.call(this, url); if (this.id === "offscreen-image") queueMicrotask(() => this.dispatchEvent(new Event("load"))); });
++  translationMockState = {
++    targetLang: "Thai",
++    setTargetLang: vi.fn(),
++    pageTargetCacheRef: { current: new Map([PAGE_ONE_URL, PAGE_TWO_URL].map(url => [url, {targetId:"th", policyVersion:LANGUAGE_POLICY_VERSION}])) },
++    getPageTargetLanguage: vi.fn(() => "th"),
++    sourceLang: "auto",
++    setSourceLang: vi.fn(),
++    modelPreference: "auto",
++    setModelPreference: vi.fn(),
++    allowPreviewModels: false,
++    setAllowPreviewModels: vi.fn(),
++    glossary: [],
++    setGlossary: vi.fn(),
++    textStyle: { fontFamily: "Itim, sans-serif", textColor: "#000000", textOutline: "#FFFFFF", fontSizeMultiplier: 1 },
++    setTextStyle: vi.fn(),
++    nsfwBypassMode: false,
++    setNsfwBypassMode: vi.fn(),
++    isTranslating: false,
++    translationResult: null,
++    setTranslationResult: vi.fn(),
++    showTranslate: false,
++    setShowTranslate: vi.fn(),
++    handleTranslate: vi.fn().mockResolvedValue(true),
++    isTranslatingAll: false,
++    translateAllProgress: null,
++    handleTranslateAll: vi.fn().mockResolvedValue(undefined),
++    cancelTranslateAll: vi.fn(),
++    translateCrop: vi.fn(),
++    activeBubbles: [],
++    setActiveBubbles: vi.fn(),
++    translatedImages: new Map(),
++    translatedImageCacheRef: { current: new Map() },
++    bubbleCacheRef: { current: new Map() },
++    textStyleRef: { current: {} },
++    userApiKey: "",
++    setUserApiKey: vi.fn(),
++    restoreSavedSession: vi.fn().mockResolvedValue({
++      pages: [{ url: PAGE_ONE_URL, name: PAGE_ONE_NAME }],
++      currentPage: 0,
++      bubbleCache: new Map(),
++      translatedImageCache: new Map(),
++    }),
++    clearSavedSession: vi.fn(),
++    saveStatus: "idle",
++    saveError: null,
++    retrySaveSession: vi.fn().mockResolvedValue(true),
++    workflowPhase: null,
++    batchFailures: [],
++    failureGroups: [],
++    retryFailedPages: vi.fn().mockResolvedValue(undefined),
++    retryFailureGroup: vi.fn().mockResolvedValue(undefined),
++    autoProceedOnReview: false,
++    setAutoProceedOnReview: vi.fn(),
++    reviewFlaggedPages: new Set(),
++    invalidatePageTranslation: vi.fn(),
++    refreshPageTranslation: vi.fn().mockResolvedValue(undefined),
++    scanTranslatedPages: vi.fn(() => []),
++    inspectTranslatedPages: vi.fn(() => []),
++    replaceBubbleText: vi.fn(() => 0),
++    getPageSignature: vi.fn(() => "rev-0"),
++    getPageRevision: vi.fn(() => 0),
++    cacheRevision: 0,
++    inspectLegacyTargets: vi.fn(() => []),
++    confirmLegacyTarget: vi.fn(() => 0),
++    inspectReviewIssues: vi.fn(() => []),
++    confirmPointReview: vi.fn(() => true),
++    repairWholeBook: vi.fn().mockResolvedValue({ pagesRepaired: 0, pointsRepaired: 0, cancelled: false, unresolved: [], skipped: [] }),
++    cancelWholeBookRepair: vi.fn(),
++    isRepairingBook: false,
++  };
++  vi.mocked(useCleaning).mockReturnValue({
++    getCurrentRemnantReview: vi.fn(() => ({ inspection: inspectBackgroundRemnants({revisions:{sourceRevision:"src-1",backgroundRevision:"bg-1",removalRevision:"rm-1"}, originalPlane:{width:1,height:1,data:new Uint8Array([255])},cleanPlane:{width:1,height:1,data:new Uint8Array([255])},removalRegions:[{id:"r",rect:{x:0,y:0,width:1,height:1},status:"ready"}]}) })),
++    cleanPage: vi.fn().mockResolvedValue(cleaningResult),
++    cleanCurrentPage: vi.fn().mockResolvedValue(cleaningResult),
++    retryRegion: vi.fn().mockResolvedValue(cleaningResult),
++    cancelPolling: vi.fn(),
++    currentResult: cleaningResult,
++    progress: undefined,
++    error: undefined,
++    resultsByPage: new Map([[PAGE_ONE_URL, cleaningResult], [PAGE_TWO_URL, cleaningResult]]),
++  } as never);
++  vi.mocked(useTranslation).mockReturnValue(translationMockState as never);
++  vi.mocked(scanPageGeometry).mockResolvedValue({ findings: [] });
++  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
++    ok: true,
++    status: 200,
++    json: vi.fn().mockResolvedValue({ pairingToken: "tok" }),
++    blob: vi.fn().mockResolvedValue(new Blob(["original"], { type: "image/png" })),
++  }));
++});
++
++async function restoreWorkspaceWith(overrides: Record<string, unknown>) {
++  Object.assign(translationMockState, overrides);
++  const rendered = render(<WorkspacePage />);
++  const restoreButton = await screen.findByRole("button", { name: /คืนค่างานเดิม/ });
++  await act(async () => { fireEvent.click(restoreButton); });
++  await waitFor(() =>
++    expect(screen.queryByRole("button", { name: /คืนค่างานเดิม/ })).not.toBeInTheDocument(),
++  );
++  return rendered;
++}
++
++async function requestExport(item: RegExp | string) {
++  fireEvent.click(screen.getAllByRole("button", { name: "ส่งออก" })[0]);
++  fireEvent.click(await screen.findByRole("menuitem", { name: item }));
++}
++
++async function readBlobBytes(blob: Blob): Promise<ArrayBuffer> {
++  return new Promise((resolve, reject) => {
++    const reader = new FileReader();
++    reader.onload = () => resolve(reader.result as ArrayBuffer);
++    reader.onerror = () => reject(reader.error);
++    reader.readAsArrayBuffer(blob);
++  });
++}
++
++test("book export lists a script-failed page even with an old accepted snapshot, and cannot blanket-confirm it", async () => {
++  await restoreWorkspaceWith({
++    bubbleCacheRef: { current: new Map([[PAGE_ONE_URL, [oldAcceptedContaminated()]]]) },
++  });
++  await requestExport(/ZIP/);
++
++  const notice = await screen.findByText("มีหน้าที่ต้องได้รับการยืนยันก่อน Export");
++  expect(notice).toBeTruthy();
++  expect(screen.getByText(/ตัวอักษรภาษาอื่นปน 1 จุด/)).toBeTruthy();
++  expect(screen.getAllByText(/ยืนยันผ่านไม่ได้/).length).toBeGreaterThan(0);
++  const confirm = screen.getByRole("button", { name: "ยืนยันทุกหน้าและดำเนินการ Export" });
++  expect(confirm).toBeDisabled();
++  // No output escaped the gate.
++  expect(vi.mocked(downloadTranslatedImage)).not.toHaveBeenCalled();
++  const { saveBlob } = await import("@/lib/export/saveLocation");
++  expect(saveBlob).not.toHaveBeenCalled();
++});
++
++test("the gate fires before any cached raster or live-canvas render is consulted", async () => {
++  await restoreWorkspaceWith({
++    bubbleCacheRef: { current: new Map([[PAGE_ONE_URL, [oldAcceptedContaminated()]]]) },
++    translatedImageCacheRef: { current: new Map([[PAGE_ONE_URL, STALE_RENDER_URL]]) },
++  });
++  await requestExport("รูปภาพหน้านี้");
++
++  expect(await screen.findByText("มีหน้าที่ต้องได้รับการยืนยันก่อน Export")).toBeTruthy();
++  expect(vi.mocked(downloadTranslatedImage)).not.toHaveBeenCalled();
++  expect(vi.mocked(applyTranslationOverlay)).not.toHaveBeenCalled();
++  const { saveBlob } = await import("@/lib/export/saveLocation");
++  expect(saveBlob).not.toHaveBeenCalled();
++});
++
++test("an affected page can be explicitly substituted with its original image", async () => {
++  await restoreWorkspaceWith({
++    bubbleCacheRef: { current: new Map([[PAGE_ONE_URL, [oldAcceptedContaminated()]]]) },
++  });
++  await requestExport("รูปภาพหน้านี้");
++  await screen.findByText("มีหน้าที่ต้องได้รับการยืนยันก่อน Export");
++
++  fireEvent.click(screen.getByRole("button", { name: "ส่งออกเป็นต้นฉบับ" }));
++  // The affected page leaves the list; the pending export stays actionable.
++  const { saveBlob } = await import("@/lib/export/saveLocation");
++  const continueExport = await screen.findByRole("button", { name: "ดำเนินการ Export ต่อ" });
++  const exportCompleted = new Promise<void>((resolve) => {
++    vi.mocked(translationMockState.setTranslationResult as ReturnType<typeof vi.fn>).mockImplementation((message: unknown) => {
++      if (typeof message === "string" && message.includes("บันทึก SuperK_Page_001_page-one.png สำเร็จ")) resolve();
++    });
++  });
++  await act(async () => {
++    fireEvent.click(continueExport);
++    await exportCompleted;
++  });
++  await waitFor(() => expect(translationMockState.setTranslationResult).toHaveBeenCalledWith(expect.stringContaining("บันทึก SuperK_Page_001_page-one.png สำเร็จ")));
++  const [blob, filename] = vi.mocked(saveBlob).mock.calls.at(-1)!;
++  expect(filename).toBe("SuperK_Page_001_page-one.png");
++  expect(new TextDecoder().decode(await readBlobBytes(blob as Blob))).toBe("pageOne");
++  // Original bytes were exported, not a translated render.
++  expect(vi.mocked(downloadTranslatedImage)).not.toHaveBeenCalled();
++});
++
++test("an affected page can be explicitly excluded from a book export while ordering and numbering are preserved", async () => {
++  await restoreWorkspaceWith({
++    bubbleCacheRef: { current: new Map([
++      [PAGE_ONE_URL, [oldAcceptedContaminated()]],
++      [PAGE_TWO_URL, [cleanVerified("หน้าสอง", "Second.")]],
++    ]), },
++    translatedImageCacheRef: { current: new Map([[PAGE_TWO_URL, "data:image/png;base64,cGFnZVR3bw=="]]) },
++    restoreSavedSession: vi.fn().mockResolvedValue({
++      pages: [
++        { url: PAGE_ONE_URL, name: PAGE_ONE_NAME },
++        { url: PAGE_TWO_URL, name: "page-two.png" },
++      ],
++      currentPage: 0,
++      bubbleCache: new Map(),
++      translatedImageCache: new Map(),
++    }),
++  });
++  await requestExport(/ZIP/);
++  await screen.findByText("มีหน้าที่ต้องได้รับการยืนยันก่อน Export");
++
++  fireEvent.click(screen.getByRole("button", { name: "ตัดหน้านี้ออก" }));
++  fireEvent.click(await screen.findByRole("button", { name: "ดำเนินการ Export ต่อ" }));
++
++  const { saveBlob } = await import("@/lib/export/saveLocation");
++  await waitFor(() => expect(saveBlob).toHaveBeenCalled());
++  const JSZip = (await import("jszip")).default;
++  const zip = await JSZip.loadAsync(await readBlobBytes(vi.mocked(saveBlob).mock.calls.at(-1)![0] as Blob));
++  expect(zip.file("SuperK_Page_001_page-one.png")).toBeNull();
++  expect(await zip.file("SuperK_Page_002_page-two.png")!.async("string")).toBe("RENDERED");
++  // The exclusion is reported, never silent.
++  await waitFor(() =>
++    expect(translationMockState.setTranslationResult).toHaveBeenCalledWith(expect.stringContaining("ตัด 1 หน้าออก")),
++  );
++});
++
++test("missing review evidence blocks export and explicit per-point confirmation releases it", async () => {
++  const unverified = { box: [0, 0, 100, 100], t: "พิมพ์เอง", original_text: "Typed." };
++  const rendered = await restoreWorkspaceWith({
++    bubbleCacheRef: { current: new Map([[PAGE_ONE_URL, [unverified]]]) },
++  });
++  await requestExport("รูปภาพหน้านี้");
++  await screen.findByText("มีหน้าที่ต้องได้รับการยืนยันก่อน Export");
++  expect(screen.getByText(/ยังไม่ได้ตรวจกับต้นฉบับ 1 จุด/)).toBeTruthy();
++  expect(screen.getByRole("button", { name: "ยืนยันทุกหน้าและดำเนินการ Export" })).toBeDisabled();
++
++  // The per-point confirmation (review dialog) mutates the bubble's review
++  // evidence in place and bumps the hook's cache revision.
++  (translationMockState.bubbleCacheRef as { current: Map<string, unknown[]> }).current
++    .set(PAGE_ONE_URL, [cleanVerified("พิมพ์เอง", "Typed.")]);
++  vi.mocked(useTranslation).mockReturnValue({
++    ...translationMockState,
++    cacheRevision: 1,
++  } as never);
++  rendered.rerender(<WorkspacePage />);
++  vi.mocked(downloadTranslatedImage).mockReturnValue("data:image/png;base64,UkVOREVSRUQ=" as never);
++  const { saveBlob } = await import("@/lib/export/saveLocation");
++  const continueExport = await screen.findByRole("button", { name: "ดำเนินการ Export ต่อ" });
++  const exportCompleted = new Promise<void>((resolve) => {
++    vi.mocked(translationMockState.setTranslationResult as ReturnType<typeof vi.fn>).mockImplementation((message: unknown) => {
++      if (typeof message === "string" && message.includes("บันทึก SuperK_Page_001_page-one.png สำเร็จ")) resolve();
++    });
++  });
++  await act(async () => {
++    fireEvent.click(continueExport);
++    await exportCompleted;
++  });
++  await waitFor(() => expect(translationMockState.setTranslationResult).toHaveBeenCalledWith(expect.stringContaining("บันทึก SuperK_Page_001_page-one.png สำเร็จ")));
++  expect(vi.mocked(saveBlob).mock.calls.at(-1)![1]).toBe("SuperK_Page_001_page-one.png");
++});
++
++test("publish-back to the reading view is gated by the same eligibility rule", async () => {
++  const publishCalls: string[] = [];
++  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
++    const url = String(input);
++    if (url.includes("/api/extension/publish-back")) {
++      publishCalls.push(url);
++      return { ok: true, json: async () => ({}) } as Response;
++    }
++    return { ok: true, status: 200, json: async () => ({ pairingToken: "tok" }) } as Response;
++  });
++  vi.stubGlobal("fetch", fetchMock);
++  const rendered = await restoreWorkspaceWith({
++    bubbleCacheRef: { current: new Map([[PAGE_ONE_URL, [oldAcceptedContaminated()]]]) },
++    restoreSavedSession: vi.fn().mockResolvedValue({
++      pages: [{ url: PAGE_ONE_URL, name: PAGE_ONE_NAME, originUrl: "https://reader.example/page-1" }],
++      currentPage: 0,
++      bubbleCache: new Map(),
++      translatedImageCache: new Map(),
++    }),
++  });
++
++  const publishButton = screen.getAllByRole("button", { name: "ส่งคำแปลกลับไปยังหน้าอ่านบนเว็บ" })[0];
++  fireEvent.click(publishButton);
++  // Let the publish attempt settle (the button re-enables when it finishes).
++  await waitFor(() => expect(publishButton).toBeEnabled());
++  expect(publishCalls).toEqual([]);
++
++  // After the text is repaired the same publication succeeds.
++  vi.mocked(useTranslation).mockReturnValue({
++    ...translationMockState,
++    bubbleCacheRef: { current: new Map([[PAGE_ONE_URL, [cleanVerified()]]]) },
++  } as never);
++  rendered.rerender(<WorkspacePage />);
++  const repairedButton = screen.getAllByRole("button", { name: "ส่งคำแปลกลับไปยังหน้าอ่านบนเว็บ" })[0];
++  fireEvent.click(repairedButton);
++  await waitFor(() => expect(publishCalls).toHaveLength(1));
++});
++
++test.each([/ZIP/, /CBZ/, /PDF/, /Strip/, "รูปภาพหน้านี้"])("every output format blocks absent background before raster selection: %s", async (format) => {
++ // Replace only the evidence accessor while keeping the real workspace actions.
++ const base = vi.mocked(useCleaning)({pages:[],currentPage:0});
++ vi.mocked(useCleaning).mockReturnValue({...base, getCurrentRemnantReview: () => undefined} as never);
++ await restoreWorkspaceWith({bubbleCacheRef:{current:new Map([[PAGE_ONE_URL,[cleanVerified()]]])}, translatedImageCacheRef:{current:new Map([[PAGE_ONE_URL,STALE_RENDER_URL]])}});
++ await requestExport(format);
++ expect(await screen.findByText("มีหน้าที่ต้องได้รับการยืนยันก่อน Export")).toBeTruthy();
++ expect(downloadTranslatedImage).not.toHaveBeenCalled();
++ expect(applyTranslationOverlay).not.toHaveBeenCalled();
++ const {saveBlob} = await import("@/lib/export/saveLocation");
++ expect(saveBlob).not.toHaveBeenCalled();
++});
++
++test("remnant findings open the comparison mask at the bounded candidate without resolving or recleaning", async () => {
++ const base = vi.mocked(useCleaning)({pages:[],currentPage:0});
++ const region = {id:"r",rect:{x:2,y:2,width:12,height:12},status:"ready",textRole:"dialogue",route:"flat"};
++ const plane = {width:16,height:16,data:new Uint8Array(256).fill(255)};
++ for(let y=4;y<12;y++) for(let x=4;x<12;x++) plane.data[y*16+x]=0;
++ const inspection = inspectBackgroundRemnants({revisions:{sourceRevision:"src-1",backgroundRevision:"bg-1",removalRevision:"rm-1"},originalPlane:plane,cleanPlane:plane,removalRegions:[region] as never});
++ expect(inspection.candidates.length).toBeGreaterThan(0);
++ const resolve = vi.fn();
++ const confirm = vi.fn();
++ vi.mocked(useCleaning).mockReturnValue({...base,currentResult:{...cleaningResult,regions:[region]},currentRemnantReview:{inspection},resolveMaskRegion:resolve,confirmArtworkCandidate:confirm} as never);
++ await restoreWorkspaceWith({});
++ fireEvent.click(screen.getAllByRole("button",{name:"แก้ Mask ที่จุดนี้"})[0]);
++ const {MaskEditor} = await import("@/components/cleaning/MaskEditor");
++ expect(vi.mocked(MaskEditor).mock.calls.at(-1)?.[0]).toMatchObject({cleanUrl:cleaningResult.cleanUrl,focusRect:inspection.candidates[0].rect});
++ expect(resolve).not.toHaveBeenCalled();
++ expect(base.cleanPage).not.toHaveBeenCalled();
++ fireEvent.click(screen.getAllByRole("button",{name:"ยืนยันเป็นลายภาพ"})[0]);
++ expect(confirm).toHaveBeenCalledWith(PAGE_ONE_URL,inspection.candidates[0].id);
++});
++
++test("single export renders fresh pixels and rejects text mutation during the asynchronous render", async () => {
++ const originalWarn = console.warn;
++ const expectedFailure = vi.spyOn(console, "warn").mockImplementation((...args) => {
++   if (args[0] !== "Offscreen render failed for page 1") originalWarn(...args);
++ });
++ try {
++ const cache = new Map([[PAGE_ONE_URL,[cleanVerified()]]]);
++ await restoreWorkspaceWith({bubbleCacheRef:{current:cache}, translatedImageCacheRef:{current:new Map([[PAGE_ONE_URL,STALE_RENDER_URL]])}});
++ vi.mocked(applyTranslationOverlay).mockImplementation((...args) => {
++   cache.set(PAGE_ONE_URL,[cleanVerified("รอก่อนนะ")]);
++   args[4]?.("data:image/png;base64,UkVOREVSRUQ=");
++   return true as never;
++ });
++ await requestExport("รูปภาพหน้านี้");
++ await waitFor(() => expect(applyTranslationOverlay).toHaveBeenCalled());
++ await waitFor(() => expect(translationMockState.setTranslationResult).toHaveBeenCalledWith(expect.stringContaining("ส่งออกไม่สำเร็จ")));
++ expect(downloadTranslatedImage).not.toHaveBeenCalled();
++ const {saveBlob} = await import("@/lib/export/saveLocation");
++ expect(saveBlob).not.toHaveBeenCalled();
++ expect(expectedFailure).toHaveBeenCalledExactlyOnceWith("Offscreen render failed for page 1", expect.objectContaining({message:"ข้อความหรือหลักฐานเปลี่ยนระหว่างเรนเดอร์ กรุณาลองส่งออกใหม่"}));
++ } finally {
++   expectedFailure.mockRestore();
++ }
++});

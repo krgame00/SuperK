@@ -1,0 +1,1686 @@
+diff --git a/hooks/useTranslation.ts b/hooks/useTranslation.ts
+index 7582bb8..28b4835 100644
+--- a/hooks/useTranslation.ts
++++ b/hooks/useTranslation.ts
+@@ -24,7 +24,8 @@ import { resolveTranslationOutcome } from "@/lib/translationPipeline";
+ import { parseLLMJSON } from "@/lib/parseLLMJSON";
+ import { deduplicateTranslations, excludeDeletedTranslations, findMissingTranslationRegions, recoverMissingTranslations } from "@/lib/translation/completeness";
+ import { reviewTranslatedBubbles } from "@/lib/translation/qualityReviewClient";
+-import { invalidateQualityReview, needsQualityReview } from "@/lib/translation/qualityReview";
++import { invalidateQualityReview, isReviewCurrent, needsQualityReview, withReviewIdentity, type TranslationReview } from "@/lib/translation/qualityReview";
++import { undoManager } from "@/lib/undoManager";
+ import { LANGUAGE_POLICY_VERSION, inspectTargetText, normalizeTargetTranslationPayload, formatOffendingCharacters } from "@/lib/languagePolicy";
+ import { createPageTargetIdentity, inspectPageOutputEligibility, type PageTargetIdentity } from "@/lib/translation/pageEligibility";
+ import { sampleBubbleRegion } from "@/lib/colorMatching/canvasSampler";
+@@ -71,6 +72,44 @@ export interface BatchPerformanceMetrics {
+   cancelled: boolean;
+ }
+ 
++/** One actionable finding for the per-point review list. */
++export interface ReviewIssuePoint {
++  /** Bubble index within the page's cached array. */
++  index: number;
++  /** 1-based display id used by the review list. */
++  pointId: string;
++  kind: "script" | "unverified";
++  hasSource: boolean;
++  /** Script failures are never human-confirmable; only clean text with source evidence is. */
++  humanConfirmable: boolean;
++  characters?: string;
++  status?: TranslationReview["status"];
++  reason?: string;
++}
++
++export interface PageReviewIssues {
++  pageUrl: string;
++  pageIndex: number;
++  pageTotal: number;
++  targetId?: string;
++  targetUnconfirmed: boolean;
++  scriptIssues: ReviewIssuePoint[];
++  unverified: ReviewIssuePoint[];
++}
++
++export interface LegacyTargetPage {
++  pageUrl: string;
++  pageIndex: number;
++}
++
++export interface WholeBookRepairSummary {
++  pagesRepaired: number;
++  pointsRepaired: number;
++  cancelled: boolean;
++  unresolved: Array<{ pageIndex: number; pageUrl: string; points: number }>;
++  skipped: Array<{ pageIndex: number; pageUrl: string; reason: "target-unconfirmed" }>;
++}
++
+ export interface PreparedTranslationPage {
+   cleaningMode?: CleaningMode;
+   textScope?: TranslationScope;
+@@ -290,6 +329,9 @@ export function useTranslation({
+   // Aborts in-flight fetches as soon as the user cancels (or unmounts),
+   // instead of letting the current page run to completion.
+   const translationAbortRef = useRef<AbortController | null>(null);
++  // Aborts the explicit whole-book repair; independent from translation runs.
++  const bookRepairAbortRef = useRef<AbortController | null>(null);
++  const [isRepairingBook, setIsRepairingBook] = useState(false);
+   const [batchFailures, setBatchFailures] = useState<BatchPageFailure[]>([]);
+   const [batchPerformanceMetrics, setBatchPerformanceMetrics] =
+     useState<BatchPerformanceMetrics | null>(null);
+@@ -2248,8 +2290,11 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
+     setTranslationResult("⏹ กำลังยกเลิก...");
+   };
+ 
+-  // Unmount: stop in-flight translation work immediately.
+-  useEffect(() => () => translationAbortRef.current?.abort(), []);
++  // Unmount: stop in-flight translation and repair work immediately.
++  useEffect(() => () => {
++    translationAbortRef.current?.abort();
++    bookRepairAbortRef.current?.abort();
++  }, []);
+ 
+   const invalidatePageTranslation = useCallback((pageUrl: string) => {
+     bubbleCacheRef.current.delete(pageUrl);
+@@ -2335,6 +2380,274 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
+       }));
+   }, [inspectTranslatedPages]);
+ 
++  // ── Legacy saved work (ticket: saved manual edits + book review) ──────────
++
++  const pageHasTranslatedText = (bubbles: TranslatedBubble[] | undefined): boolean =>
++    !!bubbles?.some((bubble) => !bubble.deleted && !!(bubble.t || bubble.translated || "").trim());
++
++  // Old projects never recorded which target language their pages use. They
++  // must be confirmed exactly once; pages that already carry a recorded target
++  // keep their own identity.
++  const inspectLegacyTargets = useCallback((): LegacyTargetPage[] => {
++    const pending: LegacyTargetPage[] = [];
++    pagesRef.current.forEach((pageUrl, pageIndex) => {
++      if (pageTargetCacheRef.current.has(pageUrl)) return;
++      if (!pageHasTranslatedText(bubbleCacheRef.current.get(pageUrl))) return;
++      pending.push({ pageUrl, pageIndex });
++    });
++    return pending;
++  }, []);
++
++  const confirmLegacyTarget = useCallback((confirmedTarget?: string): number => {
++    // Thai is the suggested first-use confirmation: the next-job selector defaults to Thai.
++    const identity = createPageTargetIdentity(confirmedTarget ?? targetLangRef.current);
++    if (!identity) return 0;
++    let assigned = 0;
++    for (const pageUrl of pagesRef.current) {
++      if (pageTargetCacheRef.current.has(pageUrl)) continue;
++      if (!pageHasTranslatedText(bubbleCacheRef.current.get(pageUrl))) continue;
++      pageTargetCacheRef.current.set(pageUrl, identity);
++      assigned++;
++    }
++    // Persist the labels through autosave; this is metadata only — no rewrites, no requests.
++    if (assigned > 0) setCacheRevision((revision) => revision + 1);
++    return assigned;
++  }, []);
++
++  // Local, request-free inspection of every active point. Absent review
++  // metadata (legacy/manual points) cannot escape it, and detectable script
++  // failures are reported even when a saved snapshot claims accepted/dismissed.
++  const inspectReviewIssues = useCallback((): PageReviewIssues[] => {
++    const reports: PageReviewIssues[] = [];
++    pagesRef.current.forEach((pageUrl, pageIndex) => {
++      const bubbles = bubbleCacheRef.current.get(pageUrl);
++      if (!bubbles || bubbles.length === 0) return;
++      const targetId = getPageTargetLanguage(pageUrl);
++      const scriptIssues: ReviewIssuePoint[] = [];
++      const unverified: ReviewIssuePoint[] = [];
++      bubbles.forEach((bubble, index) => {
++        if (bubble.deleted) return;
++        const text = bubble.t || bubble.translated || "";
++        if (!text.trim()) return;
++        const source = typeof bubble.original_text === "string" ? bubble.original_text : "";
++        const hasSource = !!source.trim();
++        const pointId = String(index + 1);
++        if (!targetId) {
++          // Without a confirmed target no script check means anything yet.
++          unverified.push({ index, pointId, kind: "unverified", hasSource, humanConfirmable: false, reason: "target-unconfirmed" });
++          return;
++        }
++        const inspection = inspectTargetText(text, targetId);
++        if (inspection.status === "blocked") {
++          scriptIssues.push({
++            index, pointId, kind: "script", hasSource, humanConfirmable: false,
++            characters: formatOffendingCharacters(inspection.offendingCharacters), reason: inspection.reason,
++          });
++          return;
++        }
++        const review = bubble.translationReview;
++        if (!review || !isReviewCurrent(bubble, targetId) || !["ok", "accepted", "dismissed"].includes(review.status)) {
++          unverified.push({
++            index, pointId, kind: "unverified", hasSource, humanConfirmable: hasSource,
++            status: review?.status ?? "unavailable", reason: review?.reason,
++          });
++        }
++      });
++      if (scriptIssues.length > 0 || unverified.length > 0) {
++        reports.push({ pageUrl, pageIndex, pageTotal: bubbles.length, targetId, targetUnconfirmed: !targetId, scriptIssues, unverified });
++      }
++    });
++    return reports;
++  }, [getPageTargetLanguage]);
++
++  // Explicit source-backed human confirmation for points whose script passes
++  // but contextual AI verification is unavailable (or metadata is absent/stale).
++  // Detectable script failures can never be confirmed, dismissed or accepted past.
++  const confirmPointReview = useCallback((pageUrl: string, pointIndex: number): boolean => {
++    const bubbles = bubbleCacheRef.current.get(pageUrl)
++      ?? (activePageRef.current === pageUrl ? activeBubbles : undefined);
++    const bubble = bubbles?.[pointIndex];
++    if (!bubble || bubble.deleted) return false;
++    const targetId = getPageTargetLanguage(pageUrl);
++    if (!targetId) return false;
++    const text = bubble.t || bubble.translated || "";
++    const source = typeof bubble.original_text === "string" ? bubble.original_text : "";
++    if (!source.trim()) return false;
++    if (inspectTargetText(text, targetId).status === "blocked") return false;
++    // Review evidence changed: reset export confirmations but keep the render cache.
++    markPageDirty(pageUrl, false);
++    bubble.translationReview = withReviewIdentity(
++      { status: "accepted", sourceText: source, reviewedText: text, reason: "ผู้ใช้ยืนยันกับต้นฉบับแล้ว" },
++      targetId,
++      String(getPageRevision(pageUrl)),
++    );
++    setCacheRevision((revision) => revision + 1);
++    return true;
++  }, [activeBubbles, getPageTargetLanguage, getPageRevision, markPageDirty]);
++
++  // Undo/Redo payloads for the whole-book repair: exact pre-repair and
++  // post-repair text plus review evidence per affected point only.
++  interface RepairEntry { pageUrl: string; index: number; text: string; review?: TranslationReview }
++  const applyRepairEntries = useCallback((entries: RepairEntry[]) => {
++    const touchedPages = new Set<string>();
++    for (const entry of entries) {
++      const bubble = bubbleCacheRef.current.get(entry.pageUrl)?.[entry.index];
++      if (!bubble) continue;
++      bubble.t = entry.text;
++      bubble.translated = entry.text;
++      bubble.translationReview = entry.review ? { ...entry.review } : undefined;
++      touchedPages.add(entry.pageUrl);
++    }
++    const activeUrl = activePageRef.current;
++    for (const pageUrl of touchedPages) {
++      markPageDirty(pageUrl);
++      void renderAndCacheTranslation(
++        bubbleCacheRef.current.get(pageUrl) ?? [],
++        pageUrl,
++        pageUrl,
++        pagesRef.current.indexOf(pageUrl),
++      ).catch(() => {
++        // Drop the stale render; exports re-render it from the bubbles.
++        translatedImageCacheRef.current.delete(pageUrl);
++        setTranslatedImages(new Map(translatedImageCacheRef.current));
++      });
++    }
++    if (activeUrl && touchedPages.has(activeUrl)) {
++      setActiveBubbles((previous) => (previous.length > 0 ? [...previous] : previous));
++    }
++  }, [markPageDirty, renderAndCacheTranslation]);
++
++  // Explicit whole-book repair for saved work: provider requests are limited to
++  // one bounded review+repair round per affected page (no retranslation), only
++  // affected point text changes, cancellation stops remaining pages, and a
++  // single Undo/Redo entry preserves the pre-repair text.
++  const repairWholeBook = useCallback(async (): Promise<WholeBookRepairSummary | null> => {
++    if (translationOperationLockRef.current || isTranslatingAll || isTranslating) return null;
++    translationOperationLockRef.current = true;
++    setIsRepairingBook(true);
++    const controller = new AbortController();
++    bookRepairAbortRef.current = controller;
++    const summary: WholeBookRepairSummary = { pagesRepaired: 0, pointsRepaired: 0, cancelled: false, unresolved: [], skipped: [] };
++    const preRepair: RepairEntry[] = [];
++    const postRepair: RepairEntry[] = [];
++    try {
++      for (let pageIndex = 0; pageIndex < pagesRef.current.length; pageIndex++) {
++        const pageUrl = pagesRef.current[pageIndex];
++        const bubbles = bubbleCacheRef.current.get(pageUrl);
++        if (!bubbles || bubbles.length === 0) continue;
++        const targetId = getPageTargetLanguage(pageUrl);
++        const activePoints = bubbles
++          .map((bubble, index) => ({ bubble, index }))
++          .filter(({ bubble }) => !bubble.deleted && !!(bubble.t || bubble.translated || "").trim());
++        if (activePoints.length === 0) continue;
++        if (!targetId) {
++          // Target confirmation comes first; repair cannot guess the language.
++          summary.skipped.push({ pageIndex, pageUrl, reason: "target-unconfirmed" });
++          continue;
++        }
++        if (controller.signal.aborted) {
++          summary.cancelled = true;
++          break;
++        }
++        const affected = activePoints
++          .filter(({ bubble }) => inspectTargetText(bubble.t || bubble.translated || "", targetId).status === "blocked");
++        if (affected.length === 0) continue;
++        for (const { bubble, index } of affected) {
++          preRepair.push({
++            pageUrl, index, text: bubble.t || bubble.translated || "",
++            review: bubble.translationReview ? { ...bubble.translationReview } : undefined,
++          });
++        }
++        let reviewed: TranslatedBubble[];
++        try {
++          reviewed = await reviewTranslatedBubbles(
++            affected.map(({ bubble }) => bubble),
++            {
++              targetLang: targetId,
++              apiKey: userApiKey,
++              modelPreference,
++              allowPreview: allowPreviewModels,
++              glossary,
++              signal: controller.signal,
++              sourceRevision: String(getPageRevision(pageUrl)),
++              repairContamination: true,
++            },
++          );
++        } catch (error) {
++          if (isUserCancelledError(error)) {
++            summary.cancelled = true;
++            break;
++          }
++          // A failed round keeps every explicit snapshot; nothing is applied for this page.
++          continue;
++        }
++        let pageChanged = 0;
++        let unresolvedPoints = 0;
++        for (let position = 0; position < affected.length; position++) {
++          const { index } = affected[position];
++          const bubble = bubbles[index];
++          const updated = reviewed[position];
++          if (!bubble || !updated) continue;
++          const before = bubble.t || bubble.translated || "";
++          const after = updated.t || updated.translated || "";
++          bubble.t = after;
++          bubble.translated = after;
++          bubble.translationReview = updated.translationReview;
++          if (after !== before) pageChanged++;
++          const stillBlocked = inspectTargetText(after, targetId).status === "blocked";
++          const unresolvedStatus = !updated.translationReview
++            || ["needs_review", "unavailable", "stale"].includes(updated.translationReview.status);
++          if (stillBlocked || unresolvedStatus) unresolvedPoints++;
++          postRepair.push({
++            pageUrl, index, text: after,
++            review: updated.translationReview ? { ...updated.translationReview } : undefined,
++          });
++        }
++        summary.pagesRepaired += pageChanged > 0 ? 1 : 0;
++        summary.pointsRepaired += pageChanged;
++        if (unresolvedPoints > 0) summary.unresolved.push({ pageIndex, pageUrl, points: unresolvedPoints });
++        if (controller.signal.aborted) {
++          summary.cancelled = true;
++          break;
++        }
++        markPageDirty(pageUrl);
++        await renderAndCacheTranslation(bubbles, pageUrl, pageUrl, pageIndex).catch(() => {
++          translatedImageCacheRef.current.delete(pageUrl);
++          setTranslatedImages(new Map(translatedImageCacheRef.current));
++        });
++      }
++      if (summary.pointsRepaired > 0) {
++        undoManager.push({
++          label: "แก้ตัวอักษรปนทั้งเล่ม",
++          undo: () => applyRepairEntries(preRepair),
++          redo: () => applyRepairEntries(postRepair),
++        });
++      }
++      return summary;
++    } finally {
++      bookRepairAbortRef.current = null;
++      translationOperationLockRef.current = false;
++      setIsRepairingBook(false);
++    }
++  }, [
++    allowPreviewModels,
++    applyRepairEntries,
++    getPageRevision,
++    getPageTargetLanguage,
++    glossary,
++    isTranslating,
++    isTranslatingAll,
++    markPageDirty,
++    modelPreference,
++    renderAndCacheTranslation,
++    userApiKey,
++  ]);
++
++  const cancelWholeBookRepair = useCallback(() => {
++    bookRepairAbortRef.current?.abort();
++  }, []);
++
++
+   // Find & Replace support: rewrite bubble text in place so the bubble cache
+   // survives (invalidating it would wipe the translations being edited).
+   // Rendered images are re-rendered afterwards so they carry the new text.
+@@ -2467,6 +2780,13 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
+     refreshPageTranslation,
+     scanTranslatedPages,
+     inspectTranslatedPages,
++    inspectLegacyTargets,
++    confirmLegacyTarget,
++    inspectReviewIssues,
++    confirmPointReview,
++    repairWholeBook,
++    cancelWholeBookRepair,
++    isRepairingBook,
+     replaceBubbleText,
+     markPageDirty,
+     getPageRevision,
+diff --git a/lib/translation/qualityReview.ts b/lib/translation/qualityReview.ts
+index 51b6847..11a46bd 100644
+--- a/lib/translation/qualityReview.ts
++++ b/lib/translation/qualityReview.ts
+@@ -111,6 +111,8 @@ export function isReviewCurrent(bubble: ReviewableBubble, targetId?: string, sou
+   // Snapshots must describe the exact raw text; trimmed comparisons silently approved raw changes.
+   if (review.sourceText !== (typeof bubble.original_text === "string" ? bubble.original_text : "")) return false;
+   if (review.reviewedText !== (bubble.t || bubble.translated || "")) return false;
++  // A snapshot recorded under a different policy version can no longer approve anything.
++  if (review.policyVersion !== undefined && review.policyVersion !== LANGUAGE_POLICY_VERSION) return false;
+   if (targetId !== undefined && review.targetId !== targetId) return false;
+   if (sourceRevision !== undefined && review.sourceRevision !== sourceRevision) return false;
+   return true;
+diff --git a/src/app/page.tsx b/src/app/page.tsx
+index 1858ac8..e0b6ff8 100644
+--- a/src/app/page.tsx
++++ b/src/app/page.tsx
+@@ -14,7 +14,7 @@ import {
+   applyTranslationOverlay,
+   type TranslatedBubble,
+ } from "@/lib/translationOverlay";
+-import { Upload, Download, Flame, Eye, EyeOff, Undo2, Redo2, GalleryVertical, RectangleHorizontal, Menu, X, Settings, FileArchive, BookOpen, FileText, Sparkles, Loader2, Check, AlertCircle, RefreshCw, ArrowDown, ArrowUp, ChevronDown, ChevronUp, Eraser, Paintbrush, RotateCcw } from "lucide-react";
++import { Upload, Download, Flame, Eye, EyeOff, Undo2, Redo2, GalleryVertical, RectangleHorizontal, Menu, X, Settings, FileArchive, BookOpen, FileText, Sparkles, Loader2, Check, AlertCircle, RefreshCw, ArrowDown, ArrowUp, ChevronDown, ChevronUp, Eraser, Paintbrush, RotateCcw, ScanSearch } from "lucide-react";
+ import { undoManager } from "@/lib/undoManager";
+ import JSZip from "jszip";
+ import { findRecoveredRegionId, useCleaning } from "@/hooks/useCleaning";
+@@ -427,6 +427,13 @@ export default function WorkspacePage() {
+     refreshPageTranslation,
+     scanTranslatedPages,
+     inspectTranslatedPages,
++    inspectLegacyTargets,
++    confirmLegacyTarget,
++    inspectReviewIssues,
++    confirmPointReview,
++    repairWholeBook,
++    cancelWholeBookRepair,
++    isRepairingBook,
+     replaceBubbleText,
+     getPageSignature,
+     cacheRevision: translationCacheRevision,
+@@ -652,10 +659,32 @@ export default function WorkspacePage() {
+   const [contaminatedScan, setContaminatedScan] = useState<
+     Array<{ pageIndex: number; contaminated: number }>
+   >([]);
++  // Retained, actionable review list: per-page script failures and unverified
++  // points (absent/stale review metadata included) with per-point confirmation.
++  const [reviewIssues, setReviewIssues] = useState<ReturnType<typeof inspectReviewIssues> | null>(null);
++  // Legacy saved-work pages that still need their one-time target confirmation.
++  const [legacyTargetPages, setLegacyTargetPages] = useState<ReturnType<typeof inspectLegacyTargets> | null>(null);
+ 
+   const handleScanTranslations = useCallback(() => {
+     const found = scanTranslatedPages();
+     setContaminatedScan(found);
++    // A postponed legacy confirmation must stay reachable: the scan path
++    // re-opens the one-time target dialog first (old work confirms its target
++    // before review) instead of stranding those pages behind an unactionable
++    // review badge.
++    const pendingLegacy = inspectLegacyTargets();
++    if (pendingLegacy.length > 0) {
++      setLegacyTargetPages(pendingLegacy);
++      return;
++    }
++    // The actionable review list replaces the plain toast when there is
++    // anything to resolve: script failures, unverified points, unconfirmed
++    // legacy targets and the whole-book repair action live there.
++    const issues = inspectReviewIssues();
++    if (issues.length > 0) {
++      setReviewIssues(issues);
++      return;
++    }
+     void import("react-hot-toast").then((m) => {
+       if (found.length === 0) {
+         m.default("✅ ไม่พบตัวอักษรภาษาอื่นปนในคำแปลทั้งเล่ม", { duration: 3500 });
+@@ -669,7 +698,48 @@ export default function WorkspacePage() {
+         );
+       }
+     });
+-  }, [scanTranslatedPages]);
++  }, [inspectLegacyTargets, inspectReviewIssues, scanTranslatedPages]);
++
++  // Explicit whole-book repair: bounded per-page rounds, cancellable, with a
++  // single Undo/Redo entry that retains the pre-repair text.
++  const handleRepairWholeBook = useCallback(async (): Promise<void> => {
++    if (uiOperationLockRef.current || operationBusy) return;
++    uiOperationLockRef.current = true;
++    setIsUiOperationBusy(true);
++    try {
++      const summary = await repairWholeBook();
++      if (!summary) return;
++      setContaminatedScan(scanTranslatedPages());
++      const issues = inspectReviewIssues();
++      setReviewIssues(issues.length > 0 ? issues : null);
++      void import("react-hot-toast").then((m) => {
++        if (summary.cancelled) {
++          m.default(`⏹ ยกเลิกการแก้ทั้งเล่ม (แก้สำเร็จ ${summary.pointsRepaired} จุด) — กด Undo เพื่อคืนค่าก่อนแก้`, { duration: 5000 });
++        } else if (summary.unresolved.length > 0) {
++          const detail = summary.unresolved.map((page) => `หน้า ${page.pageIndex + 1} (${page.points} จุด)`).join(", ");
++          const skippedNote = summary.skipped.length > 0
++            ? ` และข้าม ${summary.skipped.length} หน้า (ยืนยันภาษาไม่ครบ)`
++            : "";
++          m.default(`⚠️ แก้ตัวอักษรปนสำเร็จ ${summary.pointsRepaired} จุด แต่ยังไม่สำเร็จ: ${detail}${skippedNote} — เปิดแก้ไขข้อความเพื่อเทียบต้นฉบับ`, { duration: 7000 });
++        } else if (summary.skipped.length > 0) {
++          // Skipped pages stay recoverable: the review list opened above
++          // carries the confirm action for their pending target.
++          m.default(`✅ แก้ตัวอักษรปนสำเร็จ ${summary.pointsRepaired} จุด — ข้าม ${summary.skipped.length} หน้า (ยืนยันภาษาไม่ครบ)`, { duration: 6000 });
++        } else {
++          m.default(`✅ แก้ตัวอักษรปนสำเร็จ ${summary.pointsRepaired} จุด (${summary.pagesRepaired} หน้า)`, { duration: 3500 });
++        }
++      });
++    } catch (error) {
++      // The repair promise is fired with `void`; without this catch an
++      // unexpected throw would surface only as an unhandled rejection.
++      void import("react-hot-toast").then((m) =>
++        m.default(`❌ แก้ตัวอักษรปนทั้งเล่มไม่สำเร็จ: ${error instanceof Error ? error.message : String(error)}`, { duration: 6000 }),
++      );
++    } finally {
++      uiOperationLockRef.current = false;
++      setIsUiOperationBusy(false);
++    }
++  }, [inspectReviewIssues, operationBusy, repairWholeBook, scanTranslatedPages]);
+ 
+   const handleRetranslateContaminated = useCallback(async (): Promise<void> => {
+     if (
+@@ -691,8 +761,7 @@ export default function WorkspacePage() {
+   }, [contaminatedScan, handleTranslateAll, operationBusy, scanTranslatedPages]);
+ 
+   const [isExportReportOpen, setIsExportReportOpen] = useState(false);
+-  const [exportReportRows, setExportReportRows] = useState<ExportReportRow[]>([]);
+-  const [pendingReadabilityExport, setPendingReadabilityExport] = useState<(() => void) | null>(null);
++  const [exportReportRows, setExportReportRows] = useState<ExportReportRow[]>([]);  const [pendingReadabilityExport, setPendingReadabilityExport] = useState<(() => void) | null>(null);
+   const [pendingReadabilityAck, setPendingReadabilityAck] = useState<string | null>(null);
+   const acknowledgedReadabilityRef = useRef(new Set<string>());
+   const [exportScanProgress, setExportScanProgress] = useState<{ completed: number; total: number } | null>(null);
+@@ -961,6 +1030,8 @@ export default function WorkspacePage() {
+           setPages(restored.pages);
+           setCurrentPage(appendRes.pageIndex);
+           setSavedSessionData(null);
++          const pendingLegacy = inspectLegacyTargets();
++          if (pendingLegacy.length > 0) setLegacyTargetPages(pendingLegacy);
+         }
+         import("react-hot-toast").then((m) =>
+           m.default("✨ นำเข้าภาพจาก Chrome Extension เรียบร้อยแล้ว!", { duration: 2500 })
+@@ -969,7 +1040,7 @@ export default function WorkspacePage() {
+         console.error("Failed to process extension handoff:", err);
+       }
+     })();
+-  }, [restoreSavedSession, setCurrentPage]);
++  }, [restoreSavedSession, setCurrentPage, inspectLegacyTargets]);
+ 
+   // Keyboard shortcuts refs (to access latest state from event listener closure)
+   const currentPageRef = useRef(currentPage);
+@@ -2352,6 +2423,14 @@ export default function WorkspacePage() {
+                     <span>ลองใหม่ {batchFailures.length} หน้าที่พลาด</span>
+                   </button>
+                 )}
++                <button
++                  onClick={() => { handleScanTranslations(); setIsMobileMenuOpen(false); }}
++                  disabled={operationBusy}
++                  className="w-full bg-surface text-foreground hover:bg-surface-hover disabled:opacity-40 p-2.5 rounded-lg text-sm font-medium flex items-center gap-3 border border-transparent transition-colors"
++                >
++                  <ScanSearch className="w-5 h-5 text-primary" />
++                  <span>ตรวจคำแปลทั้งเล่ม</span>
++                </button>
+               </div>
+             </div>
+ 
+@@ -2855,6 +2934,10 @@ export default function WorkspacePage() {
+                         if (hasTranslations) {
+                           setWorkspaceLayer("translated");
+                         }
++                        // Old projects confirm their target once (Thai suggested);
++                        // pages with a recorded target keep their own language.
++                        const pendingLegacy = inspectLegacyTargets();
++                        if (pendingLegacy.length > 0) setLegacyTargetPages(pendingLegacy);
+                       }
+                       if (savedSessionData.hasUnrecoverableSources) {
+                         import('react-hot-toast').then(m => m.default("ดึงข้อมูลคำแปลกลับมาแล้ว กรุณานำเข้ารูปภาพต้นฉบับใหม่", { duration: 4000, icon: '⚠️' }));
+@@ -3007,6 +3090,175 @@ export default function WorkspacePage() {
+         onClose={() => setIsShortcutsOpen(false)}
+       />
+ 
++      {/* ── Legacy Saved-Work Target Confirmation (first use, Thai suggested) ── */}
++      {legacyTargetPages && legacyTargetPages.length > 0 && (
++        <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150">
++          <div
++            role="dialog"
++            aria-label="ยืนยันภาษาปลายทางของงานเก่า"
++            className="bg-surface border border-border shadow-2xl rounded-2xl max-w-lg w-full p-5 flex flex-col gap-4"
++          >
++            <div className="flex items-start gap-3">
++              <div className="p-2.5 rounded-xl bg-primary/15 text-primary text-xl flex-shrink-0">🌐</div>
++              <div className="flex-1 min-w-0">
++                <h3 className="text-base font-bold text-foreground">ยืนยันภาษาปลายทางของงานเก่า</h3>
++                <p className="text-xs text-muted mt-1 leading-relaxed">
++                  งานเก่าต้องยืนยันภาษาครั้งแรกก่อนตรวจสอบ — ระบบแนะนำภาษาไทย (Thai) หน้าที่เคยบันทึกภาษาไว้แล้วจะคงภาษาของตัวเอง และการเปลี่ยนภาษาในงานถัดไปจะไม่มีผลกับงานที่บันทึกไว้
++                </p>
++              </div>
++            </div>
++            <div className="max-h-48 overflow-y-auto border border-border/60 rounded-xl divide-y divide-border/40 bg-background/50">
++              {legacyTargetPages.map((page) => (
++                <div key={page.pageUrl} className="px-3 py-2 text-xs text-foreground">
++                  หน้า {page.pageIndex + 1}
++                </div>
++              ))}
++            </div>
++            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-border/50">
++              <button
++                type="button"
++                onClick={() => setLegacyTargetPages(null)}
++                className="px-4 py-2 rounded-xl border border-border hover:bg-surface text-xs font-semibold text-muted hover:text-foreground transition-colors cursor-pointer"
++              >
++                ยืนยันภายหลัง
++              </button>
++              <button
++                type="button"
++                onClick={() => {
++                  const assigned = confirmLegacyTarget();
++                  setLegacyTargetPages(null);
++                  if (assigned > 0) {
++                    void import("react-hot-toast").then((m) =>
++                      m.default(`✅ ยืนยันใช้ภาษา ${targetLang} กับ ${assigned} หน้า`, { duration: 3000 }),
++                    );
++                  }
++                }}
++                className="px-4 py-2 rounded-xl bg-primary hover:bg-primary-hover text-primary-content text-xs font-semibold shadow-md transition-colors cursor-pointer"
++              >
++                ยืนยันใช้ภาษา {targetLang}
++              </button>
++            </div>
++          </div>
++        </div>
++      )}
++
++      {/* ── Actionable review list (script failures + unverified points) ── */}
++      {reviewIssues && (
++        <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150">
++          <div
++            role="dialog"
++            aria-label="รายการตรวจคำแปลที่ต้องดำเนินการ"
++            className="bg-surface border border-border shadow-2xl rounded-2xl max-w-xl w-full p-5 flex flex-col gap-4"
++          >
++            <div className="flex items-center justify-between gap-3">
++              <h3 className="text-base font-bold text-foreground">รายการตรวจคำแปลที่ต้องดำเนินการ</h3>
++              <div className="flex items-center gap-2">
++                {isRepairingBook && (
++                  <button
++                    type="button"
++                    onClick={cancelWholeBookRepair}
++                    aria-label="ยกเลิกการแก้ทั้งเล่ม"
++                    className="px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-semibold cursor-pointer"
++                  >
++                    ยกเลิก
++                  </button>
++                )}
++                <button
++                  type="button"
++                  onClick={() => void handleRepairWholeBook()}
++                  disabled={isRepairingBook || operationBusy}
++                  aria-label="แก้ตัวอักษรปนทั้งเล่ม"
++                  className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-primary-content text-xs font-semibold shadow-md transition-colors cursor-pointer disabled:opacity-40 flex items-center gap-1.5"
++                >
++                  {isRepairingBook ? <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" /> : <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />}
++                  แก้ตัวอักษรปนทั้งเล่ม
++                </button>
++              </div>
++            </div>
++            <p className="text-xs text-muted leading-relaxed">
++              จุดที่มีตัวอักษรภาษาอื่นปนต้องแก้ไขหรือสั่งแก้ทั้งเล่มก่อนส่งออก และยืนยันเองไม่ได้ · จุดที่สคริปต์ผ่านแต่ยังไม่ได้ตรวจด้วย AI สามารถยืนยันเองได้เมื่อเทียบกับต้นฉบับแล้ว
++            </p>
++            <div className="max-h-80 overflow-y-auto border border-border/60 rounded-xl divide-y divide-border/40 bg-background/50">
++              {reviewIssues.map((page) => (
++                <div key={page.pageUrl} className="p-3 flex flex-col gap-2 text-xs">
++                  <div className="flex items-center justify-between gap-2">
++                    <span className="font-semibold text-foreground">หน้า {page.pageIndex + 1}</span>
++                    <div className="flex items-center gap-1.5">
++                      {page.targetUnconfirmed && (
++                        <>
++                          <span className="px-1.5 py-0.5 rounded bg-primary/15 text-primary text-[10px] font-medium">ยืนยันภาษาของหน้าก่อน</span>
++                          {/* Postponed confirmations stay actionable here: this
++                              confirms the pending legacy targets in place. */}
++                          <button
++                            type="button"
++                            onClick={() => {
++                              const assigned = confirmLegacyTarget();
++                              if (assigned > 0) {
++                                void import("react-hot-toast").then((m) =>
++                                  m.default(`✅ ยืนยันใช้ภาษา ${targetLang} กับ ${assigned} หน้า`, { duration: 3000 }),
++                                );
++                              }
++                              const issues = inspectReviewIssues();
++                              setReviewIssues(issues.length > 0 ? issues : null);
++                            }}
++                            className="px-2 py-1 rounded border border-primary/40 bg-primary/10 hover:bg-primary/20 text-primary text-[11px] font-medium transition-colors cursor-pointer"
++                          >
++                            ยืนยันภาษา
++                          </button>
++                        </>
++                      )}
++                      <button
++                        type="button"
++                        onClick={() => { setReviewIssues(null); setCurrentPage(page.pageIndex); }}
++                        className="px-2 py-1 rounded border border-border hover:bg-surface text-[11px] font-medium transition-colors cursor-pointer"
++                      >
++                        ไปที่หน้านี้
++                      </button>
++                    </div>
++                  </div>
++                  {page.scriptIssues.map((point) => (
++                    <div key={`script-${point.index}`} className="flex flex-wrap items-center gap-2 text-red-500">
++                      <span className="font-medium">จุด #{point.pointId}</span>
++                      <span>ตัวอักษรปน: {point.characters}</span>
++                      <span className="text-muted">— เปิดแก้ไขข้อความเพื่อเทียบต้นฉบับ (ยืนยันผ่านไม่ได้)</span>
++                    </div>
++                  ))}
++                  {page.unverified.map((point) => (
++                    <div key={`unverified-${point.index}`} className="flex flex-wrap items-center gap-2 text-foreground">
++                      <span className="font-medium">จุด #{point.pointId}</span>
++                      <span className="text-muted">{point.hasSource ? "สคริปต์ผ่าน แต่ยังไม่ได้ตรวจบริบท" : "ไม่มีข้อความต้นฉบับ กรุณาตรวจจากภาพ"}</span>
++                      {point.humanConfirmable && (
++                        <button
++                          type="button"
++                          onClick={() => {
++                            confirmPointReview(page.pageUrl, point.index);
++                            const issues = inspectReviewIssues();
++                            setReviewIssues(issues.length > 0 ? issues : null);
++                          }}
++                          aria-label={`ยืนยันจุดที่ ${point.pointId} ตรงต้นฉบับ`}
++                          className="px-2 py-1 rounded bg-emerald-600/15 text-emerald-500 border border-emerald-500/30 text-[11px] font-medium hover:bg-emerald-600/25 transition-colors cursor-pointer"
++                        >
++                          ยืนยันว่าตรงกับต้นฉบับ
++                        </button>
++                      )}
++                    </div>
++                  ))}
++                </div>
++              ))}
++            </div>
++            <div className="flex items-center justify-end pt-2 border-t border-border/50">
++              <button
++                type="button"
++                onClick={() => setReviewIssues(null)}
++                className="px-4 py-2 rounded-xl border border-border hover:bg-surface text-xs font-semibold text-muted hover:text-foreground transition-colors cursor-pointer"
++              >
++                ปิด
++              </button>
++            </div>
++          </div>
++        </div>
++      )}
++
+       {/* ── Human Review Confirmation Gate Modal (Ticket 07) ── */}
+       {unconfirmedReviewPages && unconfirmedReviewPages.length > 0 && (
+         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+diff --git a/tests/workflow/WorkspacePage.test.tsx b/tests/workflow/WorkspacePage.test.tsx
+index 1f22ef9..7a1d098 100644
+--- a/tests/workflow/WorkspacePage.test.tsx
++++ b/tests/workflow/WorkspacePage.test.tsx
+@@ -241,6 +241,19 @@ beforeEach(() => {
+     refreshPageTranslation,
+     scanTranslatedPages: vi.fn(() => []),
+     inspectTranslatedPages: vi.fn(() => []),
++    inspectLegacyTargets: vi.fn(() => []),
++    confirmLegacyTarget: vi.fn(() => 0),
++    inspectReviewIssues: vi.fn(() => []),
++    confirmPointReview: vi.fn(() => true),
++    repairWholeBook: vi.fn().mockResolvedValue({
++      pagesRepaired: 0,
++      pointsRepaired: 0,
++      cancelled: false,
++      unresolved: [],
++      skipped: [],
++    }),
++    cancelWholeBookRepair: vi.fn(),
++    isRepairingBook: false,
+     replaceBubbleText: vi.fn(() => 0),
+     getPageSignature: vi.fn(() => "rev-0"),
+     getPageRevision: vi.fn(() => 0),
+diff --git a/tests/translation/qualityReview.g03.test.ts b/tests/translation/qualityReview.g03.test.ts
+new file mode 100644
+index 0000000..8a206dc
+--- /dev/null
++++ b/tests/translation/qualityReview.g03.test.ts
+@@ -0,0 +1,32 @@
++import { describe, expect, it } from "vitest";
++import { LANGUAGE_POLICY_VERSION } from "@/lib/languagePolicy";
++import { isReviewCurrent, withReviewIdentity } from "@/lib/translation/qualityReview";
++
++describe("G03 exact source/text/target/policy snapshots control approval validity", () => {
++  it("keeps snapshots recorded under the current policy version current", () => {
++    const bubble = {
++      t: "รอ",
++      original_text: "Wait",
++      translationReview: withReviewIdentity(
++        { status: "ok", sourceText: "Wait", reviewedText: "รอ" },
++        "th",
++        "rev-1",
++      ),
++    };
++    expect(bubble.translationReview.policyVersion).toBe(LANGUAGE_POLICY_VERSION);
++    expect(isReviewCurrent(bubble)).toBe(true);
++  });
++
++  it("invalidates approval recorded under a different policy version", () => {
++    const bubble = {
++      t: "รอ",
++      original_text: "Wait",
++      translationReview: {
++        ...withReviewIdentity({ status: "ok", sourceText: "Wait", reviewedText: "รอ" }, "th"),
++        policyVersion: "strict-script-v0",
++      },
++    };
++    expect(isReviewCurrent(bubble)).toBe(false);
++    expect(isReviewCurrent(bubble, "th")).toBe(false);
++  });
++});
+diff --git a/tests/translation/useTranslation.legacyReview.test.tsx b/tests/translation/useTranslation.legacyReview.test.tsx
+new file mode 100644
+index 0000000..fdb8930
+--- /dev/null
++++ b/tests/translation/useTranslation.legacyReview.test.tsx
+@@ -0,0 +1,440 @@
++import { act, renderHook } from "@testing-library/react";
++import { afterEach, beforeEach, expect, test, vi } from "vitest";
++
++import { useTranslation } from "@/hooks/useTranslation";
++import { loadProjectSession } from "@/lib/projectStore";
++import { createPageTargetIdentity } from "@/lib/translation/pageEligibility";
++import { LANGUAGE_POLICY_VERSION } from "@/lib/languagePolicy";
++import { undoManager } from "@/lib/undoManager";
++
++vi.mock("@/lib/translationOverlay", () => ({
++  applyTranslationOverlay: vi.fn(
++    async (
++      _bubbles: unknown[],
++      _viewMode: "single" | "scroll" | "offscreen",
++      _pageIndex: number,
++      _setTranslationResult: (message: string | null) => void,
++      onComplete?: (dataUrl: string) => void,
++    ) => {
++      onComplete?.("data:rendered");
++    },
++  ),
++  clearPageAdjustments: vi.fn(),
++  clearAllAdjustments: vi.fn(),
++  readOverlayAdjustments: vi.fn(() => ({})),
++  bubbleKeyOf: vi.fn(() => "mock-key"),
++}));
++
++vi.mock("@/lib/projectStore", () => ({
++  deleteAsset: vi.fn().mockResolvedValue(undefined),
++  saveProjectSession: vi.fn().mockResolvedValue(undefined),
++  loadProjectSession: vi.fn().mockResolvedValue(null),
++  clearProjectSession: vi.fn().mockResolvedValue(undefined),
++}));
++
++const PAGE_A = "blob:page-a";
++const PAGE_B = "blob:page-b";
++const PAGE_C = "blob:page-c";
++const PAGES = [PAGE_A, PAGE_B, PAGE_C];
++
++interface ReviewBody {
++  mode?: string;
++  items: Array<{ id: string; sourceText: string; translatedText: string }>;
++}
++
++const box = [100, 100, 300, 200];
++const contaminatedHello = (text: string) => ({ box, t: text, original_text: "Hello" });
++
++// Fresh deep state per test: the hook mutates bubble objects in place.
++const makeLegacySession = () => ({
++  pages: [
++    { id: "a", url: PAGE_A, name: "A" },
++    { id: "b", url: PAGE_B, name: "B" },
++    { id: "c", url: PAGE_C, name: "C" },
++  ],
++  currentPage: 0,
++  updatedAt: 1,
++  hasUnrecoverableSources: false,
++  bubbleCache: new Map([
++    [PAGE_A, [contaminatedHello("สวัสดีA"), { box, t: "ลาก่อน", original_text: "Goodbye" }]],
++    [PAGE_B, [contaminatedHello("สวัสดีB")]],
++    [PAGE_C, [contaminatedHello("สวัสดีC")]],
++  ]),
++  translatedImageCache: new Map(),
++  // Only PAGE_B ever recorded a target: A and C are legacy pages that must be
++  // confirmed once before local checks mean anything.
++  pageTargetCache: new Map([[PAGE_B, createPageTargetIdentity("ja")!]]),
++});
++
++beforeEach(() => {
++  vi.useFakeTimers();
++  vi.clearAllMocks();
++  undoManager.clear();
++  const storageValues = new Map<string, string>();
++  const storage = {
++    get length() {
++      return storageValues.size;
++    },
++    clear: () => storageValues.clear(),
++    getItem: (key: string) => storageValues.get(key) ?? null,
++    key: (index: number) => [...storageValues.keys()][index] ?? null,
++    removeItem: (key: string) => {
++      storageValues.delete(key);
++    },
++    setItem: (key: string, value: string) => {
++      storageValues.set(key, String(value));
++    },
++  } satisfies Storage;
++  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: storage });
++  Object.defineProperty(window, "localStorage", { configurable: true, value: storage });
++  vi.stubGlobal(
++    "Image",
++    class {
++      onload: (() => void) | null = null;
++      naturalWidth = 1000;
++      naturalHeight = 1000;
++      set src(_value: string) {
++        queueMicrotask(() => this.onload?.());
++      }
++    },
++  );
++  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
++    drawImage: vi.fn(),
++    getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(4), width: 1, height: 1 })),
++  } as unknown as CanvasRenderingContext2D);
++  vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue("data:image/jpeg;base64,c2xpY2U=");
++});
++
++afterEach(() => {
++  vi.useRealTimers();
++  vi.unstubAllGlobals();
++  vi.restoreAllMocks();
++  document.body.replaceChildren();
++});
++
++function renderTranslationHook() {
++  return renderHook(() =>
++    useTranslation({
++      currentPage: 0,
++      pages: PAGES,
++      viewMode: "single",
++      preparePageForTranslation: vi.fn().mockResolvedValue({
++        recognitionUrl: PAGE_A,
++        backgroundUrl: "blob:clean",
++      }),
++    }),
++  );
++}
++
++async function restoreLegacyBook() {
++  vi.mocked(loadProjectSession).mockResolvedValue(makeLegacySession());
++  const hook = renderTranslationHook();
++  await act(async () => {
++    await hook.result.current.restoreSavedSession();
++  });
++  return hook;
++}
++
++test("legacy projects confirm target once with Thai suggested and retain recorded page targets", async () => {
++  const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(new Blob(["x"])));
++  const { result } = await restoreLegacyBook();
++
++  // Opening saved work runs local inspection only: no provider requests, no rewrites.
++  expect(fetchSpy).not.toHaveBeenCalled();
++  expect(result.current.bubbleCacheRef.current.get(PAGE_A)?.[0].t).toBe("สวัสดีA");
++  expect(result.current.inspectLegacyTargets().map((page) => page.pageUrl)).toEqual([PAGE_A, PAGE_C]);
++
++  // Thai is the suggested first-use confirmation (next-job selector default).
++  let assigned = 0;
++  act(() => {
++    assigned = result.current.confirmLegacyTarget();
++  });
++  expect(assigned).toBe(2);
++  expect(fetchSpy).not.toHaveBeenCalled();
++  expect(result.current.getPageTargetLanguage(PAGE_A)).toBe("th");
++  expect(result.current.getPageTargetLanguage(PAGE_C)).toBe("th");
++  // A page with its own recorded target keeps it.
++  expect(result.current.getPageTargetLanguage(PAGE_B)).toBe("ja");
++  expect(result.current.inspectLegacyTargets()).toHaveLength(0);
++
++  // Next-job selector changes never relabel saved pages.
++  act(() => {
++    result.current.setTargetLang("Japanese");
++  });
++  expect(result.current.getPageTargetLanguage(PAGE_A)).toBe("th");
++  expect(result.current.getPageTargetLanguage(PAGE_B)).toBe("ja");
++
++  // Unsupported targets fail closed.
++  expect(result.current.confirmLegacyTarget("Klingon")).toBe(0);
++  expect(result.current.getPageTargetLanguage(PAGE_A)).toBe("th");
++});
++
++test("absent and stale review metadata are locally checked and script failures cannot be human-confirmed", async () => {
++  vi.mocked(loadProjectSession).mockResolvedValue({
++    pages: [
++      { id: "a", url: PAGE_A, name: "A" },
++      { id: "c", url: PAGE_C, name: "C" },
++    ],
++    currentPage: 0,
++    updatedAt: 1,
++    hasUnrecoverableSources: false,
++    bubbleCache: new Map([
++      [
++        PAGE_A,
++        [
++          { box, t: "สวัสดี", original_text: "Hello" },
++          {
++            box,
++            t: "สวัสดีמה",
++            original_text: "Hello",
++            // Even a recorded approval cannot mask a detectable script failure.
++            translationReview: { status: "accepted", sourceText: "Hello", reviewedText: "สวัสดีמה" },
++          },
++          {
++            box,
++            t: "ลาก่อน",
++            original_text: "Goodbye",
++            translationReview: { status: "unavailable", sourceText: "Goodbye", reviewedText: "ลาก่อน" },
++          },
++          { box, t: "ไปกันเถอะ" },
++        ],
++      ],
++      [PAGE_C, [{ box, t: "สวัสดีC", original_text: "Hello" }]],
++    ]),
++    translatedImageCache: new Map(),
++    pageTargetCache: new Map([[PAGE_A, createPageTargetIdentity("th")!]]),
++  });
++  const { result } = renderTranslationHook();
++  await act(async () => {
++    await result.current.restoreSavedSession();
++  });
++
++  const issues = result.current.inspectReviewIssues();
++  expect(issues).toHaveLength(2);
++  const pageA = issues.find((page) => page.pageUrl === PAGE_A)!;
++  expect(pageA.targetUnconfirmed).toBe(false);
++  // The detectable script failure is listed with its offending characters and is
++  // never human-confirmable, even though its snapshot says "accepted".
++  expect(pageA.scriptIssues).toHaveLength(1);
++  expect(pageA.scriptIssues[0]).toMatchObject({ index: 1, kind: "script", humanConfirmable: false });
++  expect(pageA.scriptIssues[0].characters).toContain("מה");
++  expect(pageA.unverified).toHaveLength(3);
++  expect(pageA.unverified.find((point) => point.index === 0)).toMatchObject({
++    kind: "unverified",
++    hasSource: true,
++    humanConfirmable: true,
++  });
++  expect(pageA.unverified.find((point) => point.index === 2)).toMatchObject({
++    status: "unavailable",
++    humanConfirmable: true,
++  });
++  expect(pageA.unverified.find((point) => point.index === 3)).toMatchObject({
++    hasSource: false,
++    humanConfirmable: false,
++  });
++  // A legacy page without a recorded target is unconfirmed, not guessable.
++  const pageC = issues.find((page) => page.pageUrl === PAGE_C)!;
++  expect(pageC.targetUnconfirmed).toBe(true);
++  expect(pageC.unverified[0]).toMatchObject({ humanConfirmable: false });
++
++  // Detectable script failures can never be confirmed or dismissed past.
++  expect(result.current.confirmPointReview(PAGE_A, 1)).toBe(false);
++  expect(result.current.bubbleCacheRef.current.get(PAGE_A)![1].translationReview!.status).toBe("accepted");
++  expect(result.current.inspectReviewIssues().find((page) => page.pageUrl === PAGE_A)!.scriptIssues).toHaveLength(1);
++
++  // Human confirmation is source-backed: no source evidence, no confirmation.
++  expect(result.current.confirmPointReview(PAGE_A, 3)).toBe(false);
++  // Unconfirmed legacy pages cannot be confirmed point-by-point either.
++  expect(result.current.confirmPointReview(PAGE_C, 0)).toBe(false);
++
++  // Script passes + source present: explicit human confirmation binds an exact snapshot.
++  expect(result.current.confirmPointReview(PAGE_A, 0)).toBe(true);
++  const confirmed = result.current.bubbleCacheRef.current.get(PAGE_A)![0].translationReview!;
++  expect(confirmed).toMatchObject({
++    status: "accepted",
++    sourceText: "Hello",
++    reviewedText: "สวัสดี",
++    targetId: "th",
++    policyVersion: LANGUAGE_POLICY_VERSION,
++    sourceRevision: expect.any(String),
++  });
++  expect(result.current.inspectReviewIssues().find((page) => page.pageUrl === PAGE_A)!.unverified.map((point) => point.index)).toEqual([2, 3]);
++
++  // Exact snapshots control validity: editing the text invalidates the confirmation.
++  const bubble = result.current.bubbleCacheRef.current.get(PAGE_A)![0];
++  act(() => {
++    bubble.t = "สวัสดีจ้า";
++    bubble.translated = "สวัสดีจ้า";
++  });
++  expect(result.current.inspectReviewIssues().find((page) => page.pageUrl === PAGE_A)!.unverified.some((point) => point.index === 0)).toBe(true);
++});
++
++test("whole-book repair fixes only affected points with bounded rounds, no retranslation, and Undo/Redo retaining pre-repair text", async () => {
++  const { result } = await restoreLegacyBook();
++  // Legacy pages are confirmed once (Thai suggested) before repair; PAGE_B keeps its own ja target.
++  act(() => {
++    result.current.confirmLegacyTarget();
++  });
++  const reviewBodies: (ReviewBody & { targetLang?: string })[] = [];
++  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
++    if (String(input) !== "/api/translation-review") {
++      throw new Error(`whole-book repair must not retranslate: ${String(input)}`);
++    }
++    const body = JSON.parse(String(init?.body)) as ReviewBody & { targetLang?: string };
++    reviewBodies.push(body);
++    // The replacement must be in the page's own recorded target language.
++    const replacement = body.targetLang === "ja" ? "こんにちは" : "สวัสดี";
++    if (body.mode === "repair") {
++      return Response.json({
++        reviews: body.items.map((item) => ({ id: item.id, status: "suggested", suggestion: replacement })),
++      });
++    }
++    return Response.json({ reviews: body.items.map((item) => ({ id: item.id, status: "needs_review" })) });
++  });
++
++  let summary: Awaited<ReturnType<typeof result.current.repairWholeBook>>;
++  await act(async () => {
++    summary = await result.current.repairWholeBook();
++  });
++
++  // Only affected points participate; every targeted contaminated page is repaired
++  // under its own recorded target label.
++  expect(reviewBodies).toHaveLength(6);
++  expect(reviewBodies[0]).toMatchObject({ targetLang: "th", items: [{ id: "0", sourceText: "Hello", translatedText: "สวัสดีA" }] });
++  expect(reviewBodies[1].mode).toBe("repair");
++  expect(reviewBodies[2]).toMatchObject({ targetLang: "ja", items: [{ id: "0", sourceText: "Hello", translatedText: "สวัสดีB" }] });
++  expect(reviewBodies[4]).toMatchObject({ targetLang: "th", items: [{ id: "0", sourceText: "Hello", translatedText: "สวัสดีC" }] });
++  expect(summary!).toMatchObject({ pagesRepaired: 3, pointsRepaired: 3, cancelled: false, skipped: [] });
++
++  const pageA = result.current.bubbleCacheRef.current.get(PAGE_A)!;
++  expect(pageA[0].t).toBe("สวัสดี");
++  expect(pageA[0].translationReview).toMatchObject({ status: "ok", originalTranslation: "สวัสดีA" });
++  // Unrelated point text is untouched.
++  expect(pageA[1].t).toBe("ลาก่อน");
++  expect(result.current.bubbleCacheRef.current.get(PAGE_B)![0].t).toBe("こんにちは");
++
++  // Undo retains the pre-repair text; unrelated edits survive undo and redo.
++  act(() => {
++    pageA[1].t = "แก้ด้วยมือ";
++    pageA[1].translated = "แก้ด้วยมือ";
++  });
++  act(() => {
++    expect(undoManager.undo()).not.toBeNull();
++  });
++  expect(pageA[0].t).toBe("สวัสดีA");
++  expect(result.current.bubbleCacheRef.current.get(PAGE_B)![0].t).toBe("สวัสดีB");
++  expect(result.current.bubbleCacheRef.current.get(PAGE_C)![0].t).toBe("สวัสดีC");
++  expect(pageA[1].t).toBe("แก้ด้วยมือ");
++  act(() => {
++    expect(undoManager.redo()).not.toBeNull();
++  });
++  expect(pageA[0].t).toBe("สวัสดี");
++  expect(result.current.bubbleCacheRef.current.get(PAGE_B)![0].t).toBe("こんにちは");
++  expect(result.current.bubbleCacheRef.current.get(PAGE_C)![0].t).toBe("สวัสดี");
++  expect(pageA[1].t).toBe("แก้ด้วยมือ");
++});
++
++test("whole-book repair skips unconfirmed legacy pages instead of guessing their language", async () => {
++  const { result } = await restoreLegacyBook();
++  // No target confirmation: only PAGE_B has a recorded target (ja).
++  const reviewBodies: (ReviewBody & { targetLang?: string })[] = [];
++  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
++    if (String(input) !== "/api/translation-review") throw new Error(`unexpected fetch: ${String(input)}`);
++    const body = JSON.parse(String(init?.body)) as ReviewBody & { targetLang?: string };
++    reviewBodies.push(body);
++    if (body.mode === "repair") {
++      return Response.json({
++        reviews: body.items.map((item) => ({ id: item.id, status: "suggested", suggestion: "こんにちは" })),
++      });
++    }
++    return Response.json({ reviews: body.items.map((item) => ({ id: item.id, status: "needs_review" })) });
++  });
++
++  let summary: Awaited<ReturnType<typeof result.current.repairWholeBook>>;
++  await act(async () => {
++    summary = await result.current.repairWholeBook();
++  });
++
++  expect(reviewBodies).toHaveLength(2);
++  expect(reviewBodies[0].targetLang).toBe("ja");
++  expect(summary!.skipped).toEqual([
++    { pageIndex: 0, pageUrl: PAGE_A, reason: "target-unconfirmed" },
++    { pageIndex: 2, pageUrl: PAGE_C, reason: "target-unconfirmed" },
++  ]);
++  // Unconfirmed pages keep their saved text untouched.
++  expect(result.current.bubbleCacheRef.current.get(PAGE_A)![0].t).toBe("สวัสดีA");
++  expect(result.current.bubbleCacheRef.current.get(PAGE_C)![0].t).toBe("สวัสดีC");
++  expect(result.current.bubbleCacheRef.current.get(PAGE_B)![0].t).toBe("こんにちは");
++});
++
++test("a whole-book repair suggestion that is still contaminated stays unresolved without looping", async () => {
++  const session = makeLegacySession();
++  vi.mocked(loadProjectSession).mockResolvedValue({
++    ...session,
++    bubbleCache: new Map([[PAGE_A, [contaminatedHello("สวัสดีA")]]]),
++    pageTargetCache: new Map([[PAGE_A, createPageTargetIdentity("th")!]]),
++  });
++  const { result } = renderTranslationHook();
++  await act(async () => {
++    await result.current.restoreSavedSession();
++  });
++  const reviewBodies: ReviewBody[] = [];
++  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
++    if (String(input) !== "/api/translation-review") throw new Error(`unexpected fetch: ${String(input)}`);
++    const body = JSON.parse(String(init?.body)) as ReviewBody;
++    reviewBodies.push(body);
++    if (body.mode === "repair") {
++      return Response.json({
++        reviews: body.items.map((item) => ({ id: item.id, status: "suggested", suggestion: "แก้A" })),
++      });
++    }
++    return Response.json({ reviews: body.items.map((item) => ({ id: item.id, status: "needs_review" })) });
++  });
++
++  let summary: Awaited<ReturnType<typeof result.current.repairWholeBook>>;
++  await act(async () => {
++    summary = await result.current.repairWholeBook();
++  });
++
++  // Exactly one review + one repair round; the contaminated suggestion never applies.
++  expect(reviewBodies).toHaveLength(2);
++  expect(reviewBodies[1].mode).toBe("repair");
++  expect(result.current.bubbleCacheRef.current.get(PAGE_A)![0].t).toBe("สวัสดีA");
++  expect(summary!).toMatchObject({ pagesRepaired: 0, pointsRepaired: 0, cancelled: false });
++  expect(summary!.unresolved).toEqual([{ pageIndex: 0, pageUrl: PAGE_A, points: 1 }]);
++});
++
++test("whole-book repair cancellation keeps completed pages and stops remaining work", async () => {
++  const { result } = await restoreLegacyBook();
++  act(() => {
++    result.current.confirmLegacyTarget();
++  });
++  const reviewBodies: (ReviewBody & { targetLang?: string })[] = [];
++  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
++    if (String(input) !== "/api/translation-review") throw new Error(`unexpected fetch: ${String(input)}`);
++    const body = JSON.parse(String(init?.body)) as ReviewBody & { targetLang?: string };
++    reviewBodies.push(body);
++    if (reviewBodies.length === 3) {
++      // Cancel during PAGE_B's review round.
++      result.current.cancelWholeBookRepair();
++    }
++    if (body.mode === "repair") {
++      return Response.json({
++        reviews: body.items.map((item) => ({ id: item.id, status: "suggested", suggestion: "สวัสดี" })),
++      });
++    }
++    return Response.json({ reviews: body.items.map((item) => ({ id: item.id, status: "needs_review" })) });
++  });
++
++  let summary: Awaited<ReturnType<typeof result.current.repairWholeBook>>;
++  await act(async () => {
++    summary = await result.current.repairWholeBook();
++  });
++
++  expect(reviewBodies).toHaveLength(3);
++  expect(summary!.cancelled).toBe(true);
++  expect(summary!.pagesRepaired).toBe(1);
++  expect(result.current.bubbleCacheRef.current.get(PAGE_A)![0].t).toBe("สวัสดี");
++  // The page after cancellation keeps its saved contaminated text.
++  expect(result.current.bubbleCacheRef.current.get(PAGE_B)![0].t).toBe("สวัสดีB");
++});
+diff --git a/tests/workflow/legacyReviewWorkspace.test.tsx b/tests/workflow/legacyReviewWorkspace.test.tsx
+new file mode 100644
+index 0000000..c7d6b33
+--- /dev/null
++++ b/tests/workflow/legacyReviewWorkspace.test.tsx
+@@ -0,0 +1,447 @@
++import {
++  act,
++  fireEvent,
++  render,
++  screen,
++  waitFor,
++  within,
++} from "@testing-library/react";
++import type { ComponentProps } from "react";
++import type { CleaningToolbar } from "@/components/cleaning/CleaningToolbar";
++import { beforeEach, expect, test, vi } from "vitest";
++
++import { useCleaning } from "@/hooks/useCleaning";
++import { useTranslation } from "@/hooks/useTranslation";
++import WorkspacePage from "@/src/app/page";
++import { scanPageGeometry } from "@/lib/export/readabilityScan";
++import toast from "react-hot-toast";
++
++vi.mock("@/hooks/useCleaning");
++vi.mock("@/hooks/useTranslation");
++vi.mock("react-hot-toast", () => ({
++  default: vi.fn(),
++  Toaster: () => null,
++}));
++vi.mock("@/lib/translationOverlay", () => ({
++  applyTranslationOverlay: vi.fn(),
++  downloadTranslatedImage: vi.fn(),
++}));
++vi.mock("@/lib/export/readabilityScan", () => ({ scanPageGeometry: vi.fn() }));
++vi.mock("@/components/cleaning/MaskLegend", () => ({
++  MaskLegend: () => null,
++}));
++vi.mock("@/components/cleaning/CleaningToolbar", () => ({
++  CleaningToolbar: vi.fn(
++    ({
++      hasTranslated,
++      layer,
++      onClean,
++      onEditMask,
++      onLayerChange,
++    }: ComponentProps<typeof CleaningToolbar>) => (
++      <section
++        aria-label="Cleaning toolbar"
++        data-has-translated={String(hasTranslated)}
++        data-layer={layer}
++      >
++        <button type="button" onClick={onClean}>
++          Clean current page
++        </button>
++        <button type="button" onClick={onEditMask}>
++          Edit mask
++        </button>
++        {(["original", "clean", "translated", "mask"] as const).map(
++          (nextLayer) => (
++            <button
++              key={nextLayer}
++              type="button"
++              onClick={() => onLayerChange(nextLayer)}
++              disabled={nextLayer === "translated" && !hasTranslated}
++            >
++              Layer {nextLayer}
++            </button>
++          ),
++        )}
++      </section>
++    ),
++  ),
++}));
++vi.mock("@/components/cleaning/MaskEditor", () => ({
++  MaskEditor: vi.fn(() => <div role="dialog" aria-label="Mask editor" />),
++}));
++
++const ORIGINAL_URL = "data:image/png;base64,ORIGINAL";
++const PAGE_NAME = "page-one.png";
++
++const cleaningResult = {
++  width: 100,
++  height: 100,
++  pageId: ORIGINAL_URL,
++  cleanUrl: "data:image/png;base64,CLEAN",
++  maskUrl: "data:image/png;base64,MASK",
++  reviewMaskUrl: "data:image/png;base64,REVIEW",
++  protectedMaskUrl: "data:image/png;base64,PROTECTED",
++  diffUrl: "data:image/png;base64,DIFF",
++  regions: [],
++};
++
++let translationMockState: Record<string, unknown>;
++
++beforeEach(() => {
++  vi.clearAllMocks();
++  translationMockState = {
++    targetLang: "Thai",
++    setTargetLang: vi.fn(),
++    pageTargetCacheRef: { current: new Map() },
++    getPageTargetLanguage: vi.fn(() => "th"),
++    sourceLang: "auto",
++    setSourceLang: vi.fn(),
++    modelPreference: "auto",
++    setModelPreference: vi.fn(),
++    allowPreviewModels: false,
++    setAllowPreviewModels: vi.fn(),
++    glossary: [],
++    setGlossary: vi.fn(),
++    textStyle: {
++      fontFamily: "Itim, sans-serif",
++      textColor: "#000000",
++      textOutline: "#FFFFFF",
++      fontSizeMultiplier: 1,
++    },
++    setTextStyle: vi.fn(),
++    nsfwBypassMode: false,
++    setNsfwBypassMode: vi.fn(),
++    isTranslating: false,
++    translationResult: null,
++    setTranslationResult: vi.fn(),
++    showTranslate: false,
++    setShowTranslate: vi.fn(),
++    handleTranslate: vi.fn().mockResolvedValue(true),
++    isTranslatingAll: false,
++    translateAllProgress: null,
++    handleTranslateAll: vi.fn().mockResolvedValue(undefined),
++    cancelTranslateAll: vi.fn(),
++    translateCrop: vi.fn(),
++    activeBubbles: [],
++    setActiveBubbles: vi.fn(),
++    translatedImages: new Map(),
++    translatedImageCacheRef: { current: new Map() },
++    bubbleCacheRef: { current: new Map() },
++    textStyleRef: { current: {} },
++    userApiKey: "",
++    setUserApiKey: vi.fn(),
++    restoreSavedSession: vi.fn().mockResolvedValue({
++      pages: [{ url: ORIGINAL_URL, name: PAGE_NAME }],
++      currentPage: 0,
++      bubbleCache: new Map(),
++      translatedImageCache: new Map(),
++    }),
++    clearSavedSession: vi.fn(),
++    saveStatus: "idle",
++    saveError: null,
++    retrySaveSession: vi.fn().mockResolvedValue(true),
++    workflowPhase: null,
++    batchFailures: [],
++    failureGroups: [],
++    retryFailedPages: vi.fn().mockResolvedValue(undefined),
++    retryFailureGroup: vi.fn().mockResolvedValue(undefined),
++    autoProceedOnReview: false,
++    setAutoProceedOnReview: vi.fn(),
++    reviewFlaggedPages: new Set(),
++    invalidatePageTranslation: vi.fn(),
++    refreshPageTranslation: vi.fn().mockResolvedValue(undefined),
++    scanTranslatedPages: vi.fn(() => []),
++    inspectTranslatedPages: vi.fn(() => []),
++    replaceBubbleText: vi.fn(() => 0),
++    getPageSignature: vi.fn(() => "rev-0"),
++    getPageRevision: vi.fn(() => 0),
++    cacheRevision: 0,
++    // Ticket 03 surfaces.
++    inspectLegacyTargets: vi.fn(() => []),
++    confirmLegacyTarget: vi.fn(() => 0),
++    inspectReviewIssues: vi.fn(() => []),
++    confirmPointReview: vi.fn(() => true),
++    repairWholeBook: vi.fn().mockResolvedValue({
++      pagesRepaired: 0,
++      pointsRepaired: 0,
++      cancelled: false,
++      unresolved: [],
++      skipped: [],
++    }),
++    cancelWholeBookRepair: vi.fn(),
++    isRepairingBook: false,
++  };
++  vi.mocked(useCleaning).mockReturnValue({
++    cleanPage: vi.fn().mockResolvedValue(cleaningResult),
++    cleanCurrentPage: vi.fn().mockResolvedValue(cleaningResult),
++    retryRegion: vi.fn().mockResolvedValue(cleaningResult),
++    cancelPolling: vi.fn(),
++    currentResult: cleaningResult,
++    progress: undefined,
++    error: undefined,
++    resultsByPage: new Map([[ORIGINAL_URL, cleaningResult]]),
++  } as never);
++  vi.mocked(useTranslation).mockReturnValue(translationMockState as never);
++  vi.mocked(scanPageGeometry).mockResolvedValue({ findings: [] });
++  vi.stubGlobal(
++    "fetch",
++    vi.fn().mockResolvedValue({
++      ok: true,
++      status: 200,
++      json: vi.fn().mockResolvedValue({}),
++      blob: vi.fn().mockResolvedValue(new Blob(["original"], { type: "image/png" })),
++    }),
++  );
++});
++
++async function restoreWorkspaceWith(overrides: Record<string, unknown>) {
++  Object.assign(translationMockState, overrides);
++  const rendered = render(<WorkspacePage />);
++  const restoreButton = await screen.findByRole("button", { name: /คืนค่างานเดิม/ });
++  await act(async () => {
++    fireEvent.click(restoreButton);
++  });
++  await waitFor(() =>
++    expect(screen.queryByRole("button", { name: /คืนค่างานเดิม/ })).not.toBeInTheDocument(),
++  );
++  return rendered;
++}
++
++test("restored legacy projects confirm their target once with Thai suggested", async () => {
++  const confirmLegacyTarget = vi.fn(() => 1);
++  await restoreWorkspaceWith({
++    inspectLegacyTargets: vi.fn(() => [{ pageUrl: ORIGINAL_URL, pageIndex: 0 }]),
++    confirmLegacyTarget,
++  });
++
++  const dialog = screen.getByRole("dialog", { name: /ยืนยันภาษาปลายทางของงานเก่า/ });
++  expect(dialog).toBeInTheDocument();
++  expect(within(dialog).getByText(/หน้า 1/)).toBeInTheDocument();
++  expect(within(dialog).getAllByText(/ภาษาไทย/).length).toBeGreaterThan(0);
++
++  fireEvent.click(screen.getByRole("button", { name: /ยืนยันใช้ภาษา/ }));
++  expect(confirmLegacyTarget).toHaveBeenCalledTimes(1);
++  expect(
++    screen.queryByRole("dialog", { name: /ยืนยันภาษาปลายทางของงานเก่า/ }),
++  ).not.toBeInTheDocument();
++});
++
++test("legacy target confirmation can be postponed without relabelling pages", async () => {
++  await restoreWorkspaceWith({
++    inspectLegacyTargets: vi.fn(() => [{ pageUrl: ORIGINAL_URL, pageIndex: 0 }]),
++    confirmLegacyTarget: vi.fn(() => 0),
++  });
++
++  fireEvent.click(screen.getByRole("button", { name: /ยืนยันภายหลัง/ }));
++  expect(screen.queryByRole("dialog", { name: /ยืนยันภาษาปลายทางของงานเก่า/ })).not.toBeInTheDocument();
++  expect(translationMockState.confirmLegacyTarget).not.toHaveBeenCalled();
++});
++
++test("the scan action opens an actionable review list with human confirmation and whole-book repair", async () => {
++  const confirmPointReview = vi.fn(() => true);
++  const repairWholeBook = vi.fn().mockResolvedValue({
++    pagesRepaired: 1,
++    pointsRepaired: 1,
++    cancelled: false,
++    unresolved: [],
++    skipped: [],
++  });
++  await restoreWorkspaceWith({
++    confirmPointReview,
++    repairWholeBook,
++    inspectReviewIssues: vi.fn(() => [
++      {
++        pageUrl: ORIGINAL_URL,
++        pageIndex: 0,
++        pageTotal: 2,
++        targetId: "th",
++        targetUnconfirmed: false,
++        scriptIssues: [
++          {
++            index: 0,
++            pointId: "1",
++            kind: "script",
++            hasSource: true,
++            humanConfirmable: false,
++            characters: "U+05DE",
++          },
++        ],
++        unverified: [
++          {
++            index: 1,
++            pointId: "2",
++            kind: "unverified",
++            hasSource: true,
++            humanConfirmable: true,
++            status: "unavailable",
++          },
++        ],
++      },
++    ]),
++  });
++
++  fireEvent.click(screen.getAllByRole("button", { name: "เครื่องมือ" })[0]);
++  fireEvent.click(await screen.findByRole("menuitem", { name: "ตรวจคำแปลทั้งเล่ม" }));
++
++  const dialog = await screen.findByRole("dialog", { name: /รายการตรวจคำแปล/ });
++  expect(dialog).toBeInTheDocument();
++  // The script failure shows its offending characters and offers no confirmation.
++  expect(screen.getByText(/U\+05DE/)).toBeInTheDocument();
++  expect(screen.queryByRole("button", { name: /ยืนยันจุดที่ 1/ })).not.toBeInTheDocument();
++  // A source-backed point whose script passes can be explicitly human-confirmed.
++  fireEvent.click(screen.getByRole("button", { name: /ยืนยันจุดที่ 2/ }));
++  expect(confirmPointReview).toHaveBeenCalledWith(ORIGINAL_URL, 1);
++
++  fireEvent.click(screen.getByRole("button", { name: /แก้ตัวอักษรปนทั้งเล่ม/ }));
++  await waitFor(() => expect(repairWholeBook).toHaveBeenCalledTimes(1));
++});
++
++test("postponed legacy confirmation reopens from the scan before the review list", async () => {
++  const confirmLegacyTarget = vi.fn(() => 1);
++  await restoreWorkspaceWith({
++    inspectLegacyTargets: vi.fn(() => [{ pageUrl: ORIGINAL_URL, pageIndex: 0 }]),
++    confirmLegacyTarget,
++  });
++
++  fireEvent.click(screen.getByRole("button", { name: /ยืนยันภายหลัง/ }));
++  expect(
++    screen.queryByRole("dialog", { name: /ยืนยันภาษาปลายทางของงานเก่า/ }),
++  ).not.toBeInTheDocument();
++
++  fireEvent.click(screen.getAllByRole("button", { name: "เครื่องมือ" })[0]);
++  fireEvent.click(await screen.findByRole("menuitem", { name: "ตรวจคำแปลทั้งเล่ม" }));
++
++  // The scan must re-open the one-time confirmation instead of stranding the
++  // postponed pages behind an unactionable review badge.
++  const dialog = await screen.findByRole("dialog", {
++    name: /ยืนยันภาษาปลายทางของงานเก่า/,
++  });
++  expect(dialog).toBeInTheDocument();
++  fireEvent.click(within(dialog).getByRole("button", { name: /ยืนยันใช้ภาษา/ }));
++  expect(confirmLegacyTarget).toHaveBeenCalledTimes(1);
++});
++
++test("the review dialog offers a confirm action next to the unconfirmed-target badge", async () => {
++  const confirmLegacyTarget = vi.fn(() => 1);
++  await restoreWorkspaceWith({
++    confirmLegacyTarget,
++    inspectReviewIssues: vi.fn(() => [
++      {
++        pageUrl: ORIGINAL_URL,
++        pageIndex: 0,
++        pageTotal: 2,
++        targetId: "th",
++        targetUnconfirmed: true,
++        scriptIssues: [],
++        unverified: [],
++      },
++    ]),
++  });
++
++  fireEvent.click(screen.getAllByRole("button", { name: "เครื่องมือ" })[0]);
++  fireEvent.click(await screen.findByRole("menuitem", { name: "ตรวจคำแปลทั้งเล่ม" }));
++
++  const dialog = await screen.findByRole("dialog", { name: /รายการตรวจคำแปล/ });
++  expect(within(dialog).getByText("ยืนยันภาษาของหน้าก่อน")).toBeInTheDocument();
++  fireEvent.click(within(dialog).getByRole("button", { name: /ยืนยันภาษา/ }));
++  expect(confirmLegacyTarget).toHaveBeenCalledTimes(1);
++});
++
++test("the whole-book repair toast surfaces pages skipped for unconfirmed targets", async () => {
++  const repairWholeBook = vi.fn().mockResolvedValue({
++    pagesRepaired: 0,
++    pointsRepaired: 2,
++    cancelled: false,
++    unresolved: [],
++    skipped: [{ pageIndex: 1, pageUrl: "url-2", reason: "target-unconfirmed" }],
++  });
++  await restoreWorkspaceWith({
++    repairWholeBook,
++    inspectReviewIssues: vi.fn(() => [
++      {
++        pageUrl: ORIGINAL_URL,
++        pageIndex: 0,
++        pageTotal: 2,
++        targetId: "th",
++        targetUnconfirmed: true,
++        scriptIssues: [],
++        unverified: [],
++      },
++    ]),
++  });
++
++  fireEvent.click(screen.getAllByRole("button", { name: "เครื่องมือ" })[0]);
++  fireEvent.click(await screen.findByRole("menuitem", { name: "ตรวจคำแปลทั้งเล่ม" }));
++
++  fireEvent.click(screen.getByRole("button", { name: /แก้ตัวอักษรปนทั้งเล่ม/ }));
++  await waitFor(() => expect(repairWholeBook).toHaveBeenCalledTimes(1));
++  await waitFor(() =>
++    expect(toast).toHaveBeenCalledWith(
++      expect.stringContaining("ข้าม 1 หน้า (ยืนยันภาษาไม่ครบ)"),
++      expect.anything(),
++    ),
++  );
++});
++
++test("a whole-book repair failure surfaces an error toast instead of an unhandled rejection", async () => {
++  const repairWholeBook = vi
++    .fn()
++    .mockRejectedValue(new Error("repair boom"));
++  await restoreWorkspaceWith({
++    repairWholeBook,
++    inspectReviewIssues: vi.fn(() => [
++      {
++        pageUrl: ORIGINAL_URL,
++        pageIndex: 0,
++        pageTotal: 2,
++        targetId: "th",
++        targetUnconfirmed: false,
++        scriptIssues: [
++          {
++            index: 0,
++            pointId: "1",
++            kind: "script",
++            hasSource: true,
++            humanConfirmable: false,
++            characters: "U+05DE",
++          },
++        ],
++        unverified: [],
++      },
++    ]),
++  });
++
++  fireEvent.click(screen.getAllByRole("button", { name: "เครื่องมือ" })[0]);
++  fireEvent.click(await screen.findByRole("menuitem", { name: "ตรวจคำแปลทั้งเล่ม" }));
++
++  fireEvent.click(screen.getByRole("button", { name: /แก้ตัวอักษรปนทั้งเล่ม/ }));
++  await waitFor(() => expect(repairWholeBook).toHaveBeenCalledTimes(1));
++  await waitFor(() =>
++    expect(toast).toHaveBeenCalledWith(
++      expect.stringContaining("repair boom"),
++      expect.anything(),
++    ),
++  );
++});
++
++test("legacy confirmation labels follow the actual target language", async () => {
++  await restoreWorkspaceWith({
++    targetLang: "English",
++    inspectLegacyTargets: vi.fn(() => [{ pageUrl: ORIGINAL_URL, pageIndex: 0 }]),
++    confirmLegacyTarget: vi.fn(() => 1),
++  });
++
++  const dialog = screen.getByRole("dialog", { name: /ยืนยันภาษาปลายทางของงานเก่า/ });
++  const confirmButton = within(dialog).getByRole("button", {
++    name: "ยืนยันใช้ภาษา English",
++  });
++  expect(confirmButton).toBeInTheDocument();
++
++  fireEvent.click(confirmButton);
++  await waitFor(() =>
++    expect(toast).toHaveBeenCalledWith(
++      "✅ ยืนยันใช้ภาษา English กับ 1 หน้า",
++      expect.anything(),
++    ),
++  );
++});

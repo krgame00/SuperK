@@ -38,6 +38,7 @@ vi.mock("@/components/cleaning/CleaningToolbar", () => ({
       onClean,
       onEditMask,
       onLayerChange,
+      children,
     }: ComponentProps<typeof CleaningToolbar>) => (
       <section
         aria-label="Cleaning toolbar"
@@ -62,6 +63,7 @@ vi.mock("@/components/cleaning/CleaningToolbar", () => ({
             </button>
           ),
         )}
+        {children}
       </section>
     ),
   ),

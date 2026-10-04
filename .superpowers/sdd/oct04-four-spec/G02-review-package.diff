@@ -1,0 +1,880 @@
+diff --git a/hooks/useTranslation.ts b/hooks/useTranslation.ts
+index 7642a5a..7582bb8 100644
+--- a/hooks/useTranslation.ts
++++ b/hooks/useTranslation.ts
+@@ -27,10 +27,6 @@ import { reviewTranslatedBubbles } from "@/lib/translation/qualityReviewClient";
+ import { invalidateQualityReview, needsQualityReview } from "@/lib/translation/qualityReview";
+ import { LANGUAGE_POLICY_VERSION, inspectTargetText, normalizeTargetTranslationPayload, formatOffendingCharacters } from "@/lib/languagePolicy";
+ import { createPageTargetIdentity, inspectPageOutputEligibility, type PageTargetIdentity } from "@/lib/translation/pageEligibility";
+-import {
+-  countContaminatedBubbles,
+-  isThaiTargetLanguage,
+-} from "@/lib/thaiSpellcheck";
+ import { sampleBubbleRegion } from "@/lib/colorMatching/canvasSampler";
+ import { extractTextColors } from "@/lib/colorMatching/sampleTextColors";
+ import { needsSourceOutlineRefresh, refreshSourceOutline } from "@/lib/colorMatching/outlineMigration";
+@@ -1053,7 +1049,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
+           setTranslationResult("กำลังตรวจความหมายและสำนวนคำแปล…");
+         }
+         return reviewTranslatedBubbles(bubbles,{targetLang,apiKey:userApiKey,modelPreference,
+-          allowPreview:allowPreviewModels,glossary,signal});
++          allowPreview:allowPreviewModels,glossary,signal,
++          sourceRevision:String(getPageRevision(pageUrl)),repairContamination:true});
+       };
+       const unresolvedScriptWarning = (bubbles: TranslatedBubble[]) => {
+         const points = bubbles.flatMap((bubble,index) => {
+@@ -1383,28 +1380,21 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
+       const typedParsed = parsed as { bubbles?: TranslatedBubble[] } & Record<string, unknown>;
+       const normalized = normalizeTargetTranslationPayload(typedParsed, targetLang);
+       let pageBubbles: TranslatedBubble[] = normalized.bubbles ?? [];
+-      // Foreign-script leakage (Japanese kana/kanji from the source page,
+-      // Cyrillic runs) is treated like the 0-bubble failure: retry once on
+-      // the enhanced image and keep whichever pass came out cleaner. The
+-      // guard only applies to Thai targets — kana/kanji are legitimate when
+-      // translating INTO Japanese.
+-      const isThaiTarget = isThaiTargetLanguage(targetLang);
+-      let contaminatedBubbles = isThaiTarget
+-        ? countContaminatedBubbles(pageBubbles)
+-        : 0;
+-
++      // Foreign-script leakage is repaired per point by the single bounded
++      // repair round inside reviewPage below. A whole-image retry here would
++      // stack a second automatic correction pass on top of point repair, so
++      // only the genuinely distinct 0-bubble recognition failure retries the
++      // enhanced image.
+       if (
+-        (pageBubbles.length === 0 || contaminatedBubbles > 0)
++        pageBubbles.length === 0
+         && !isAutoRetry
+         && !nsfwBypassMode
+         && !forceNsfwBypass
+       ) {
+-        console.log(`[Auto-Retry] ${pageBubbles.length === 0 ? "0 bubbles found" : `${contaminatedBubbles} bubble(s) with foreign-script characters`} for page ${pageIndex + 1}. Retrying with enhanced single image...`);
++        console.log(`[Auto-Retry] 0 bubbles found for page ${pageIndex + 1}. Retrying with enhanced single image...`);
+         if (activePageRef.current === pageUrl) {
+           setTranslationResult(
+-            pageBubbles.length === 0
+-              ? "⏳ ไม่พบข้อความ! กำลังปรับความคมชัดภาพและ Auto-Retry..."
+-              : `⏳ พบตัวอักษรภาษาอื่นปนในคำแปล ${contaminatedBubbles} จุด! กำลังแปลใหม่อัตโนมัติ...`,
++            "⏳ ไม่พบข้อความ! กำลังปรับความคมชัดภาพและ Auto-Retry...",
+           );
+         }
+ 
+@@ -1460,14 +1450,12 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
+         );
+         const retryBubbles: TranslatedBubble[] =
+           (retryNormalized as { bubbles?: TranslatedBubble[] }).bubbles ?? [];
+-        const retryContamination = countContaminatedBubbles(retryBubbles);
+         // The retry replaced the first response only when the first pass had
+-        // nothing to keep (0 bubbles) or the retry is actually cleaner —
+-        // swapping for a dirtier result would throw away good translations.
+-        if (pageBubbles.length === 0 || retryContamination < contaminatedBubbles) {
++        // nothing to keep (0 bubbles); contamination is handled per point by
++        // the bounded repair round, not by swapping whole-image passes.
++        if (pageBubbles.length === 0) {
+           parsed = retryNormalized;
+           pageBubbles = retryBubbles;
+-          contaminatedBubbles = retryContamination;
+         }
+       }
+ 
+diff --git a/lib/translation/qualityReview.ts b/lib/translation/qualityReview.ts
+index ff7c49d..51b6847 100644
+--- a/lib/translation/qualityReview.ts
++++ b/lib/translation/qualityReview.ts
+@@ -1,4 +1,4 @@
+-import { inspectTargetText, resolveTargetLanguage, formatOffendingCharacters } from "@/lib/languagePolicy";
++import { LANGUAGE_POLICY_VERSION, inspectTargetText, resolveTargetLanguage, formatOffendingCharacters } from "@/lib/languagePolicy";
+ 
+ export interface QualityReviewItem {
+   id: string;
+@@ -8,11 +8,18 @@ export interface QualityReviewItem {
+ 
+ export interface TranslationReview {
+   status: "ok" | "suggested" | "needs_review" | "accepted" | "dismissed" | "unavailable" | "stale";
++  /** Exact raw source text; trimmed evidence cannot silently approve raw content. */
+   sourceText: string;
++  /** Exact raw translated text at snapshot time. */
+   reviewedText: string;
+   suggestion?: string;
+   reason?: string;
+   originalTranslation?: string;
++  /** Target-policy identity bound when this snapshot was recorded. */
++  targetId?: string;
++  policyVersion?: string;
++  /** Exact source evidence revision bound when this snapshot was recorded. */
++  sourceRevision?: string;
+ }
+ 
+ interface ReviewableBubble {
+@@ -30,6 +37,17 @@ export function unavailableReview(item: QualityReviewItem, reason = "ยัง
+   return {status:"unavailable",sourceText:item.sourceText,reviewedText:item.translatedText,reason};
+ }
+ 
++/** Every recorded snapshot binds the target policy and source revision it was captured under. */
++export function withReviewIdentity(review: TranslationReview, targetLang: string, sourceRevision?: string): TranslationReview {
++  const resolution = resolveTargetLanguage(targetLang);
++  return {
++    ...review,
++    ...(resolution.status === "resolved" ? {targetId:resolution.profile.id} : {}),
++    policyVersion: LANGUAGE_POLICY_VERSION,
++    ...(sourceRevision !== undefined ? {sourceRevision} : {}),
++  };
++}
++
+ /** Provider output is untrusted. Missing, duplicated, or invalid IDs never imply approval. */
+ export function guardQualityReview(review: TranslationReview, targetLang = "Thai"): TranslationReview {
+   const suggestionInspection = review.suggestion === undefined ? undefined : inspectTargetText(review.suggestion, targetLang);
+@@ -51,12 +69,16 @@ export function guardQualityReview(review: TranslationReview, targetLang = "Thai
+   return { ...review, status: review.status === "suggested" ? "suggested" : "needs_review", reason };
+ }
+ 
+-export function parseQualityReviews(items: QualityReviewItem[], response: unknown, targetLang = "Thai"): Record<string, TranslationReview> {
++export function parseQualityReviews(items: QualityReviewItem[], response: unknown, targetLang = "Thai", sourceRevision?: string): Record<string, TranslationReview> {
+   const rows = response && typeof response === "object" && "reviews" in response && Array.isArray(response.reviews)
+     ? response.reviews as unknown[] : [];
+   const result: Record<string, TranslationReview> = Object.create(null);
+   for (const item of items) {
+-    result[item.id] = guardQualityReview(unavailableReview(item), targetLang);
++    // Provider output is never approval without source-backed evidence to compare against.
++    result[item.id] = guardQualityReview(withReviewIdentity(
++      unavailableReview(item, item.sourceText.trim() ? "ยังตรวจคำแปลไม่ได้ กรุณาเทียบต้นฉบับ" : "ไม่มีข้อความต้นฉบับให้เทียบ กรุณาตรวจจากภาพ"),
++      targetLang, sourceRevision), targetLang);
++    if (!item.sourceText.trim()) continue;
+     const matches = rows.filter(row => row && typeof row === "object" && "id" in row && row.id === item.id);
+     if (matches.length !== 1) continue;
+     const row = matches[0] as Record<string, unknown>;
+@@ -69,7 +91,7 @@ export function parseQualityReviews(items: QualityReviewItem[], response: unknow
+       review.suggestion = row.suggestion;
+       const guarded = guardQualityReview(review, targetLang);
+       if (guarded.suggestion === undefined) {
+-        result[item.id] = guarded;
++        result[item.id] = withReviewIdentity(guarded, targetLang, sourceRevision);
+         continue;
+       }
+       review.suggestion = review.suggestion.trim();
+@@ -78,15 +100,20 @@ export function parseQualityReviews(items: QualityReviewItem[], response: unknow
+         delete review.suggestion;
+       }
+     }
+-    result[item.id] = guardQualityReview(review, targetLang);
++    result[item.id] = withReviewIdentity(guardQualityReview(review, targetLang), targetLang, sourceRevision);
+   }
+   return result;
+ }
+ 
+-export function isReviewCurrent(bubble: ReviewableBubble): boolean {
++export function isReviewCurrent(bubble: ReviewableBubble, targetId?: string, sourceRevision?: string): boolean {
+   const review = bubble.translationReview;
+-  return !!review && review.sourceText === (typeof bubble.original_text === "string" ? bubble.original_text.trim() : "") &&
+-    review.reviewedText === (bubble.t || bubble.translated || "").trim();
++  if (!review) return false;
++  // Snapshots must describe the exact raw text; trimmed comparisons silently approved raw changes.
++  if (review.sourceText !== (typeof bubble.original_text === "string" ? bubble.original_text : "")) return false;
++  if (review.reviewedText !== (bubble.t || bubble.translated || "")) return false;
++  if (targetId !== undefined && review.targetId !== targetId) return false;
++  if (sourceRevision !== undefined && review.sourceRevision !== sourceRevision) return false;
++  return true;
+ }
+ 
+ export function invalidateQualityReview(bubble: ReviewableBubble): void {
+diff --git a/lib/translation/qualityReviewClient.ts b/lib/translation/qualityReviewClient.ts
+index 6d03171..cc2346b 100644
+--- a/lib/translation/qualityReviewClient.ts
++++ b/lib/translation/qualityReviewClient.ts
+@@ -1,5 +1,6 @@
+ import type { TranslatedBubble } from "@/lib/translationOverlay";
+-import { guardQualityReview, MAX_REVIEW_ITEMS, MAX_REVIEW_TEXT_LENGTH, parseQualityReviews, unavailableReview, type QualityReviewItem } from "./qualityReview";
++import { inspectTargetText } from "@/lib/languagePolicy";
++import { guardQualityReview, MAX_REVIEW_ITEMS, MAX_REVIEW_TEXT_LENGTH, parseQualityReviews, unavailableReview, withReviewIdentity, type QualityReviewItem, type TranslationReview } from "./qualityReview";
+ 
+ interface ReviewOptions {
+   targetLang: string;
+@@ -9,37 +10,109 @@ interface ReviewOptions {
+   glossary?: unknown[];
+   signal?: AbortSignal;
+   fetchImpl?: typeof fetch;
++  /** Exact source evidence revision bound into every recorded snapshot. */
++  sourceRevision?: string;
++  /** Run the single bounded automatic repair round for locally detected script contamination. */
++  repairContamination?: boolean;
+ }
+ 
+-/** A failed checker must not discard an otherwise successful translation. */
++class ReviewRequestFailed extends Error {}
++
++function chunkItems(items: QualityReviewItem[]): QualityReviewItem[][] {
++  const chunks: QualityReviewItem[][] = [];
++  for (let index = 0; index < items.length; index += MAX_REVIEW_ITEMS) chunks.push(items.slice(index, index + MAX_REVIEW_ITEMS));
++  return chunks;
++}
++
++/**
++ * A failed checker must not discard an otherwise successful translation.
++ * Every active (non-deleted) point ends with an explicit snapshot: provider
++ * reviewed, or locally marked unavailable. Deleted points never participate.
++ */
+ export async function reviewTranslatedBubbles(bubbles: TranslatedBubble[], options: ReviewOptions): Promise<TranslatedBubble[]> {
+   if (options.signal?.aborted) throw new DOMException("Cancelled", "AbortError");
+-  const items: QualityReviewItem[] = [];
+-  const result = bubbles.map((bubble, index) => {
+-    if (bubble.deleted || bubble.isManual || !(bubble.t || bubble.translated || "").trim()) return bubble;
+-    const item = {id:String(index),sourceText:typeof bubble.original_text === "string" ? bubble.original_text.trim() : "",translatedText:(bubble.t || bubble.translated || "").trim()};
+-    const eligible = item.sourceText.length > 0 && item.sourceText.length <= MAX_REVIEW_TEXT_LENGTH &&
+-      item.translatedText.length <= MAX_REVIEW_TEXT_LENGTH && items.length < MAX_REVIEW_ITEMS;
+-    if (eligible) items.push(item);
+-    return {...bubble,translationReview:guardQualityReview(unavailableReview(item, eligible ? undefined :
+-      !item.sourceText ? "ไม่มีข้อความต้นฉบับให้เทียบ กรุณาตรวจจากภาพ" : "ข้อความเกินขอบเขตการตรวจ กรุณาตรวจจากภาพ"),options.targetLang)};
++  const result = bubbles.slice();
++  const entries = bubbles.flatMap((bubble, index) => {
++    if (bubble.deleted) return [];
++    // Exact raw text is preserved end-to-end (snapshots and request payloads);
++    // only the provider suggestion is trimmed before equivalence checks.
++    const sourceText = typeof bubble.original_text === "string" ? bubble.original_text : "";
++    const translatedText = bubble.t || bubble.translated || "";
++    const item: QualityReviewItem = {id:String(index),sourceText,translatedText};
++    const reviewable = !!sourceText.trim() && !!translatedText.trim() &&
++      sourceText.length <= MAX_REVIEW_TEXT_LENGTH && translatedText.length <= MAX_REVIEW_TEXT_LENGTH;
++    result[index] = {...bubble,translationReview:guardQualityReview(withReviewIdentity(
++      unavailableReview(item, !sourceText.trim() ? "ไม่มีข้อความต้นฉบับให้เทียบ กรุณาตรวจจากภาพ" : "ข้อความเกินขอบเขตการตรวจ กรุณาตรวจจากภาพ"),
++      options.targetLang,options.sourceRevision),options.targetLang)};
++    return [{index,item,reviewable}];
+   });
+-  if (items.length === 0) return result;
++  const items = entries.filter(entry => entry.reviewable).map(entry => entry.item);
+   const controller = new AbortController();
+   const cancel = () => controller.abort();
+   options.signal?.addEventListener("abort", cancel, {once:true});
+-  const timeout = setTimeout(cancel, 50_000);
++  const requestChunk = async (chunk: QualityReviewItem[], mode?: "repair"): Promise<Record<string, TranslationReview>> => {
++    const timeout = setTimeout(cancel, 50_000);
++    try {
++      const response = await (options.fetchImpl ?? fetch)("/api/translation-review", {
++        method:"POST",headers:{"Content-Type":"application/json"},signal:controller.signal,
++        body:JSON.stringify({items:chunk,targetLang:options.targetLang,apiKey:options.apiKey,
++          modelPreference:options.modelPreference,allowPreview:options.allowPreview,
++          glossary:options.glossary ?? [],...(mode ? {mode}:{})}),
++      });
++      if (options.signal?.aborted) throw new DOMException("Cancelled", "AbortError");
++      if (!response.ok) throw new ReviewRequestFailed(String(response.status));
++      return parseQualityReviews(chunk, await response.json(), options.targetLang, options.sourceRevision);
++    } finally {
++      clearTimeout(timeout);
++    }
++  };
+   try {
+-    const response = await (options.fetchImpl ?? fetch)("/api/translation-review", {
+-      method:"POST",headers:{"Content-Type":"application/json"},signal:controller.signal,
+-      body:JSON.stringify({items,targetLang:options.targetLang,apiKey:options.apiKey,
+-        modelPreference:options.modelPreference,allowPreview:options.allowPreview,glossary:options.glossary ?? []}),
+-    });
+-    if (options.signal?.aborted) throw new DOMException("Cancelled", "AbortError");
+-    if (!response.ok) return result;
+-    const reviews = parseQualityReviews(items, await response.json(), options.targetLang);
+-    for (const item of items) result[Number(item.id)].translationReview = reviews[item.id];
+-    if (options.signal?.aborted) throw new DOMException("Cancelled", "AbortError");
++    // Dense pages exceed single-request limits: chunk instead of silently
++    // leaving active points unreviewed. A failed chunk keeps its explicit
++    // unavailable snapshot; cancellation still propagates to the caller.
++    for (const chunk of chunkItems(items)) {
++      const reviews = await requestChunk(chunk);
++      if (options.signal?.aborted) throw new DOMException("Cancelled", "AbortError");
++      for (const item of chunk) {
++        const index = Number(item.id);
++        result[index] = {...result[index],translationReview:reviews[item.id]};
++      }
++    }
++    if (options.repairContamination) {
++      // The one logical automatic repair round per page/run: only locally
++      // detected script contamination, only affected point IDs, validated once,
++      // and never stacked with a whole-image retry. Editorial (clean) review
++      // suggestions stay explicit-acceptance and are never applied here.
++      const affected = entries
++        .filter(entry => entry.reviewable && inspectTargetText(entry.item.translatedText, options.targetLang).status === "blocked")
++        .map(entry => entry.item);
++      for (const chunk of chunkItems(affected)) {
++        if (options.signal?.aborted) throw new DOMException("Cancelled", "AbortError");
++        let reviews: Record<string, TranslationReview>;
++        try {
++          reviews = await requestChunk(chunk, "repair");
++        } catch (error) {
++          if (options.signal?.aborted) throw new DOMException("Cancelled", "AbortError");
++          void error;
++          break; // A failed repair keeps the unresolved review snapshot; no loop.
++        }
++        if (options.signal?.aborted) throw new DOMException("Cancelled", "AbortError");
++        for (const item of chunk) {
++          const review = reviews[item.id];
++          // Missing/duplicate/malformed repair rows and provider "ok" without a
++          // replacement never resolve the point; the review snapshot stands.
++          if (review?.status !== "suggested" || review.suggestion === undefined) continue;
++          const replacement = review.suggestion;
++          const index = Number(item.id);
++          // The suggestion was validated once against the target policy in
++          // parseQualityReviews; contaminated repairs never reach this branch.
++          result[index] = {...result[index],t:replacement,translated:replacement,
++            translationReview:withReviewIdentity({status:"ok",sourceText:item.sourceText,
++              reviewedText:replacement,originalTranslation:item.translatedText},
++              options.targetLang,options.sourceRevision)};
++        }
++      }
++    }
+     return result;
+   } catch (error) {
+     if (options.signal?.aborted) throw new DOMException("Cancelled", "AbortError");
+@@ -47,7 +120,6 @@ export async function reviewTranslatedBubbles(bubbles: TranslatedBubble[], optio
+     void error;
+     return result;
+   } finally {
+-    clearTimeout(timeout);
+     options.signal?.removeEventListener("abort",cancel);
+   }
+ }
+diff --git a/tests/translation/qualityReviewClient.test.ts b/tests/translation/qualityReviewClient.test.ts
+index e548a4f..0470d31 100644
+--- a/tests/translation/qualityReviewClient.test.ts
++++ b/tests/translation/qualityReviewClient.test.ts
+@@ -23,13 +23,17 @@ describe("page quality review client", () => {
+     const result=await reviewTranslatedBubbles([bubble],{targetLang:"Thai",fetchImpl:vi.fn().mockRejectedValue(new Error("offline"))});
+     expect(result[0]).toMatchObject({...bubble,translationReview:{status:"unavailable"}});
+   });
+-  it("does not guess missing source or review manual/deleted bubbles",async()=>{
+-    const fetchImpl=vi.fn();
++  it("reviews manual points, never guesses without source, and excludes deleted points",async()=>{
++    const fetchImpl=vi.fn(async(_url,init)=>{const body=JSON.parse(String(init?.body));return Response.json({reviews:body.items.map((item:{id:string})=>({id:item.id,status:"ok"}))});});
+     const manual={...bubble,isManual:true}; const deleted={...bubble,deleted:true};
+     const result=await reviewTranslatedBubbles([{t:"สวัสดี"},manual,deleted],{targetLang:"Thai",fetchImpl});
+-    expect(fetchImpl).not.toHaveBeenCalled();
++    const sent=JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body)).items as Array<{id:string}>;
++    expect(sent.map(item=>item.id)).toEqual(["1"]);
+     expect(result[0].translationReview?.status).toBe("unavailable");
+-    expect(result[1]).toBe(manual); expect(result[2]).toBe(deleted);
++    expect(result[0].t).toBe("สวัสดี");
++    expect(result[1].translationReview?.status).toBe("ok");
++    expect(result[1].isManual).toBe(true);
++    expect(result[2]).toBe(deleted);
+   });
+   it("propagates cancellation instead of caching a completed page",async()=>{
+     const controller=new AbortController(); controller.abort();
+@@ -47,10 +51,11 @@ describe("page quality review client", () => {
+     expect(result[0].translationReview?.status).toBe("unavailable");
+     expect(fetchImpl).not.toHaveBeenCalled();
+   });
+-  it("flags excess items rather than silently approving them",async()=>{
+-    const fetchImpl=vi.fn().mockResolvedValue(Response.json({reviews:Array.from({length:64},(_,i)=>({id:String(i),status:"ok"}))}));
++  it("chunks dense pages across requests instead of leaving points unreviewed",async()=>{
++    const fetchImpl=vi.fn(async(_url,init)=>{const body=JSON.parse(String(init?.body));return Response.json({reviews:body.items.map((item:{id:string})=>({id:item.id,status:"ok"}))});});
+     const result=await reviewTranslatedBubbles(Array.from({length:65},()=>({...bubble})),{targetLang:"Thai",fetchImpl});
++    expect(fetchImpl).toHaveBeenCalledTimes(2);
+     expect(result[63].translationReview?.status).toBe("ok");
+-    expect(result[64].translationReview?.status).toBe("unavailable");
++    expect(result[64].translationReview?.status).toBe("ok");
+   });
+ });
+diff --git a/tests/translation/useTranslation.manualBubble.test.tsx b/tests/translation/useTranslation.manualBubble.test.tsx
+index b8b45f0..7091f09 100644
+--- a/tests/translation/useTranslation.manualBubble.test.tsx
++++ b/tests/translation/useTranslation.manualBubble.test.tsx
+@@ -43,6 +43,10 @@ const translatedBubble = {
+   box: [10, 20, 40, 80],
+   t: "translated",
+ };
++// Review evidence snapshots are attached to every active point (G02), so
++// manual bubbles are matched by content instead of exact deep equality.
++const manualLike = (bubble: { box: number[]; t: string }) =>
++  expect.objectContaining({ box: bubble.box, t: bubble.t, isManual: true });
+ const storageValues = new Map<string, string>();
+ const storage = {
+   get length() {
+@@ -157,9 +161,9 @@ test("NSFW translation publishes same-page manual bubbles to both render and bub
+   const rendered = vi
+     .mocked(applyTranslationOverlay)
+     .mock.calls.findLast((call) => call[1] === "offscreen")?.[0];
+-  expect(rendered).toEqual(expect.arrayContaining([activeManual]));
++  expect(rendered).toEqual(expect.arrayContaining([manualLike(activeManual)]));
+   expect(result.current.bubbleCacheRef.current.get("blob:one")).toEqual(
+-    expect.arrayContaining([activeManual]),
++    expect.arrayContaining([manualLike(activeManual)]),
+   );
+ });
+ 
+@@ -211,13 +215,13 @@ test("Translate All uses each background page cache instead of active-page manua
+       (call) => call[1] === "offscreen" && call[2] === 1,
+     )?.[0];
+   expect(backgroundRender).toEqual(
+-    expect.arrayContaining([backgroundManual]),
++    expect.arrayContaining([manualLike(backgroundManual)]),
+   );
+-  expect(backgroundRender).not.toEqual(expect.arrayContaining([activeManual]));
++  expect(backgroundRender).not.toEqual(expect.arrayContaining([manualLike(activeManual)]));
+   expect(result.current.bubbleCacheRef.current.get("blob:two")).toEqual(
+-    expect.arrayContaining([backgroundManual]),
++    expect.arrayContaining([manualLike(backgroundManual)]),
+   );
+   expect(result.current.bubbleCacheRef.current.get("blob:two")).not.toEqual(
+-    expect.arrayContaining([activeManual]),
++    expect.arrayContaining([manualLike(activeManual)]),
+   );
+ });
+diff --git a/tests/translation/useTranslation.manualBubbles.test.tsx b/tests/translation/useTranslation.manualBubbles.test.tsx
+index b8b45f0..7091f09 100644
+--- a/tests/translation/useTranslation.manualBubbles.test.tsx
++++ b/tests/translation/useTranslation.manualBubbles.test.tsx
+@@ -43,6 +43,10 @@ const translatedBubble = {
+   box: [10, 20, 40, 80],
+   t: "translated",
+ };
++// Review evidence snapshots are attached to every active point (G02), so
++// manual bubbles are matched by content instead of exact deep equality.
++const manualLike = (bubble: { box: number[]; t: string }) =>
++  expect.objectContaining({ box: bubble.box, t: bubble.t, isManual: true });
+ const storageValues = new Map<string, string>();
+ const storage = {
+   get length() {
+@@ -157,9 +161,9 @@ test("NSFW translation publishes same-page manual bubbles to both render and bub
+   const rendered = vi
+     .mocked(applyTranslationOverlay)
+     .mock.calls.findLast((call) => call[1] === "offscreen")?.[0];
+-  expect(rendered).toEqual(expect.arrayContaining([activeManual]));
++  expect(rendered).toEqual(expect.arrayContaining([manualLike(activeManual)]));
+   expect(result.current.bubbleCacheRef.current.get("blob:one")).toEqual(
+-    expect.arrayContaining([activeManual]),
++    expect.arrayContaining([manualLike(activeManual)]),
+   );
+ });
+ 
+@@ -211,13 +215,13 @@ test("Translate All uses each background page cache instead of active-page manua
+       (call) => call[1] === "offscreen" && call[2] === 1,
+     )?.[0];
+   expect(backgroundRender).toEqual(
+-    expect.arrayContaining([backgroundManual]),
++    expect.arrayContaining([manualLike(backgroundManual)]),
+   );
+-  expect(backgroundRender).not.toEqual(expect.arrayContaining([activeManual]));
++  expect(backgroundRender).not.toEqual(expect.arrayContaining([manualLike(activeManual)]));
+   expect(result.current.bubbleCacheRef.current.get("blob:two")).toEqual(
+-    expect.arrayContaining([backgroundManual]),
++    expect.arrayContaining([manualLike(backgroundManual)]),
+   );
+   expect(result.current.bubbleCacheRef.current.get("blob:two")).not.toEqual(
+-    expect.arrayContaining([activeManual]),
++    expect.arrayContaining([manualLike(activeManual)]),
+   );
+ });
+diff --git a/tests/translation/useTranslation.scriptGuard.test.tsx b/tests/translation/useTranslation.scriptGuard.test.tsx
+index c2f799c..fadbe72 100644
+--- a/tests/translation/useTranslation.scriptGuard.test.tsx
++++ b/tests/translation/useTranslation.scriptGuard.test.tsx
+@@ -3,6 +3,8 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
+ 
+ import { useTranslation } from "@/hooks/useTranslation";
+ import { applyTranslationOverlay } from "@/lib/translationOverlay";
++import { loadProjectSession } from "@/lib/projectStore";
++import { createPageTargetIdentity } from "@/lib/translation/pageEligibility";
+ 
+ vi.mock("@/lib/translationOverlay", () => ({
+   applyTranslationOverlay: vi.fn(
+@@ -29,10 +31,9 @@ vi.mock("@/lib/projectStore", () => ({
+   clearProjectSession: vi.fn().mockResolvedValue(undefined),
+ }));
+ 
+-const contaminatedThai = { box: [100, 100, 300, 200], t: "สวัสดีこんにちは" };
+-const cleanThai = { box: [100, 100, 300, 200], t: "สวัสดี" };
+-const farewell = { box: [400, 400, 600, 500], t: "ลาก่อน" };
+-const contaminatedFarewell = { box: [400, 400, 600, 500], t: "Привет" };
++const contaminatedThai = { box: [100, 100, 300, 200], t: "สวัสดีこんにちは", original_text: "Hello" };
++const cleanThai = { box: [100, 100, 300, 200], t: "สวัสดี", original_text: "Hello" };
++const farewell = { box: [400, 400, 600, 500], t: "ลาก่อน", original_text: "Goodbye" };
+ 
+ const imageResponse = () =>
+   new Response(new Blob(["clean"], { type: "image/png" }), { status: 200 });
+@@ -40,6 +41,19 @@ const imageResponse = () =>
+ const bubblesResponse = (bubbles: unknown[]) =>
+   Response.json({ text: JSON.stringify({ bubbles }) });
+ 
++interface ReviewBody {
++  mode?: string;
++  items: Array<{ id: string; sourceText: string; translatedText: string }>;
++}
++
++function lastRendered() {
++  return vi
++    .mocked(applyTranslationOverlay)
++    .mock.calls.findLast((call) => call[1] === "offscreen")?.[0] as Array<{
++    t?: string;
++  }>;
++}
++
+ beforeEach(() => {
+   vi.useFakeTimers();
+   vi.clearAllMocks();
+@@ -113,138 +127,189 @@ function renderTranslationHook(pages: string[], targetLang = "Thai") {
+   return hook;
+ }
+ 
+-test.each([contaminatedThai,{...contaminatedThai,t:"กลิ่นนี่มันมีมนמהขลังอะไรกันแน่..."}])("foreign-script contamination triggers one retry and keeps the cleaner pass: $t", async mixed => {
+-  const pages = ["blob:one"];
++async function runTranslation(result: ReturnType<typeof renderTranslationHook>["result"]) {
++  let translation!: Promise<boolean>;
++  act(() => {
++    translation = result.current.handleTranslate();
++  });
++  await act(async () => {
++    // Bounded advancement: running all timers would fire the 4s message reset.
++    await vi.advanceTimersByTimeAsync(100);
++    expect(await translation).toBe(true);
++  });
++}
++
++test("script contamination skips the whole-image retry and repairs only the affected point once", async () => {
+   let translateCalls = 0;
+-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
++  const reviewBodies: ReviewBody[] = [];
++  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+     const url = String(input);
+     if (url === "blob:one" || url === "blob:clean-one") return imageResponse();
+     if (url === "/api/translate") {
+       translateCalls += 1;
+-      // First pass leaks kana; the enhanced retry comes back clean.
+-      return bubblesResponse(
+-        translateCalls === 1 ? [mixed, farewell] : [cleanThai, farewell],
+-      );
++      return bubblesResponse([contaminatedThai, farewell]);
++    }
++    if (url === "/api/translation-review") {
++      const body = JSON.parse(String(init?.body)) as ReviewBody;
++      reviewBodies.push(body);
++      if (reviewBodies.length === 1) {
++        return Response.json({
++          reviews: [
++            { id: "0", status: "needs_review", reason: "ตรวจพบตัวอักษรปน" },
++            { id: "1", status: "ok" },
++          ],
++        });
++      }
++      return Response.json({
++        reviews: [{ id: "0", status: "suggested", suggestion: "สวัสดี" }],
++      });
+     }
+     throw new Error(`unexpected fetch: ${url}`);
+   });
+-  const { result } = renderTranslationHook(pages);
++  const { result } = renderTranslationHook(["blob:one"]);
++  await runTranslation(result);
+ 
+-  let translation!: Promise<boolean>;
+-  act(() => {
+-    translation = result.current.handleTranslate();
++  // The full original-image retry must not stack with the point repair round.
++  expect(translateCalls).toBe(1);
++  expect(reviewBodies).toHaveLength(2);
++  expect(reviewBodies[1].mode).toBe("repair");
++  expect(reviewBodies[1].items.map((item) => item.id)).toEqual(["0"]);
++  expect(reviewBodies[1].items[0]).toMatchObject({
++    sourceText: "Hello",
++    translatedText: "สวัสดีこんにちは",
+   });
+-  await act(async () => {
+-    await vi.runAllTimersAsync();
+-    expect(await translation).toBe(true);
+-  });
+-
+-  expect(translateCalls).toBe(2);
+-  const rendered = vi
+-    .mocked(applyTranslationOverlay)
+-    .mock.calls.findLast((call) => call[1] === "offscreen")?.[0] as Array<{
+-    t?: string;
+-  }>;
++  const rendered = lastRendered();
+   expect(rendered).toEqual(
+-    expect.arrayContaining([expect.objectContaining({ t: "สวัสดี" })]),
++    expect.arrayContaining([
++      expect.objectContaining({ t: "สวัสดี" }),
++      expect.objectContaining({ t: "ลาก่อน" }),
++    ]),
+   );
+-  // The kana-contaminated text must not survive into the final bubbles.
+-  expect(JSON.stringify(rendered)).not.toContain("こんにちは");
++  // The repaired point text is clean; the corrupted wording survives only as
++  // the originalTranslation diagnostic, never as rendered text.
++  expect(rendered.every((bubble) => !(bubble.t ?? "").includes("こんにちは"))).toBe(true);
+ });
+ 
+-test("unresolved Hebrew after the bounded retry reports the point and characters", async () => {
+-  let calls=0;
+-  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+-    const url=String(input);
+-    if(url.startsWith("blob:"))return imageResponse();
+-    if(url==="/api/translate") {calls++;return bubblesResponse([{...contaminatedThai,t:"กลิ่นนี่มันมีมนמהขลังอะไรกันแน่..."}]);}
+-    throw new Error("unexpected fetch");
++test("unresolved contamination after the repair round reports the point without looping or deleting text", async () => {
++  let translateCalls = 0;
++  const reviewBodies: ReviewBody[] = [];
++  const unresolved = { ...contaminatedThai, t: "กลิ่นนี่มันมีมน\u05DE\u05D4ขลังอะไรกันแน่..." };
++  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
++    const url = String(input);
++    if (url === "blob:one" || url === "blob:clean-one") return imageResponse();
++    if (url === "/api/translate") {
++      translateCalls += 1;
++      return bubblesResponse([unresolved]);
++    }
++    if (url === "/api/translation-review") {
++      const body = JSON.parse(String(init?.body)) as ReviewBody;
++      reviewBodies.push(body);
++      if (body.mode === "repair") {
++        // The repair suggestion itself is still contaminated: it must never apply.
++        return Response.json({
++          reviews: [{ id: "0", status: "suggested", suggestion: "กลิ่นนี่มันมีมนมาขลังA" }],
++        });
++      }
++      return Response.json({
++        reviews: [{ id: "0", status: "needs_review", reason: "ตรวจพบตัวอักษรปน" }],
++      });
++    }
++    throw new Error(`unexpected fetch: ${url}`);
+   });
+-  const {result}=renderTranslationHook(["blob:one"]);
+-  let pending!:Promise<boolean>;act(()=>{pending=result.current.handleTranslate();});
+-  await act(async()=>{await vi.advanceTimersByTimeAsync(100);expect(await pending).toBe(true);});
+-  expect(calls).toBe(2);
++  const { result } = renderTranslationHook(["blob:one"]);
++  await runTranslation(result);
++
++  expect(translateCalls).toBe(1);
++  // Exactly one repair round: no third provider request.
++  expect(reviewBodies).toHaveLength(2);
++  expect(reviewBodies[1].mode).toBe("repair");
+   expect(result.current.translationResult).toContain("ภาษาอื่น");
+   expect(result.current.translationResult).toContain("מה");
+   expect(result.current.translationResult).toContain("1");
++  // The corrupted wording is retained for repair instead of being stripped.
++  const renderedText = JSON.stringify(lastRendered());
++  expect(renderedText).toContain("กลิ่นนี่มันมีมน");
++  expect(renderedText).toContain("\u05DE\u05D4");
+ });
+ 
+-test("a dirtier retry does not replace the original translation", async () => {
+-  const pages = ["blob:one"];
++test("zero-bubble recognition failure still retries once on the enhanced image", async () => {
+   let translateCalls = 0;
+-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
++  const reviewBodies: ReviewBody[] = [];
++  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+     const url = String(input);
+     if (url === "blob:one" || url === "blob:clean-one") return imageResponse();
+     if (url === "/api/translate") {
+       translateCalls += 1;
+-      // First pass has one contaminated bubble; the retry is worse (two).
+-      return bubblesResponse(
+-        translateCalls === 1
+-          ? [contaminatedThai, farewell]
+-          : [contaminatedThai, contaminatedFarewell],
+-      );
++      return translateCalls === 1
++        ? Response.json({ text: JSON.stringify({ bubbles: [] }) })
++        : bubblesResponse([cleanThai, farewell]);
++    }
++    if (url === "/api/translation-review") {
++      const body = JSON.parse(String(init?.body)) as ReviewBody;
++      reviewBodies.push(body);
++      return Response.json({
++        reviews: body.items.map((item) => ({ id: item.id, status: "ok" })),
++      });
+     }
+     throw new Error(`unexpected fetch: ${url}`);
+   });
+-  const { result } = renderTranslationHook(pages);
+-
+-  let translation!: Promise<boolean>;
+-  act(() => {
+-    translation = result.current.handleTranslate();
+-  });
+-  await act(async () => {
+-    await vi.runAllTimersAsync();
+-    expect(await translation).toBe(true);
+-  });
++  const { result } = renderTranslationHook(["blob:one"]);
++  await runTranslation(result);
+ 
+   expect(translateCalls).toBe(2);
+-  const rendered = vi
+-    .mocked(applyTranslationOverlay)
+-    .mock.calls.findLast((call) => call[1] === "offscreen")?.[0] as Array<{
+-    t?: string;
+-  }>;
+-  // The original pass stays: it had fewer contaminated bubbles.
++  expect(reviewBodies).toHaveLength(1);
++  const rendered = lastRendered();
+   expect(rendered).toEqual(
+-    expect.arrayContaining([expect.objectContaining({ t: "ลาก่อน" })]),
++    expect.arrayContaining([
++      expect.objectContaining({ t: "สวัสดี" }),
++      expect.objectContaining({ t: "ลาก่อน" }),
++    ]),
+   );
+-  expect(JSON.stringify(rendered)).not.toContain("Привет");
+ });
+ 
+-test("inspectTranslatedPages reports per-page bubble stats", () => {
+-  const { result } = renderTranslationHook(["blob:clean", "blob:dirty", "blob:none"]);
+-  act(() => {
+-    result.current.bubbleCacheRef.current.set("blob:clean", [
+-      { box: [0, 0, 10, 10], t: "สวัสดี" },
+-    ]);
+-    result.current.bubbleCacheRef.current.set("blob:dirty", [
+-      { box: [0, 0, 10, 10], t: "สวัสดี" },
+-      { box: [0, 0, 10, 10], t: "สวัสดีこんにちは", isInvalidBox: true },
+-    ]);
++test("contamination without source text is left unresolved without provider guesses", async () => {
++  let translateCalls = 0;
++  let reviewCalls = 0;
++  vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
++    const url = String(input);
++    if (url === "blob:one" || url === "blob:clean-one") return imageResponse();
++    if (url === "/api/translate") {
++      translateCalls += 1;
++      return bubblesResponse([{ box: contaminatedThai.box, t: contaminatedThai.t }]);
++    }
++    if (url === "/api/translation-review") {
++      reviewCalls += 1;
++      return Response.json({ reviews: [{ id: "0", status: "ok" }] });
++    }
++    throw new Error(`unexpected fetch: ${url}`);
+   });
+-  const stats = result.current.inspectTranslatedPages();
+-  expect(stats).toHaveLength(2);
+-  expect(stats[0]).toEqual({ pageUrl: "blob:clean", pageIndex: 0, total: 1, contaminated: 0, invalidBoxes: 0 });
+-  expect(stats[1]).toEqual({ pageUrl: "blob:dirty", pageIndex: 1, total: 2, contaminated: 1, invalidBoxes: 1 });
++  const { result } = renderTranslationHook(["blob:one"]);
++  await runTranslation(result);
++
++  expect(translateCalls).toBe(1);
++  // No source-backed evidence means the provider is never asked to guess.
++  expect(reviewCalls).toBe(0);
++  expect(lastRendered()?.[0]?.t).toBe(contaminatedThai.t);
++  expect(result.current.translationResult).toContain("ภาษาอื่น");
+ });
+ 
+-test("scanTranslatedPages reports only pages with contaminated bubbles", () => {
+-  const { result } = renderTranslationHook(["blob:clean", "blob:dirty"]);
+-  act(() => {
+-    result.current.bubbleCacheRef.current.set("blob:clean", [
+-      { box: [0, 0, 10, 10], t: "สวัสดี" },
+-    ]);
+-    result.current.bubbleCacheRef.current.set("blob:dirty", [
+-      { box: [0, 0, 10, 10], t: "สวัสดี" },
+-      { box: [0, 0, 10, 10], t: "กลิ่นนี่มันมีมนמהขลังอะไรกันแน่..." },
+-    ]);
++test("opening saved work inspects locally without network calls or text rewrite", async () => {
++  const savedBubble = { ...contaminatedThai };
++  vi.mocked(loadProjectSession).mockResolvedValue({
++    pages: [{ id: "stable", url: "blob:one", name: "page" }],
++    currentPage: 0,
++    updatedAt: 1,
++    hasUnrecoverableSources: false,
++    bubbleCache: new Map([["blob:one", [savedBubble]]]),
++    translatedImageCache: new Map([["blob:one", "data:old-bitmap"]]),
++    pageTargetCache: new Map([["blob:one", createPageTargetIdentity("th")!]]),
++  });
++  const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(imageResponse());
++  const { result } = renderTranslationHook(["blob:one"]);
++  await act(async () => {
++    await result.current.restoreSavedSession();
+   });
+-  expect(result.current.scanTranslatedPages()).toEqual([
+-    { pageUrl: "blob:dirty", pageIndex: 1, contaminated: 1, total: 2 },
+-  ]);
+-});
+ 
+-test("saved Hebrew output is not reported as contamination for a Hebrew target", () => {
+-  const {result}=renderTranslationHook(["blob:one"],"Hebrew");
+-  act(()=>{result.current.bubbleCacheRef.current.set("blob:one",[{box:[0,0,10,10],t:"שלום"}]);});
+-  expect(result.current.scanTranslatedPages()).toEqual([]);
++  expect(fetchSpy).not.toHaveBeenCalled();
++  expect(result.current.bubbleCacheRef.current.get("blob:one")?.[0].t).toBe(contaminatedThai.t);
+ });
+diff --git a/tests/translation/qualityReview.g02.test.ts b/tests/translation/qualityReview.g02.test.ts
+new file mode 100644
+index 0000000..9117c4e
+--- /dev/null
++++ b/tests/translation/qualityReview.g02.test.ts
+@@ -0,0 +1,79 @@
++import {describe,it,expect,vi} from "vitest";
++import {reviewTranslatedBubbles} from "@/lib/translation/qualityReviewClient";
++import {isReviewCurrent,parseQualityReviews} from "@/lib/translation/qualityReview";
++const bubble={t:"รอ",original_text:" Wait. ",box:[1,2,3,4],fontSize:24};
++interface ReviewBody{mode?:string;items:Array<{id:string;sourceText:string;translatedText:string}>}
++const echoBody=(init:RequestInit|undefined)=>JSON.parse(String(init?.body)) as ReviewBody;
++describe("G02 exact contextual review and bounded repair",()=>{
++ it("reviews every active point across bounded chunks including manual",async()=>{
++  const fetchImpl=vi.fn(async(_url,init)=>{const body=echoBody(init);return Response.json({reviews:body.items.map((item:{id:string})=>({id:item.id,status:"ok"}))});});
++  const result=await reviewTranslatedBubbles(Array.from({length:130},()=>({...bubble,isManual:true})),{targetLang:"th",fetchImpl});
++  expect(fetchImpl).toHaveBeenCalledTimes(3); expect(result.every(b=>b.translationReview?.status==="ok")).toBe(true);
++ });
++ it("binds exact raw snapshots to target and source revision",async()=>{
++  const fetchImpl=vi.fn(async()=>Response.json({reviews:[{id:"0",status:"ok"}]}));
++  const result=await reviewTranslatedBubbles([{...bubble,t:" รอ "}],{targetLang:"th",sourceRevision:"source-1",fetchImpl});
++  expect(result[0].translationReview).toMatchObject({sourceText:" Wait. ",reviewedText:" รอ ",targetId:"th",sourceRevision:"source-1",policyVersion:expect.any(String)});
++  expect(isReviewCurrent({...result[0],t:"รอ"})).toBe(false);
++  expect(isReviewCurrent(result[0],"en","source-1")).toBe(false);
++  expect(isReviewCurrent(result[0],"th","source-2")).toBe(false);
++ });
++ it("repairs only contaminated points once and keeps editorial suggestions explicit",async()=>{
++  const fetchImpl=vi.fn(async(_url,init)=>{const body=echoBody(init);return Response.json({reviews:body.items.map((item:{id:string})=>({id:item.id,status:"suggested",suggestion:body.mode==="repair"?"สวัสดี":"รอตรงนี้"}))});});
++  const result=await reviewTranslatedBubbles([{...bubble,t:"สวัสดีA"},bubble],{targetLang:"th",repairContamination:true,fetchImpl});
++  expect(fetchImpl).toHaveBeenCalledTimes(2); expect(echoBody(fetchImpl.mock.calls[1][1]).items.map((i:{id:string})=>i.id)).toEqual(["0"]);
++  expect(result[0]).toMatchObject({...bubble,t:"สวัสดี",box:[1,2,3,4],fontSize:24,translationReview:{status:"ok",originalTranslation:"สวัสดีA"}});
++  expect(result[1].t).toBe(bubble.t); expect(result[1].translationReview?.status).toBe("suggested");
++ });
++ it("does not guess without source and rejects contaminated repair with no loop",async()=>{
++  const fetchImpl=vi.fn(async()=>Response.json({reviews:[{id:"0",status:"suggested",suggestion:"รอA"}]}));
++  const result=await reviewTranslatedBubbles([{...bubble,t:"รอA"},{...bubble,t:"รอB",original_text:""}],{targetLang:"th",repairContamination:true,fetchImpl});
++  expect(fetchImpl).toHaveBeenCalledTimes(2);expect(result[0].t).toBe("รอA");expect(result[1].t).toBe("รอB");expect(result.every(b=>b.translationReview?.status==="needs_review")).toBe(true);
++ });
++ it("does not approve source-less provider approval",()=>{
++  expect(parseQualityReviews([{id:"0",sourceText:"",translatedText:"รอ"}],{reviews:[{id:"0",status:"ok"}]},"th")["0"].status).toBe("unavailable");
++ });
++ it("keeps the unresolved snapshot when repair rows are missing or duplicated",async()=>{
++  const fetchImpl=vi.fn(async(_url,init)=>{const body=echoBody(init);
++   if(body.mode==="repair")return Response.json({reviews:[{id:"0",status:"ok"},{id:"0",status:"suggested",suggestion:"สวัสดี"}]});
++   return Response.json({reviews:body.items.map((item:{id:string})=>({id:item.id,status:"ok"}))});});
++  const result=await reviewTranslatedBubbles([{...bubble,t:"สวัสดีA"}],{targetLang:"th",repairContamination:true,fetchImpl});
++  expect(fetchImpl).toHaveBeenCalledTimes(2);
++  expect(result[0].t).toBe("สวัสดีA");
++  expect(result[0].translationReview?.status).toBe("needs_review");
++ });
++ it("chunks repair requests for dense pages beyond the request limit",async()=>{
++  const contaminated=Array.from({length:130},()=>({...bubble,t:"สวัสดีA"}));
++  const fetchImpl=vi.fn(async(_url,init)=>{const body=echoBody(init);
++   return Response.json({reviews:body.items.map((item:{id:string})=>({id:item.id,status:"suggested",suggestion:body.mode==="repair"?"สวัสดี":"สวัสดีA"}))});});
++  const result=await reviewTranslatedBubbles(contaminated,{targetLang:"th",repairContamination:true,fetchImpl});
++  expect(fetchImpl).toHaveBeenCalledTimes(6);
++  const repairBodies=fetchImpl.mock.calls.map(call=>echoBody(call[1])).filter(body=>body.mode==="repair");
++  expect(repairBodies.map(body=>body.items.length)).toEqual([64,64,2]);
++  expect(result.every(b=>b.t==="สวัสดี"&&b.translationReview?.status==="ok")).toBe(true);
++ });
++ it("exposes explicit unverified snapshots for points beyond request text limits",async()=>{
++  const fetchImpl=vi.fn(async(_url,init)=>{const body=echoBody(init);return Response.json({reviews:body.items.map((item:{id:string})=>({id:item.id,status:"ok"}))});});
++  const oversized={...bubble,t:"ก".repeat(2001)};
++  const result=await reviewTranslatedBubbles([bubble,oversized],{targetLang:"th",fetchImpl});
++  expect(echoBody(fetchImpl.mock.calls[0][1]).items.map((item:{id:string})=>item.id)).toEqual(["0"]);
++  expect(result[1].translationReview?.status).toBe("unavailable");
++  expect(result[1].t).toHaveLength(2001);
++ });
++ it("propagates cancellation instead of starting the repair round",async()=>{
++  const controller=new AbortController();
++  const fetchImpl=vi.fn(async()=>{controller.abort();return Response.json({reviews:[{id:"0",status:"ok"}]});});
++  await expect(reviewTranslatedBubbles([{...bubble,t:"สวัสดีA"}],{targetLang:"th",repairContamination:true,signal:controller.signal,fetchImpl})).rejects.toMatchObject({name:"AbortError"});
++  expect(fetchImpl).toHaveBeenCalledTimes(1);
++ });
++ it("keeps the failed repair unresolved when the repair request itself fails",async()=>{
++  let calls=0;
++  const fetchImpl=vi.fn(async(_url,init)=>{const body=echoBody(init);
++   if(body.mode==="repair")throw new Error("network down");
++   calls+=1;return Response.json({reviews:body.items.map((item:{id:string})=>({id:item.id,status:"ok"}))});});
++  const result=await reviewTranslatedBubbles([{...bubble,t:"สวัสดีA"}],{targetLang:"th",repairContamination:true,fetchImpl});
++  expect(calls).toBe(1);
++  expect(result[0].t).toBe("สวัสดีA");
++  expect(result[0].translationReview?.status).toBe("needs_review");
++ });
++});

@@ -94,3 +94,12 @@ patch-probe.md
 /.agents/skills/video-use/
 
 
+
+# Service worker build artifacts
+/public/sw.js*
+/public/swe-worker-*
+/public/workbox-*
+
+# Heavy SDD diagnostic traces (>100MB)
+*-diagnostic-trace.json
+.superpowers/**/P01-*-trace*.json

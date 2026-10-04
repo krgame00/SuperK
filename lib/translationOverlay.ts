@@ -386,16 +386,23 @@ export const downloadTranslatedImage = (
     }
   });
 
-  const dataUrl = exportCanvas.toDataURL("image/jpeg", 0.9);
-  exportCanvas.width = 0;
-  exportCanvas.height = 0;
-  if (returnDataUrl) return dataUrl;
+  try {
+    const dataUrl = exportCanvas.toDataURL("image/jpeg", 0.9);
+    exportCanvas.width = 0;
+    exportCanvas.height = 0;
+    if (returnDataUrl) return dataUrl;
 
-  const link = document.createElement("a");
-  link.download = defaultFilename;
-  link.href = dataUrl;
-  link.click();
-  return dataUrl;
+    const link = document.createElement("a");
+    link.download = defaultFilename;
+    link.href = dataUrl;
+    link.click();
+    return dataUrl;
+  } catch (err) {
+    console.error("downloadTranslatedImage canvas export failed", err);
+    exportCanvas.width = 0;
+    exportCanvas.height = 0;
+    return null;
+  }
 };
 
 export const getReadableMinimumFontSize = (pageWidth: number): number => {
@@ -809,6 +816,12 @@ export const applyTranslationOverlay = async (
     (b.t ?? b.translated ?? "").trim() || b.layoutAdjustment
   ));
   if (real.length === 0) {
+    if (onComplete) {
+      setTimeout(() => {
+        const url = downloadTranslatedImage(viewMode, currentPage, "", true, container);
+        if (url) onComplete(url);
+      }, 0);
+    }
     return;
   }
 

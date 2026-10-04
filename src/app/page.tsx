@@ -1401,7 +1401,13 @@ export default function WorkspacePage() {
       // page's translated output is its cleaned background, and a page with
       // bubbles must re-render from those bubbles instead of stale pixels.
 
-      if (bubbles && bubbles.length > 0) {
+      const hasRenderableBubbles = Boolean(
+        bubbles?.some(
+          (b) => b && !b.deleted && ((b.t ?? b.translated ?? "").trim() || b.layoutAdjustment)
+        )
+      );
+
+      if (hasRenderableBubbles && bubbles) {
         setTranslationResult(`⏳ กำลังเตรียมรูปภาพหน้า ${index + 1}/${pages.length}...`);
         try {
           return await new Promise<string>((resolve, reject) => {
@@ -1423,13 +1429,15 @@ export default function WorkspacePage() {
 
             offscreenContainer.querySelectorAll(".tl-overlay,.tl-canvas").forEach((el) => el.remove());
 
-            offscreenImg.onload = () => {
+            const targetSrc = cleaningResultsByPage.get(pageUrl)?.cleanUrl ?? pageUrl;
+
+            const startRender = () => {
               // Larger pages need proportionally longer to render (30s cap).
               const megapixels =
-                (offscreenImg.naturalWidth * offscreenImg.naturalHeight) / 1_000_000;
+                ((offscreenImg.naturalWidth || 1000) * (offscreenImg.naturalHeight || 1000)) / 1_000_000;
               timeout = setTimeout(
                 () => fail("หมดเวลา"),
-                Math.min(30_000, 2_000 + Math.round(megapixels * 1_000)),
+                Math.max(10_000, Math.min(30_000, 2_000 + Math.round(megapixels * 1_000))),
               );
               applyTranslationOverlay(
                 bubbles,
@@ -1439,7 +1447,10 @@ export default function WorkspacePage() {
                 (renderedUrl) => {
                   clearTimeout(timeout);
                   const approxBytes = Math.round(renderedUrl.length * 0.75);
-                  if (collectExportReviewPages(pages, [index], allowUnreviewedExportRef.current).length || beforeSignature !== exportInputSignature(pageUrl)) { reject(new Error("ข้อความหรือหลักฐานเปลี่ยนระหว่างเรนเดอร์ กรุณาลองส่งออกใหม่")); return; }
+                  if (collectExportReviewPages(pages, [index], allowUnreviewedExportRef.current).length || beforeSignature !== exportInputSignature(pageUrl)) {
+                    reject(new Error("ข้อความหรือหลักฐานเปลี่ยนระหว่างเรนเดอร์ กรุณาลองส่งออกใหม่"));
+                    return;
+                  }
                   translatedImageCacheRef.current.set(pageUrl, renderedUrl);
                   const freshSig = getPageSignature?.(pageUrl) ?? "rev-0";
                   workspaceResourceManager.registerRenderedImage(
@@ -1458,13 +1469,19 @@ export default function WorkspacePage() {
                 getPageTargetLanguage(pageUrl),
               );
             };
+
+            offscreenImg.onload = () => startRender();
             offscreenImg.onerror = () => fail("โหลดภาพไม่สำเร็จ");
-            offscreenImg.src =
-              cleaningResultsByPage.get(pageUrl)?.cleanUrl ?? pageUrl;
+
+            if (offscreenImg.complete && offscreenImg.naturalWidth > 0 && offscreenImg.src === targetSrc) {
+              startRender();
+            } else {
+              offscreenImg.src = targetSrc;
+            }
           });
         } catch (err) {
           console.warn(`Offscreen render failed for page ${index + 1}`, err);
-          return null;
+          throw (err instanceof Error ? err : new Error(String(err)));
         }
       }
       // A bubble-free page has no translation layer to rasterize: its
@@ -2733,12 +2750,14 @@ export default function WorkspacePage() {
             }}
             role="status"
             aria-live="polite"
-            className={`fixed left-1/2 -translate-x-1/2 z-40 bg-surface/90 backdrop-blur-md border border-primary/30 text-foreground px-4 py-1.5 rounded-full text-xs font-semibold shadow-lg animate-in fade-in slide-in-from-top-2 duration-300 flex items-center gap-2 max-w-[90vw] truncate transition-all cursor-pointer hover:bg-surface select-none ${
+            className={`fixed left-1/2 -translate-x-1/2 z-40 bg-surface/90 backdrop-blur-md border border-primary/30 text-foreground px-4 py-1.5 rounded-full text-xs font-semibold shadow-lg animate-in fade-in duration-300 flex items-center gap-2 max-w-[90vw] truncate transition-all cursor-pointer hover:bg-surface select-none ${
               isFocusMode
-                ? "top-3"
+                ? "bottom-5 sm:bottom-6 slide-in-from-bottom-2"
                 : toolbarPosition === "top"
-                  ? isToolbarCollapsed ? "top-20 sm:top-22" : "top-24 sm:top-26"
-                  : "top-16"
+                  ? isThumbnailsCollapsed
+                    ? "bottom-5 sm:bottom-6 slide-in-from-bottom-2"
+                    : "bottom-21 sm:bottom-23 slide-in-from-bottom-2"
+                  : "top-16 sm:top-18 slide-in-from-top-2"
             }`}
             title="คลิกเพื่อปิดการแจ้งเตือน"
           >
@@ -2881,27 +2900,6 @@ export default function WorkspacePage() {
                   </div>
                 ) : (
                   <>
-                    {pages[currentPage] && (
-                      <label className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface/95 px-3 py-2 text-xs shadow-lg">
-                        <span>หน้า {currentPage + 1} · ส่งออกหน้านี้เป็น</span>
-                        <span aria-label="ภาษาคำแปลของหน้า">{(() => {
-                          const target = resolveTargetLanguage(pageTargetCacheRef.current.get(pages[currentPage].url)?.targetId);
-                          return target.status === "resolved" ? `คำแปล: ${target.profile.label}` : "คำแปล: ยังไม่ยืนยันภาษา";
-                        })()}</span>
-                        <select aria-label="ส่งออกหน้านี้เป็น" className="rounded-md border border-border bg-background px-2 py-1"
-                          value={normalizePageExportSource(pages[currentPage].exportSource)}
-                          disabled={isZipping || isChoosingExport || Boolean(pendingExportAction) || Boolean(pendingReadabilityExport)}
-                          onChange={(event) => {
-                            if (isZipping || isChoosingExport || pendingExportAction || pendingReadabilityExport) return;
-                            const source = normalizePageExportSource(event.target.value);
-                            setPages(current => current.map((page, index) => index === currentPage ? { ...page, exportSource: source } : page));
-                          }}>
-                          <option value="translated">พร้อมคำแปล</option>
-                          <option value="original">ต้นฉบับ</option>
-                          <option value="clean" disabled={!currentCleaningResult?.cleanUrl}>ภาพคลีน</option>
-                        </select>
-                      </label>
-                    )}
                     <CleaningToolbar
                       hasPage={pages.length > 0 && !operationBusy}
                       hasResult={Boolean(currentCleaningResult)}
@@ -2915,8 +2913,61 @@ export default function WorkspacePage() {
                       position={toolbarPosition}
                       onTogglePosition={toggleToolbarPosition}
                       onCollapse={toggleToolbarCollapsed}
-                      className="flex w-full max-w-4xl flex-wrap items-center justify-between gap-2 rounded-xl border border-border/80 bg-surface/90 px-3 py-1.5 shadow-xl backdrop-blur-md transition-all"
-                    />
+                      className="flex flex-nowrap w-full max-w-5xl items-center justify-between gap-1.5 sm:gap-2 rounded-xl border border-border/80 bg-surface/90 px-2 sm:px-3 py-1.5 shadow-xl backdrop-blur-md transition-all overflow-x-auto no-scrollbar"
+                    >
+                      {pages[currentPage] && (
+                        <label className="flex flex-nowrap items-center gap-1.5 sm:gap-2 text-xs shrink-0 select-none">
+                          <span className="sr-only">
+                            หน้า {currentPage + 1} · ส่งออกหน้านี้เป็น
+                          </span>
+                          <span
+                            aria-hidden="true"
+                            className="font-medium text-foreground/80 whitespace-nowrap hidden xl:inline text-xs"
+                          >
+                            หน้า {currentPage + 1} ·
+                          </span>
+                          <span
+                            aria-hidden="true"
+                            className="font-medium text-foreground/70 whitespace-nowrap hidden sm:inline text-xs"
+                          >
+                            ส่งออก:
+                          </span>
+                          {(() => {
+                            const cachedTargetId = pageTargetCacheRef.current.get(pages[currentPage].url)?.targetId;
+                            const target = resolveTargetLanguage(cachedTargetId ?? targetLang);
+                            const isResolved = target.status === "resolved";
+                            const langLabel = isResolved ? target.profile.label : (targetLang || "ไทย");
+                            return (
+                              <span
+                                aria-label="ภาษาคำแปลของหน้า"
+                                className="hidden 2xl:inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-primary/10 text-primary border border-primary/20 shadow-xs whitespace-nowrap shrink-0"
+                              >
+                                <span className="h-1.5 w-1.5 rounded-full bg-primary shrink-0" />
+                                <span>{langLabel}</span>
+                              </span>
+                            );
+                          })()}
+                          <div className="relative inline-flex items-center shrink-0">
+                            <select
+                              aria-label="ส่งออกหน้านี้เป็น"
+                              className="appearance-none cursor-pointer rounded-lg border border-border/80 bg-background/90 hover:bg-surface-hover active:bg-surface-active px-2 sm:px-2.5 py-1 pr-5.5 text-xs font-semibold text-foreground transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-40 disabled:cursor-not-allowed shadow-xs shrink-0"
+                              value={normalizePageExportSource(pages[currentPage].exportSource)}
+                              disabled={isZipping || isChoosingExport || Boolean(pendingExportAction) || Boolean(pendingReadabilityExport)}
+                              onChange={(event) => {
+                                if (isZipping || isChoosingExport || pendingExportAction || pendingReadabilityExport) return;
+                                const source = normalizePageExportSource(event.target.value);
+                                setPages(current => current.map((page, index) => index === currentPage ? { ...page, exportSource: source } : page));
+                              }}
+                            >
+                              <option value="translated">พร้อมคำแปล</option>
+                              <option value="original">ต้นฉบับ</option>
+                              <option value="clean" disabled={!currentCleaningResult?.cleanUrl}>ภาพคลีน</option>
+                            </select>
+                            <ChevronDown className="pointer-events-none absolute right-1.5 h-3 w-3 text-muted" />
+                          </div>
+                        </label>
+                      )}
+                    </CleaningToolbar>
                     {currentPageUrl &&
                       !confirmedPages.has(currentPageUrl) &&
                       doesPageRequireReview(
@@ -3015,7 +3066,7 @@ export default function WorkspacePage() {
             {/* Hidden container for offscreen rendering */}
             <div id="offscreen-container" className="fixed top-0 left-0 w-full max-w-4xl opacity-0 pointer-events-none -z-50" style={{ visibility: 'hidden' }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img id="offscreen-image" alt="offscreen" className="max-w-full h-auto" crossOrigin="anonymous" />
+              <img id="offscreen-image" alt="offscreen" className="max-w-full h-auto" />
             </div>
 
             {isDragging && (
@@ -3157,22 +3208,22 @@ export default function WorkspacePage() {
         onToggleCollapse={() => setIsThumbnailsCollapsed(!isThumbnailsCollapsed)}
         isFocusMode={isFocusMode}
       />
-                    <RemnantReviewPanel
-                      sourceUrl={pages[currentPage]?.url}
-                      cleanUrl={currentCleaningResult?.cleanUrl}
-                      dimensions={currentCleaningResult ? { width: currentCleaningResult.width, height: currentCleaningResult.height } : undefined}
-                      canConfirmHumanInspection={pages[currentPage] ? getCurrentRemnantReview?.(pages[currentPage].url, getExpectedRemnantEvidence(pages[currentPage].url))?.canConfirmHumanInspection : false}
-                      inspection={pages[currentPage] ? getCurrentRemnantReview?.(pages[currentPage].url, getExpectedRemnantEvidence(pages[currentPage].url))?.inspection : undefined}
-                      regions={currentCleaningResult?.regions ?? []}
-                      onOpenMask={(candidate) => {
-                        setMaskFocusRect(candidate.rect);
-                        setIsMaskEditorOpen(true);
-                      }}
-                      onConfirmArtwork={(candidate) => { if (currentPageUrl) confirmArtworkCandidate(currentPageUrl, candidate.id); }}
-                      onConfirmHumanInspection={(revisionKey, sourceUrl, cleanUrl) => { if (currentPageUrl) confirmHumanImageInspection(currentPageUrl, revisionKey, sourceUrl, cleanUrl); }}
-                      onReimportSource={() => document.querySelector<HTMLInputElement>('input[aria-label="เลือกไฟล์มังงะเพื่อเพิ่ม"]')?.click()}
-                      onRecheck={() => { if (currentPageUrl) void recheckPageRemnants(currentPageUrl); }}
-                    />
+      <RemnantReviewPanel
+        sourceUrl={pages[currentPage]?.url}
+        cleanUrl={currentCleaningResult?.cleanUrl}
+        dimensions={currentCleaningResult ? { width: currentCleaningResult.width, height: currentCleaningResult.height } : undefined}
+        canConfirmHumanInspection={pages[currentPage] ? getCurrentRemnantReview?.(pages[currentPage].url, getExpectedRemnantEvidence(pages[currentPage].url))?.canConfirmHumanInspection : false}
+        inspection={pages[currentPage] ? getCurrentRemnantReview?.(pages[currentPage].url, getExpectedRemnantEvidence(pages[currentPage].url))?.inspection : undefined}
+        regions={currentCleaningResult?.regions ?? []}
+        onOpenMask={(candidate) => {
+          setMaskFocusRect(candidate.rect);
+          setIsMaskEditorOpen(true);
+        }}
+        onConfirmArtwork={(candidate) => { if (currentPageUrl) confirmArtworkCandidate(currentPageUrl, candidate.id); }}
+        onConfirmHumanInspection={(revisionKey, sourceUrl, cleanUrl) => { if (currentPageUrl) confirmHumanImageInspection(currentPageUrl, revisionKey, sourceUrl, cleanUrl); }}
+        onReimportSource={() => document.querySelector<HTMLInputElement>('input[aria-label="เลือกไฟล์มังงะเพื่อเพิ่ม"]')?.click()}
+        onRecheck={() => { if (currentPageUrl) void recheckPageRemnants(currentPageUrl); }}
+      />
 
       {isMaskEditorOpen && currentCleaningResult && pages[currentPage] && (
         <MaskEditor

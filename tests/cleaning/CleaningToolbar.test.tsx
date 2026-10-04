@@ -87,3 +87,20 @@ test("triggers position toggle and collapse callbacks", () => {
 
   expect(screen.getByRole("button", { name: "ย้ายแถบไปด้านบน" })).toBeTruthy();
 });
+
+test("renders children when provided", () => {
+  render(
+    <CleaningToolbar
+      hasPage
+      hasResult
+      hasTranslated
+      layer="clean"
+      onClean={vi.fn()}
+      onEditMask={vi.fn()}
+      onLayerChange={vi.fn()}
+    >
+      <div data-testid="custom-child">Child Element</div>
+    </CleaningToolbar>,
+  );
+  expect(screen.getByTestId("custom-child")).toBeInTheDocument();
+});
