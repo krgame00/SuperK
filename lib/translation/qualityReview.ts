@@ -111,6 +111,8 @@ export function isReviewCurrent(bubble: ReviewableBubble, targetId?: string, sou
   // Snapshots must describe the exact raw text; trimmed comparisons silently approved raw changes.
   if (review.sourceText !== (typeof bubble.original_text === "string" ? bubble.original_text : "")) return false;
   if (review.reviewedText !== (bubble.t || bubble.translated || "")) return false;
+  // A snapshot recorded under a different policy version can no longer approve anything.
+  if (review.policyVersion !== undefined && review.policyVersion !== LANGUAGE_POLICY_VERSION) return false;
   if (targetId !== undefined && review.targetId !== targetId) return false;
   if (sourceRevision !== undefined && review.sourceRevision !== sourceRevision) return false;
   return true;

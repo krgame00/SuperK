@@ -24,7 +24,8 @@ import { resolveTranslationOutcome } from "@/lib/translationPipeline";
 import { parseLLMJSON } from "@/lib/parseLLMJSON";
 import { deduplicateTranslations, excludeDeletedTranslations, findMissingTranslationRegions, recoverMissingTranslations } from "@/lib/translation/completeness";
 import { reviewTranslatedBubbles } from "@/lib/translation/qualityReviewClient";
-import { invalidateQualityReview, needsQualityReview } from "@/lib/translation/qualityReview";
+import { invalidateQualityReview, isReviewCurrent, needsQualityReview, withReviewIdentity, type TranslationReview } from "@/lib/translation/qualityReview";
+import { undoManager } from "@/lib/undoManager";
 import { LANGUAGE_POLICY_VERSION, inspectTargetText, normalizeTargetTranslationPayload, formatOffendingCharacters } from "@/lib/languagePolicy";
 import { createPageTargetIdentity, inspectPageOutputEligibility, type PageTargetIdentity } from "@/lib/translation/pageEligibility";
 import { sampleBubbleRegion } from "@/lib/colorMatching/canvasSampler";
@@ -69,6 +70,44 @@ export interface BatchPerformanceMetrics {
   completedPages: number;
   failedPages: number;
   cancelled: boolean;
+}
+
+/** One actionable finding for the per-point review list. */
+export interface ReviewIssuePoint {
+  /** Bubble index within the page's cached array. */
+  index: number;
+  /** 1-based display id used by the review list. */
+  pointId: string;
+  kind: "script" | "unverified";
+  hasSource: boolean;
+  /** Script failures are never human-confirmable; only clean text with source evidence is. */
+  humanConfirmable: boolean;
+  characters?: string;
+  status?: TranslationReview["status"];
+  reason?: string;
+}
+
+export interface PageReviewIssues {
+  pageUrl: string;
+  pageIndex: number;
+  pageTotal: number;
+  targetId?: string;
+  targetUnconfirmed: boolean;
+  scriptIssues: ReviewIssuePoint[];
+  unverified: ReviewIssuePoint[];
+}
+
+export interface LegacyTargetPage {
+  pageUrl: string;
+  pageIndex: number;
+}
+
+export interface WholeBookRepairSummary {
+  pagesRepaired: number;
+  pointsRepaired: number;
+  cancelled: boolean;
+  unresolved: Array<{ pageIndex: number; pageUrl: string; points: number }>;
+  skipped: Array<{ pageIndex: number; pageUrl: string; reason: "target-unconfirmed" }>;
 }
 
 export interface PreparedTranslationPage {
@@ -290,6 +329,9 @@ export function useTranslation({
   // Aborts in-flight fetches as soon as the user cancels (or unmounts),
   // instead of letting the current page run to completion.
   const translationAbortRef = useRef<AbortController | null>(null);
+  // Aborts the explicit whole-book repair; independent from translation runs.
+  const bookRepairAbortRef = useRef<AbortController | null>(null);
+  const [isRepairingBook, setIsRepairingBook] = useState(false);
   const [batchFailures, setBatchFailures] = useState<BatchPageFailure[]>([]);
   const [batchPerformanceMetrics, setBatchPerformanceMetrics] =
     useState<BatchPerformanceMetrics | null>(null);
@@ -2248,8 +2290,11 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     setTranslationResult("⏹ กำลังยกเลิก...");
   };
 
-  // Unmount: stop in-flight translation work immediately.
-  useEffect(() => () => translationAbortRef.current?.abort(), []);
+  // Unmount: stop in-flight translation and repair work immediately.
+  useEffect(() => () => {
+    translationAbortRef.current?.abort();
+    bookRepairAbortRef.current?.abort();
+  }, []);
 
   const invalidatePageTranslation = useCallback((pageUrl: string) => {
     bubbleCacheRef.current.delete(pageUrl);
@@ -2334,6 +2379,274 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         total,
       }));
   }, [inspectTranslatedPages]);
+
+  // ── Legacy saved work (ticket: saved manual edits + book review) ──────────
+
+  const pageHasTranslatedText = (bubbles: TranslatedBubble[] | undefined): boolean =>
+    !!bubbles?.some((bubble) => !bubble.deleted && !!(bubble.t || bubble.translated || "").trim());
+
+  // Old projects never recorded which target language their pages use. They
+  // must be confirmed exactly once; pages that already carry a recorded target
+  // keep their own identity.
+  const inspectLegacyTargets = useCallback((): LegacyTargetPage[] => {
+    const pending: LegacyTargetPage[] = [];
+    pagesRef.current.forEach((pageUrl, pageIndex) => {
+      if (pageTargetCacheRef.current.has(pageUrl)) return;
+      if (!pageHasTranslatedText(bubbleCacheRef.current.get(pageUrl))) return;
+      pending.push({ pageUrl, pageIndex });
+    });
+    return pending;
+  }, []);
+
+  const confirmLegacyTarget = useCallback((confirmedTarget?: string): number => {
+    // Thai is the suggested first-use confirmation: the next-job selector defaults to Thai.
+    const identity = createPageTargetIdentity(confirmedTarget ?? targetLangRef.current);
+    if (!identity) return 0;
+    let assigned = 0;
+    for (const pageUrl of pagesRef.current) {
+      if (pageTargetCacheRef.current.has(pageUrl)) continue;
+      if (!pageHasTranslatedText(bubbleCacheRef.current.get(pageUrl))) continue;
+      pageTargetCacheRef.current.set(pageUrl, identity);
+      assigned++;
+    }
+    // Persist the labels through autosave; this is metadata only — no rewrites, no requests.
+    if (assigned > 0) setCacheRevision((revision) => revision + 1);
+    return assigned;
+  }, []);
+
+  // Local, request-free inspection of every active point. Absent review
+  // metadata (legacy/manual points) cannot escape it, and detectable script
+  // failures are reported even when a saved snapshot claims accepted/dismissed.
+  const inspectReviewIssues = useCallback((): PageReviewIssues[] => {
+    const reports: PageReviewIssues[] = [];
+    pagesRef.current.forEach((pageUrl, pageIndex) => {
+      const bubbles = bubbleCacheRef.current.get(pageUrl);
+      if (!bubbles || bubbles.length === 0) return;
+      const targetId = getPageTargetLanguage(pageUrl);
+      const scriptIssues: ReviewIssuePoint[] = [];
+      const unverified: ReviewIssuePoint[] = [];
+      bubbles.forEach((bubble, index) => {
+        if (bubble.deleted) return;
+        const text = bubble.t || bubble.translated || "";
+        if (!text.trim()) return;
+        const source = typeof bubble.original_text === "string" ? bubble.original_text : "";
+        const hasSource = !!source.trim();
+        const pointId = String(index + 1);
+        if (!targetId) {
+          // Without a confirmed target no script check means anything yet.
+          unverified.push({ index, pointId, kind: "unverified", hasSource, humanConfirmable: false, reason: "target-unconfirmed" });
+          return;
+        }
+        const inspection = inspectTargetText(text, targetId);
+        if (inspection.status === "blocked") {
+          scriptIssues.push({
+            index, pointId, kind: "script", hasSource, humanConfirmable: false,
+            characters: formatOffendingCharacters(inspection.offendingCharacters), reason: inspection.reason,
+          });
+          return;
+        }
+        const review = bubble.translationReview;
+        if (!review || !isReviewCurrent(bubble, targetId) || !["ok", "accepted", "dismissed"].includes(review.status)) {
+          unverified.push({
+            index, pointId, kind: "unverified", hasSource, humanConfirmable: hasSource,
+            status: review?.status ?? "unavailable", reason: review?.reason,
+          });
+        }
+      });
+      if (scriptIssues.length > 0 || unverified.length > 0) {
+        reports.push({ pageUrl, pageIndex, pageTotal: bubbles.length, targetId, targetUnconfirmed: !targetId, scriptIssues, unverified });
+      }
+    });
+    return reports;
+  }, [getPageTargetLanguage]);
+
+  // Explicit source-backed human confirmation for points whose script passes
+  // but contextual AI verification is unavailable (or metadata is absent/stale).
+  // Detectable script failures can never be confirmed, dismissed or accepted past.
+  const confirmPointReview = useCallback((pageUrl: string, pointIndex: number): boolean => {
+    const bubbles = bubbleCacheRef.current.get(pageUrl)
+      ?? (activePageRef.current === pageUrl ? activeBubbles : undefined);
+    const bubble = bubbles?.[pointIndex];
+    if (!bubble || bubble.deleted) return false;
+    const targetId = getPageTargetLanguage(pageUrl);
+    if (!targetId) return false;
+    const text = bubble.t || bubble.translated || "";
+    const source = typeof bubble.original_text === "string" ? bubble.original_text : "";
+    if (!source.trim()) return false;
+    if (inspectTargetText(text, targetId).status === "blocked") return false;
+    // Review evidence changed: reset export confirmations but keep the render cache.
+    markPageDirty(pageUrl, false);
+    bubble.translationReview = withReviewIdentity(
+      { status: "accepted", sourceText: source, reviewedText: text, reason: "ผู้ใช้ยืนยันกับต้นฉบับแล้ว" },
+      targetId,
+      String(getPageRevision(pageUrl)),
+    );
+    setCacheRevision((revision) => revision + 1);
+    return true;
+  }, [activeBubbles, getPageTargetLanguage, getPageRevision, markPageDirty]);
+
+  // Undo/Redo payloads for the whole-book repair: exact pre-repair and
+  // post-repair text plus review evidence per affected point only.
+  interface RepairEntry { pageUrl: string; index: number; text: string; review?: TranslationReview }
+  const applyRepairEntries = useCallback((entries: RepairEntry[]) => {
+    const touchedPages = new Set<string>();
+    for (const entry of entries) {
+      const bubble = bubbleCacheRef.current.get(entry.pageUrl)?.[entry.index];
+      if (!bubble) continue;
+      bubble.t = entry.text;
+      bubble.translated = entry.text;
+      bubble.translationReview = entry.review ? { ...entry.review } : undefined;
+      touchedPages.add(entry.pageUrl);
+    }
+    const activeUrl = activePageRef.current;
+    for (const pageUrl of touchedPages) {
+      markPageDirty(pageUrl);
+      void renderAndCacheTranslation(
+        bubbleCacheRef.current.get(pageUrl) ?? [],
+        pageUrl,
+        pageUrl,
+        pagesRef.current.indexOf(pageUrl),
+      ).catch(() => {
+        // Drop the stale render; exports re-render it from the bubbles.
+        translatedImageCacheRef.current.delete(pageUrl);
+        setTranslatedImages(new Map(translatedImageCacheRef.current));
+      });
+    }
+    if (activeUrl && touchedPages.has(activeUrl)) {
+      setActiveBubbles((previous) => (previous.length > 0 ? [...previous] : previous));
+    }
+  }, [markPageDirty, renderAndCacheTranslation]);
+
+  // Explicit whole-book repair for saved work: provider requests are limited to
+  // one bounded review+repair round per affected page (no retranslation), only
+  // affected point text changes, cancellation stops remaining pages, and a
+  // single Undo/Redo entry preserves the pre-repair text.
+  const repairWholeBook = useCallback(async (): Promise<WholeBookRepairSummary | null> => {
+    if (translationOperationLockRef.current || isTranslatingAll || isTranslating) return null;
+    translationOperationLockRef.current = true;
+    setIsRepairingBook(true);
+    const controller = new AbortController();
+    bookRepairAbortRef.current = controller;
+    const summary: WholeBookRepairSummary = { pagesRepaired: 0, pointsRepaired: 0, cancelled: false, unresolved: [], skipped: [] };
+    const preRepair: RepairEntry[] = [];
+    const postRepair: RepairEntry[] = [];
+    try {
+      for (let pageIndex = 0; pageIndex < pagesRef.current.length; pageIndex++) {
+        const pageUrl = pagesRef.current[pageIndex];
+        const bubbles = bubbleCacheRef.current.get(pageUrl);
+        if (!bubbles || bubbles.length === 0) continue;
+        const targetId = getPageTargetLanguage(pageUrl);
+        const activePoints = bubbles
+          .map((bubble, index) => ({ bubble, index }))
+          .filter(({ bubble }) => !bubble.deleted && !!(bubble.t || bubble.translated || "").trim());
+        if (activePoints.length === 0) continue;
+        if (!targetId) {
+          // Target confirmation comes first; repair cannot guess the language.
+          summary.skipped.push({ pageIndex, pageUrl, reason: "target-unconfirmed" });
+          continue;
+        }
+        if (controller.signal.aborted) {
+          summary.cancelled = true;
+          break;
+        }
+        const affected = activePoints
+          .filter(({ bubble }) => inspectTargetText(bubble.t || bubble.translated || "", targetId).status === "blocked");
+        if (affected.length === 0) continue;
+        for (const { bubble, index } of affected) {
+          preRepair.push({
+            pageUrl, index, text: bubble.t || bubble.translated || "",
+            review: bubble.translationReview ? { ...bubble.translationReview } : undefined,
+          });
+        }
+        let reviewed: TranslatedBubble[];
+        try {
+          reviewed = await reviewTranslatedBubbles(
+            affected.map(({ bubble }) => bubble),
+            {
+              targetLang: targetId,
+              apiKey: userApiKey,
+              modelPreference,
+              allowPreview: allowPreviewModels,
+              glossary,
+              signal: controller.signal,
+              sourceRevision: String(getPageRevision(pageUrl)),
+              repairContamination: true,
+            },
+          );
+        } catch (error) {
+          if (isUserCancelledError(error)) {
+            summary.cancelled = true;
+            break;
+          }
+          // A failed round keeps every explicit snapshot; nothing is applied for this page.
+          continue;
+        }
+        let pageChanged = 0;
+        let unresolvedPoints = 0;
+        for (let position = 0; position < affected.length; position++) {
+          const { index } = affected[position];
+          const bubble = bubbles[index];
+          const updated = reviewed[position];
+          if (!bubble || !updated) continue;
+          const before = bubble.t || bubble.translated || "";
+          const after = updated.t || updated.translated || "";
+          bubble.t = after;
+          bubble.translated = after;
+          bubble.translationReview = updated.translationReview;
+          if (after !== before) pageChanged++;
+          const stillBlocked = inspectTargetText(after, targetId).status === "blocked";
+          const unresolvedStatus = !updated.translationReview
+            || ["needs_review", "unavailable", "stale"].includes(updated.translationReview.status);
+          if (stillBlocked || unresolvedStatus) unresolvedPoints++;
+          postRepair.push({
+            pageUrl, index, text: after,
+            review: updated.translationReview ? { ...updated.translationReview } : undefined,
+          });
+        }
+        summary.pagesRepaired += pageChanged > 0 ? 1 : 0;
+        summary.pointsRepaired += pageChanged;
+        if (unresolvedPoints > 0) summary.unresolved.push({ pageIndex, pageUrl, points: unresolvedPoints });
+        if (controller.signal.aborted) {
+          summary.cancelled = true;
+          break;
+        }
+        markPageDirty(pageUrl);
+        await renderAndCacheTranslation(bubbles, pageUrl, pageUrl, pageIndex).catch(() => {
+          translatedImageCacheRef.current.delete(pageUrl);
+          setTranslatedImages(new Map(translatedImageCacheRef.current));
+        });
+      }
+      if (summary.pointsRepaired > 0) {
+        undoManager.push({
+          label: "แก้ตัวอักษรปนทั้งเล่ม",
+          undo: () => applyRepairEntries(preRepair),
+          redo: () => applyRepairEntries(postRepair),
+        });
+      }
+      return summary;
+    } finally {
+      bookRepairAbortRef.current = null;
+      translationOperationLockRef.current = false;
+      setIsRepairingBook(false);
+    }
+  }, [
+    allowPreviewModels,
+    applyRepairEntries,
+    getPageRevision,
+    getPageTargetLanguage,
+    glossary,
+    isTranslating,
+    isTranslatingAll,
+    markPageDirty,
+    modelPreference,
+    renderAndCacheTranslation,
+    userApiKey,
+  ]);
+
+  const cancelWholeBookRepair = useCallback(() => {
+    bookRepairAbortRef.current?.abort();
+  }, []);
+
 
   // Find & Replace support: rewrite bubble text in place so the bubble cache
   // survives (invalidating it would wipe the translations being edited).
@@ -2467,6 +2780,13 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     refreshPageTranslation,
     scanTranslatedPages,
     inspectTranslatedPages,
+    inspectLegacyTargets,
+    confirmLegacyTarget,
+    inspectReviewIssues,
+    confirmPointReview,
+    repairWholeBook,
+    cancelWholeBookRepair,
+    isRepairingBook,
     replaceBubbleText,
     markPageDirty,
     getPageRevision,

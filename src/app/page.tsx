@@ -14,7 +14,7 @@ import {
   applyTranslationOverlay,
   type TranslatedBubble,
 } from "@/lib/translationOverlay";
-import { Upload, Download, Flame, Eye, EyeOff, Undo2, Redo2, GalleryVertical, RectangleHorizontal, Menu, X, Settings, FileArchive, BookOpen, FileText, Sparkles, Loader2, Check, AlertCircle, RefreshCw, ArrowDown, ArrowUp, ChevronDown, ChevronUp, Eraser, Paintbrush, RotateCcw } from "lucide-react";
+import { Upload, Download, Flame, Eye, EyeOff, Undo2, Redo2, GalleryVertical, RectangleHorizontal, Menu, X, Settings, FileArchive, BookOpen, FileText, Sparkles, Loader2, Check, AlertCircle, RefreshCw, ArrowDown, ArrowUp, ChevronDown, ChevronUp, Eraser, Paintbrush, RotateCcw, ScanSearch } from "lucide-react";
 import { undoManager } from "@/lib/undoManager";
 import JSZip from "jszip";
 import { findRecoveredRegionId, useCleaning } from "@/hooks/useCleaning";
@@ -427,6 +427,13 @@ export default function WorkspacePage() {
     refreshPageTranslation,
     scanTranslatedPages,
     inspectTranslatedPages,
+    inspectLegacyTargets,
+    confirmLegacyTarget,
+    inspectReviewIssues,
+    confirmPointReview,
+    repairWholeBook,
+    cancelWholeBookRepair,
+    isRepairingBook,
     replaceBubbleText,
     getPageSignature,
     cacheRevision: translationCacheRevision,
@@ -652,10 +659,32 @@ export default function WorkspacePage() {
   const [contaminatedScan, setContaminatedScan] = useState<
     Array<{ pageIndex: number; contaminated: number }>
   >([]);
+  // Retained, actionable review list: per-page script failures and unverified
+  // points (absent/stale review metadata included) with per-point confirmation.
+  const [reviewIssues, setReviewIssues] = useState<ReturnType<typeof inspectReviewIssues> | null>(null);
+  // Legacy saved-work pages that still need their one-time target confirmation.
+  const [legacyTargetPages, setLegacyTargetPages] = useState<ReturnType<typeof inspectLegacyTargets> | null>(null);
 
   const handleScanTranslations = useCallback(() => {
     const found = scanTranslatedPages();
     setContaminatedScan(found);
+    // A postponed legacy confirmation must stay reachable: the scan path
+    // re-opens the one-time target dialog first (old work confirms its target
+    // before review) instead of stranding those pages behind an unactionable
+    // review badge.
+    const pendingLegacy = inspectLegacyTargets();
+    if (pendingLegacy.length > 0) {
+      setLegacyTargetPages(pendingLegacy);
+      return;
+    }
+    // The actionable review list replaces the plain toast when there is
+    // anything to resolve: script failures, unverified points, unconfirmed
+    // legacy targets and the whole-book repair action live there.
+    const issues = inspectReviewIssues();
+    if (issues.length > 0) {
+      setReviewIssues(issues);
+      return;
+    }
     void import("react-hot-toast").then((m) => {
       if (found.length === 0) {
         m.default("✅ ไม่พบตัวอักษรภาษาอื่นปนในคำแปลทั้งเล่ม", { duration: 3500 });
@@ -669,7 +698,48 @@ export default function WorkspacePage() {
         );
       }
     });
-  }, [scanTranslatedPages]);
+  }, [inspectLegacyTargets, inspectReviewIssues, scanTranslatedPages]);
+
+  // Explicit whole-book repair: bounded per-page rounds, cancellable, with a
+  // single Undo/Redo entry that retains the pre-repair text.
+  const handleRepairWholeBook = useCallback(async (): Promise<void> => {
+    if (uiOperationLockRef.current || operationBusy) return;
+    uiOperationLockRef.current = true;
+    setIsUiOperationBusy(true);
+    try {
+      const summary = await repairWholeBook();
+      if (!summary) return;
+      setContaminatedScan(scanTranslatedPages());
+      const issues = inspectReviewIssues();
+      setReviewIssues(issues.length > 0 ? issues : null);
+      void import("react-hot-toast").then((m) => {
+        if (summary.cancelled) {
+          m.default(`⏹ ยกเลิกการแก้ทั้งเล่ม (แก้สำเร็จ ${summary.pointsRepaired} จุด) — กด Undo เพื่อคืนค่าก่อนแก้`, { duration: 5000 });
+        } else if (summary.unresolved.length > 0) {
+          const detail = summary.unresolved.map((page) => `หน้า ${page.pageIndex + 1} (${page.points} จุด)`).join(", ");
+          const skippedNote = summary.skipped.length > 0
+            ? ` และข้าม ${summary.skipped.length} หน้า (ยืนยันภาษาไม่ครบ)`
+            : "";
+          m.default(`⚠️ แก้ตัวอักษรปนสำเร็จ ${summary.pointsRepaired} จุด แต่ยังไม่สำเร็จ: ${detail}${skippedNote} — เปิดแก้ไขข้อความเพื่อเทียบต้นฉบับ`, { duration: 7000 });
+        } else if (summary.skipped.length > 0) {
+          // Skipped pages stay recoverable: the review list opened above
+          // carries the confirm action for their pending target.
+          m.default(`✅ แก้ตัวอักษรปนสำเร็จ ${summary.pointsRepaired} จุด — ข้าม ${summary.skipped.length} หน้า (ยืนยันภาษาไม่ครบ)`, { duration: 6000 });
+        } else {
+          m.default(`✅ แก้ตัวอักษรปนสำเร็จ ${summary.pointsRepaired} จุด (${summary.pagesRepaired} หน้า)`, { duration: 3500 });
+        }
+      });
+    } catch (error) {
+      // The repair promise is fired with `void`; without this catch an
+      // unexpected throw would surface only as an unhandled rejection.
+      void import("react-hot-toast").then((m) =>
+        m.default(`❌ แก้ตัวอักษรปนทั้งเล่มไม่สำเร็จ: ${error instanceof Error ? error.message : String(error)}`, { duration: 6000 }),
+      );
+    } finally {
+      uiOperationLockRef.current = false;
+      setIsUiOperationBusy(false);
+    }
+  }, [inspectReviewIssues, operationBusy, repairWholeBook, scanTranslatedPages]);
 
   const handleRetranslateContaminated = useCallback(async (): Promise<void> => {
     if (
@@ -691,8 +761,7 @@ export default function WorkspacePage() {
   }, [contaminatedScan, handleTranslateAll, operationBusy, scanTranslatedPages]);
 
   const [isExportReportOpen, setIsExportReportOpen] = useState(false);
-  const [exportReportRows, setExportReportRows] = useState<ExportReportRow[]>([]);
-  const [pendingReadabilityExport, setPendingReadabilityExport] = useState<(() => void) | null>(null);
+  const [exportReportRows, setExportReportRows] = useState<ExportReportRow[]>([]);  const [pendingReadabilityExport, setPendingReadabilityExport] = useState<(() => void) | null>(null);
   const [pendingReadabilityAck, setPendingReadabilityAck] = useState<string | null>(null);
   const acknowledgedReadabilityRef = useRef(new Set<string>());
   const [exportScanProgress, setExportScanProgress] = useState<{ completed: number; total: number } | null>(null);
@@ -961,6 +1030,8 @@ export default function WorkspacePage() {
           setPages(restored.pages);
           setCurrentPage(appendRes.pageIndex);
           setSavedSessionData(null);
+          const pendingLegacy = inspectLegacyTargets();
+          if (pendingLegacy.length > 0) setLegacyTargetPages(pendingLegacy);
         }
         import("react-hot-toast").then((m) =>
           m.default("✨ นำเข้าภาพจาก Chrome Extension เรียบร้อยแล้ว!", { duration: 2500 })
@@ -969,7 +1040,7 @@ export default function WorkspacePage() {
         console.error("Failed to process extension handoff:", err);
       }
     })();
-  }, [restoreSavedSession, setCurrentPage]);
+  }, [restoreSavedSession, setCurrentPage, inspectLegacyTargets]);
 
   // Keyboard shortcuts refs (to access latest state from event listener closure)
   const currentPageRef = useRef(currentPage);
@@ -2352,6 +2423,14 @@ export default function WorkspacePage() {
                     <span>ลองใหม่ {batchFailures.length} หน้าที่พลาด</span>
                   </button>
                 )}
+                <button
+                  onClick={() => { handleScanTranslations(); setIsMobileMenuOpen(false); }}
+                  disabled={operationBusy}
+                  className="w-full bg-surface text-foreground hover:bg-surface-hover disabled:opacity-40 p-2.5 rounded-lg text-sm font-medium flex items-center gap-3 border border-transparent transition-colors"
+                >
+                  <ScanSearch className="w-5 h-5 text-primary" />
+                  <span>ตรวจคำแปลทั้งเล่ม</span>
+                </button>
               </div>
             </div>
 
@@ -2855,6 +2934,10 @@ export default function WorkspacePage() {
                         if (hasTranslations) {
                           setWorkspaceLayer("translated");
                         }
+                        // Old projects confirm their target once (Thai suggested);
+                        // pages with a recorded target keep their own language.
+                        const pendingLegacy = inspectLegacyTargets();
+                        if (pendingLegacy.length > 0) setLegacyTargetPages(pendingLegacy);
                       }
                       if (savedSessionData.hasUnrecoverableSources) {
                         import('react-hot-toast').then(m => m.default("ดึงข้อมูลคำแปลกลับมาแล้ว กรุณานำเข้ารูปภาพต้นฉบับใหม่", { duration: 4000, icon: '⚠️' }));
@@ -3006,6 +3089,175 @@ export default function WorkspacePage() {
         isOpen={isShortcutsOpen}
         onClose={() => setIsShortcutsOpen(false)}
       />
+
+      {/* ── Legacy Saved-Work Target Confirmation (first use, Thai suggested) ── */}
+      {legacyTargetPages && legacyTargetPages.length > 0 && (
+        <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+          <div
+            role="dialog"
+            aria-label="ยืนยันภาษาปลายทางของงานเก่า"
+            className="bg-surface border border-border shadow-2xl rounded-2xl max-w-lg w-full p-5 flex flex-col gap-4"
+          >
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 rounded-xl bg-primary/15 text-primary text-xl flex-shrink-0">🌐</div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-bold text-foreground">ยืนยันภาษาปลายทางของงานเก่า</h3>
+                <p className="text-xs text-muted mt-1 leading-relaxed">
+                  งานเก่าต้องยืนยันภาษาครั้งแรกก่อนตรวจสอบ — ระบบแนะนำภาษาไทย (Thai) หน้าที่เคยบันทึกภาษาไว้แล้วจะคงภาษาของตัวเอง และการเปลี่ยนภาษาในงานถัดไปจะไม่มีผลกับงานที่บันทึกไว้
+                </p>
+              </div>
+            </div>
+            <div className="max-h-48 overflow-y-auto border border-border/60 rounded-xl divide-y divide-border/40 bg-background/50">
+              {legacyTargetPages.map((page) => (
+                <div key={page.pageUrl} className="px-3 py-2 text-xs text-foreground">
+                  หน้า {page.pageIndex + 1}
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-border/50">
+              <button
+                type="button"
+                onClick={() => setLegacyTargetPages(null)}
+                className="px-4 py-2 rounded-xl border border-border hover:bg-surface text-xs font-semibold text-muted hover:text-foreground transition-colors cursor-pointer"
+              >
+                ยืนยันภายหลัง
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const assigned = confirmLegacyTarget();
+                  setLegacyTargetPages(null);
+                  if (assigned > 0) {
+                    void import("react-hot-toast").then((m) =>
+                      m.default(`✅ ยืนยันใช้ภาษา ${targetLang} กับ ${assigned} หน้า`, { duration: 3000 }),
+                    );
+                  }
+                }}
+                className="px-4 py-2 rounded-xl bg-primary hover:bg-primary-hover text-primary-content text-xs font-semibold shadow-md transition-colors cursor-pointer"
+              >
+                ยืนยันใช้ภาษา {targetLang}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Actionable review list (script failures + unverified points) ── */}
+      {reviewIssues && (
+        <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+          <div
+            role="dialog"
+            aria-label="รายการตรวจคำแปลที่ต้องดำเนินการ"
+            className="bg-surface border border-border shadow-2xl rounded-2xl max-w-xl w-full p-5 flex flex-col gap-4"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-base font-bold text-foreground">รายการตรวจคำแปลที่ต้องดำเนินการ</h3>
+              <div className="flex items-center gap-2">
+                {isRepairingBook && (
+                  <button
+                    type="button"
+                    onClick={cancelWholeBookRepair}
+                    aria-label="ยกเลิกการแก้ทั้งเล่ม"
+                    className="px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-semibold cursor-pointer"
+                  >
+                    ยกเลิก
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void handleRepairWholeBook()}
+                  disabled={isRepairingBook || operationBusy}
+                  aria-label="แก้ตัวอักษรปนทั้งเล่ม"
+                  className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-primary-content text-xs font-semibold shadow-md transition-colors cursor-pointer disabled:opacity-40 flex items-center gap-1.5"
+                >
+                  {isRepairingBook ? <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" /> : <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />}
+                  แก้ตัวอักษรปนทั้งเล่ม
+                </button>
+              </div>
+            </div>
+            <p className="text-xs text-muted leading-relaxed">
+              จุดที่มีตัวอักษรภาษาอื่นปนต้องแก้ไขหรือสั่งแก้ทั้งเล่มก่อนส่งออก และยืนยันเองไม่ได้ · จุดที่สคริปต์ผ่านแต่ยังไม่ได้ตรวจด้วย AI สามารถยืนยันเองได้เมื่อเทียบกับต้นฉบับแล้ว
+            </p>
+            <div className="max-h-80 overflow-y-auto border border-border/60 rounded-xl divide-y divide-border/40 bg-background/50">
+              {reviewIssues.map((page) => (
+                <div key={page.pageUrl} className="p-3 flex flex-col gap-2 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-foreground">หน้า {page.pageIndex + 1}</span>
+                    <div className="flex items-center gap-1.5">
+                      {page.targetUnconfirmed && (
+                        <>
+                          <span className="px-1.5 py-0.5 rounded bg-primary/15 text-primary text-[10px] font-medium">ยืนยันภาษาของหน้าก่อน</span>
+                          {/* Postponed confirmations stay actionable here: this
+                              confirms the pending legacy targets in place. */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const assigned = confirmLegacyTarget();
+                              if (assigned > 0) {
+                                void import("react-hot-toast").then((m) =>
+                                  m.default(`✅ ยืนยันใช้ภาษา ${targetLang} กับ ${assigned} หน้า`, { duration: 3000 }),
+                                );
+                              }
+                              const issues = inspectReviewIssues();
+                              setReviewIssues(issues.length > 0 ? issues : null);
+                            }}
+                            className="px-2 py-1 rounded border border-primary/40 bg-primary/10 hover:bg-primary/20 text-primary text-[11px] font-medium transition-colors cursor-pointer"
+                          >
+                            ยืนยันภาษา
+                          </button>
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => { setReviewIssues(null); setCurrentPage(page.pageIndex); }}
+                        className="px-2 py-1 rounded border border-border hover:bg-surface text-[11px] font-medium transition-colors cursor-pointer"
+                      >
+                        ไปที่หน้านี้
+                      </button>
+                    </div>
+                  </div>
+                  {page.scriptIssues.map((point) => (
+                    <div key={`script-${point.index}`} className="flex flex-wrap items-center gap-2 text-red-500">
+                      <span className="font-medium">จุด #{point.pointId}</span>
+                      <span>ตัวอักษรปน: {point.characters}</span>
+                      <span className="text-muted">— เปิดแก้ไขข้อความเพื่อเทียบต้นฉบับ (ยืนยันผ่านไม่ได้)</span>
+                    </div>
+                  ))}
+                  {page.unverified.map((point) => (
+                    <div key={`unverified-${point.index}`} className="flex flex-wrap items-center gap-2 text-foreground">
+                      <span className="font-medium">จุด #{point.pointId}</span>
+                      <span className="text-muted">{point.hasSource ? "สคริปต์ผ่าน แต่ยังไม่ได้ตรวจบริบท" : "ไม่มีข้อความต้นฉบับ กรุณาตรวจจากภาพ"}</span>
+                      {point.humanConfirmable && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            confirmPointReview(page.pageUrl, point.index);
+                            const issues = inspectReviewIssues();
+                            setReviewIssues(issues.length > 0 ? issues : null);
+                          }}
+                          aria-label={`ยืนยันจุดที่ ${point.pointId} ตรงต้นฉบับ`}
+                          className="px-2 py-1 rounded bg-emerald-600/15 text-emerald-500 border border-emerald-500/30 text-[11px] font-medium hover:bg-emerald-600/25 transition-colors cursor-pointer"
+                        >
+                          ยืนยันว่าตรงกับต้นฉบับ
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-end pt-2 border-t border-border/50">
+              <button
+                type="button"
+                onClick={() => setReviewIssues(null)}
+                className="px-4 py-2 rounded-xl border border-border hover:bg-surface text-xs font-semibold text-muted hover:text-foreground transition-colors cursor-pointer"
+              >
+                ปิด
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Human Review Confirmation Gate Modal (Ticket 07) ── */}
       {unconfirmedReviewPages && unconfirmedReviewPages.length > 0 && (
