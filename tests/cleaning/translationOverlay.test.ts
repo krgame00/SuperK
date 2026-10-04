@@ -1673,11 +1673,14 @@ test("corner resizing coalesces pointer bursts and commits the final release pos
   for(let i=1;i<=40;i++) firePointer(handle,"pointermove",500+i,500-i,false);
   expect(fillTextSpy).not.toHaveBeenCalled();
   vi.advanceTimersByTime(16);
-  const paintedLines=fillTextSpy.mock.calls.length;
-  expect(paintedLines).toBeGreaterThan(0);
+  // The coalesced frame previews with the captured bitmap via proportional
+  // CSS sizing — the frame grows without retypesetting any glyph.
+  expect(fillTextSpy).not.toHaveBeenCalled();
+  expect(Number.parseFloat(wrapper.style.width)).toBeGreaterThan(widthBefore);
   firePointer(handle,"pointermove",560,440,false);
-  expect(fillTextSpy.mock.calls.length).toBe(paintedLines);
+  expect(fillTextSpy).not.toHaveBeenCalled();
   firePointer(handle,"pointerup",570,430);
+  expect(fillTextSpy).toHaveBeenCalled();
   expect(Number.parseFloat(wrapper.style.width)).toBeGreaterThan(widthBefore);
   const committedWidth=wrapper.style.width;
   vi.advanceTimersByTime(32);

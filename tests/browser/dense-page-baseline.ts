@@ -49,7 +49,8 @@ async function run() {
           layoutAdjustment: { bx, by, bw, bh, iw, ih, manualMinHeightPx: bh } };
       });
       await applyTranslationOverlay(bubbles, 'single', 0, () => {}, undefined,
-        { current: { fontFamily: 'sans-serif', textColor: '#000000', textOutline: '#ffffff', fontSizeMultiplier: 1 } }, stage);
+        { current: { fontFamily: 'sans-serif', textColor: '#000000', textOutline: '#ffffff', fontSizeMultiplier: 1 } }, stage,
+        undefined, undefined, 'th');
       await wait(300);
       const wrapper = stage.querySelector<HTMLElement>('.translation-bubble-wrapper')!;
       const frame = wrapper.querySelector<HTMLElement>('.bubble-text-selection')!;

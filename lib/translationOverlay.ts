@@ -108,6 +108,9 @@ export interface TranslatedBubble {
   manualMinHeightPx?: number;
   /** persisted interactive layout; source of truth for move/resize/rotation */
   layoutAdjustment?: OverlayAdjustment;
+  /** bounded proportional layout of the last render; drives bitmap previews
+   *  and exact re-renders for movement/rotation/undo/reopen */
+  layoutSnapshot?: BubbleProportionalLayout;
   /** redraw callback attached to overlay bubbles */
   render?: () => void;
   styleProfile?: TextStyleProfile;
@@ -134,7 +137,69 @@ export interface OverlayAdjustment {
   fontSizeMultiplier?: number;
   targetFontSize?: number;
   manualMinHeightPx?: number;
+  /** Bounded proportional layout snapshot captured from the last render. */
+  layoutSnapshot?: BubbleProportionalLayout;
 }
+
+/**
+ * Bounded proportional snapshot of one rendered bubble layout: exact text and
+ * canvas font identity, the wrapped lines with their float font/line size, and
+ * the tight text-block geometry inside the frame. Corner drags rescale it for
+ * bitmap previews and crisp releases; re-renders reuse it verbatim for
+ * movement/rotation/Undo/Redo/reopen parity. Text, font, and width edits
+ * invalidate it; movement and rotation do not.
+ */
+export interface BubbleProportionalLayout {
+  /** Exact (script-normalized) translated text the lines were laid out for. */
+  text: string;
+  /** Canvas font family used when the lines were measured. */
+  fontFamily: string;
+  /** Rendered effective font size in frame pixels (float). */
+  fontSizePx: number;
+  /** Rendered line height in frame pixels (float). */
+  lineHeightPx: number;
+  /** Wrapped lines captured from the rendered layout. */
+  lines: string[];
+  /** Frame size the snapshot was captured at (source-image px). */
+  frameWidthPx: number;
+  frameHeightPx: number;
+  /** Tight text-block bounds inside the frame (source-image px, unrotated). */
+  selectionX: number;
+  selectionY: number;
+  selectionWidth: number;
+  selectionHeight: number;
+  /** Bubble/global font multipliers at capture time (identity check). */
+  bubbleMult: number;
+  globalMult: number;
+  /** Whether the captured layout overflowed its frame. */
+  overflow: boolean;
+}
+
+const LAYOUT_SNAPSHOT_MAX_LINES = 400;
+
+const isUsableLayoutSnapshot = (
+  snapshot: BubbleProportionalLayout | undefined,
+  text: string,
+  fontFamily: string,
+): snapshot is BubbleProportionalLayout =>
+  !!snapshot
+  && snapshot.text === text
+  && snapshot.fontFamily === fontFamily
+  && Array.isArray(snapshot.lines)
+  && snapshot.lines.length > 0
+  && snapshot.lines.length <= LAYOUT_SNAPSHOT_MAX_LINES
+  && [
+    snapshot.fontSizePx,
+    snapshot.lineHeightPx,
+    snapshot.frameWidthPx,
+    snapshot.frameHeightPx,
+    snapshot.selectionX,
+    snapshot.selectionY,
+    snapshot.selectionWidth,
+    snapshot.selectionHeight,
+    snapshot.bubbleMult,
+    snapshot.globalMult,
+  ].every((value) => typeof value === "number" && Number.isFinite(value));
 
 /**
  * Snaps a rotation angle (in degrees) to cardinal right angles (0, 90, 180, 270)
@@ -912,6 +977,13 @@ export const applyTranslationOverlay = async (
         && Number.isFinite(adj.manualMinHeightPx)
         ? Math.max(0, adj.manualMinHeightPx)
         : undefined;
+      // The bubble object is the authoritative layout state; adopt a
+      // proportional snapshot persisted in the legacy localStorage index so
+      // reopen parity does not depend on the app-state round trip.
+      if (!b.layoutSnapshot) {
+        const persistedSnapshot = adj?.layoutSnapshot ?? legacyAdj?.layoutSnapshot;
+        if (persistedSnapshot) b.layoutSnapshot = persistedSnapshot;
+      }
       let layoutOverflow = false;
       // Frame-floor bookkeeping: the size the floor grows from (so repeated
       // re-renders cannot compound it) and whether a resize drag is live.
@@ -931,6 +1003,7 @@ export const applyTranslationOverlay = async (
           ...(typeof b.fontSizeMultiplier === "number" ? { fontSizeMultiplier: b.fontSizeMultiplier } : {}),
           ...(typeof b.targetFontSize === "number" ? { targetFontSize: b.targetFontSize } : {}),
           ...(typeof manualMinHeightPx === "number" ? { manualMinHeightPx } : {}),
+          ...(b.layoutSnapshot ? { layoutSnapshot: b.layoutSnapshot } : {}),
         };
         b.layoutAdjustment = persistedLayout;
 
@@ -1047,7 +1120,7 @@ export const applyTranslationOverlay = async (
         updateSelectionFrame();
         chromeControlsByWrapper.get(wrapper)?.position();
       };
-      const renderBubble = (availableHeight = Math.max(0, ih - currentBy)) => {
+      const renderBubble = (availableHeight = Math.max(0, ih - currentBy), snapshotScale = 1) => {
         const currentStyle = textStyleRef?.current || ts;
         const rawText = b.t || b.translated || "";
         const scriptInspection = inspectTargetText(rawText, targetLanguage);
@@ -1084,6 +1157,7 @@ export const applyTranslationOverlay = async (
           }
         }
         const bubbleMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
+        const globalMult = currentStyle.fontSizeMultiplier || 1.0;
         const lockedFs = typeof b.targetFontSize === "number" && Number.isFinite(b.targetFontSize) && b.targetFontSize > 0
           ? b.targetFontSize
           : (typeof adj?.targetFontSize === "number" && Number.isFinite(adj.targetFontSize) && adj.targetFontSize > 0
@@ -1091,7 +1165,31 @@ export const applyTranslationOverlay = async (
             : undefined);
         let fixedLayout: FixedFontWidthResult | null = null;
         let legacyFit: BubbleTextFit | null = null;
+        let snapshotFit: { layout: BubbleProportionalLayout; scale: number } | null = null;
 
+        // A usable proportional snapshot replaces re-wrapping: movement,
+        // rotation, Undo/Redo and reopening re-render the committed layout
+        // exactly (float font size, same lines). A corner release passes an
+        // explicit scale to rescale the captured layout crisply in one pass.
+        // Matched-auto bubbles always keep the fresh constrained layout so
+        // source-space evidence and neighbor caps govern every render.
+        const isMatchedAuto = b.sourceSizing?.mode === "auto" && b.sourceSizing.status === "matched";
+        if (text && !isMatchedAuto && isUsableLayoutSnapshot(b.layoutSnapshot, text, currentFontFam)) {
+          if (snapshotScale !== 1) {
+            snapshotFit = { layout: b.layoutSnapshot, scale: snapshotScale };
+          } else if (
+            b.layoutSnapshot.globalMult === globalMult
+            && b.layoutSnapshot.bubbleMult === bubbleMult
+            && Math.abs(currentBw - b.layoutSnapshot.frameWidthPx) < 0.5
+            && Math.abs(currentBh - b.layoutSnapshot.frameHeightPx) < 0.5
+          ) {
+            snapshotFit = { layout: b.layoutSnapshot, scale: 1 };
+          }
+        }
+
+        if (snapshotFit) {
+          textLayoutOverflow = snapshotFit.layout.overflow === true;
+        } else {
         if (text && typeof lockedFs === "number") {
           const matchedAuto = b.sourceSizing?.mode === 'auto' && b.sourceSizing.status === 'matched';
           const scaledFs = lockedFs * (currentStyle.fontSizeMultiplier || 1.0) * bubbleMult;
@@ -1184,7 +1282,7 @@ export const applyTranslationOverlay = async (
           );
         }
         textLayoutOverflow = fixedLayout ? fixedLayout.overflow : Boolean(text && !legacyFit?.fits);
-        updateBubbleFrame();
+        }
         bCanvas.width = Math.round(currentBw);
         bCanvas.height = Math.round(currentBh);
         const ctx = bCanvas.getContext("2d");
@@ -1192,6 +1290,8 @@ export const applyTranslationOverlay = async (
         ctx.clearRect(0, 0, currentBw, currentBh);
         if (!text || scriptInspection.status === "blocked") {
           textSelection = { x: 0, y: 0, width: currentBw, height: currentBh };
+          // An empty frame has no proportional layout to reuse later.
+          if (!text) delete b.layoutSnapshot;
           updateBubbleFrame();
           return;
         }
@@ -1199,7 +1299,14 @@ export const applyTranslationOverlay = async (
         const textColor = resolvedStyle.textColor;
         const outlineColor = resolvedStyle.textOutline;
         const opacity = resolvedStyle.opacity ?? 1.0;
-        const fit = fixedLayout
+        const fit = snapshotFit
+          ? {
+              fontSize: snapshotFit.layout.fontSizePx * snapshotFit.scale,
+              lines: snapshotFit.layout.lines,
+              lineHeight: snapshotFit.layout.lineHeightPx * snapshotFit.scale,
+              fits: true,
+            }
+          : fixedLayout
           ? {
               fontSize: fixedLayout.fontSizePx,
               lines: fixedLayout.lines,
@@ -1221,7 +1328,9 @@ export const applyTranslationOverlay = async (
         const fontSize = fit.fontSize;
         renderedFontSize = fontSize;
         const lines = fit.lines;
-        const lineH = fixedLayout ? fontSize * 1.30 : Math.min(fontSize * 1.30, currentBh / Math.max(1, lines.length));
+        const lineH = snapshotFit
+          ? snapshotFit.layout.lineHeightPx * snapshotFit.scale
+          : fixedLayout ? fontSize * 1.30 : Math.min(fontSize * 1.30, currentBh / Math.max(1, lines.length));
 
         ctx.globalAlpha = opacity;
         ctx.textAlign = "center";
@@ -1271,7 +1380,39 @@ export const applyTranslationOverlay = async (
           ctx.fillStyle = fillPaint;
           ctx.fillText(l, currentBw / 2, yPos);
         });
-        textSelection = measureTextSelection(ctx, lines, fontSize, lineH, currentBw, currentBh);
+        const measuredSelection = measureTextSelection(ctx, lines, fontSize, lineH, currentBw, currentBh);
+        // Snapshot renders keep the captured selection (scaled for a corner
+        // release) so the crisp redraw, reopening, and Undo/Redo all show the
+        // exact previewed geometry; its padding is additive while scaling is
+        // proportional, so re-measuring would shift the anchor between the
+        // previewed and committed states. Fresh renders take the measurement.
+        textSelection = snapshotFit
+          ? { x: snapshotFit.layout.selectionX * snapshotFit.scale,
+              y: snapshotFit.layout.selectionY * snapshotFit.scale,
+              width: snapshotFit.layout.selectionWidth * snapshotFit.scale,
+              height: snapshotFit.layout.selectionHeight * snapshotFit.scale }
+          : measuredSelection;
+        // Capture the bounded proportional layout of this render so corner
+        // drags preview with this bitmap and later re-renders (movement,
+        // rotation, Undo/Redo, reopen) reproduce it exactly.
+        if (lines.length > 0 && lines.length <= LAYOUT_SNAPSHOT_MAX_LINES) {
+          b.layoutSnapshot = {
+            text,
+            fontFamily: currentFontFam,
+            fontSizePx: fontSize,
+            lineHeightPx: lineH,
+            lines: [...lines],
+            frameWidthPx: currentBw,
+            frameHeightPx: currentBh,
+            selectionX: textSelection.x,
+            selectionY: textSelection.y,
+            selectionWidth: textSelection.width,
+            selectionHeight: textSelection.height,
+            bubbleMult,
+            globalMult,
+            overflow: textLayoutOverflow,
+          };
+        }
         updateBubbleFrame();
       };
 
@@ -1702,19 +1843,23 @@ export const applyTranslationOverlay = async (
         const oldMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
         const newMult = Math.max(0.4, Math.min(3.0, Number((oldMult + delta).toFixed(2))));
         if (newMult === oldMult) return;
+        const snapshotBefore = b.layoutSnapshot;
         b.fontSizeMultiplier = newMult;
         onBubblesMutated?.();
         renderBubble();
+        const snapshotAfter = b.layoutSnapshot;
         saveAdjustment();
         undoManager.push({
           label: delta > 0 ? "เพิ่มขนาดข้อความ" : "ลดขนาดข้อความ",
           undo: () => {
             b.fontSizeMultiplier = oldMult;
+            b.layoutSnapshot = snapshotBefore;
             renderBubble();
             saveAdjustment();
           },
           redo: () => {
             b.fontSizeMultiplier = newMult;
+            b.layoutSnapshot = snapshotAfter;
             renderBubble();
             saveAdjustment();
           },
@@ -1769,6 +1914,7 @@ export const applyTranslationOverlay = async (
           const initBy = currentBy;
           const initBw = currentBw;
           const initBh = currentBh;
+          const initSnapshot = b.layoutSnapshot;
 
           if (e.altKey) {
             if (e.key === "ArrowRight") {
@@ -1794,17 +1940,20 @@ export const applyTranslationOverlay = async (
 
           if (currentBx !== initBx || currentBy !== initBy || currentBw !== initBw || currentBh !== initBh) {
             renderBubble();
+            const committedSnapshot = b.layoutSnapshot;
             saveAdjustment();
             const newBx = currentBx, newBy = currentBy, newBw = currentBw, newBh = currentBh;
             undoManager.push({
               label: e.altKey ? "ปรับขนาดกล่องข้อความ" : "ย้ายตำแหน่งกล่องข้อความ",
               undo: () => {
                 currentBx = initBx; currentBy = initBy; currentBw = initBw; currentBh = initBh;
+                b.layoutSnapshot = initSnapshot;
                 renderBubble();
                 saveAdjustment();
               },
               redo: () => {
                 currentBx = newBx; currentBy = newBy; currentBw = newBw; currentBh = newBh;
+                b.layoutSnapshot = committedSnapshot;
                 renderBubble();
                 saveAdjustment();
               },
@@ -1888,12 +2037,16 @@ export const applyTranslationOverlay = async (
         let widthDragDidMove = false;
         let handleDidMove = false;
         let scaleAnchor = { x: 0, y: 0 };
+        // Proportional layout captured once at corner pointerdown: the drawn
+        // bitmap, wrapped lines, font and selection stay frozen for the whole
+        // drag and are rescaled through CSS; only this snapshot is reused.
+        let scaleDragSnapshot: { layout: BubbleProportionalLayout; selection: SelectionRect } | null = null;
+        let rInitSnapshot: BubbleProportionalLayout | undefined = undefined;
         const pinScaleAnchor = () => {
           const point = rotateLocalPoint(textSelection.x, textSelection.y + textSelection.height,
             currentBw, currentBh, currentRotation);
           currentBx = scaleAnchor.x - point.x;
           currentBy = scaleAnchor.y - point.y;
-          updateBubbleFrame();
         };
 
         const widthGeometryForDrag = (dx: number): { width: number; left: number } => {
@@ -1923,6 +2076,13 @@ export const applyTranslationOverlay = async (
           rDragInitBy = currentBy;
           rInitBw = currentBw; rInitBh = currentBh;
           rInitRot = currentRotation;
+          rInitSnapshot = b.layoutSnapshot;
+          // Corner drags freeze the rendered layout once, here: the drawn
+          // canvas, lines, font and selection are reused for every preview
+          // frame and rescaled proportionally on release.
+          scaleDragSnapshot = id === 'scale' && b.layoutSnapshot
+            ? { layout: b.layoutSnapshot, selection: { ...textSelection } }
+            : null;
           const anchor = rotateLocalPoint(textSelection.x, textSelection.y + textSelection.height,
             currentBw, currentBh, currentRotation);
           scaleAnchor = { x: currentBx + anchor.x, y: currentBy + anchor.y };
@@ -2068,19 +2228,44 @@ export const applyTranslationOverlay = async (
             currentBx = rInitBx + dx;
             currentBy = rInitBy + dy;
           }
-          if (id === "move" || id === "rotate") updateBubbleFrame();
-          else renderBubble(id === "scale" ? ih : undefined);
-          if (id === "scale") {
-            pinScaleAnchor();
+          if (id === "move" || id === "rotate") {
+            updateBubbleFrame();
+          } else if (id === "scale" && scaleDragSnapshot) {
+            // Bitmap corner preview: scale the captured selection and rescale
+            // the same canvas bitmap via proportional CSS sizing — zero
+            // retypesetting, canvas resets or re-measuring during the drag.
+            const previewScale = rInitBw > 0 ? currentBw / rInitBw : 1;
+            const scaleSelection = (k: number): SelectionRect => {
+              const captured = scaleDragSnapshot!.selection;
+              return { x: captured.x * k, y: captured.y * k,
+                width: captured.width * k, height: captured.height * k };
+            };
+            textSelection = scaleSelection(previewScale);
             // Resolve the anchor before page constraints. Keep the last valid
             // scale when growth would cross an edge, rather than clipping its
             // height differently on redo, reopening, or export.
+            pinScaleAnchor();
             if (currentBx < 0 || currentBy < 0 || currentBx + currentBw > iw || currentBy + currentBh > ih) {
               currentBx = previousScale.bx; currentBy = previousScale.by;
               currentBw = previousScale.bw; currentBh = previousScale.bh;
               b.fontSizeMultiplier = previousScale.font; b.targetFontSize = previousScale.target;
               manualMinHeightPx = previousScale.minimum;
-              renderBubble();
+              textSelection = scaleSelection(rInitBw > 0 ? currentBw / rInitBw : 1);
+            }
+            updateBubbleFrame();
+          } else {
+            renderBubble(id === "scale" ? ih : undefined);
+            if (id === "scale") {
+              pinScaleAnchor();
+              if (currentBx < 0 || currentBy < 0 || currentBx + currentBw > iw || currentBy + currentBh > ih) {
+                currentBx = previousScale.bx; currentBy = previousScale.by;
+                currentBw = previousScale.bw; currentBh = previousScale.bh;
+                b.fontSizeMultiplier = previousScale.font; b.targetFontSize = previousScale.target;
+                manualMinHeightPx = previousScale.minimum;
+                renderBubble();
+              } else {
+                updateBubbleFrame();
+              }
             }
           }
         };
@@ -2154,6 +2339,7 @@ export const applyTranslationOverlay = async (
             currentRotation = rInitRot;
             b.targetFontSize = rInitTargetFs;
             manualMinHeightPx = rInitManualMinHeightPx;
+            if (scaleDragSnapshot) textSelection = { ...scaleDragSnapshot.selection };
             floorBase = { w: rInitBw, h: rInitBh };
             updateBubbleFrame();
             return;
@@ -2162,15 +2348,28 @@ export const applyTranslationOverlay = async (
           resizeDragActive = false;
           widthSelectionPreview = false;
           if (id === "scale") manualMinHeightPx = currentBh;
-          // Re-apply the frame floor once, now that the drag has ended.
-          if (wasResizing || id === "move") renderBubble();
-          if (id === "scale") pinScaleAnchor();
+          // Re-apply the frame floor once, now that the drag has ended. A
+          // corner drag redraws crisply in a single pass: the captured layout
+          // is rescaled by the committed drag scale (same lines, float font).
+          if (wasResizing || id === "move") {
+            if (id === "scale" && scaleDragSnapshot && rInitBw > 0) {
+              renderBubble(undefined, currentBw / rInitBw);
+            } else {
+              renderBubble();
+            }
+          }
+          if (id === "scale") {
+            pinScaleAnchor();
+            updateBubbleFrame();
+          }
+          scaleDragSnapshot = null;
           saveAdjustment();
 
           const finalBx = currentBx, finalBy = currentBy, finalBw = currentBw, finalBh = currentBh, finalRot = currentRotation;
           const finalFontMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
           const finalTargetFs = b.targetFontSize;
           const finalManualMinHeight = manualMinHeightPx;
+          const finalSnapshot = b.layoutSnapshot;
           if (
             finalBx !== rInitBx ||
             finalBy !== rInitBy ||
@@ -2199,6 +2398,7 @@ export const applyTranslationOverlay = async (
                 b.fontSizeMultiplier = rInitFontMult;
                 b.targetFontSize = rInitTargetFs;
                 manualMinHeightPx = rInitManualMinHeightPx;
+                b.layoutSnapshot = rInitSnapshot;
                 floorBase = { w: rInitBw, h: rInitBh };
                 renderBubble();
                 saveAdjustment();
@@ -2212,6 +2412,7 @@ export const applyTranslationOverlay = async (
                 b.fontSizeMultiplier = finalFontMult;
                 b.targetFontSize = finalTargetFs;
                 manualMinHeightPx = finalManualMinHeight;
+                b.layoutSnapshot = finalSnapshot;
                 floorBase = { w: finalBw, h: finalBh };
                 renderBubble();
                 saveAdjustment();
@@ -2238,6 +2439,9 @@ export const applyTranslationOverlay = async (
           b.fontSizeMultiplier = rInitFontMult;
           b.targetFontSize = rInitTargetFs;
           manualMinHeightPx = rInitManualMinHeightPx;
+          b.layoutSnapshot = rInitSnapshot;
+          if (scaleDragSnapshot) textSelection = { ...scaleDragSnapshot.selection };
+          scaleDragSnapshot = null;
           floorBase = { w: rInitBw, h: rInitBh };
           renderBubble();
         });
@@ -2563,12 +2767,16 @@ export const applyTranslationOverlay = async (
         }
 
         const rootRect = chromeRoot.getBoundingClientRect();
-        const bubbleRect = wrapper.getBoundingClientRect();
         const stageRect = tlContainer.getBoundingClientRect();
-        const scaleX = stageRect.width > 0 ? stageRect.width / iw : bubbleRect.width / currentBw;
-        const scaleY = stageRect.height > 0 ? stageRect.height / ih : bubbleRect.height / currentBh;
-        const originX = stageRect.width > 0 ? stageRect.left + currentBx * scaleX : bubbleRect.left;
-        const originY = stageRect.height > 0 ? stageRect.top + currentBy * scaleY : bubbleRect.top;
+        // The normal path derives rotated page bounds from the stage rect
+        // alone; the per-bubble wrapper rect is read lazily only when the
+        // stage has no measurable dimensions yet.
+        const stageReady = stageRect.width > 0 && stageRect.height > 0;
+        const bubbleRect = stageReady ? null : wrapper.getBoundingClientRect();
+        const scaleX = stageRect.width > 0 ? stageRect.width / iw : (bubbleRect ? bubbleRect.width : 0) / currentBw;
+        const scaleY = stageRect.height > 0 ? stageRect.height / ih : (bubbleRect ? bubbleRect.height : 0) / currentBh;
+        const originX = stageRect.width > 0 ? stageRect.left + currentBx * scaleX : (bubbleRect ? bubbleRect.left : 0);
+        const originY = stageRect.height > 0 ? stageRect.top + currentBy * scaleY : (bubbleRect ? bubbleRect.top : 0);
         const pointInChrome = (x: number, y: number) => {
           const point = rotateLocalPoint(x, y, currentBw, currentBh, currentRotation);
           return { x: originX - rootRect.left + point.x * scaleX, y: originY - rootRect.top + point.y * scaleY };
