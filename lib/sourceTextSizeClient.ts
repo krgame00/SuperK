@@ -5,13 +5,13 @@ import { analyzeSourceLetterSize, calibrateOutputBodyMetric, resolveSourceFontSi
   SOURCE_SIZE_POLICY, SOURCE_SIZE_FALLBACK_LABEL, type SourceSizing, type SourceSizeEvidence } from './sourceTextSize';
 
 /** Preparation only: original-image work is deliberately outside overlay/gesture rendering. */
-export async function prepareNewSourceSizing(bubbles:TranslatedBubble[], image:HTMLImageElement, family:string):Promise<void> {
+export async function prepareNewSourceSizing(bubbles:TranslatedBubble[], image:HTMLImageElement, family:string, targets?:ReadonlySet<TranslatedBubble>):Promise<void> {
   const primary=family.split(',')[0].trim().replace(/^["']|["']$/g,'').toLowerCase();
   if(['itim','prompt','kanit','sarabun','mitr','chakra petch'].includes(primary)) {
     const registered=getComputedStyle(document.documentElement).getPropertyValue(`--font-${primary.replace(/ /g,'-')}`).trim();
     if(registered) family=registered;
   }
-  const fresh=bubbles.filter(b=>b.sourceSizing?.mode==='auto' || (!b.sourceSizing && b.targetFontSize===undefined));
+  const fresh=bubbles.filter(b=>(!targets || targets.has(b)) && (b.sourceSizing?.mode==='auto' || (!b.sourceSizing && b.targetFontSize===undefined)));
   if(!fresh.length) return;
   const spaceContextKey=bubbles.map(b=>sourceRegionKey(b.box)).sort().join('|');
   const width=image.naturalWidth||image.width||0,height=image.naturalHeight||image.height||0;

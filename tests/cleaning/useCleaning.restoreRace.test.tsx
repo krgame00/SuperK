@@ -126,7 +126,8 @@ test("metadata restore restarts after the page count changes", async () => {
   });
 
   expect(loadCleaningResultsMetadata).toHaveBeenCalledTimes(2);
-  expect(result.current.resultsByPage.get("blob:one")?.jobId).toBe("job-1");
+  expect(getCleaningResult).not.toHaveBeenCalled();
+  expect(result.current.resultsByPage.get("blob:one")).toBeUndefined();
 });
 
 test("a failing metadata store skips the clean restore instead of dying unhandled", async () => {

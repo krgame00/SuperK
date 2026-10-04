@@ -10,7 +10,6 @@ import { resolveTargetLanguage } from "@/lib/languagePolicy";
 import { jsPDF } from "jspdf";
 import { Toaster } from "react-hot-toast";
 import {
-  downloadTranslatedImage,
   applyTranslationOverlay,
   type TranslatedBubble,
 } from "@/lib/translationOverlay";
@@ -24,6 +23,8 @@ import {
   type WorkspaceLayer,
 } from "@/components/cleaning/CleaningToolbar";
 import { MaskEditor } from "@/components/cleaning/MaskEditor";
+import { RemnantReviewPanel } from "@/components/cleaning/RemnantReviewPanel";
+import type { PixelRect } from "@/lib/cleaning/types";
 import type {
   CleanerOverride,
   CleaningRegion,
@@ -45,7 +46,6 @@ import {
   generateStripFilename,
 } from "@/lib/export/exportManager";
 import {
-  shouldReuseCachedTranslatedRender,
 } from "@/lib/export/renderFreshness";
 import {
   getAskExportDirectory,
@@ -65,6 +65,7 @@ import {
 import { KeyboardShortcutsDialog } from "@/components/editing/KeyboardShortcutsDialog";
 import {
   doesPageRequireReview,
+  getPageOutputBlockers,
   getUnconfirmedPages,
   missingTranslationSignature,
   type PageReviewInfo,
@@ -120,7 +121,7 @@ function formatStopwatchTime(elapsedMs: number): string {
   return `${String(totalMinutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${tenths}`;
 }
 
-type WorkspaceExportPage = { id?: string; url: string; name: string; originUrl?: string; exportSource?: PageExportSource };
+type WorkspaceExportPage = { id?: string; url: string; name: string; originUrl?: string; exportSource?: PageExportSource; exportExcluded?: boolean };
 
 export default function WorkspacePage() {
 
@@ -143,6 +144,7 @@ export default function WorkspacePage() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isThumbnailsCollapsed, setIsThumbnailsCollapsed] = useState(false);
   const [isMaskEditorOpen, setIsMaskEditorOpen] = useState(false);
+  const [maskFocusRect, setMaskFocusRect] = useState<PixelRect>();
   const uiOperationLockRef = useRef(false);
   const dirtyExportPagesRef = useRef<Set<string>>(new Set());
   const [isUiOperationBusy, setIsUiOperationBusy] = useState(false);
@@ -266,6 +268,10 @@ export default function WorkspacePage() {
     progress: cleaningProgress,
     error: cleaningError,
     resultsByPage: cleaningResultsByPage,
+    getCurrentRemnantReview,
+    currentRemnantReview,
+    confirmArtworkCandidate,
+    recheckPageRemnants,
   } = useCleaning({ pages: pageUrls, pageIds, currentPage });
 
   useEffect(() => {
@@ -370,6 +376,7 @@ export default function WorkspacePage() {
         backgroundUrl: result.cleanUrl,
         maskUrl: result.maskUrl,
         preparedIdentity: result.preparedIdentity,
+        sourceFingerprint: result.sourceFingerprint,
         awaitingReview: result.awaitingReview === true,
         cleaningMode: result.cleaningMode,
       };
@@ -444,6 +451,7 @@ export default function WorkspacePage() {
     pageNames,
     pageOriginUrls: pages.map((p) => p.originUrl),
     pageExportSources: pages.map((p) => normalizePageExportSource(p.exportSource)),
+    pageSourceFingerprints: new Map([...cleaningResultsByPage].flatMap(([url, result]) => result.sourceFingerprint ? [[url, result.sourceFingerprint] as const] : [])),
     viewMode: "single",
     preparePageForTranslation,
     onPageDirtied: (pageUrl) => {
@@ -1213,6 +1221,32 @@ export default function WorkspacePage() {
     const page = pages[currentPage];
     if (!page || !page.originUrl) return;
 
+    // Publication shares the export eligibility boundary: deterministic script
+    // failures, unresolved review evidence, unconfirmed targets and unresolved
+    // background-remnant findings block publish-back; generated-text approval
+    // cannot clear them. Recomputed from raw text at each attempt.
+    const blockers = getPageOutputBlockers(
+      bubbleCacheRef.current.get(page.url) ?? activeBubbles,
+      pageTargetCacheRef.current.get(page.url),
+      getCurrentRemnantReview?.(page.url)?.inspection,
+      cleaningResultsByPage.get(page.url)?.sourceFingerprint,
+    );
+    if (blockers.targetUnconfirmed || blockers.scriptIssueCount > 0 ||
+        blockers.unverifiedReviewCount > 0 || blockers.backgroundBlocked) {
+      const details = [
+        blockers.targetUnconfirmed ? "ยังไม่ยืนยันภาษาของหน้า" : null,
+        blockers.scriptIssueCount > 0 ? `ตัวอักษรภาษาอื่นปน ${blockers.scriptIssueCount} จุด` : null,
+        blockers.unverifiedReviewCount > 0 ? `ยังไม่ได้ตรวจกับต้นฉบับ ${blockers.unverifiedReviewCount} จุด` : null,
+        blockers.backgroundBlocked ? "พบร่องรอยต้องตรวจในภาพพื้นหลัง" : null,
+      ].filter(Boolean).join(", ");
+      (await import("react-hot-toast")).default(
+        `❌ ยังส่งกลับหน้าอ่านไม่ได้: ${details} — เปิด เครื่องมือ > ตรวจคำแปลทั้งเล่ม เพื่อตรวจและยืนยันก่อน`,
+        { duration: 6000 },
+      );
+      return;
+    }
+
+    const publicationSignature = exportInputSignature(page.url);
     setIsPublishingBack(true);
     try {
       let cleanUrl = cleaningResultsByPage.get(page.url)?.cleanUrl || translatedImages.get(page.url);
@@ -1231,6 +1265,7 @@ export default function WorkspacePage() {
         }
       }
       const pairingToken = await fetchExtensionPairingToken();
+      if (publicationSignature !== exportInputSignature(page.url) || collectExportReviewPages([{...page, exportSource:"translated"}], [0]).length > 0) throw new Error("หลักฐานเปลี่ยนระหว่างส่งกลับ กรุณาตรวจหน้าอีกครั้ง");
       const res = await fetch("/api/extension/publish-back", {
         method: "POST",
         headers: {
@@ -1261,91 +1296,62 @@ export default function WorkspacePage() {
     }
   };
 
-  const handleDownloadAll = async (format: "zip" | "cbz" | "pdf" | "strip" = "zip") => {
-    if (pages.length === 0) return;
-
-    const unconfirmed = getUnconfirmedPages(
-      exportSnapshotRef.current?.pages ?? pages,
+  // Shared output-eligibility gate: every translated export path evaluates this
+  // BEFORE choosing the live canvas, a cached raster or a fresh offscreen render.
+  // The eligibility result is recomputed from raw text at each attempt, so old
+  // accepted/dismissed states and generic page confirmations cannot bypass it.
+  const collectExportReviewPages = useCallback((snapshotPages: WorkspaceExportPage[], targetIndices?: number[]) => {
+    return getUnconfirmedPages(
+      snapshotPages,
       confirmedPages,
       cleaningResultsByPage,
       bubbleCacheRef.current,
-      undefined,
+      targetIndices,
       confirmedMissingTranslationsRef.current,
+      {
+        targetIdentities: pageTargetCacheRef.current,
+        sourceRevisions: new Map(snapshotPages.map((page) => [page.url, cleaningResultsByPage.get(page.url)?.sourceFingerprint])),
+        backgroundInspections: new Map(snapshotPages.flatMap((page) => {
+          const review = getCurrentRemnantReview?.(page.url);
+          return review ? [[page.url, review.inspection] as const] : [];
+        })),
+      },
     );
-    if (unconfirmed.length > 0) {
-      pendingReviewIndicesRef.current = undefined;
-      setUnconfirmedReviewPages(unconfirmed);
-      setPendingExportAction(() => () => void executeDownloadAll(format));
-      return;
-    }
+  }, [confirmedPages, cleaningResultsByPage, pageTargetCacheRef, getCurrentRemnantReview, bubbleCacheRef]);
 
-    await executeDownloadAll(format);
-  };
+  // Explicit original-image substitution for one affected page, scoped to the
+  // pending export snapshot. The exported bytes become the page's original.
+  const substituteExportPageWithOriginal = useCallback((pageUrl: string) => {
+    const snapshot = exportSnapshotRef.current;
+    if (!snapshot) return;
+    snapshot.pages = snapshot.pages.map((page) => page.url === pageUrl ? { ...page, exportSource: "original" as const } : page);
+    setUnconfirmedReviewPages(collectExportReviewPages(snapshot.pages, pendingReviewIndicesRef.current));
+  }, [collectExportReviewPages]);
 
-  const executeDownloadAll = async (format: "zip" | "cbz" | "pdf" | "strip" = "zip") => {
-    const pages = exportSnapshotRef.current?.pages ?? [];
-    if (pages.length === 0) return;
-    const currentPage = exportSnapshotRef.current?.currentPage ?? 0;
-    setIsChoosingExport(false);
-    setIsZipping(true);
+  // Explicit exclusion of one affected page from a pending book export. Ordering
+  // and numbering are preserved and the exclusion is reported, never silent.
+  const excludeExportPage = useCallback((pageUrl: string) => {
+    const snapshot = exportSnapshotRef.current;
+    if (!snapshot) return;
+    snapshot.pages = snapshot.pages.map((page) => page.url === pageUrl ? { ...page, exportExcluded: true } : page);
+    const remainingIndices = pendingReviewIndicesRef.current?.filter((index) => snapshot.pages[index]?.url !== pageUrl);
+    setUnconfirmedReviewPages(collectExportReviewPages(snapshot.pages, remainingIndices));
+  }, [collectExportReviewPages]);
 
-    // Optional destination-folder picker (Chrome/Edge). Unavailable browsers
-    // or a dismissed dialog fall back to the normal download flow.
-    let destDir: DirectoryHandleLike | null = null;
-    if (getAskExportDirectory()) {
-      if (!isDirectoryPickerSupported()) {
-        import("react-hot-toast").then((m) =>
-          m.default("เบราว์เซอร์นี้ไม่รองรับการเลือกโฟลเดอร์ จะดาวน์โหลดตามค่าตั้งต้นแทน", { duration: 3000 }),
-        );
-      } else {
-        destDir = await getOrPickExportDirectory();
-        if (!destDir) {
-          setIsZipping(false);
-      exportSnapshotRef.current = null;
-          return;
-        }
-      }
-    }
+  // Review evidence changed while the dialog is open (per-point confirmation,
+  // target confirmation, text repair): refresh the listed rows so a repaired
+  // page can be released without reopening the export.
+  useEffect(() => {
+    if (!unconfirmedReviewPages || !exportSnapshotRef.current) return;
+    setUnconfirmedReviewPages(collectExportReviewPages(exportSnapshotRef.current.pages, pendingReviewIndicesRef.current));
+  }, [translationCacheRevision, collectExportReviewPages]);
 
-    const failedExportPages: number[] = [];
-    const exportErrors: string[] = [];
-    const reportRenderFailures = () => {
-      setTranslationResult(
-        `❌ Export ไม่สำเร็จที่หน้า ${failedExportPages.join(", ")} ${exportErrors.join("; ")} — ลองใหม่อีกครั้ง`,
-      );
-      setTimeout(() => setTranslationResult(null), 5000);
-    };
+  const exportInputSignature = (pageUrl: string) => JSON.stringify([pageTargetCacheRef.current.get(pageUrl), bubbleCacheRef.current.get(pageUrl), textStyleRef.current, getCurrentRemnantReview?.(pageUrl)?.inspection.revisionKey, cleaningResultsByPage.get(pageUrl)?.sourceFingerprint, cleaningResultsByPage.get(pageUrl)?.cleanUrl]);
 
-    const renderTranslatedDataUrl = async (pageUrl: string, index: number): Promise<string | null> => {
+    const renderExportImage = async (pageUrl: string, index: number, pages: WorkspaceExportPage[]): Promise<string | null> => {
+      if (collectExportReviewPages(pages, [index]).length) throw new Error("กรุณาตรวจหลักฐานหน้านี้ใหม่ เลือกต้นฉบับ หรือข้ามหน้า");
+      const beforeSignature = exportInputSignature(pageUrl);
       const pageId = pages[index]?.id || `page_${index}`;
-      if (
-        index === currentPage &&
-        workspaceLayer === "translated" &&
-        activeBubbles.length > 0
-      ) {
-        const currentDataUrl = downloadTranslatedImage("single", index, "", true);
-        if (currentDataUrl) {
-          const currentSig = getPageSignature?.(pageUrl) ?? "rev-0";
-          workspaceResourceManager.registerRenderedImage(
-            pageId,
-            currentSig,
-            currentDataUrl,
-            Math.round(currentDataUrl.length * 0.75),
-          );
-          translatedImageCacheRef.current.set(pageUrl, currentDataUrl);
-          dirtyExportPagesRef.current.delete(pageUrl);
-          return currentDataUrl;
-        }
-      }
-
-      const isExportDirty = dirtyExportPagesRef.current.has(pageUrl);
-      if (
-        shouldReuseCachedTranslatedRender(isExportDirty) &&
-        translatedImageCacheRef.current.has(pageUrl)
-      ) {
-        return translatedImageCacheRef.current.get(pageUrl) as string;
-      }
-
       const bubbles = bubbleCacheRef.current.get(pageUrl);
       // Spilled-render reuse is intentionally not consulted here: a bubble-free
       // page's translated output is its cleaned background, and a page with
@@ -1388,8 +1394,9 @@ export default function WorkspacePage() {
                 () => {},
                 (renderedUrl) => {
                   clearTimeout(timeout);
-                  translatedImageCacheRef.current.set(pageUrl, renderedUrl);
                   const approxBytes = Math.round(renderedUrl.length * 0.75);
+                  if (collectExportReviewPages(pages, [index]).length || beforeSignature !== exportInputSignature(pageUrl)) { reject(new Error("ข้อความหรือหลักฐานเปลี่ยนระหว่างเรนเดอร์ กรุณาลองส่งออกใหม่")); return; }
+                  translatedImageCacheRef.current.set(pageUrl, renderedUrl);
                   const freshSig = getPageSignature?.(pageUrl) ?? "rev-0";
                   workspaceResourceManager.registerRenderedImage(
                     pageId,
@@ -1420,14 +1427,68 @@ export default function WorkspacePage() {
       // translated output is the cleaned background, else the untouched page.
       return (
         cleaningResultsByPage.get(pageUrl)?.cleanUrl ??
-        translatedImageCacheRef.current.get(pageUrl) ??
         pageUrl
       );
     };
 
+  const handleDownloadAll = async (format: "zip" | "cbz" | "pdf" | "strip" = "zip") => {
+    if (pages.length === 0) return;
+
+    const unconfirmed = collectExportReviewPages(exportSnapshotRef.current?.pages ?? pages);
+    if (unconfirmed.length > 0) {
+      pendingReviewIndicesRef.current = undefined;
+      setUnconfirmedReviewPages(unconfirmed);
+      setPendingExportAction(() => () => void executeDownloadAll(format));
+      return;
+    }
+
+    await executeDownloadAll(format);
+  };
+
+  const executeDownloadAll = async (format: "zip" | "cbz" | "pdf" | "strip" = "zip") => {
+    const pages = exportSnapshotRef.current?.pages ?? [];
+    if (pages.length === 0) return;
+    const outputSignatures = new Map(pages.map(page => [page.url, exportInputSignature(page.url)]));
+    const assertCurrentOutput = () => {
+      if (collectExportReviewPages(pages).length || pages.some(page => !page.exportExcluded && normalizePageExportSource(page.exportSource) !== "original" && outputSignatures.get(page.url) !== exportInputSignature(page.url))) throw new Error("หลักฐานหรือข้อความเปลี่ยนระหว่างส่งออก กรุณาตรวจหน้าและส่งออกใหม่");
+    };
+    setIsChoosingExport(false);
+    setIsZipping(true);
+
+    // Optional destination-folder picker (Chrome/Edge). Unavailable browsers
+    // or a dismissed dialog fall back to the normal download flow.
+    let destDir: DirectoryHandleLike | null = null;
+    if (getAskExportDirectory()) {
+      if (!isDirectoryPickerSupported()) {
+        import("react-hot-toast").then((m) =>
+          m.default("เบราว์เซอร์นี้ไม่รองรับการเลือกโฟลเดอร์ จะดาวน์โหลดตามค่าตั้งต้นแทน", { duration: 3000 }),
+        );
+      } else {
+        destDir = await getOrPickExportDirectory();
+        if (!destDir) {
+          setIsZipping(false);
+      exportSnapshotRef.current = null;
+          return;
+        }
+      }
+    }
+
+    const failedExportPages: number[] = [];
+    const exportErrors: string[] = [];
+    // Explicit exclusions from the review dialog are reported, never silent.
+    const excludedCount = pages.filter((page) => page.exportExcluded).length;
+    const excludedNote = excludedCount > 0 ? ` — ตัด ${excludedCount} หน้าออกตามที่เลือก` : "";
+    const reportRenderFailures = () => {
+      setTranslationResult(
+        `❌ Export ไม่สำเร็จที่หน้า ${failedExportPages.join(", ")} ${exportErrors.join("; ")} — ลองใหม่อีกครั้ง`,
+      );
+      setTimeout(() => setTranslationResult(null), 5000);
+    };
+
     const getExportDataUrl = async (pageUrl: string, index: number): Promise<string> => {
+      if (collectExportReviewPages(pages, [index]).length) throw new Error("กรุณาตรวจหลักฐานหน้านี้ใหม่ เลือกต้นฉบับ หรือข้ามหน้า");
       const selectedUrl = await resolvePageExportUrl(pages[index], cleaningResultsByPage.get(pageUrl)?.cleanUrl,
-        () => renderTranslatedDataUrl(pageUrl, index));
+        () => renderExportImage(pageUrl, index, pages));
       return selectedUrl.startsWith("data:") ? selectedUrl : blobToDataUrl(await exportImageBlob(selectedUrl));
     };
 
@@ -1438,6 +1499,7 @@ export default function WorkspacePage() {
         const targetWidth = 1200;
 
         for (let i = 0; i < pages.length; i++) {
+          if (pages[i].exportExcluded) continue;
           try {
             const dataUrl = await getExportDataUrl(pages[i].url, i);
             if (!dataUrl) {
@@ -1495,6 +1557,7 @@ export default function WorkspacePage() {
           const blob = await new Promise<Blob>((resolve, reject) => {
             stripCanvas.toBlob(result => result ? resolve(result) : reject(new Error("ไม่สามารถสร้างภาพ Strip")), "image/jpeg", 0.92);
           });
+          assertCurrentOutput();
           const savedName = await saveBlob(blob, stripFilename, destDir);
           if (savedName && savedName !== stripFilename) {
             const toast = (await import("react-hot-toast")).default;
@@ -1518,7 +1581,7 @@ export default function WorkspacePage() {
         }
 
         const folderLabel = destDir?.name ? ` ใน "${destDir.name}"` : "";
-        setTranslationResult(`✅ ดาวน์โหลด Webtoon Strip${folderLabel} สำเร็จ! (${loadedImages.length} หน้า)`);
+        setTranslationResult(`✅ ดาวน์โหลด Webtoon Strip${folderLabel} สำเร็จ! (${loadedImages.length} หน้า)${excludedNote}`);
         setTimeout(() => setTranslationResult(null), 3000);
       } catch (e) {
         console.error("Failed to generate long strip", e);
@@ -1537,6 +1600,7 @@ export default function WorkspacePage() {
         let addedCount = 0;
 
         for (let i = 0; i < pages.length; i++) {
+          if (pages[i].exportExcluded) continue;
           try {
             const dataUrl = await getExportDataUrl(pages[i].url, i);
             if (!dataUrl) {
@@ -1590,13 +1654,14 @@ export default function WorkspacePage() {
         if (addedCount > 0) {
           const pdfFilename = generateArchiveFilename("pdf", pages);
           setTranslationResult(`⏳ กำลังบันทึก PDF...`);
+          assertCurrentOutput();
           const savedName = await saveBlob(pdf.output("blob"), pdfFilename, destDir);
           const wasRenamed = savedName !== pdfFilename;
           const folderLabel = destDir?.name ? ` ใน "${destDir.name}"` : "";
           setTranslationResult(
             wasRenamed
               ? `✅ บันทึก ${savedName}${folderLabel} สำเร็จ! (พบชื่อซ้ำ จึงเปลี่ยนชื่อให้อัตโนมัติ)`
-              : `✅ ดาวน์โหลด PDF${folderLabel} สำเร็จ! (${addedCount} หน้า)`
+              : `✅ ดาวน์โหลด PDF${folderLabel} สำเร็จ! (${addedCount} หน้า)${excludedNote}`
           );
           if (wasRenamed) {
             import("react-hot-toast").then((m) =>
@@ -1622,9 +1687,11 @@ export default function WorkspacePage() {
     let zipAddedCount = 0;
 
     for (let i = 0; i < pages.length; i++) {
+      if (pages[i].exportExcluded) continue;
       try {
+        if (collectExportReviewPages(pages, [i]).length) throw new Error("กรุณาตรวจหลักฐานหน้านี้ใหม่ เลือกต้นฉบับ หรือข้ามหน้า");
         const selectedUrl = await resolvePageExportUrl(pages[i], cleaningResultsByPage.get(pages[i].url)?.cleanUrl,
-          () => renderTranslatedDataUrl(pages[i].url, i));
+          () => renderExportImage(pages[i].url, i, pages));
         const blob = await exportImageBlob(selectedUrl);
         const filename = exportImageFilename(pages[i].name, i, blob.type);
         // ArrayBuffer keeps raw original/clean bytes and includes blob URLs.
@@ -1667,13 +1734,14 @@ export default function WorkspacePage() {
         const archiveFilename = generateArchiveFilename(format, pages);
         setTranslationResult(`⏳ กำลังสร้างไฟล์ ${format.toUpperCase()}...`);
         const content = await zip.generateAsync({ type: "blob" });
+        assertCurrentOutput();
         const savedName = await saveBlob(content, archiveFilename, destDir);
         const wasRenamed = savedName !== archiveFilename;
         const folderLabel = destDir?.name ? ` ใน "${destDir.name}"` : "";
         setTranslationResult(
           wasRenamed
             ? `✅ บันทึก ${savedName}${folderLabel} สำเร็จ! (พบชื่อซ้ำ จึงเปลี่ยนชื่อให้อัตโนมัติ)`
-            : `✅ ดาวน์โหลด ${format.toUpperCase()}${folderLabel} สำเร็จ! (${zipAddedCount} หน้า)`
+            : `✅ ดาวน์โหลด ${format.toUpperCase()}${folderLabel} สำเร็จ! (${zipAddedCount} หน้า)${excludedNote}`
         );
         if (wasRenamed) {
           import("react-hot-toast").then((m) =>
@@ -1695,13 +1763,9 @@ export default function WorkspacePage() {
   };
 
   const saveCurrentPageImage = async () => {
-    const unconfirmed = getUnconfirmedPages(
+    const unconfirmed = collectExportReviewPages(
       exportSnapshotRef.current?.pages ?? pages,
-      confirmedPages,
-      cleaningResultsByPage,
-      bubbleCacheRef.current,
       [exportSnapshotRef.current?.currentPage ?? currentPage],
-      confirmedMissingTranslationsRef.current,
     );
     if (unconfirmed.length > 0) {
       pendingReviewIndicesRef.current = [exportSnapshotRef.current?.currentPage ?? currentPage];
@@ -1721,15 +1785,9 @@ export default function WorkspacePage() {
     try {
       const page = pages[currentPage];
       if (!page) return;
-      const url = await resolvePageExportUrl(page, cleaningResultsByPage.get(page.url)?.cleanUrl, async () => {
-        const bubbles = (bubbleCacheRef.current.get(page.url) ?? []).filter((b) => !b.deleted);
-        if (bubbles.length === 0) {
-          // A bubble-free page has no translation layer: its translated
-          // output is the cleaned background, else the untouched page.
-          return cleaningResultsByPage.get(page.url)?.cleanUrl ?? page.url;
-        }
-        return downloadTranslatedImage("single", currentPage, "", true);
-      });
+      if (collectExportReviewPages(pages, [currentPage]).length) throw new Error("หน้านี้ยังต้องตรวจคำแปลหรือภาพพื้นหลัง กรุณาตรวจใหม่ เลือกต้นฉบับ หรือข้ามหน้า");
+      const beforeSignature = exportInputSignature(page.url);
+      const url = await resolvePageExportUrl(page, cleaningResultsByPage.get(page.url)?.cleanUrl, () => renderExportImage(page.url, currentPage, pages));
       const blob = await exportImageBlob(url);
       const filename = exportImageFilename(page.name, currentPage, blob.type);
       let directory: DirectoryHandleLike | null = null;
@@ -1737,6 +1795,7 @@ export default function WorkspacePage() {
         directory = await getOrPickExportDirectory();
         if (!directory) return;
       }
+      if (collectExportReviewPages(pages, [currentPage]).length || (normalizePageExportSource(page.exportSource) !== "original" && beforeSignature !== exportInputSignature(page.url))) throw new Error("หลักฐานเปลี่ยนระหว่างส่งออก กรุณาตรวจหน้าอีกครั้ง");
       await saveBlob(blob, filename, directory);
       setTranslationResult(`✅ บันทึก ${filename} สำเร็จ!`);
     } catch (error) {
@@ -3031,6 +3090,17 @@ export default function WorkspacePage() {
         onToggleCollapse={() => setIsThumbnailsCollapsed(!isThumbnailsCollapsed)}
         isFocusMode={isFocusMode}
       />
+                    <RemnantReviewPanel
+                      inspection={currentRemnantReview?.inspection}
+                      regions={currentCleaningResult?.regions ?? []}
+                      onOpenMask={(candidate) => {
+                        setMaskFocusRect(candidate.rect);
+                        setIsMaskEditorOpen(true);
+                      }}
+                      onConfirmArtwork={(candidate) => { if (currentPageUrl) confirmArtworkCandidate(currentPageUrl, candidate.id); }}
+                      onRecheck={() => { if (currentPageUrl) void recheckPageRemnants(currentPageUrl); }}
+                    />
+
       {isMaskEditorOpen && currentCleaningResult && pages[currentPage] && (
         <MaskEditor
           sourceUrl={pages[currentPage].url}
@@ -3038,7 +3108,8 @@ export default function WorkspacePage() {
           proposalMaskUrl={currentCleaningResult.reviewMaskUrl}
           maskUrl={currentCleaningResult.maskUrl}
           regions={currentCleaningResult.regions}
-          onClose={() => setIsMaskEditorOpen(false)}
+          focusRect={maskFocusRect}
+          onClose={() => { setIsMaskEditorOpen(false); setMaskFocusRect(undefined); }}
           onRetry={handleRetryRegion}
           onResolveRegion={resolveMaskRegion}
           onRefreshProposal={refreshMaskProposal}
@@ -3259,8 +3330,8 @@ export default function WorkspacePage() {
         </div>
       )}
 
-      {/* ── Human Review Confirmation Gate Modal (Ticket 07) ── */}
-      {unconfirmedReviewPages && unconfirmedReviewPages.length > 0 && (
+      {/* ── Human Review Confirmation Gate Modal (Ticket 07 + output eligibility) ── */}
+      {unconfirmedReviewPages && (unconfirmedReviewPages.length > 0 || pendingExportAction) && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150">
           <div className="bg-surface border border-border shadow-2xl rounded-2xl max-w-lg w-full p-5 flex flex-col gap-4">
             <div className="flex items-start gap-3">
@@ -3273,6 +3344,7 @@ export default function WorkspacePage() {
                 </h3>
                 <p className="text-xs text-muted mt-1 leading-relaxed">
                   พบหน้าที่การคลีนหรือการแปลมีความมั่นใจต่ำ หรือมีบริเวณข้อความที่ตรวจพบแต่ยังไม่มีคำแปล ตรวจสอบหน้าที่ระบุ หรือยืนยันเพื่อส่งออกพร้อมคำแปลที่มีอยู่
+                  หน้าที่ตรวจพบตัวอักษรภาษาอื่นหรือยังไม่ได้ตรวจกับต้นฉบับยืนยันผ่านไม่ได้ ต้องแก้ไข ส่งออกเป็นภาพต้นฉบับ หรือตัดออกจากการส่งออกอย่างชัดเจน
                 </p>
               </div>
             </div>
@@ -3288,6 +3360,26 @@ export default function WorkspacePage() {
                       ({p.pageName})
                     </span>
                     <div className="flex flex-wrap items-center gap-1">
+                      {p.scriptIssueCount > 0 && (
+                        <span className="px-1.5 py-0.5 rounded bg-red-500/15 text-red-500 text-[10px] font-medium">
+                          ตัวอักษรภาษาอื่นปน {p.scriptIssueCount} จุด (ยืนยันผ่านไม่ได้)
+                        </span>
+                      )}
+                      {p.unverifiedReviewCount > 0 && (
+                        <span className="px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-500 text-[10px] font-medium">
+                          ยังไม่ได้ตรวจกับต้นฉบับ {p.unverifiedReviewCount} จุด
+                        </span>
+                      )}
+                      {p.targetUnconfirmed && (
+                        <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 text-[10px] font-medium">
+                          ยังไม่ยืนยันภาษาของหน้า
+                        </span>
+                      )}
+                      {p.backgroundBlocked && (
+                        <span className="px-1.5 py-0.5 rounded bg-red-500/15 text-red-500 text-[10px] font-medium">
+                          พบร่องรอยต้องตรวจในภาพพื้นหลัง
+                        </span>
+                      )}
                       {p.missingTranslationCount > 0 && (
                         <span className="px-1.5 py-0.5 rounded bg-red-500/15 text-red-500 text-[10px] font-medium">
                           ยังไม่มีคำแปล {p.missingTranslationCount} บริเวณ
@@ -3305,22 +3397,48 @@ export default function WorkspacePage() {
                       )}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      exportSnapshotRef.current = null;
-                      setIsChoosingExport(false);
-                      setCurrentPage(p.pageIndex);
-                      setUnconfirmedReviewPages(null);
-                      setPendingExportAction(null);
-                    }}
-                    className="px-2 py-1 rounded border border-border hover:bg-surface text-[11px] font-medium transition-colors cursor-pointer"
-                  >
-                    ไปที่หน้านี้
-                  </button>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    {p.hasHardBlockers && (
+                      <button
+                        type="button"
+                        onClick={() => substituteExportPageWithOriginal(p.pageUrl)}
+                        className="px-2 py-1 rounded border border-border hover:bg-surface text-[11px] font-medium transition-colors cursor-pointer"
+                      >
+                        ส่งออกเป็นต้นฉบับ
+                      </button>
+                    )}
+                    {p.hasHardBlockers && pendingReviewIndicesRef.current === undefined && (
+                      <button
+                        type="button"
+                        onClick={() => excludeExportPage(p.pageUrl)}
+                        className="px-2 py-1 rounded border border-border hover:bg-surface text-[11px] font-medium transition-colors cursor-pointer"
+                      >
+                        ตัดหน้านี้ออก
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        exportSnapshotRef.current = null;
+                        setIsChoosingExport(false);
+                        setCurrentPage(p.pageIndex);
+                        setUnconfirmedReviewPages(null);
+                        setPendingExportAction(null);
+                      }}
+                      className="px-2 py-1 rounded border border-border hover:bg-surface text-[11px] font-medium transition-colors cursor-pointer"
+                    >
+                      ไปที่หน้านี้
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
+
+            {unconfirmedReviewPages.length === 0 && (
+              <p className="text-xs text-muted">
+                ทุกหน้าที่ได้รับผลกระทบถูกเลือกส่งออกเป็นต้นฉบับหรือตัดออกจากการส่งออกแล้ว
+              </p>
+            )}
 
             <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-border/50">
               <button
@@ -3335,19 +3453,29 @@ export default function WorkspacePage() {
               >
                 ยกเลิก
               </button>
+              {unconfirmedReviewPages.some((p) => p.hasHardBlockers) && (
+                <p className="text-[11px] text-muted max-w-[220px] text-right">
+                  หน้าที่ติดสถานะยืนยันผ่านไม่ได้ต้องแก้ไข ส่งออกเป็นต้นฉบับ หรือตัดออกก่อน
+                </p>
+              )}
               <button
                 type="button"
+                disabled={unconfirmedReviewPages.some((p) => p.hasHardBlockers)}
                 onClick={() => {
-                  const currentReview = getUnconfirmedPages(
-                    exportSnapshotRef.current?.pages ?? pages, confirmedPages, cleaningResultsByPage, bubbleCacheRef.current,
-                    pendingReviewIndicesRef.current, confirmedMissingTranslationsRef.current,
+                  const currentReview = collectExportReviewPages(
+                    exportSnapshotRef.current?.pages ?? pages, pendingReviewIndicesRef.current,
                   );
                   const shown = new Map(unconfirmedReviewPages.map(p => [p.pageUrl, p]));
                   const hasNewWarning = currentReview.some(p => {
                     const previous = shown.get(p.pageUrl);
                     return !previous || previous.missingTranslationSignature !== p.missingTranslationSignature ||
                       previous.hasUncertainCleaning !== p.hasUncertainCleaning ||
-                      previous.hasUncertainTranslation !== p.hasUncertainTranslation;
+                      previous.hasUncertainTranslation !== p.hasUncertainTranslation ||
+                      previous.hasHardBlockers !== p.hasHardBlockers ||
+                      previous.scriptIssueCount !== p.scriptIssueCount ||
+                      previous.unverifiedReviewCount !== p.unverifiedReviewCount ||
+                      previous.targetUnconfirmed !== p.targetUnconfirmed ||
+                      previous.backgroundBlocked !== p.backgroundBlocked;
                   });
                   if (hasNewWarning) {
                     setUnconfirmedReviewPages(currentReview);
@@ -3366,9 +3494,9 @@ export default function WorkspacePage() {
                   setPendingExportAction(null);
                   action?.();
                 }}
-                className="px-4 py-2 rounded-xl bg-primary hover:bg-primary-hover text-primary-content text-xs font-semibold shadow-md transition-colors cursor-pointer"
+                className="px-4 py-2 rounded-xl bg-primary hover:bg-primary-hover text-primary-content text-xs font-semibold shadow-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                ยืนยันทุกหน้าและดำเนินการ Export
+                {unconfirmedReviewPages.length === 0 ? "ดำเนินการ Export ต่อ" : "ยืนยันทุกหน้าและดำเนินการ Export"}
               </button>
             </div>
           </div>

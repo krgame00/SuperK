@@ -689,3 +689,18 @@ test("per-page export source survives asset storage and project reload", async (
   await saveProjectSession({ pages, currentPage: 1, bubbleCache: new Map(), translatedImageCache: new Map() });
   expect((await loadProjectSession())?.pages.map(p => p.exportSource)).toEqual(["original", "clean", "translated"]);
 });
+
+test("artwork confirmations persist with cleaning metadata and round-trip", async () => {
+  await saveCleaningResultMetadata({
+    pageUrl: "blob:confirm",
+    sourceHash: "a".repeat(64),
+    jobId: "job-confirm",
+    regions: [],
+    updatedAt: 1,
+    artworkConfirmations: [{ candidateId: "rem-1", revisionKey: '["background-remnant-inspection-v1","src","bg","rem"]' }],
+  });
+  const loaded = await loadCleaningResultsMetadata();
+  expect(loaded.get("blob:confirm")?.artworkConfirmations).toEqual([
+    { candidateId: "rem-1", revisionKey: '["background-remnant-inspection-v1","src","bg","rem"]' },
+  ]);
+});

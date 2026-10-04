@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 
 import { applyBrush, type BrushMode, type MaskPoint } from "@/lib/cleaning/maskEdits";
+import { findRegionForCandidate } from "@/lib/cleaning/remnantReview";
 import type {
   CleanerOverride,
   CleaningRegion,
@@ -31,6 +32,8 @@ interface MaskEditorProps {
   maskUrl: string;
   proposalMaskUrl?: string;
   regions: CleaningRegion[];
+  /** Page-pixel location of a suspected remnant; selects and marks its authorized region. */
+  focusRect?: PixelRect;
   onClose: () => void;
   onRetry: (
     regionId: string,
@@ -151,6 +154,7 @@ export function MaskEditor({
   maskUrl,
   proposalMaskUrl,
   regions,
+  focusRect,
   onClose,
   onRetry,
   onRefreshProposal,
@@ -466,6 +470,27 @@ export function MaskEditor({
     setPan({ x: imageWidth * (0.5 - (rect.x + rect.width / 2) / canvasSize.width), y: imageHeight * (0.5 - (rect.y + rect.height / 2) / canvasSize.height) });
   }, [selectedRegion, canvasSize.width, canvasSize.height]);
   useEffect(() => { fitSelectedRegion(); }, [fitSelectedRegion]);
+
+  // Remnant navigation: bring the finding's authorized removal region into
+  // view and mark the exact suspected location for original/clean comparison.
+  // Editing stays clipped to the region's normalized bounds as before.
+  const appliedFocusRef = useRef("");
+  useEffect(() => {
+    const key = focusRect ? `${focusRect.x},${focusRect.y},${focusRect.width},${focusRect.height}` : "";
+    if (!focusRect || !canvasSize.width || appliedFocusRef.current === key) return;
+    appliedFocusRef.current = key;
+    const target = findRegionForCandidate(regions, focusRect);
+    if (!target) return;
+    if (target.id !== regionId) {
+      setRegionId(target.id);
+      const targetIndex = regions.findIndex((region) => region.id === target.id);
+      setStatusMessage(`เลือกจุดที่ ${targetIndex + 1} จากจุดสงสัย`);
+    }
+    setBrushPoint({
+      x: Math.max(0, Math.min(canvasSize.width - 1, Math.round(focusRect.x + focusRect.width / 2))),
+      y: Math.max(0, Math.min(canvasSize.height - 1, Math.round(focusRect.y + focusRect.height / 2))),
+    });
+  }, [focusRect, canvasSize.width, canvasSize.height, regions, regionId]);
 
   const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -998,6 +1023,21 @@ export function MaskEditor({
                     );
                   })}
                 </div>
+              )}
+
+              {/* Suspected-remnant location marker (from the review list) */}
+              {focusRect && canvasSize.width > 0 && (
+                <div
+                  title="ตำแหน่งจุดสงสัย"
+                  aria-label="ตำแหน่งจุดสงสัย"
+                  style={{
+                    left: `${(focusRect.x / canvasSize.width) * 100}%`,
+                    top: `${(focusRect.y / canvasSize.height) * 100}%`,
+                    width: `${(focusRect.width / canvasSize.width) * 100}%`,
+                    height: `${(focusRect.height / canvasSize.height) * 100}%`,
+                  }}
+                  className="pointer-events-none absolute border-2 border-dashed border-amber-400 bg-amber-400/10"
+                />
               )}
 
               {/* Mask Canvas Layer */}

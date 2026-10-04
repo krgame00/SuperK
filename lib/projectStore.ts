@@ -1,6 +1,7 @@
 // IndexedDB helper for Manga Translator project state and blob asset persistence
 
 import { normalizePageExportSource, type PageExportSource } from "./export/pageSource";
+import type { BackgroundArtworkConfirmation } from "./cleaning/backgroundRemnantInspection";
 import type { CleaningMode, CleaningRegion } from "./cleaning/types";
 import type { TranslatedBubble } from "./translationOverlay";
 import type { PageTargetIdentity } from "./translation/pageEligibility";
@@ -34,6 +35,8 @@ export interface StoredCleaningResult {
   timingsMs?: Record<string, number | string>;
   awaitingReview?: boolean;
   cleaningMode?: CleaningMode;
+  /** Artwork confirmations bound to exact candidate ids and inspection revision keys. */
+  artworkConfirmations?: BackgroundArtworkConfirmation[];
 }
 
 export interface StoredAsset {

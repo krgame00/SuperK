@@ -13,6 +13,8 @@ import {
 import { applyTranslationOverlay } from "@/lib/translationOverlay";
 import type { TranslatedBubble } from "@/lib/translationOverlay";
 import { prepareNewSourceSizing } from '@/lib/sourceTextSizeClient';
+import { manualSourceSizing } from '@/lib/sourceTextSize';
+import { isManualSized, resetSizingToAuto, restoreSizing, snapshotSizing, type SizeSnapshot } from '@/lib/savedTextSizing';
 import {
   saveProjectSession,
   loadProjectSession,
@@ -111,6 +113,7 @@ export interface WholeBookRepairSummary {
 }
 
 export interface PreparedTranslationPage {
+  sourceFingerprint?: string;
   cleaningMode?: CleaningMode;
   textScope?: TranslationScope;
   recognitionUrl: string;
@@ -121,6 +124,7 @@ export interface PreparedTranslationPage {
 }
 
 interface UseTranslationProps {
+  pageSourceFingerprints?: Map<string,string>;
   currentPage: number;
   pages: string[];
   /** Stable identities matching `pages` order, used for compact persistence. */
@@ -289,6 +293,7 @@ export const enrichBubblesWithColorProfiles = async (
 };
 
 export function useTranslation({
+  pageSourceFingerprints,
   currentPage,
   pages,
   pageIds,
@@ -299,6 +304,11 @@ export function useTranslation({
   preparePageForTranslation,
   onPageDirtied,
 }: UseTranslationProps) {
+  const preparedSourceFingerprintsRef = useRef(new Map<string,string>());
+  const suppliedSourceFingerprintsRef = useRef(pageSourceFingerprints);
+  suppliedSourceFingerprintsRef.current = pageSourceFingerprints;
+  const getPageSourceRevision = useCallback((pageUrl:string):string|undefined=>
+    suppliedSourceFingerprintsRef.current?.get(pageUrl) ?? preparedSourceFingerprintsRef.current.get(pageUrl),[]);
   const [isTranslatingAll, setIsTranslatingAll] = useState(false);
   const [translateAllProgress, setTranslateAllProgress] = useState<{
     current: number;
@@ -430,7 +440,7 @@ export function useTranslation({
     }
     return false;
   });
-  const [textStyle, setTextStyle] = useState({
+  const [textStyle, setTextStyleState] = useState({
     fontFamily: "Itim, sans-serif",
     textColor: "#000000",
     textOutline: "#FFFFFF",
@@ -487,6 +497,17 @@ export function useTranslation({
   // Per-page bubble cache, keyed by image data URL so it survives reordering
   const bubbleCacheRef = useRef<Map<string, TranslatedBubble[]>>(new Map());
   const pageTargetCacheRef = useRef<Map<string, PageTargetIdentity>>(new Map());
+  const renderedOutputEvidenceRef = useRef(new Map<string,{url:string;signature:string;backgroundUrl:string}>());
+  const renderedSignature = useCallback((pageUrl:string,bubbles:TranslatedBubble[],backgroundUrl:string)=>JSON.stringify([
+    getPageSourceRevision(pageUrl)??null,pageTargetCacheRef.current.get(pageUrl)??null,LANGUAGE_POLICY_VERSION,
+    backgroundUrl,textStyleRef.current,bubbles.map(({render,...bubble})=>{void render;return bubble;}),
+  ]),[getPageSourceRevision]);
+  const getCurrentRenderedOutput = useCallback((pageUrl:string)=>{
+    const evidence = renderedOutputEvidenceRef.current.get(pageUrl);
+    const bubbles = bubbleCacheRef.current.get(pageUrl);
+    if (!evidence || !bubbles || translatedImageCacheRef.current.get(pageUrl) !== evidence.url || evidence.signature !== renderedSignature(pageUrl,bubbles,evidence.backgroundUrl)) return undefined;
+    return {url:evidence.url,signature:evidence.signature};
+  },[renderedSignature]);
   const getPageTargetLanguage = useCallback((pageUrl: string) => {
     const identity = pageTargetCacheRef.current.get(pageUrl);
     return identity?.policyVersion === LANGUAGE_POLICY_VERSION ? identity.targetId : undefined;
@@ -516,12 +537,40 @@ export function useTranslation({
     const nextRev = (pageRevisionsRef.current.get(pageUrl) ?? 0) + 1;
     pageRevisionsRef.current.set(pageUrl, nextRev);
     if (evictRenderCache) {
+      renderedOutputEvidenceRef.current.delete(pageUrl);
       translatedImageCacheRef.current.delete(pageUrl);
       setTranslatedImages(new Map(translatedImageCacheRef.current));
     }
     setCacheRevision((rev) => rev + 1);
     onPageDirtiedRef.current?.(pageUrl);
   }, []);
+
+  const setTextStyle = useCallback((update: typeof textStyle | ((previous: typeof textStyle)=>typeof textStyle))=>{
+    const before = textStyleRef.current;
+    const after = typeof update === 'function' ? update(before) : update;
+    textStyleRef.current = after;
+    setTextStyleState(after);
+    if (before.fontSizeMultiplier === after.fontSizeMultiplier) return;
+    const entries: Array<{pageUrl:string;bubble:TranslatedBubble;before:SizeSnapshot;after:SizeSnapshot}> = [];
+    for (const [pageUrl,bubbles] of bubbleCacheRef.current) {
+      for (const bubble of bubbles) {
+        if (bubble.deleted) continue;
+        const snapshot = snapshotSizing(bubble);
+        bubble.sourceSizing = manualSourceSizing(bubble.sourceSizing,bubble.box);
+        delete bubble.layoutSnapshot;
+        entries.push({pageUrl,bubble,before:snapshot,after:snapshotSizing(bubble)});
+      }
+      markPageDirty(pageUrl);
+    }
+    const apply = (side:'before'|'after',multiplier:number)=>{
+      const style = {...textStyleRef.current,fontSizeMultiplier:multiplier};
+      textStyleRef.current = style;setTextStyleState(style);
+      const touched = new Set<string>();
+      for (const entry of entries) {restoreSizing(entry.bubble,entry[side]);entry.bubble.render?.();touched.add(entry.pageUrl);}
+      touched.forEach(url=>markPageDirty(url));
+    };
+    undoManager.push({label:'ปรับขนาดข้อความทั้งหมด',undo:()=>apply('before',before.fontSizeMultiplier),redo:()=>apply('after',after.fontSizeMultiplier)});
+  }, [markPageDirty]);
 
   const getPageRevision = useCallback((pageUrl: string): number => {
     return pageRevisionsRef.current.get(pageUrl) ?? 0;
@@ -931,6 +980,9 @@ export function useTranslation({
       pageIndex: number,
       targetIdentity = pageTargetCacheRef.current.get(pageUrl),
     ): Promise<void> => {
+      const startRevision = getPageRevision(pageUrl);
+      const startStyle = JSON.stringify(textStyleRef.current);
+      const startText = JSON.stringify(bubbles.map(b=>[b.t,b.translated,b.original_text,b.deleted,b.styleProfile]));
       const renderTarget = targetIdentity?.policyVersion === LANGUAGE_POLICY_VERSION ? targetIdentity.targetId : undefined;
       const offscreenContainer = document.createElement("div");
       offscreenContainer.dataset.translationOffscreen = pageUrl;
@@ -955,9 +1007,15 @@ export function useTranslation({
             if (settled) return;
             settled = true;
             cleanup();
+            if (!pagesRef.current.includes(pageUrl) || getPageRevision(pageUrl) !== startRevision ||
+              JSON.stringify(textStyleRef.current) !== startStyle ||
+              JSON.stringify(bubbles.map(b=>[b.t,b.translated,b.original_text,b.deleted,b.styleProfile])) !== startText) {
+              resolve();return;
+            }
             bubbleCacheRef.current.set(pageUrl, bubbles);
             if (targetIdentity) pageTargetCacheRef.current.set(pageUrl, targetIdentity);
             translatedImageCacheRef.current.set(pageUrl, dataUrl);
+            renderedOutputEvidenceRef.current.set(pageUrl,{url:dataUrl,backgroundUrl,signature:renderedSignature(pageUrl,bubbles,backgroundUrl)});
             markPageDirty(pageUrl, false);
             setTranslatedImages(new Map(translatedImageCacheRef.current));
             setCacheRevision((revision) => revision + 1);
@@ -1008,7 +1066,7 @@ export function useTranslation({
         );
       }
     },
-    [viewMode, markPageDirty],
+    [viewMode, markPageDirty,getPageRevision,renderedSignature],
   );
 
 async function readBlobAsDataUrl(blob: Blob): Promise<string> {
@@ -1079,6 +1137,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     try {
       const targetLang = jobTargetIdentity.targetId;
       const { backgroundUrl, textScope } = preparedPage;
+      if (preparedPage.sourceFingerprint) preparedSourceFingerprintsRef.current.set(pageUrl,preparedPage.sourceFingerprint);
       const recognitionUrl = preparedPage.recognitionUrl;
       const resImg = await fetch(recognitionUrl, signal ? { signal } : undefined);
       if (!resImg.ok) throw new Error(`ไม่สามารถโหลดรูปภาพได้ (HTTP ${resImg.status})`);
@@ -1092,7 +1151,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         }
         return reviewTranslatedBubbles(bubbles,{targetLang,apiKey:userApiKey,modelPreference,
           allowPreview:allowPreviewModels,glossary,signal,
-          sourceRevision:String(getPageRevision(pageUrl)),repairContamination:true});
+          sourceRevision:getPageSourceRevision(pageUrl),repairContamination:true});
       };
       const unresolvedScriptWarning = (bubbles: TranslatedBubble[]) => {
         const points = bubbles.flatMap((bubble,index) => {
@@ -2446,9 +2505,10 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           return;
         }
         const review = bubble.translationReview;
-        if (!review || !isReviewCurrent(bubble, targetId) || !["ok", "accepted", "dismissed"].includes(review.status)) {
+        const sourceRevision = getPageSourceRevision(pageUrl);
+        if (!sourceRevision || !review || !isReviewCurrent(bubble, targetId,sourceRevision) || !["ok", "accepted", "dismissed"].includes(review.status)) {
           unverified.push({
-            index, pointId, kind: "unverified", hasSource, humanConfirmable: hasSource,
+            index, pointId, kind: "unverified", hasSource, humanConfirmable: hasSource && !!sourceRevision,
             status: review?.status ?? "unavailable", reason: review?.reason,
           });
         }
@@ -2458,7 +2518,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       }
     });
     return reports;
-  }, [getPageTargetLanguage]);
+  }, [getPageTargetLanguage,getPageSourceRevision]);
 
   // Explicit source-backed human confirmation for points whose script passes
   // but contextual AI verification is unavailable (or metadata is absent/stale).
@@ -2470,6 +2530,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     if (!bubble || bubble.deleted) return false;
     const targetId = getPageTargetLanguage(pageUrl);
     if (!targetId) return false;
+    const sourceRevision = getPageSourceRevision(pageUrl);
+    if (!sourceRevision) return false;
     const text = bubble.t || bubble.translated || "";
     const source = typeof bubble.original_text === "string" ? bubble.original_text : "";
     if (!source.trim()) return false;
@@ -2479,11 +2541,11 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     bubble.translationReview = withReviewIdentity(
       { status: "accepted", sourceText: source, reviewedText: text, reason: "ผู้ใช้ยืนยันกับต้นฉบับแล้ว" },
       targetId,
-      String(getPageRevision(pageUrl)),
+      sourceRevision,
     );
     setCacheRevision((revision) => revision + 1);
     return true;
-  }, [activeBubbles, getPageTargetLanguage, getPageRevision, markPageDirty]);
+  }, [activeBubbles, getPageTargetLanguage, getPageSourceRevision, markPageDirty]);
 
   // Undo/Redo payloads for the whole-book repair: exact pre-repair and
   // post-repair text plus review evidence per affected point only.
@@ -2569,7 +2631,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
               allowPreview: allowPreviewModels,
               glossary,
               signal: controller.signal,
-              sourceRevision: String(getPageRevision(pageUrl)),
+              sourceRevision: getPageSourceRevision(pageUrl),
               repairContamination: true,
             },
           );
@@ -2632,7 +2694,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
   }, [
     allowPreviewModels,
     applyRepairEntries,
-    getPageRevision,
+    getPageSourceRevision,
     getPageTargetLanguage,
     glossary,
     isTranslating,
@@ -2720,6 +2782,56 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     setCacheRevision((rev) => rev + 1);
   }, [pages, currentPage]);
 
+  const resizeSavedText = useCallback(async (options: {scope: 'point'|'page'|'book';pageUrl?: string;pointIndex?: number;returnToAuto?: boolean}): Promise<number> => {
+    if (translationOperationLockRef.current || isTranslating || isTranslatingAll) return 0;
+    if (options.returnToAuto && (options.scope !== 'point' || options.pointIndex === undefined)) return 0;
+    const urls = options.scope === 'book' ? [...pagesRef.current] : [options.pageUrl ?? pagesRef.current[currentPage]];
+    const entries: Array<{pageUrl:string;index:number;before:SizeSnapshot;after:SizeSnapshot}> = [];
+    translationOperationLockRef.current = true;
+    try {
+      for (const pageUrl of urls) {
+        if (!pageUrl || !pagesRef.current.includes(pageUrl)) continue;
+        const bubbles = bubbleCacheRef.current.get(pageUrl);
+        if (!bubbles) continue;
+        const revision = getPageRevision(pageUrl);
+        const selected = bubbles.map((bubble,index)=>({bubble,index})).filter(({bubble,index})=>!bubble.deleted &&
+          (options.scope !== 'point' || index === options.pointIndex) && (options.returnToAuto || !isManualSized(bubble)));
+        if (!selected.length) continue;
+        const prepared = selected.map(({bubble,index})=>{
+          const copy = {...bubble,...snapshotSizing(bubble)};
+          resetSizingToAuto(copy);
+          return {copy,bubble,index,before:snapshotSizing(bubble)};
+        });
+        const image = await waitForImageReady(pageUrl);
+        const byIndex = new Map(prepared.map(p=>[p.index,p.copy]));
+        const context = bubbles.map((bubble,index)=>byIndex.get(index) ?? {...bubble});
+        await prepareNewSourceSizing(context,image,textStyleRef.current.fontFamily,new Set(prepared.map(p=>p.copy)));
+        if (!pagesRef.current.includes(pageUrl) || bubbleCacheRef.current.get(pageUrl) !== bubbles || getPageRevision(pageUrl) !== revision) continue;
+        for (const item of prepared) {
+          restoreSizing(item.bubble,snapshotSizing(item.copy));
+          entries.push({pageUrl,index:item.index,before:item.before,after:snapshotSizing(item.bubble)});
+          item.bubble.render?.();
+        }
+        markPageDirty(pageUrl);
+      }
+      if (entries.length) {
+        const apply = (side:'before'|'after')=>{
+          const touched = new Set<string>();
+          for (const entry of entries) {
+            const bubble = bubbleCacheRef.current.get(entry.pageUrl)?.[entry.index];
+            if (!bubble) continue;
+            restoreSizing(bubble,entry[side]);bubble.render?.();touched.add(entry.pageUrl);
+          }
+          touched.forEach(url=>markPageDirty(url));
+          setActiveBubbles(previous=>[...previous]);
+        };
+        undoManager.push({label:'เทียบขนาดต้นฉบับ',undo:()=>apply('before'),redo:()=>apply('after')});
+        setActiveBubbles(previous=>[...previous]);
+      }
+      return entries.length;
+    } finally {translationOperationLockRef.current = false;}
+  }, [currentPage,getPageRevision,isTranslating,isTranslatingAll,markPageDirty]);
+
   return {
     targetLang, setTargetLang,
     sourceLang, setSourceLang,
@@ -2750,7 +2862,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     bubbleCacheRef,
     pageTargetCacheRef,
     getPageTargetLanguage,
-    inspectPageOutputEligibility: (pageUrl: string) => inspectPageOutputEligibility({targetIdentity:pageTargetCacheRef.current.get(pageUrl),points:(bubbleCacheRef.current.get(pageUrl) ?? []).map((bubble,index)=>({id:String(index),text:bubble.t || bubble.translated || "",sourceText:bubble.original_text,deleted:bubble.deleted})),sourceRevision:String(getPageRevision(pageUrl))}),
+    inspectPageOutputEligibility: (pageUrl: string) => inspectPageOutputEligibility({targetIdentity:pageTargetCacheRef.current.get(pageUrl),points:(bubbleCacheRef.current.get(pageUrl) ?? []).map((bubble,index)=>({id:String(index),text:bubble.t || bubble.translated || "",sourceText:bubble.original_text,deleted:bubble.deleted})),sourceRevision:getPageSourceRevision(pageUrl)}),
     textStyleRef,
     userApiKey,
     setUserApiKey: (key: string) => {
@@ -2792,5 +2904,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     getPageRevision,
     getPageSignature,
     flushMemory,
+    resizeSavedText,
+    getPageSourceRevision,
+    getCurrentRenderedOutput,
   };
 }

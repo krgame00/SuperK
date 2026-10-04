@@ -178,7 +178,7 @@ it("never reports artwork outside the bounded evidence areas", () => {
   expect(backgroundEligibilityState(result)).toBe("approved");
 });
 
-it("treats explicitly preserved regions as known-kept, not review candidates", () => {
+it("keeps source ink in preserved/protected regions unresolved until exact artwork confirmation", () => {
   const original = makePlane(64, 64);
   fillRect(original, 20, 24, 20, 10, INK);
   const clean = copyPlane(original);
@@ -189,7 +189,8 @@ it("treats explicitly preserved regions as known-kept, not review candidates", (
     removalRegions: [region("r1", { x: 16, y: 20, width: 28, height: 18 }, { status: "preserved", textRole: "protected" })],
   });
   expect(result.status).toBe("inspected");
-  expect(result.candidates).toEqual([]);
+  expect(result.candidates[0]?.state).toBe("unchanged-candidate");
+  expect(backgroundEligibilityState(result)).toBe("unresolved");
 });
 
 it("marks missing original evidence as unverified and never clean", () => {
@@ -383,4 +384,42 @@ it("converts RGBA pixels to a luma plane with white compositing", () => {
   expect(plane.data[0]).toBe(76);
   expect(plane.data[1]).toBe(150);
   expect(plane.data[2]).toBe(255);
+});
+
+it("never caches unverified inspection results", () => {
+  const cache = new BackgroundInspectionCache(2);
+  const unverified = cache.inspect({
+    revisions: REVISIONS,
+    cleanPlane: makePlane(8, 8),
+    removalRegions: [region("r1", { x: 0, y: 0, width: 8, height: 8 })],
+  });
+  expect(unverified.status).toBe("unverified");
+  // The original becoming available with the same revision identity must
+  // actually run detection instead of replaying the stale unverified result.
+  const original = makePlane(8, 8);
+  fillRect(original, 0, 0, 4, 4, INK);
+  const inspected = cache.inspect({
+    revisions: REVISIONS,
+    originalPlane: original,
+    cleanPlane: makePlane(8, 8),
+    removalRegions: [region("r1", { x: 0, y: 0, width: 8, height: 8 })],
+  });
+  expect(inspected.status).toBe("inspected");
+  expect(inspected).not.toBe(unverified);
+});
+
+it("invalidate drops the cached result so the exact revision is re-inspected", () => {
+  const cache = new BackgroundInspectionCache(2);
+  const input = {
+    revisions: REVISIONS,
+    originalPlane: makePlane(8, 8),
+    cleanPlane: makePlane(8, 8),
+    removalRegions: [region("r1", { x: 0, y: 0, width: 8, height: 8 })],
+  };
+  const first = cache.inspect(input);
+  expect(cache.inspect(input)).toBe(first);
+  cache.invalidate(REVISIONS);
+  const reRun = cache.inspect(input);
+  expect(reRun).not.toBe(first);
+  expect(reRun.revisionKey).toBe(first.revisionKey);
 });

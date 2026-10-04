@@ -965,7 +965,7 @@ test("cleaning persistence stores the awaiting-review flag", async () => {
   expect(saveCleaningResultMetadata).toHaveBeenCalledWith(expect.objectContaining({ awaitingReview: true, cleaningMode: "all-text" }));
 });
 
-test("restore metadata without image dimensions falls back to guarded hydration", async () => {
+test("restore metadata without image dimensions stays unavailable without provider hydration", async () => {
   const pageUrl = "blob:one";
   vi.mocked(loadCleaningResultsMetadata).mockResolvedValue(
     new Map([
@@ -1006,9 +1006,8 @@ test("restore metadata without image dimensions falls back to guarded hydration"
     for (let index = 0; index < 12; index += 1) await Promise.resolve();
   });
 
-  // Zero dimensions would make translationScope compute NaN boxes and cache
-  // the page as clean-only; the guarded hydration path must run instead.
-  expect(getCleaningResult).toHaveBeenCalled();
+  // Opening incomplete saved evidence requires an explicit later reclean.
+  expect(getCleaningResult).not.toHaveBeenCalled();
   expect(result.current.currentResult).toBeUndefined();
   expect(result.current.error?.recovery).toBe("reclean");
 });

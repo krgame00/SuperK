@@ -2,6 +2,7 @@ import { act, renderHook } from '@testing-library/react';
 import { beforeEach, afterEach, expect, test, vi } from 'vitest';
 import { useTranslation } from '@/hooks/useTranslation';
 import { applyTranslationOverlay } from '@/lib/translationOverlay';
+import { undoManager } from '@/lib/undoManager';
 
 vi.mock('@/lib/translationOverlay',async(importOriginal)=>({...(await importOriginal<typeof import('@/lib/translationOverlay')>()),applyTranslationOverlay:vi.fn(async(_b,_v,_i,_s,done)=>done?.('data:render'))}));
 vi.mock('@/lib/projectStore',()=>({saveProjectSession:vi.fn().mockResolvedValue(undefined),loadProjectSession:vi.fn().mockResolvedValue(null),clearProjectSession:vi.fn(),deleteAsset:vi.fn()}));
@@ -31,6 +32,47 @@ beforeEach(()=>{
   });
 });
 afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals();vi.unstubAllEnvs();});
+test('source identity stays immutable across size revisions and missing source blocks human confirmation',()=>{
+  const {result}=renderHook(()=>useTranslation({currentPage:0,pages:['blob:original'],pageSourceFingerprints:new Map([['blob:original','original-sha']]),viewMode:'single',preparePageForTranslation:async()=>({recognitionUrl:'blob:scoped',backgroundUrl:'blob:clean'})}));
+  expect(result.current.getPageSourceRevision('blob:original')).toBe('original-sha');
+  act(()=>result.current.markPageDirty('blob:original'));
+  expect(result.current.getPageSourceRevision('blob:original')).toBe('original-sha');
+  expect(result.current.getPageSourceRevision('blob:missing')).toBeUndefined();
+});
+test('saved page sizing skips manual and legacy locks; explicit point Auto preserves text and Undo evidence',async()=>{
+  undoManager.clear();
+  const {result}=renderHook(()=>useTranslation({currentPage:0,pages:['blob:original'],viewMode:'single',preparePageForTranslation:async()=>({recognitionUrl:'blob:scoped',backgroundUrl:'blob:clean'})}));
+  const fresh={box:[0,0,1000,1000],original_text:'HELLO',t:'สวัสดี'};
+  const legacy={...fresh,box:[100,100,200,200],targetFontSize:23,fontSizeMultiplier:1.2,layoutAdjustment:{bx:1,by:2,bw:90,bh:30,rotation:0,targetFontSize:23}};
+  result.current.bubbleCacheRef.current.set('blob:original',[fresh,legacy]);
+  result.current.translatedImageCacheRef.current.set('blob:original','stale');
+  await act(async()=>{expect(await result.current.resizeSavedText({scope:'page',pageUrl:'blob:original'})).toBe(1);});
+  expect(legacy.targetFontSize).toBe(23);
+  expect(result.current.bubbleCacheRef.current.get('blob:original')![0].sourceSizing?.space?.contextKey).toBe('0,0,1000,1000|100,100,200,200');
+  expect(result.current.translatedImageCacheRef.current.has('blob:original')).toBe(false);
+  await act(async()=>{expect(await result.current.resizeSavedText({scope:'point',pageUrl:'blob:original',pointIndex:1,returnToAuto:true})).toBe(1);});
+  expect(legacy).toMatchObject({t:'สวัสดี',sourceSizing:{mode:'auto'},layoutAdjustment:{bx:1,by:2,bw:90}});
+  act(()=>{undoManager.undo();});
+  expect(legacy).toMatchObject({targetFontSize:23,fontSizeMultiplier:1.2});
+  expect('sourceSizing' in legacy).toBe(false);
+  act(()=>{undoManager.redo();});
+  expect(legacy).toMatchObject({sourceSizing:{mode:'auto'}});
+});
+test('global size change marks automatic points manual and Undo restores ownership; color keeps ownership',async()=>{
+  undoManager.clear();
+  const {result}=renderHook(()=>useTranslation({currentPage:0,pages:['blob:original'],viewMode:'single',preparePageForTranslation:async()=>({recognitionUrl:'blob:scoped',backgroundUrl:'blob:clean'})}));
+  await act(async()=>{await result.current.handleTranslate();});
+  const bubble=result.current.bubbleCacheRef.current.get('blob:original')![0];
+  const evidence=structuredClone(bubble.sourceSizing);
+  act(()=>result.current.setTextStyle(previous=>({...previous,textColor:'#123456'})));
+  expect(bubble.sourceSizing?.mode).toBe('auto');
+  act(()=>result.current.setTextStyle(previous=>({...previous,fontSizeMultiplier:1.2})));
+  expect(bubble.sourceSizing?.mode).toBe('manual');
+  act(()=>undoManager.undo());
+  expect(bubble.sourceSizing).toEqual(evidence);
+  expect(result.current.textStyle.textColor).toBe('#123456');
+  expect(result.current.textStyle.fontSizeMultiplier).toBe(1);
+});
 test('public new translation action measures pre-clean original, persists automatic size before offscreen rendering',async()=>{
   const {result}=renderHook(()=>useTranslation({currentPage:0,pages:['blob:original'],viewMode:'single',
     preparePageForTranslation:async()=>({recognitionUrl:'blob:scoped',backgroundUrl:'blob:clean'})}));
@@ -39,6 +81,9 @@ test('public new translation action measures pre-clean original, persists automa
   expect(bubbles?.[0].sourceSizing).toMatchObject({mode:'auto',status:'matched',evidence:{bodyHeightPx:10,sourceRevision:expect.stringMatching(/^100x40:/)}});
   expect(bubbles![0].targetFontSize! * bubbles![0].sourceSizing!.font!.bodyHeightPx / bubbles![0].sourceSizing!.font!.referencePx).toBe(10);
   expect(imageSources).toContain('blob:original');
+  expect(result.current.getCurrentRenderedOutput('blob:original')?.url).toBe('data:render');
+  act(()=>{result.current.bubbleCacheRef.current.get('blob:original')![0].t='changed-without-dirty';});
+  expect(result.current.getCurrentRenderedOutput('blob:original')).toBeUndefined();
 });
 
 test.each(['abort','replace','revision'] as const)('source preparation discards pending work on %s',async(change)=>{

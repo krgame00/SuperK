@@ -37,6 +37,12 @@ function renderMaskEditor(props: Partial<React.ComponentProps<typeof MaskEditor>
   );
 }
 
+const secondReviewRegion: CleaningRegion = {
+  ...preservedRegion,
+  id: "region-2",
+  rect: { x: 50, y: 40, width: 20, height: 12 },
+};
+
 describe("MaskEditor", () => {
   beforeEach(() => {
     undoManager.clear();
@@ -213,9 +219,10 @@ describe("MaskEditor", () => {
     expect(screen.getByRole("img", { name: "ภาพที่คลีนแล้ว" })).toHaveAttribute("src", "blob:cleaned");
     const assertEmpty = () => expect(vi.mocked(context.putImageData).mock.calls.at(-1)![0].data[(11 * 100 + 11) * 4 + 3]).toBe(0);
     assertEmpty();
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "จุดถัดไป" })); await new Promise(resolve => setTimeout(resolve, 0)); });
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "จุดก่อนหน้า" })); await new Promise(resolve => setTimeout(resolve, 0)); });
-    assertEmpty();
+    fireEvent.click(screen.getByRole("button", { name: "จุดถัดไป" }));
+    await waitFor(() => expect(vi.mocked(context.putImageData).mock.calls.at(-1)![0].data[(11 * 100 + 11) * 4 + 3]).toBe(150));
+    fireEvent.click(screen.getByRole("button", { name: "จุดก่อนหน้า" }));
+    await waitFor(assertEmpty);
     undoManager.undo();
     undoManager.undo();
     undoManager.undo();
@@ -890,4 +897,83 @@ test("keeps unsaved strokes when switching regions and back", async () => {
   const restored = lastImage();
   expect(alphaAt(restored, 30, 40)).toBe(255);
   expect(alphaAt(restored, 11, 11)).toBe(150);
+});
+
+describe("MaskEditor remnant navigation", () => {
+  test("compares the stored original and clean background at the same location without applying a mask", async () => {
+    const onRetry = vi.fn();
+    renderMaskEditor({ cleanUrl: "blob:clean-background", focusRect: { x: 10, y: 10, width: 5, height: 5 }, onRetry });
+    expect(screen.getByAltText("ภาพที่คลีนแล้ว")).toHaveAttribute("src", "blob:clean-background");
+    fireEvent.click(screen.getByRole("button", { name: "ภาพเดิม" }));
+    expect(screen.getByAltText("ภาพเดิม")).toBeInTheDocument();
+    expect(await screen.findByTitle("ตำแหน่งจุดสงสัย")).toBeInTheDocument();
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+  beforeEach(() => {
+    undoManager.clear();
+    mockMaskHasPixels = true;
+    mockMaskPixels = [[11, 11], [12, 11], [11, 12], [12, 12]];
+
+    class MockImage {
+      naturalWidth = 100;
+      naturalHeight = 80;
+      width = 100;
+      height = 80;
+      onload: (() => void) | null = null;
+      private _src = "";
+      set src(value: string) {
+        this._src = value;
+        setTimeout(() => { this.onload?.(); }, 0);
+      }
+      get src() {
+        return this._src;
+      }
+    }
+    vi.stubGlobal("Image", MockImage);
+
+    const mockContext = {
+      drawImage: vi.fn(),
+      getImageData: vi.fn((_x: number, _y: number, w?: number, h?: number) => {
+        const width = w || 100;
+        const height = h || 80;
+        const data = new ImageData(new Uint8ClampedArray(width * height * 4), width, height);
+        for (const [x, y] of mockMaskPixels) {
+          const index = (y * data.width + x) * 4;
+          data.data[index] = 255;
+          data.data[index + 3] = 255;
+        }
+        return data;
+      }),
+      putImageData: vi.fn(),
+      createImageData: vi.fn((w: number, h: number) => new ImageData(new Uint8ClampedArray(w * h * 4), w, h)),
+    };
+    HTMLCanvasElement.prototype.getContext = vi.fn(
+      () => mockContext as unknown as CanvasRenderingContext2D,
+    ) as unknown as typeof HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getBoundingClientRect = vi.fn(() => ({
+      left: 0, top: 0, width: 100, height: 80, right: 100, bottom: 80, x: 0, y: 0, toJSON: () => ({}),
+    }));
+    HTMLCanvasElement.prototype.setPointerCapture = vi.fn();
+  });
+
+  test("navigates a remnant finding to its authorized mask region and marks the location", async () => {
+    renderMaskEditor({
+      regions: [preservedRegion, secondReviewRegion],
+      focusRect: { x: 52, y: 44, width: 6, height: 4 },
+    });
+    // The editor selects the removal region containing the finding.
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "จุดที่แก้ไข" })).toHaveValue("region-2"));
+    // The suspected location is highlighted for original/clean comparison.
+    expect(await screen.findByTitle("ตำแหน่งจุดสงสัย")).toBeInTheDocument();
+  });
+
+  test("keeps the default region when the finding has no authorized removal region", async () => {
+    renderMaskEditor({
+      regions: [preservedRegion],
+      focusRect: { x: 90, y: 70, width: 4, height: 4 },
+    });
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "จุดที่แก้ไข" })).toHaveValue("region-1"));
+    // The location is still marked so the user can inspect it manually.
+    expect(await screen.findByTitle("ตำแหน่งจุดสงสัย")).toBeInTheDocument();
+  });
 });

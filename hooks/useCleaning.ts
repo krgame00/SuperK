@@ -25,30 +25,23 @@ import {
 } from "@/lib/projectStore";
 import { assertMatchingImageDimensions } from "@/lib/translationPipeline";
 import { authorizationIdentity } from "@/lib/cleaning/textAuthorization";
+import {
+  applyArtworkConfirmations,
+  backgroundEligibilityState,
+  confirmCandidateArtwork,
+  type BackgroundInspectionResult,
+} from "@/lib/cleaning/backgroundRemnantInspection";
+import {
+  blobFingerprint,
+  inspectCleanedPage,
+  RemnantConfirmationStore,
+} from "@/lib/cleaning/remnantReview";
+import type { BackgroundEligibilityState } from "@/lib/translation/pageEligibility";
 
 const POLL_INTERVAL_MS = 500;
 const CURRENT_PIPELINE_VERSION = "2.3.1-enclosed-backing";
 
-const fingerprintBlob = (blob: Blob): string | Promise<string> => {
-  // Keep fake-timer workflow tests deterministic; production uses content hash.
-  if (typeof process !== "undefined" && process.env?.NODE_ENV === "test") {
-    return `${blob.size}:${blob.type}`;
-  }
-  return (async () => {
-    const bytes = new Uint8Array(await blob.arrayBuffer());
-    const subtle = globalThis.crypto?.subtle;
-    if (subtle) {
-      const digest = new Uint8Array(await subtle.digest("SHA-256", bytes));
-      return Array.from(digest, (value) => value.toString(16).padStart(2, "0")).join("");
-    }
-    let hash = 0x811c9dc5;
-    for (const value of bytes) {
-      hash ^= value;
-      hash = Math.imul(hash, 0x01000193) >>> 0;
-    }
-    return `${blob.size}:${blob.type}:${hash.toString(16).padStart(8, "0")}`;
-  })();
-};
+const fingerprintBlob = blobFingerprint;
 
 const buildPreparedIdentity = (
   sourceFingerprint: string,
@@ -151,6 +144,14 @@ export interface PageCleaningResult extends CleaningResult {
   reviewMaskBlob?: Blob;
   protectedMaskBlob?: Blob;
 }
+
+/** One page's background-remnant review evidence, bound to exact revisions. */
+export interface PageRemnantReview {
+  pageUrl: string;
+  inspection: BackgroundInspectionResult;
+  /** Shared output-eligibility input: never "approved" while unverified. */
+  eligibility: BackgroundEligibilityState;
+}
 export interface CleaningHookError {
   message: string;
   recovery: "retry" | "start-local-service" | "reclean";
@@ -173,7 +174,16 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     value: CleaningProgress;
   }>();
   const [error, setError] = useState<CleaningHookError>();
+  const [remnantReviews, setRemnantReviews] = useState<Map<string, PageRemnantReview>>(new Map());
   const pageTokensRef = useRef<Map<string, number>>(new Map());
+  const remnantReviewsRef = useRef(remnantReviews);
+  const reviewBindingsRef = useRef(new Map<string, {
+    result: PageCleaningResult; cleanBlob?: Blob; maskBlob?: Blob;
+    sourceFingerprint?: string; maskFingerprint?: string; authorization: string;
+  }>());
+  const confirmationsRef = useRef(new RemnantConfirmationStore());
+  const inspectionTokensRef = useRef<Map<string, number>>(new Map());
+  const lastSourceRevisionRef = useRef<Map<string, string>>(new Map());
   const currentPageUrl = pages[currentPage];
   const pageUrlRef = useRef(currentPageUrl);
   const pagesRef = useRef(pages);
@@ -235,10 +245,133 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       const updated = new Map(resultsRef.current);
       updated.set(pageUrl, next);
       resultsRef.current = updated;
+      reviewBindingsRef.current.delete(pageUrl);
+      const reviews = new Map(remnantReviewsRef.current);
+      reviews.delete(pageUrl);
+      remnantReviewsRef.current = reviews;
+      setRemnantReviews(reviews);
       setResultsByPage(updated);
       setCacheRevision((revision) => revision + 1);
     },
     [revokeResult],
+  );
+
+  const publishRemnantReview = useCallback(
+    (pageUrl: string, inspection: BackgroundInspectionResult) => {
+      const updated = new Map(remnantReviewsRef.current);
+      updated.set(pageUrl, { pageUrl, inspection, eligibility: backgroundEligibilityState(inspection) });
+      remnantReviewsRef.current = updated;
+      setRemnantReviews(updated);
+    },
+    [],
+  );
+
+  const getCurrentRemnantReview = useCallback((pageUrl: string): PageRemnantReview | undefined => {
+    const result = resultsRef.current.get(pageUrl);
+    const binding = reviewBindingsRef.current.get(pageUrl);
+    if (!result || !binding || result !== binding.result ||
+        result.cleanBlob !== binding.cleanBlob || result.maskBlob !== binding.maskBlob ||
+        result.sourceFingerprint !== binding.sourceFingerprint || result.maskFingerprint !== binding.maskFingerprint ||
+        authorizationIdentity(result.regions) !== binding.authorization) return undefined;
+    return remnantReviewsRef.current.get(pageUrl);
+  }, []);
+
+  /**
+   * Inspect one page's clean background against its original at a processing
+   * boundary. Provider-free and read-only: a failed or unavailable inspection
+   * publishes an unverified state, never a clean one. Findings and artwork
+   * confirmations bind to the exact source/background/removal revisions, so
+   * recleaning, mask edits, source replacement and Undo/Redo naturally
+   * invalidate or restore exactly the revision-bound review state.
+   */
+  const inspectPageRemnants = useCallback(
+    async (pageUrl: string, result: PageCleaningResult, sourceBlob?: Blob) => {
+      const token = (inspectionTokensRef.current.get(pageUrl) ?? 0) + 1;
+      inspectionTokensRef.current.set(pageUrl, token);
+      reviewBindingsRef.current.delete(pageUrl);
+      const pendingReviews = new Map(remnantReviewsRef.current);
+      pendingReviews.delete(pageUrl);
+      remnantReviewsRef.current = pendingReviews;
+      setRemnantReviews(pendingReviews);
+      const binding = {
+        result, cleanBlob: result.cleanBlob, maskBlob: result.maskBlob,
+        sourceFingerprint: result.sourceFingerprint, maskFingerprint: result.maskFingerprint,
+        authorization: authorizationIdentity(result.regions),
+      };
+      const inspectionResult = { ...result, regions: result.regions.map(region => ({ ...region, rect: { ...region.rect } })) };
+      let original = sourceBlob;
+      if (!original) {
+        try {
+          const response = await fetch(pageUrl, { cache: "no-store" });
+          original = response.ok ? await response.blob() : undefined;
+        } catch {
+          original = undefined;
+        }
+      }
+      // Source replacement: old confirmations could never bind the new source.
+      const sourceRevision = result.sourceFingerprint ?? "";
+      // A URL can keep its identity while its bytes change. Never inspect new
+      // original pixels under the old saved source revision or cached approval.
+      if (original && await fingerprintBlob(original) !== sourceRevision) {
+        confirmationsRef.current.invalidatePage(pageUrl);
+        original = undefined;
+      }
+      const previousSource = lastSourceRevisionRef.current.get(pageUrl);
+      if (previousSource && sourceRevision && previousSource !== sourceRevision) {
+        confirmationsRef.current.invalidatePage(pageUrl);
+      }
+      if (sourceRevision) lastSourceRevisionRef.current.set(pageUrl, sourceRevision);
+      const inspection = await inspectCleanedPage({
+        result: inspectionResult,
+        ...(original ? { sourceBlob: original } : {}),
+        confirmations: confirmationsRef.current.allForPage(pageUrl),
+      });
+      // A newer result superseded this run; it schedules its own inspection.
+      if (inspectionTokensRef.current.get(pageUrl) !== token || resultsRef.current.get(pageUrl) !== result ||
+          result.cleanBlob !== binding.cleanBlob || result.maskBlob !== binding.maskBlob ||
+          result.sourceFingerprint !== binding.sourceFingerprint || result.maskFingerprint !== binding.maskFingerprint ||
+          authorizationIdentity(result.regions) !== binding.authorization) return;
+      reviewBindingsRef.current.set(pageUrl, binding);
+      publishRemnantReview(pageUrl, inspection);
+    },
+    [publishRemnantReview],
+  );
+
+  const persistArtworkConfirmations = useCallback(
+    async (pageUrl: string) => {
+      try {
+        const saved = await loadCleaningResultsMetadata();
+        const record = saved.get(pageUrl);
+        if (!record) return;
+        await saveCleaningResultMetadata({
+          ...record,
+          artworkConfirmations: confirmationsRef.current.allForPage(pageUrl),
+          updatedAt: Date.now(),
+        });
+      } catch (error) {
+        console.warn("Failed to persist artwork confirmations:", error);
+      }
+    },
+    [],
+  );
+
+  /**
+   * Explicitly confirm one candidate of the current inspection as artwork.
+   * Scoped to that exact candidate id and inspection revisionKey — never a
+   * broad or future approval. Unverified pages cannot be confirmed away.
+   */
+  const confirmArtworkCandidate = useCallback(
+    (pageUrl: string, candidateId: string): boolean => {
+      const review = getCurrentRemnantReview(pageUrl);
+      if (!review || review.inspection.status !== "inspected") return false;
+      const confirmation = confirmCandidateArtwork(review.inspection, candidateId);
+      if (!confirmation) return false;
+      confirmationsRef.current.confirm(pageUrl, confirmation);
+      publishRemnantReview(pageUrl, applyArtworkConfirmations(review.inspection, [confirmation]));
+      void persistArtworkConfirmations(pageUrl);
+      return true;
+    },
+    [getCurrentRemnantReview, persistArtworkConfirmations, publishRemnantReview],
   );
 
   const hydrateResult = useCallback(
@@ -337,6 +470,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       pageUrl: string,
       sourceFingerprint?: string,
       signal?: AbortSignal,
+      sourceBlob?: Blob,
     ): Promise<PageCleaningResult> => {
       if (signal?.aborted) throw new DOMException("Cleaning cancelled", "AbortError");
       const result = signal ? await getCleaningResult(job.jobId,signal) : await getCleaningResult(job.jobId);
@@ -366,6 +500,9 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
           : undefined,
       };
       replaceResult(pageUrl, identified);
+      // Inspect the fresh clean background (without translated overlays) at
+      // this processing boundary; findings bind to the exact revisions above.
+      await inspectPageRemnants(pageUrl, identified, sourceBlob);
       try {
         let assetIds: {
           cleanAssetId?: string;
@@ -396,6 +533,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
           timingsMs: result.timingsMs,
           awaitingReview: result.awaitingReview,
           cleaningMode: result.cleaningMode ?? "safe",
+          artworkConfirmations: confirmationsRef.current.allForPage(pageUrl),
           ...assetIds,
         });
       } catch (saveErr) {
@@ -405,7 +543,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       }
       return identified;
     },
-    [hydrateResult, replaceResult, revokeResult],
+    [hydrateResult, inspectPageRemnants, replaceResult, revokeResult],
   );
 
   const runJob = useCallback(
@@ -415,10 +553,11 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       pageUrl: string,
       sourceFingerprint?: string,
       signal?: AbortSignal,
+      sourceBlob?: Blob,
     ): Promise<PageCleaningResult> => {
       try {
         const terminal = await waitForJob(initial, token, pageUrl,signal);
-        return await finishJob(terminal, token, pageUrl, sourceFingerprint,signal);
+        return await finishJob(terminal, token, pageUrl, sourceFingerprint,signal, sourceBlob);
       } finally {
         setProgressState((previous) => (previous?.pageUrl === pageUrl ? undefined : previous));
       }
@@ -494,7 +633,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
             : await sourceFingerprintValue;
         const job = await jobPromise;
         if (signal?.aborted) throw new DOMException("Cleaning cancelled", "AbortError");
-        return await runJob(job, token, pageUrl, sourceFingerprint,signal);
+        return await runJob(job, token, pageUrl, sourceFingerprint,signal, source);
       } catch (caught) {
         handleFailure(caught, pageUrl);
         throw caught;
@@ -776,41 +915,18 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
               continue;
             }
             replaceResult(pageUrl, restored);
+            // Restoring is local-only: the persisted revision-bound artwork
+            // confirmations are re-seeded and the stored background is
+            // inspected without any provider call and without altering pixels.
+            if (metadata.artworkConfirmations?.length) {
+              confirmationsRef.current.replacePage(pageUrl, metadata.artworkConfirmations);
+            }
+            await inspectPageRemnants(pageUrl, restored, sourceBlob);
             continue;
           }
 
-          const result = await getCleaningResult(metadata.jobId);
-          if (result.sourceHash !== metadata.sourceHash) continue;
-          if (metadata.pipelineVersion && result.pipelineVersion !== metadata.pipelineVersion) continue;
-          if (authorizationIdentity(result.regions) !== authorizationIdentity(metadata.regions)) continue;
-          const hydrated = await hydrateResult(result);
-          if (hydrated.maskFingerprint !== metadata.maskFingerprint) {
-            revokeResult(hydrated);
-            continue;
-          }
-          const restored: PageCleaningResult = {
-            ...hydrated,
-            sourceFingerprint: metadata.sourceFingerprint,
-            preparedIdentity: metadata.sourceFingerprint
-              ? buildPreparedIdentity(
-                  metadata.sourceFingerprint,
-                  hydrated.maskFingerprint ?? "unknown-mask",
-                  result.pipelineVersion,
-                  result.regions,
-                  result.cleaningMode,
-                )
-              : undefined,
-          };
-          if (
-            !active ||
-            !pagesRef.current.includes(pageUrl) ||
-            resultsRef.current.has(pageUrl)
-          ) {
-            revokeResult(restored);
-            if (!active) return;
-            continue;
-          }
-          replaceResult(pageUrl, restored);
+          // Opening saved work reads local evidence only. Missing assets remain unavailable.
+          if (pageUrl === pageUrlRef.current) setError({ message: "Saved cleaning assets are unavailable.", recovery: "reclean" });
         } catch {
           if (active && pageUrl === pageUrlRef.current) {
             setError({
@@ -826,7 +942,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       active = false;
       if (!completed) restoreStartedRef.current = false;
     };
-  }, [hydrateResult, pages.length, replaceResult, revokeResult]);
+  }, [hydrateResult, inspectPageRemnants, pages.length, replaceResult, revokeResult]);
 
   useEffect(() => {
     const retained = new Map<string, PageCleaningResult>();
@@ -837,6 +953,20 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
         revokeResult(result);
         removed = true;
       }
+    }
+    const retainedReviews = new Map(remnantReviewsRef.current);
+    let reviewRemoved = false;
+    for (const pageUrl of retainedReviews.keys()) {
+      if (!pagesRef.current.includes(pageUrl)) {
+        retainedReviews.delete(pageUrl);
+        reviewBindingsRef.current.delete(pageUrl);
+        confirmationsRef.current.invalidatePage(pageUrl);
+        reviewRemoved = true;
+      }
+    }
+    if (reviewRemoved) {
+      remnantReviewsRef.current = retainedReviews;
+      setRemnantReviews(retainedReviews);
     }
     if (!removed) return;
     resultsRef.current = retained;
@@ -858,6 +988,10 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     () => (currentPageUrl ? resultsByPage.get(currentPageUrl) : undefined),
     [currentPageUrl, resultsByPage],
   );
+  const currentRemnantReview = useMemo(
+    () => (currentPageUrl ? remnantReviews.get(currentPageUrl) : undefined),
+    [currentPageUrl, remnantReviews],
+  );
   const progress =
     progressState && progressState.pageUrl === currentPageUrl
       ? progressState.value
@@ -870,6 +1004,14 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     resolveMaskRegion,
     cancelPolling,
     currentResult,
+    currentRemnantReview,
+    getCurrentRemnantReview,
+    recheckPageRemnants: async (pageUrl: string) => {
+      const result = resultsRef.current.get(pageUrl);
+      if (result) await inspectPageRemnants(pageUrl, result);
+    },
+    remnantReviews,
+    confirmArtworkCandidate,
     progress,
     error,
     resultsByPage,

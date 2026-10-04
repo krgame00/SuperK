@@ -27,7 +27,7 @@ import type { BackgroundEligibilityState } from "../translation/pageEligibility"
 import type { PixelRect } from "./types";
 
 /** Bumped when the detection or binding semantics change, invalidating old keys. */
-export const BACKGROUND_REMNANT_INSPECTION_VERSION = 1;
+export const BACKGROUND_REMNANT_INSPECTION_VERSION = 2;
 
 /** Single-channel luma plane (0-255). Kept DOM-free so inspection is deterministic and testable. */
 export interface GrayscalePlane {
@@ -416,15 +416,13 @@ function runDetection(
     meanLumaClean: 0,
   });
 
-  // Pass 1: removal regions — areas where cleaning was attempted (or explicitly
-  // preserved). Surviving ink here is a removal failure, not artwork to erase.
+  // Pass 1: existing removal bounds are observation evidence. Preserving pixels
+  // authorizes keeping them; it does not confirm that source ink is artwork.
   for (const region of removalRegions) {
     const area = clampRect(region.rect, width, height);
     if (!area) continue;
     inspectedAreas += 1;
-    // Explicitly preserved/protected marks were already reviewed; flagging them
-    // again would spam review with decisions the user already made.
-    if (region.status === "preserved" || region.textRole === "protected") continue;
+    const preserved = region.status === "preserved" || region.textRole === "protected";
     const stats = analyzeArea(original, clean, area, options.inkThreshold);
     if (stats.originalInk === 0 || stats.surviving < MIN_SURVIVING_ANY || stats.survivingRatio < options.removedRatio) continue;
     const base = collectEvidence(stats.bbox ?? area);
@@ -437,6 +435,8 @@ function runDetection(
       // survived inside the region. Genuinely ambiguous — stays a low-confidence
       // review finding, never an auto-erase instruction.
       addCandidate(makeCandidate("uncertain", "line-like", stats.bbox ?? area, 0.3, base));
+    } else if (preserved) {
+      addCandidate(makeCandidate("unchanged-candidate", stats.survivingRatio >= 0.8 ? "unchanged" : "partial-glyph", stats.bbox ?? area, 0.6, base));
     } else if (stats.survivingRatio >= options.fullRemnantRatio) {
       addCandidate(makeCandidate("suspected-remnant", "full-glyph", stats.bbox ?? area, 0.55 + 0.4 * stats.survivingRatio, base));
     } else {
@@ -445,8 +445,8 @@ function runDetection(
   }
 
   // Pass 2: text evidence not explained by a removal region. Nothing here was
-  // assumed cleaned, so findings are "unchanged candidates" for human review —
-  // deliberately preserved text (inside preserved regions) is skipped.
+  // assumed cleaned, so findings are "unchanged candidates" for human review.
+  // Overlapping regions were already considered in Pass 1, including preserved ink.
   for (const evidence of textEvidence) {
     const area = boxToRect(evidence.box, width, height);
     if (!area) continue;
@@ -528,7 +528,10 @@ export class BackgroundInspectionCache {
     let base = key ? this.entries.get(key) : undefined;
     if (!base) {
       base = inspectBackgroundRemnants({ ...input, artworkConfirmations: undefined });
-      if (key && base.revisionKey === key) this.entries.set(key, base);
+      // Only inspected evidence is reusable. Unverified outcomes are never
+      // cached: evidence that arrives later (same revision identity, e.g. the
+      // original becoming readable) must actually run detection.
+      if (key && base.status === "inspected" && base.revisionKey === key) this.entries.set(key, base);
     }
     return applyArtworkConfirmations(base, input.artworkConfirmations ?? []);
   }

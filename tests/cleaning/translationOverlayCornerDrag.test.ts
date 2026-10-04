@@ -185,6 +185,45 @@ function selectionSouthWest(wrapper: HTMLElement, rotation = 0) {
 }
 
 describe("corner drag bitmap preview", () => {
+  test.each([.44,1,1.6])('saved size preview/reopen/export agrees at zoom %s',async zoom=>{
+    const {container,canvas,bubble,handle}=await renderCornerFixture('สวัสดีโลก');
+    mockCanvasRect(container,zoom);
+    firePointer(handle,'pointerdown',300*zoom,100*zoom);
+    firePointer(handle,'pointermove',400*zoom,50*zoom);
+    firePointer(handle,'pointerup',400*zoom,50*zoom);
+    const font=canvasFont(canvas);
+    const saved=JSON.parse(JSON.stringify(bubble)) as TranslatedBubble;
+    const reopened=await renderCornerFixture('สวัสดีโลก',saved);
+    mockCanvasRect(reopened.container,zoom);
+    expect(canvasFont(reopened.canvas)).toBe(font);
+    expect(reopened.bubble.sourceSizing?.mode).toBe('manual');
+    const exported=JSON.parse(JSON.stringify(reopened.bubble)) as TranslatedBubble;
+    const {applyTranslationOverlay}=await import('@/lib/translationOverlay');
+    await applyTranslationOverlay([exported],'offscreen',0,vi.fn(),vi.fn(),{current:{fontFamily:'Itim, sans-serif',textColor:'#000000',textOutline:'#ffffff',fontSizeMultiplier:1}},reopened.container,undefined,undefined,'th');
+    await vi.runAllTimersAsync();
+    expect(exported.layoutSnapshot?.fontSizePx).toBe(reopened.bubble.layoutSnapshot?.fontSizePx);
+    expect(exported.layoutSnapshot?.lines).toEqual(reopened.bubble.layoutSnapshot?.lines);
+  });
+  test('legacy direct size gains explicit manual ownership without claiming source measurement',async()=>{
+    const {wrapper,bubble}=await renderCornerFixture('hello',{targetFontSize:20});
+    wrapper.dispatchEvent(new KeyboardEvent('keydown',{key:'+',bubbles:true}));
+    expect(bubble.sourceSizing).toMatchObject({mode:'manual',status:'fallback',evidence:{quality:'unreliable',reason:'user-size-without-source-measurement'}});
+  });
+  test('corner sizing owns manual mode and Undo restores automatic evidence', async()=>{
+    const sizing: NonNullable<TranslatedBubble['sourceSizing']>={mode:'auto',status:'fallback',fallbackLabel:'unavailable',evidence:{policyVersion:'original-body-direction-v2',sourceRevision:'pixels',regionKey:'100,100,300,400',rect:{x:0,y:0,width:10,height:10},pixelRevision:'pixels',quality:'unreliable',confidence:0,reason:'test',glyphCount:0,lineCount:0}};
+    const {container,handle,bubble}=await renderCornerFixture('hello',{sourceSizing:sizing});
+    const initialSizing=structuredClone(bubble.sourceSizing);
+    mockCanvasRect(container);
+    firePointer(handle,'pointerdown',300,100);
+    firePointer(handle,'pointermove',400,50);
+    firePointer(handle,'pointerup',400,50);
+    expect(bubble.sourceSizing?.mode).toBe('manual');
+    expect(bubble.userTextSpace).toMatchObject({owner:'manual',rect:{width:expect.any(Number),height:expect.any(Number)}});
+    (await freshUndoManager()).undo();
+    expect(bubble.sourceSizing).toEqual(initialSizing);
+    (await freshUndoManager()).redo();
+    expect(bubble.sourceSizing?.mode).toBe('manual');
+  });
   test("dragging the corner reuses the captured bitmap: zero glyph, stroke or measure work", async () => {
     const { container, wrapper, canvas, handle } = await renderCornerFixture(
       "บรรทัดแรก\nบรรทัดที่สอง",
@@ -437,3 +476,4 @@ describe("proportional snapshot invalidation", () => {
     expect(bubble.layoutSnapshot!.fontSizePx).not.toBe(committed.fontSizePx);
   });
 });
+

@@ -117,6 +117,7 @@ function renderTranslationHook() {
     useTranslation({
       currentPage: 0,
       pages: PAGES,
+      pageSourceFingerprints: new Map(PAGES.map(url=>[url,`original:${url}`])),
       viewMode: "single",
       preparePageForTranslation: vi.fn().mockResolvedValue({
         recognitionUrl: PAGE_A,

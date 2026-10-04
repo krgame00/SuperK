@@ -1,6 +1,6 @@
 import { undoManager } from "./undoManager";
 import { constrainSourceLayoutHeight } from './sourceTextSpace';
-import { calibrateOutputBodyMetric, resolveSourceFontSize, sourceRegionKey, SOURCE_SIZE_POLICY, SOURCE_SIZE_FALLBACK_LABEL, type SourceSizing } from './sourceTextSize';
+import { calibrateOutputBodyMetric, resolveSourceFontSize, sourceRegionKey, manualSourceSizing, SOURCE_SIZE_POLICY, SOURCE_SIZE_FALLBACK_LABEL, type SourceSizing } from './sourceTextSize';
 import { measureTextSelection, rotateLocalPoint, type SelectionRect } from "./textSelectionBounds";
 import { guardQualityReview, unavailableReview, invalidateQualityReview, isReviewCurrent } from "./translation/qualityReview";
 import type { TranslationReview } from "./translation/qualityReview";
@@ -104,6 +104,8 @@ export interface TranslatedBubble {
   targetFontSize?: number;
   /** Persisted original-pixel measurement, distinct from style and saved manual sizes. */
   sourceSizing?: SourceSizing;
+  /** User-authorized layout space in original-image pixels, never inferred from an OCR box. */
+  userTextSpace?: {owner:'manual';rect:{x:number;y:number;width:number;height:number};imageWidth:number;imageHeight:number};
   /** minimum frame height preserved by content-driven width reflow */
   manualMinHeightPx?: number;
   /** persisted interactive layout; source of truth for move/resize/rotation */
@@ -1137,8 +1139,8 @@ export const applyTranslationOverlay = async (
         const autoSizing = b.sourceSizing?.mode === 'auto' ? b.sourceSizing : undefined;
         const discardDerivedSize = () => {
           if (b.targetFontSize === autoSizing?.baseFontSizePx) delete b.targetFontSize;
-          if (adj?.targetFontSize === autoSizing?.baseFontSizePx) delete adj.targetFontSize;
-          if (legacyAdj?.targetFontSize === autoSizing?.baseFontSizePx) delete legacyAdj.targetFontSize;
+          if (adj && autoSizing?.baseFontSizePx !== undefined && adj.targetFontSize === autoSizing.baseFontSizePx) delete adj.targetFontSize;
+          if (legacyAdj && autoSizing?.baseFontSizePx !== undefined && legacyAdj.targetFontSize === autoSizing.baseFontSizePx) delete legacyAdj.targetFontSize;
         };
         if (autoSizing) {
           const evidence = autoSizing.evidence;
@@ -1223,7 +1225,8 @@ export const applyTranslationOverlay = async (
             const evidence = space && space.sourceRevision === b.sourceSizing?.evidence.sourceRevision &&
               space.regionKey === b.sourceSizing?.evidence.regionKey ? space : undefined;
             const constrained = constrainSourceLayoutHeight({x: currentBx, y: currentBy, width: currentBw, height: currentBh},
-              Math.max(fixedLayout.requiredHeightPx, savedManualMinimum), evidence, undefined, neighbors);
+              Math.max(fixedLayout.requiredHeightPx, savedManualMinimum), evidence,
+              b.userTextSpace && b.userTextSpace.imageWidth === iw && b.userTextSpace.imageHeight === ih ? b.userTextSpace.rect : undefined, neighbors);
             currentBh = constrained.height;
             fixedLayout = {...fixedLayout, heightPx: currentBh, overflow: fixedLayout.overflow || constrained.overflow};
           } else currentBh = fixedLayout.heightPx;
@@ -1844,6 +1847,9 @@ export const applyTranslationOverlay = async (
         const newMult = Math.max(0.4, Math.min(3.0, Number((oldMult + delta).toFixed(2))));
         if (newMult === oldMult) return;
         const snapshotBefore = b.layoutSnapshot;
+        const sizingBefore = b.sourceSizing;
+        b.sourceSizing = manualSourceSizing(b.sourceSizing,b.box);
+        const sizingAfter = b.sourceSizing;
         b.fontSizeMultiplier = newMult;
         onBubblesMutated?.();
         renderBubble();
@@ -1853,12 +1859,14 @@ export const applyTranslationOverlay = async (
           label: delta > 0 ? "เพิ่มขนาดข้อความ" : "ลดขนาดข้อความ",
           undo: () => {
             b.fontSizeMultiplier = oldMult;
+            b.sourceSizing = sizingBefore;
             b.layoutSnapshot = snapshotBefore;
             renderBubble();
             saveAdjustment();
           },
           redo: () => {
             b.fontSizeMultiplier = newMult;
+            b.sourceSizing = sizingAfter;
             b.layoutSnapshot = snapshotAfter;
             renderBubble();
             saveAdjustment();
@@ -2042,6 +2050,8 @@ export const applyTranslationOverlay = async (
         // drag and are rescaled through CSS; only this snapshot is reused.
         let scaleDragSnapshot: { layout: BubbleProportionalLayout; selection: SelectionRect } | null = null;
         let rInitSnapshot: BubbleProportionalLayout | undefined = undefined;
+        let rInitSizing: SourceSizing | undefined;
+        let rInitUserSpace: TranslatedBubble['userTextSpace'];
         const pinScaleAnchor = () => {
           const point = rotateLocalPoint(textSelection.x, textSelection.y + textSelection.height,
             currentBw, currentBh, currentRotation);
@@ -2077,6 +2087,8 @@ export const applyTranslationOverlay = async (
           rInitBw = currentBw; rInitBh = currentBh;
           rInitRot = currentRotation;
           rInitSnapshot = b.layoutSnapshot;
+          rInitSizing = b.sourceSizing;
+          rInitUserSpace = b.userTextSpace;
           // Corner drags freeze the rendered layout once, here: the drawn
           // canvas, lines, font and selection are reused for every preview
           // frame and rescaled proportionally on release.
@@ -2365,6 +2377,10 @@ export const applyTranslationOverlay = async (
           scaleDragSnapshot = null;
           saveAdjustment();
 
+          if (id === 'scale' && Math.abs((b.fontSizeMultiplier ?? 1)-rInitFontMult) > .000001) b.sourceSizing = manualSourceSizing(b.sourceSizing,b.box);
+          if (id === 'scale' || id === 'width') b.userTextSpace = {owner:'manual',rect:{x:currentBx,y:currentBy,width:currentBw,height:currentBh},imageWidth:iw,imageHeight:ih};
+          const finalUserSpace = b.userTextSpace;
+          const finalSizing = b.sourceSizing;
           const finalBx = currentBx, finalBy = currentBy, finalBw = currentBw, finalBh = currentBh, finalRot = currentRotation;
           const finalFontMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
           const finalTargetFs = b.targetFontSize;
@@ -2396,6 +2412,8 @@ export const applyTranslationOverlay = async (
                 currentBh = rInitBh;
                 currentRotation = rInitRot;
                 b.fontSizeMultiplier = rInitFontMult;
+                b.sourceSizing = rInitSizing;
+                b.userTextSpace = rInitUserSpace;
                 b.targetFontSize = rInitTargetFs;
                 manualMinHeightPx = rInitManualMinHeightPx;
                 b.layoutSnapshot = rInitSnapshot;
@@ -2410,6 +2428,8 @@ export const applyTranslationOverlay = async (
                 currentBh = finalBh;
                 currentRotation = finalRot;
                 b.fontSizeMultiplier = finalFontMult;
+                b.sourceSizing = finalSizing;
+                b.userTextSpace = finalUserSpace;
                 b.targetFontSize = finalTargetFs;
                 manualMinHeightPx = finalManualMinHeight;
                 b.layoutSnapshot = finalSnapshot;

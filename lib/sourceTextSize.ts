@@ -44,6 +44,15 @@ export interface SourceSizing {
 export const sourceRegionKey = (box?: number[]): string =>
   box?.length === 4 && box.every(Number.isFinite) ? box.join(',') : 'missing';
 
+/** Explicit user ownership never upgrades legacy locks into original measurements. */
+export function manualSourceSizing(previous: SourceSizing | undefined, box?:number[]): SourceSizing {
+  if (previous) return {...previous,mode:'manual'};
+  return {mode:'manual',status:'fallback',fallbackLabel:SOURCE_SIZE_FALLBACK_LABEL,evidence:{
+    policyVersion:SOURCE_SIZE_POLICY,sourceRevision:'unmeasured',regionKey:sourceRegionKey(box),
+    rect:{x:0,y:0,width:0,height:0},pixelRevision:'unmeasured',quality:'unreliable',confidence:0,
+    reason:'user-size-without-source-measurement',glyphCount:0,lineCount:0}};
+}
+
 /** Content identity: pixels, rather than a temporary object URL, identify evidence. */
 export function sourcePixelRevision(rgba: Uint8ClampedArray, width: number, height: number): string {
   let hash = 2166136261;
