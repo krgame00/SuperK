@@ -1,7 +1,8 @@
 import type { PixelRect } from './colorMatching/canvasSampler';
 import type { ColorSampleRegion } from './colorMatching/types';
+import type { SourceTextSpaceEvidence } from './sourceTextSpace';
 
-export const SOURCE_SIZE_POLICY = 'original-body-horizontal-v1';
+export const SOURCE_SIZE_POLICY = 'original-body-direction-v2';
 export const SOURCE_SIZE_FALLBACK_LABEL = 'ยังเทียบขนาดต้นฉบับไม่ได้';
 export interface SourceSizeEvidence {
   policyVersion: string;
@@ -15,6 +16,8 @@ export interface SourceSizeEvidence {
   bodyHeightPx?: number;
   glyphCount: number;
   lineCount: number;
+  writingMode?: 'horizontal' | 'vertical';
+  rotation?: number;
 }
 export interface OutputBodyMetric {
   family: string;
@@ -34,6 +37,9 @@ export interface SourceSizing {
   baseFontSizePx?: number;
   readabilityWarning?: string;
   fallbackLabel?: string;
+  space?: SourceTextSpaceEvidence;
+  /** Preparation cache identity for source transcript and direction hints. */
+  sourceInputKey?: string;
 }
 export const sourceRegionKey = (box?: number[]): string =>
   box?.length === 4 && box.every(Number.isFinite) ? box.join(',') : 'missing';
@@ -46,7 +52,7 @@ export function sourcePixelRevision(rgba: Uint8ClampedArray, width: number, heig
 }
 const median = (values: number[]): number => [...values].sort((a,b)=>a-b)[Math.floor(values.length / 2)];
 
-/** Conservative plain horizontal lettering policy. No OCR rectangle size or removal mask is a size estimate. */
+/** Conservative separated lettering policy. No OCR rectangle size or removal mask is a size estimate. */
 export function analyzeSourceLetterSize(
   sample: ColorSampleRegion,
   identity: {sourceRevision: string; regionKey: string; rect: PixelRect; originalText?: string; writingMode?: string; rotation?: number},
@@ -59,8 +65,27 @@ export function analyzeSourceLetterSize(
   };
   const fail = (reason:string) => ({...evidence,reason});
   const {width,height,rgba} = sample;
-  if (identity.writingMode === 'vertical' || Math.abs(identity.rotation ?? 0) > 2) return fail('unsupported-direction');
   if (!identity.originalText?.trim() || width < 3 || height < 3 || rgba.length !== width*height*4 || width*height > 2_000_000) return fail('missing-or-oversized-evidence');
+  if (!Number.isFinite(identity.rotation ?? 0)) return fail('unsupported-direction');
+  const angle=(identity.rotation ?? 0)%360;
+  if(Math.abs(angle)>2) {
+    // A known source angle is required. Deskew original pixels only during preparation.
+    // White padding is not evidence: reject dark content clipped by the original crop.
+    for(let y=0;y<height;y++)for(let x=0;x<width;x++) if(x===0||y===0||x===width-1||y===height-1) {
+      const i=(y*width+x)*4;if(rgba[i]<225||rgba[i+1]<225||rgba[i+2]<225) return fail('clipped-glyphs-or-artwork');
+    }
+    const radians=angle*Math.PI/180,c=Math.cos(radians),s=Math.sin(radians);
+    const w=Math.ceil(Math.abs(width*c)+Math.abs(height*s))+4,h=Math.ceil(Math.abs(width*s)+Math.abs(height*c))+4;
+    if(w*h>2_000_000) return fail('missing-or-oversized-evidence');
+    const pixels=new Uint8ClampedArray(w*h*4).fill(255);
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++) {
+      const dx=x-(w-1)/2,dy=y-(h-1)/2;
+      const sx=Math.round(c*dx-s*dy+(width-1)/2),sy=Math.round(s*dx+c*dy+(height-1)/2);
+      if(sx>=0&&sx<width&&sy>=0&&sy<height) pixels.set(rgba.subarray((sy*width+sx)*4,(sy*width+sx)*4+4),(y*w+x)*4);
+    }
+    const result=analyzeSourceLetterSize({...sample,width:w,height:h,rgba:pixels},{...identity,rotation:0});
+    return {...result,rect:evidence.rect,pixelRevision:evidence.pixelRevision,rotation:angle};
+  }
   const ink = new Uint8Array(width*height);
   let dark = 0, white = 0, colored = 0, middle = 0;
   for(let p=0;p<ink.length;p++) {
@@ -100,16 +125,22 @@ export function analyzeSourceLetterSize(
   const bodyHeight=median(bodies.map(c=>c.h));
   const regular=bodies.filter(c=>Math.abs(c.h-bodyHeight)<=Math.max(1,bodyHeight*0.15));
   if(regular.length/bodies.length<0.8 || regular.length<3) return fail('irregular-or-decorative-glyphs');
+  const group=(vertical:boolean)=>{
   const rows:Component[][]=[];
   for(const c of [...regular].sort((a,b)=>a.y-b.y)) {
-    const row=rows.find(r=>Math.abs(median(r.map(v=>v.y+v.h))-c.y-c.h)<=Math.max(1,bodyHeight*0.2));
+    const row=rows.find(r=>Math.abs(median(r.map(v=>vertical?v.x+v.w/2:v.y+v.h))-(vertical?c.x+c.w/2:c.y+c.h))<=Math.max(1,bodyHeight*0.2));
     if(row) row.push(c);else rows.push([c]);
   }
-  if(rows.some(row=>row.length<3 || Math.max(...row.map(c=>c.x+c.w))-Math.min(...row.map(c=>c.x))<bodyHeight*2)) return fail('unsupported-direction-or-layout');
+  return rows.some(row=>row.length<3 || Math.max(...row.map(c=>vertical?c.y+c.h:c.x+c.w))-Math.min(...row.map(c=>vertical?c.y:c.x))<bodyHeight*2)?undefined:rows;
+  };
+  let vertical=identity.writingMode==='vertical';
+  let rows=group(vertical);
+  if(!rows&&!identity.writingMode) {vertical=true;rows=group(true);}
+  if(!rows) return fail('unsupported-direction-or-layout');
   // Detached marks are acceptable only close to an established body column.
   if(components.some(c=>!regular.includes(c) && !regular.some(body=>
     c.h<bodyHeight*0.5 && c.x<body.x+body.w && c.x+c.w>body.x && Math.abs(c.y-body.y)<bodyHeight*0.65))) return fail('unexplained-artwork-or-effects');
-  return {...evidence,quality:'reliable',confidence:0.9,reason:'regular-high-contrast-horizontal-glyphs',bodyHeightPx:bodyHeight,glyphCount:regular.length,lineCount:rows.length};
+  return {...evidence,quality:'reliable',confidence:0.9,reason:`regular-high-contrast-${vertical?'vertical':'horizontal'}-glyphs`,bodyHeightPx:bodyHeight,glyphCount:regular.length,lineCount:rows.length,writingMode:vertical?'vertical':'horizontal',rotation:angle};
 }
 
 export function resolveSourceFontSize(evidence:SourceSizeEvidence, font:OutputBodyMetric): SourceSizing {

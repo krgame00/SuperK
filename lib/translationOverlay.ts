@@ -1,4 +1,5 @@
 import { undoManager } from "./undoManager";
+import { constrainSourceLayoutHeight } from './sourceTextSpace';
 import { calibrateOutputBodyMetric, resolveSourceFontSize, sourceRegionKey, SOURCE_SIZE_POLICY, SOURCE_SIZE_FALLBACK_LABEL, type SourceSizing } from './sourceTextSize';
 import { measureTextSelection, rotateLocalPoint, type SelectionRect } from "./textSelectionBounds";
 import { guardQualityReview, unavailableReview, invalidateQualityReview, isReviewCurrent } from "./translation/qualityReview";
@@ -995,7 +996,7 @@ export const applyTranslationOverlay = async (
       const fontMult = ts.fontSizeMultiplier || 1.0;
       const minReadableFs = Math.max(14, getReadableMinimumFontSize(iw));
 
-      if (!adj) {
+      if (!adj && !(b.sourceSizing?.mode === 'auto' && b.sourceSizing.status === 'matched')) {
         const text = (b.t || b.translated || "").trim();
         if (text) {
           const layout = fitTextInAdaptiveBubble(
@@ -1076,7 +1077,7 @@ export const applyTranslationOverlay = async (
           } else if (autoSizing.font?.family !== currentFontFam || autoSizing.font?.textKey !== text || !sourceFontLoaded) {
             const metricContext = bCanvas.getContext('2d');
             if (metricContext) {
-              b.sourceSizing = resolveSourceFontSize(evidence, calibrateOutputBodyMetric(metricContext, evidence, currentFontFam, text, sourceFontLoaded));
+              b.sourceSizing = { ...autoSizing, ...resolveSourceFontSize(evidence, calibrateOutputBodyMetric(metricContext, evidence, currentFontFam, text, sourceFontLoaded)) };
               if (b.sourceSizing.status === 'matched') b.targetFontSize = b.sourceSizing.baseFontSizePx;
               else discardDerivedSize();
             }
@@ -1108,7 +1109,26 @@ export const applyTranslationOverlay = async (
             availableHeight,
             wordWrapLocale,
           );
-          currentBh = fixedLayout.heightPx;
+          if (matchedAuto) {
+            const neighbors = real.filter(other => other !== b && !other.deleted).flatMap(other => {
+              const layout = other.layoutAdjustment;
+              if (!layout) return [];
+              const sx = iw / layout.iw, sy = ih / layout.ih;
+              const width = layout.bw * sx, height = layout.bh * sy;
+              const radians = (layout.rotation || 0) * Math.PI / 180;
+              const boundWidth = Math.abs(width * Math.cos(radians)) + Math.abs(height * Math.sin(radians));
+              const boundHeight = Math.abs(width * Math.sin(radians)) + Math.abs(height * Math.cos(radians));
+              return [{ x: layout.bx * sx + (width - boundWidth) / 2,
+                y: layout.by * sy + (height - boundHeight) / 2, width: boundWidth, height: boundHeight }];
+            });
+            const space = b.sourceSizing?.space;
+            const evidence = space && space.sourceRevision === b.sourceSizing?.evidence.sourceRevision &&
+              space.regionKey === b.sourceSizing?.evidence.regionKey ? space : undefined;
+            const constrained = constrainSourceLayoutHeight({x: currentBx, y: currentBy, width: currentBw, height: currentBh},
+              Math.max(fixedLayout.requiredHeightPx, savedManualMinimum), evidence, undefined, neighbors);
+            currentBh = constrained.height;
+            fixedLayout = {...fixedLayout, heightPx: currentBh, overflow: fixedLayout.overflow || constrained.overflow};
+          } else currentBh = fixedLayout.heightPx;
         } else {
           legacyFit = null;
         }
@@ -1201,7 +1221,7 @@ export const applyTranslationOverlay = async (
         const fontSize = fit.fontSize;
         renderedFontSize = fontSize;
         const lines = fit.lines;
-        const lineH = Math.min(fontSize * 1.30, currentBh / Math.max(1, lines.length));
+        const lineH = fixedLayout ? fontSize * 1.30 : Math.min(fontSize * 1.30, currentBh / Math.max(1, lines.length));
 
         ctx.globalAlpha = opacity;
         ctx.textAlign = "center";
