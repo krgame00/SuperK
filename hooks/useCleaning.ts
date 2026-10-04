@@ -29,6 +29,8 @@ import {
   applyArtworkConfirmations,
   backgroundEligibilityState,
   confirmCandidateArtwork,
+  textEvidenceIdentity,
+  type RemnantTextEvidence,
   type BackgroundInspectionResult,
 } from "@/lib/cleaning/backgroundRemnantInspection";
 import {
@@ -152,6 +154,10 @@ export interface PageRemnantReview {
   /** Shared output-eligibility input: never "approved" while unverified. */
   eligibility: BackgroundEligibilityState;
 }
+export interface PageRemnantTextEvidence {
+  sourceContext: string;
+  textEvidence: readonly RemnantTextEvidence[];
+}
 export interface CleaningHookError {
   message: string;
   recovery: "retry" | "start-local-service" | "reclean";
@@ -177,9 +183,10 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
   const [remnantReviews, setRemnantReviews] = useState<Map<string, PageRemnantReview>>(new Map());
   const pageTokensRef = useRef<Map<string, number>>(new Map());
   const remnantReviewsRef = useRef(remnantReviews);
+  const textEvidenceRef = useRef(new Map<string, PageRemnantTextEvidence>());
   const reviewBindingsRef = useRef(new Map<string, {
     result: PageCleaningResult; cleanBlob?: Blob; maskBlob?: Blob;
-    sourceFingerprint?: string; maskFingerprint?: string; authorization: string;
+    sourceFingerprint?: string; maskFingerprint?: string; authorization: string; evidenceIdentity: string;
   }>());
   const confirmationsRef = useRef(new RemnantConfirmationStore());
   const inspectionTokensRef = useRef<Map<string, number>>(new Map());
@@ -266,10 +273,15 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     [],
   );
 
-  const getCurrentRemnantReview = useCallback((pageUrl: string): PageRemnantReview | undefined => {
+  const getCurrentRemnantReview = useCallback((pageUrl: string, expectedEvidence?: PageRemnantTextEvidence): PageRemnantReview | undefined => {
     const result = resultsRef.current.get(pageUrl);
     const binding = reviewBindingsRef.current.get(pageUrl);
+    const evidence = textEvidenceRef.current.get(pageUrl);
+    const identity = textEvidenceIdentity(evidence?.textEvidence, evidence?.sourceContext);
+    if (expectedEvidence && (!expectedEvidence.sourceContext || !evidence ||
+        textEvidenceIdentity(expectedEvidence.textEvidence, expectedEvidence.sourceContext) !== identity)) return undefined;
     if (!result || !binding || result !== binding.result ||
+        binding.evidenceIdentity !== identity || (evidence && evidence.sourceContext !== result.sourceFingerprint) ||
         result.cleanBlob !== binding.cleanBlob || result.maskBlob !== binding.maskBlob ||
         result.sourceFingerprint !== binding.sourceFingerprint || result.maskFingerprint !== binding.maskFingerprint ||
         authorizationIdentity(result.regions) !== binding.authorization) return undefined;
@@ -286,6 +298,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
    */
   const inspectPageRemnants = useCallback(
     async (pageUrl: string, result: PageCleaningResult, sourceBlob?: Blob) => {
+      const evidence = textEvidenceRef.current.get(pageUrl);
       const token = (inspectionTokensRef.current.get(pageUrl) ?? 0) + 1;
       inspectionTokensRef.current.set(pageUrl, token);
       reviewBindingsRef.current.delete(pageUrl);
@@ -297,6 +310,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
         result, cleanBlob: result.cleanBlob, maskBlob: result.maskBlob,
         sourceFingerprint: result.sourceFingerprint, maskFingerprint: result.maskFingerprint,
         authorization: authorizationIdentity(result.regions),
+        evidenceIdentity: textEvidenceIdentity(evidence?.textEvidence, evidence?.sourceContext),
       };
       const inspectionResult = { ...result, regions: result.regions.map(region => ({ ...region, rect: { ...region.rect } })) };
       let original = sourceBlob;
@@ -323,11 +337,14 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       if (sourceRevision) lastSourceRevisionRef.current.set(pageUrl, sourceRevision);
       const inspection = await inspectCleanedPage({
         result: inspectionResult,
-        ...(original ? { sourceBlob: original } : {}),
+        ...(original && (!evidence || evidence.sourceContext === result.sourceFingerprint) ? { sourceBlob: original } : {}),
+        textEvidence: evidence?.textEvidence,
+        sourceContext: evidence?.sourceContext,
         confirmations: confirmationsRef.current.allForPage(pageUrl),
       });
       // A newer result superseded this run; it schedules its own inspection.
       if (inspectionTokensRef.current.get(pageUrl) !== token || resultsRef.current.get(pageUrl) !== result ||
+          textEvidenceIdentity(textEvidenceRef.current.get(pageUrl)?.textEvidence, textEvidenceRef.current.get(pageUrl)?.sourceContext) !== binding.evidenceIdentity ||
           result.cleanBlob !== binding.cleanBlob || result.maskBlob !== binding.maskBlob ||
           result.sourceFingerprint !== binding.sourceFingerprint || result.maskFingerprint !== binding.maskFingerprint ||
           authorizationIdentity(result.regions) !== binding.authorization) return;
@@ -336,6 +353,23 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     },
     [publishRemnantReview],
   );
+
+  const setPageRemnantTextEvidence = useCallback((pageUrl: string, evidence?: PageRemnantTextEvidence) => {
+    const previous = textEvidenceRef.current.get(pageUrl);
+    if (textEvidenceIdentity(previous?.textEvidence, previous?.sourceContext) === textEvidenceIdentity(evidence?.textEvidence, evidence?.sourceContext)) return;
+    if (evidence) textEvidenceRef.current.set(pageUrl, { sourceContext: evidence.sourceContext, textEvidence: evidence.textEvidence.map(e => ({ id: e.id, box: [...e.box] })) });
+    else textEvidenceRef.current.delete(pageUrl);
+    inspectionTokensRef.current.set(pageUrl, (inspectionTokensRef.current.get(pageUrl) ?? 0) + 1);
+    reviewBindingsRef.current.delete(pageUrl);
+    const reviews = new Map(remnantReviewsRef.current);
+    reviews.delete(pageUrl);
+    remnantReviewsRef.current = reviews;
+    setRemnantReviews(reviews);
+    queueMicrotask(() => {
+      const result = resultsRef.current.get(pageUrl);
+      if (result && pagesRef.current.includes(pageUrl)) void inspectPageRemnants(pageUrl, result);
+    });
+  }, [inspectPageRemnants]);
 
   const persistArtworkConfirmations = useCallback(
     async (pageUrl: string) => {
@@ -955,6 +989,12 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       }
     }
     const retainedReviews = new Map(remnantReviewsRef.current);
+    for (const pageUrl of textEvidenceRef.current.keys()) {
+      if (!pagesRef.current.includes(pageUrl)) {
+        textEvidenceRef.current.delete(pageUrl);
+        inspectionTokensRef.current.set(pageUrl, (inspectionTokensRef.current.get(pageUrl) ?? 0) + 1);
+      }
+    }
     let reviewRemoved = false;
     for (const pageUrl of retainedReviews.keys()) {
       if (!pagesRef.current.includes(pageUrl)) {
@@ -1006,6 +1046,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     currentResult,
     currentRemnantReview,
     getCurrentRemnantReview,
+    setPageRemnantTextEvidence,
     recheckPageRemnants: async (pageUrl: string) => {
       const result = resultsRef.current.get(pageUrl);
       if (result) await inspectPageRemnants(pageUrl, result);

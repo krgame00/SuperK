@@ -25,6 +25,7 @@ import {
   inspectBackgroundRemnants,
   lumaPlaneFromRgba,
   revisionKeyOf,
+  textEvidenceIdentity,
   type BackgroundArtworkConfirmation,
   type BackgroundInspectionInput,
   type BackgroundInspectionRevisions,
@@ -143,6 +144,8 @@ export interface InspectCleanedPageParams {
   sourceBlob?: Blob;
   /** Optional bubble text evidence (0-1000 boxes); not required for review. */
   textEvidence?: readonly RemnantTextEvidence[];
+  /** Stable original-image fingerprint for the supplied source boxes. */
+  sourceContext?: string;
   /** Confirmations from earlier inspections; only exact revisionKey matches bind. */
   confirmations?: readonly BackgroundArtworkConfirmation[];
   cache?: BackgroundInspectionCache;
@@ -159,7 +162,7 @@ export async function inspectCleanedPage(params: InspectCleanedPageParams): Prom
   const { result, sourceBlob, textEvidence, confirmations, cache = sharedInspectionCache } = params;
   let revisions: BackgroundInspectionRevisions;
   try {
-    revisions = await remnantRevisions(result);
+    revisions = { ...await remnantRevisions(result), textEvidenceRevision: params.sourceContext };
   } catch (error) {
     return unverifiedResult(
       { sourceRevision: result.sourceFingerprint ?? "", backgroundRevision: "", removalRevision: "" },
@@ -168,7 +171,7 @@ export async function inspectCleanedPage(params: InspectCleanedPageParams): Prom
       error instanceof Error ? error.message : "Could not compute the page's revision identities.",
     );
   }
-  const revisionKey = revisionKeyOf(revisions) ?? "";
+  const revisionKey = revisionKeyOf({ ...revisions, textEvidenceRevision: textEvidenceIdentity(textEvidence, params.sourceContext) }) ?? "";
   if (!revisionKey) {
     return unverifiedResult(
       revisions,

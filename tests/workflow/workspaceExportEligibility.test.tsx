@@ -153,6 +153,7 @@ beforeEach(() => {
     inspectTranslatedPages: vi.fn(() => []),
     replaceBubbleText: vi.fn(() => 0),
     getPageSignature: vi.fn(() => "rev-0"),
+    getPageSourceRevision: vi.fn(() => "src-1"),
     getPageRevision: vi.fn(() => 0),
     cacheRevision: 0,
     inspectLegacyTargets: vi.fn(() => []),
@@ -197,7 +198,7 @@ async function restoreWorkspaceWith(overrides: Record<string, unknown>) {
 
 async function requestExport(item: RegExp | string) {
   fireEvent.click(screen.getAllByRole("button", { name: "ส่งออก" })[0]);
-  fireEvent.click(await screen.findByRole("menuitem", { name: item }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: item instanceof RegExp && item.source === "ZIP" ? /^ZIP$/ : item }));
 }
 
 async function readBlobBytes(blob: Blob): Promise<ArrayBuffer> {
@@ -340,11 +341,11 @@ test("missing review evidence blocks export and explicit per-point confirmation 
 });
 
 test("publish-back to the reading view is gated by the same eligibility rule", async () => {
-  const publishCalls: string[] = [];
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+  const publishCalls: unknown[] = [];
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/extension/publish-back")) {
-      publishCalls.push(url);
+      publishCalls.push(JSON.parse(String(init?.body)));
       return { ok: true, json: async () => ({}) } as Response;
     }
     return { ok: true, status: 200, json: async () => ({ pairingToken: "tok" }) } as Response;
@@ -375,6 +376,40 @@ test("publish-back to the reading view is gated by the same eligibility rule", a
   const repairedButton = screen.getAllByRole("button", { name: "ส่งคำแปลกลับไปยังหน้าอ่านบนเว็บ" })[0];
   fireEvent.click(repairedButton);
   await waitFor(() => expect(publishCalls).toHaveLength(1));
+  expect(publishCalls[0]).toMatchObject({ bubbles: [cleanVerified()], targetIdentity: {targetId:"th",policyVersion:LANGUAGE_POLICY_VERSION},sourceRevision:"src-1",backgroundState:"approved" });
+});
+
+test("publication rejects an accepted cache replacement during pairing", async () => {
+ const cache = new Map([[PAGE_ONE_URL,[cleanVerified()]]]);
+ let finishPairing!: (value: Response) => void;
+ const fetchMock = vi.fn((input:RequestInfo|URL) => String(input).endsWith("/pair") ? new Promise<Response>(resolve => { finishPairing = resolve; }) : Promise.resolve({ok:true,json:async()=>({})} as Response));
+ vi.stubGlobal("fetch",fetchMock);
+ const failure = vi.spyOn(console,"error").mockImplementation(() => {});
+ await restoreWorkspaceWith({bubbleCacheRef:{current:cache},restoreSavedSession:vi.fn().mockResolvedValue({pages:[{url:PAGE_ONE_URL,name:PAGE_ONE_NAME,originUrl:"https://reader.example/page-1"}],currentPage:0,bubbleCache:new Map(),translatedImageCache:new Map()})});
+ await act(async () => { fireEvent.click(screen.getAllByRole("button",{name:"ส่งคำแปลกลับไปยังหน้าอ่านบนเว็บ"})[0]); });
+ await waitFor(() => expect(finishPairing).toBeTypeOf("function"));
+ await act(async () => { cache.set(PAGE_ONE_URL,[cleanVerified("รอก่อนนะ")]); finishPairing({ok:true,json:async()=>({pairingToken:"tok"})} as Response); });
+ expect(fetchMock.mock.calls.some(([url])=>String(url).includes("publish-back"))).toBe(false);
+ expect(failure).toHaveBeenCalledExactlyOnceWith("Failed to publish back to reading view:",expect.objectContaining({message:"หลักฐานเปลี่ยนระหว่างส่งกลับ กรุณาตรวจหน้าอีกครั้ง"}));
+ failure.mockRestore();
+});
+
+test.each([false,true])("two strip chunks stage the whole book before release (mutation %s)", async (mutate) => {
+ const cache = new Map([[PAGE_ONE_URL,[cleanVerified()]],[PAGE_TWO_URL,[cleanVerified()]]]);
+ vi.spyOn(HTMLImageElement.prototype,"src","set").mockImplementation(function(this:HTMLImageElement,url){this.setAttribute("src",url);Object.defineProperties(this,{naturalWidth:{value:1200,configurable:true},naturalHeight:{value:8000,configurable:true}});queueMicrotask(()=>this.dispatchEvent(new Event("load")));});
+ vi.spyOn(HTMLCanvasElement.prototype,"getContext").mockReturnValue({drawImage:vi.fn()} as never);
+ vi.spyOn(HTMLCanvasElement.prototype,"toDataURL").mockReturnValue("data:image/png;base64,UkVOREVSRUQ=");
+ let chunks = 0;
+ vi.spyOn(HTMLCanvasElement.prototype,"toBlob").mockImplementation(function(callback){ chunks++; if(mutate && chunks===2) cache.set(PAGE_ONE_URL,[cleanVerified("รอก่อนนะ")]);queueMicrotask(()=>callback(new Blob([`chunk-${chunks}`],{type:"image/jpeg"})));});
+ const failure = vi.spyOn(console,"error").mockImplementation(()=>{});
+ await restoreWorkspaceWith({bubbleCacheRef:{current:cache},restoreSavedSession:vi.fn().mockResolvedValue({pages:[{url:PAGE_ONE_URL,name:PAGE_ONE_NAME},{url:PAGE_TWO_URL,name:"page-two.png"}],currentPage:0,bubbleCache:new Map(),translatedImageCache:new Map()})});
+ const completed = new Promise<void>(resolve=>vi.mocked(translationMockState.setTranslationResult as ReturnType<typeof vi.fn>).mockImplementation((message:unknown)=>{if(typeof message==="string" && (message.includes("สำเร็จ!")||message.includes("เกิดข้อผิดพลาดในการรวมภาพ"))) resolve();}));
+ await act(async()=>{await requestExport(/Strip/); await completed;});
+ const {saveBlob} = await import("@/lib/export/saveLocation");
+ expect(chunks).toBe(2);
+ if(mutate){expect(saveBlob).not.toHaveBeenCalled();expect(failure).toHaveBeenCalledExactlyOnceWith("Failed to generate long strip",expect.objectContaining({message:"หลักฐานหรือข้อความเปลี่ยนระหว่างส่งออก กรุณาตรวจหน้าและส่งออกใหม่"}));}
+ else {expect(saveBlob).toHaveBeenCalledOnce();expect(vi.mocked(saveBlob).mock.calls[0][1]).toMatch(/\.zip$/);const JSZip=(await import("jszip")).default; const zip=await JSZip.loadAsync(await readBlobBytes(vi.mocked(saveBlob).mock.calls[0][0] as Blob));expect(Object.keys(zip.files)).toHaveLength(2);expect(failure).not.toHaveBeenCalled();}
+ failure.mockRestore();
 });
 
 test.each([/ZIP/, /CBZ/, /PDF/, /Strip/, "รูปภาพหน้านี้"])("every output format blocks absent background before raster selection: %s", async (format) => {
@@ -390,6 +425,20 @@ test.each([/ZIP/, /CBZ/, /PDF/, /Strip/, "รูปภาพหน้านี�
  expect(saveBlob).not.toHaveBeenCalled();
 });
 
+test("live changed known source box blocks output before the background recheck effect", async () => {
+ const cache = new Map([[PAGE_ONE_URL,[cleanVerified()]]]);
+ const base = vi.mocked(useCleaning)({pages:[],currentPage:0});
+ const accessor = vi.fn((_url:string,expected?:{sourceContext:string;textEvidence:{id:string;box:number[]}[]}) => expected?.sourceContext==="src-1" && expected.textEvidence[0]?.box[1]===0 ? base.getCurrentRemnantReview(PAGE_ONE_URL) : undefined);
+ vi.mocked(useCleaning).mockReturnValue({...base,getCurrentRemnantReview:accessor,setPageRemnantTextEvidence:vi.fn()} as never);
+ await restoreWorkspaceWith({bubbleCacheRef:{current:cache}});
+ cache.set(PAGE_ONE_URL,[{...cleanVerified(),box:[0,200,100,300]}]);
+ await requestExport("รูปภาพหน้านี้");
+ expect(await screen.findByText("มีหน้าที่ต้องได้รับการยืนยันก่อน Export")).toBeTruthy();
+ expect(accessor).toHaveBeenCalledWith(PAGE_ONE_URL,{sourceContext:"src-1",textEvidence:[{id:"0",box:[0,200,100,300]}]});
+ expect(applyTranslationOverlay).not.toHaveBeenCalled();
+ const {saveBlob}=await import("@/lib/export/saveLocation");expect(saveBlob).not.toHaveBeenCalled();
+});
+
 test("remnant findings open the comparison mask at the bounded candidate without resolving or recleaning", async () => {
  const base = vi.mocked(useCleaning)({pages:[],currentPage:0});
  const region = {id:"r",rect:{x:2,y:2,width:12,height:12},status:"ready",textRole:"dialogue",route:"flat"};
@@ -399,7 +448,7 @@ test("remnant findings open the comparison mask at the bounded candidate without
  expect(inspection.candidates.length).toBeGreaterThan(0);
  const resolve = vi.fn();
  const confirm = vi.fn();
- vi.mocked(useCleaning).mockReturnValue({...base,currentResult:{...cleaningResult,regions:[region]},currentRemnantReview:{inspection},resolveMaskRegion:resolve,confirmArtworkCandidate:confirm} as never);
+ vi.mocked(useCleaning).mockReturnValue({...base,currentResult:{...cleaningResult,regions:[region]},currentRemnantReview:{inspection},getCurrentRemnantReview:()=>({inspection}),resolveMaskRegion:resolve,confirmArtworkCandidate:confirm} as never);
  await restoreWorkspaceWith({});
  fireEvent.click(screen.getAllByRole("button",{name:"แก้ Mask ที่จุดนี้"})[0]);
  const {MaskEditor} = await import("@/components/cleaning/MaskEditor");

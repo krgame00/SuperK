@@ -55,6 +55,24 @@ function textBox(id: string, ymin: number, xmin: number, ymax: number, xmax: num
 
 const REVISIONS = { sourceRevision: "src-1", backgroundRevision: "bg-1", removalRevision: "mask-1" };
 
+it("cache and artwork confirmations bind exact known source evidence and context", () => {
+  const original = makePlane(64, 64);
+  fillRect(original, 20, 24, 20, 10, INK);
+  const cache = new BackgroundInspectionCache(4);
+  const base = { revisions: REVISIONS, originalPlane: original, cleanPlane: copyPlane(original), removalRegions: [region("clean", { x: 2, y: 2, width: 8, height: 8 })] };
+  expect(cache.inspect(base).candidates).toHaveLength(0);
+  const evidence = [textBox("outside", 300, 250, 600, 700)];
+  const finding = cache.inspect({ ...base, textEvidence: evidence });
+  expect(finding.candidates).toHaveLength(1);
+  const confirmation = confirmCandidateArtwork(finding, finding.candidates[0].id)!;
+  const changed = cache.inspect({ ...base, textEvidence: [textBox("outside-new", 300, 250, 600, 700)], artworkConfirmations: [confirmation] });
+  expect(changed.revisionKey).not.toBe(finding.revisionKey);
+  expect(changed.candidates[0].state).not.toBe("human-confirmed-artwork");
+  const contextChanged = cache.inspect({ ...base, revisions: { ...REVISIONS, textEvidenceRevision: "new-source-context" }, textEvidence: evidence, artworkConfirmations: [confirmation] });
+  expect(contextChanged.revisionKey).not.toBe(finding.revisionKey);
+  expect(contextChanged.candidates[0].state).not.toBe("human-confirmed-artwork");
+});
+
 function openStates(result: BackgroundInspectionResult): string[] {
   return result.candidates.filter(c => c.state !== "human-confirmed-artwork").map(c => c.state);
 }

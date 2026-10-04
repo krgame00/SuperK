@@ -43,6 +43,8 @@ export interface BackgroundInspectionRevisions {
   backgroundRevision: string;
   /** Removal-evidence identity, e.g. mask fingerprint + region authorization. */
   removalRevision: string;
+  /** Known source boxes and their original-image context. */
+  textEvidenceRevision?: string;
 }
 
 export interface RemnantRemovalRegion {
@@ -57,6 +59,10 @@ export interface RemnantTextEvidence {
   id: string;
   /** Bounding box [ymin, xmin, ymax, xmax] in 0-1000 page scale (TranslatedBubble.box convention). */
   box: number[];
+}
+
+export function textEvidenceIdentity(evidence: readonly RemnantTextEvidence[] = [], sourceContext = ""): string {
+  return JSON.stringify(["source-box-policy-v1", sourceContext, evidence.map(e => [e.id, e.box])]);
 }
 
 export interface BackgroundArtworkConfirmation {
@@ -165,7 +171,7 @@ export function revisionKeyOf(revisions: BackgroundInspectionRevisions): string 
   if (![sourceRevision, backgroundRevision, removalRevision].every(v => typeof v === "string" && v.length > 0)) {
     return undefined;
   }
-  return JSON.stringify([`background-remnant-inspection-v${BACKGROUND_REMNANT_INSPECTION_VERSION}`, sourceRevision, backgroundRevision, removalRevision]);
+  return JSON.stringify([`background-remnant-inspection-v${BACKGROUND_REMNANT_INSPECTION_VERSION}`, sourceRevision, backgroundRevision, removalRevision, revisions.textEvidenceRevision ?? textEvidenceIdentity()]);
 }
 
 /** ITU-R BT.601 luma with transparent pixels composited over white. */
@@ -328,7 +334,7 @@ function unverifiedResult(revisions: BackgroundInspectionRevisions, revisionKey:
  * Synchronous, deterministic, allocation-bounded, and side-effect free.
  */
 export function inspectBackgroundRemnants(input: BackgroundInspectionInput): BackgroundInspectionResult {
-  const revisions = input.revisions;
+  const revisions = { ...input.revisions, textEvidenceRevision: textEvidenceIdentity(input.textEvidence, input.revisions.textEvidenceRevision) };
   const revisionKey = revisionKeyOf(revisions) ?? "";
   if (!revisionKey) {
     return unverifiedResult(revisions, revisionKey, "missing-revisions", "Source, background and removal revision identities are required to bind findings.");
@@ -524,7 +530,7 @@ export class BackgroundInspectionCache {
   }
 
   inspect(input: BackgroundInspectionInput): BackgroundInspectionResult {
-    const key = revisionKeyOf(input.revisions);
+    const key = revisionKeyOf({ ...input.revisions, textEvidenceRevision: textEvidenceIdentity(input.textEvidence, input.revisions.textEvidenceRevision) });
     let base = key ? this.entries.get(key) : undefined;
     if (!base) {
       base = inspectBackgroundRemnants({ ...input, artworkConfirmations: undefined });

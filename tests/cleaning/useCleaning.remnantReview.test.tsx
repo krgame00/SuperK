@@ -159,6 +159,58 @@ const cleaningResult = {
 
 const maskBlob = new Blob(["mask-image-data"], { type: "image/png" });
 
+test("known source evidence outside a cleaned region invalidates approval synchronously", async () => {
+  vi.mocked(createCleaningJob).mockResolvedValue(queuedJob);
+  vi.mocked(getCleaningJob).mockResolvedValue(succeededJob);
+  vi.mocked(getCleaningResult).mockResolvedValue({ ...cleaningResult, regions: [{ ...regionFixture, rect: { x: 2, y: 2, width: 8, height: 8 } }] });
+  const { result } = renderHook(() => useCleaning({ pages: ["blob:one"], currentPage: 0 }));
+  let cleaning!: Promise<PageCleaningResult>;
+  act(() => { cleaning = result.current.cleanPage("blob:one", SOURCE_BLOB); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); await cleaning; });
+  expect(result.current.getCurrentRemnantReview("blob:one")?.eligibility).toBe("approved");
+  const evidence = { sourceContext: `${SOURCE_BLOB.size}:image/png`, textEvidence: [{ id: "outside", box: [300, 250, 600, 700] }] };
+  expect(result.current.getCurrentRemnantReview("blob:one", evidence)).toBeUndefined();
+  act(() => { result.current.setPageRemnantTextEvidence("blob:one", evidence); });
+  expect(result.current.getCurrentRemnantReview("blob:one", evidence)).toBeUndefined();
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); for (let i = 0; i < 40; i++) await Promise.resolve(); });
+  const review = result.current.getCurrentRemnantReview("blob:one", evidence)!;
+  expect(review.eligibility).toBe("unresolved");
+  expect(review.inspection.candidates[0].evidence.textEvidenceIds).toContain("outside");
+  act(() => { expect(result.current.confirmArtworkCandidate("blob:one", review.inspection.candidates[0].id)).toBe(true); });
+  expect(result.current.getCurrentRemnantReview("blob:one", evidence)?.eligibility).toBe("human-confirmed");
+  const decodes = vi.mocked(createImageBitmap).mock.calls.length;
+  act(() => { result.current.setPageRemnantTextEvidence("blob:one", { ...evidence, textEvidence: evidence.textEvidence.map(e => ({ ...e, box: [...e.box] })) }); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); for (let i = 0; i < 40; i++) await Promise.resolve(); });
+  expect(vi.mocked(createImageBitmap).mock.calls.length).toBe(decodes);
+  const changed = { ...evidence, textEvidence: [{ id: "outside-new", box: [300, 250, 600, 700] }] };
+  act(() => { result.current.setPageRemnantTextEvidence("blob:one", changed); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); for (let i = 0; i < 40; i++) await Promise.resolve(); });
+  expect(result.current.getCurrentRemnantReview("blob:one", changed)?.eligibility).toBe("unresolved");
+  expect(result.current.getCurrentRemnantReview("blob:one", changed)?.inspection.revisionKey).not.toBe(review.inspection.revisionKey);
+  const decoder = vi.mocked(createImageBitmap).getMockImplementation()!;
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  vi.mocked(createImageBitmap).mockImplementationOnce(async (...args) => {
+    await pending;
+    return decoder(...args);
+  });
+  let recheck!: Promise<void>;
+  act(() => { recheck = result.current.recheckPageRemnants("blob:one"); });
+  await act(async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); });
+  const latest = { ...changed, textEvidence: [] };
+  act(() => { result.current.setPageRemnantTextEvidence("blob:one", latest); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); for (let i = 0; i < 40; i++) await Promise.resolve(); });
+  expect(result.current.getCurrentRemnantReview("blob:one", latest)?.eligibility).toBe("approved");
+  await act(async () => { release(); await recheck; });
+  expect(result.current.getCurrentRemnantReview("blob:one", latest)?.eligibility).toBe("approved");
+  expect(result.current.getCurrentRemnantReview("blob:one", changed)).toBeUndefined();
+  expect(result.current.getCurrentRemnantReview("blob:one", { ...latest, sourceContext: "" })).toBeUndefined();
+  act(() => { result.current.setPageRemnantTextEvidence("blob:one", { ...latest, sourceContext: "different-source" }); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); for (let i = 0; i < 40; i++) await Promise.resolve(); });
+  expect(result.current.getCurrentRemnantReview("blob:one")).toBeUndefined();
+  expect(result.current.currentRemnantReview?.eligibility).toBe("unavailable");
+});
+
 test("opening saved work with missing local assets never contacts the cleaning provider", async () => {
   vi.mocked(loadCleaningResultsMetadata).mockResolvedValue(new Map([["blob:one", storedMetadata()]]));
   vi.mocked(loadCleaningResultAssets).mockResolvedValue({ cleanBlob: null, maskBlob: null, reviewMaskBlob: null, protectedMaskBlob: null });

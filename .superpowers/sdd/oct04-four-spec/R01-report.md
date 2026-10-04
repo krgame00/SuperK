@@ -128,3 +128,22 @@ The older useCleaning suite emits jsdom's unsupported canvas-context diagnostics
 Adjacent whole-mask test timing correction: broad verification exposed the existing draft/Undo test intermittently checking alpha 150 immediately after navigating back, before the async image loader completed. Source trace showed the loader cancels obsolete callbacks and applies the stored cleared snapshot correctly. Replaced setTimeout(0) sleeps with exact public mask-pixel transition assertions (next 150, previous 0); no guessed production fix. Full MaskEditor 42 tests and final combined 177 tests pass. Actual cleaned-image Undo/Redo persistence is not claimed tested; see R02 readiness.
 
 Final TypeScript result: the final `node node_modules/typescript/bin/tsc --noEmit --incremental false` invocation completed with exit 0 and no diagnostics after S03's simultaneous changes settled.
+
+### R01 Important correction — known source evidence (2026-10-04)
+
+Production inspection now receives current known source boxes through the optional public hook seam:
+
+- `PageRemnantTextEvidence = { sourceContext: string; textEvidence: readonly RemnantTextEvidence[] }` (`sourceContext` is the stable original fingerprint, equal to the cleaning result sourceFingerprint).
+- `setPageRemnantTextEvidence(pageUrl, evidence?)` synchronously snapshots/clones evidence, cancels obsolete inspection tokens, clears review binding and queues local inspection in a microtask. Equivalent id/box/context content is a no-op and triggers no decoding. Clearing evidence uses undefined.
+- `getCurrentRemnantReview(pageUrl, expectedEvidence?)` synchronously rejects missing or mismatched installed/live evidence, empty expected source context, and evidence bound to a different original fingerprint. Output boundaries must supply current expected evidence to avoid setter-effect lag.
+
+The pure revision/cache key includes source-box policy, exact box IDs/geometry and original source context. Artwork confirmations bind that key and cannot clear findings from new boxes. Clean assets and overlay composition are unchanged. Evidence boxes are SOURCE boxes, never render geometry; deleted points are filtered by the page consumer while cleaning regions continue to account for remaining known foreign/source ink under the approved policy. No pixel reads occur in pointer handlers. Page wiring and candidate comparison navigation are owned by G04/root, not this correction's files.
+
+Regression reproduces a genuinely clean authorized rectangle and surviving original glyph ink in a known source box outside it: initially approved before evidence arrives; current expected evidence rejects that approval synchronously; queued local inspection publishes unresolved outside candidate. It also checks unchanged evidence does not decode, changed evidence does not reuse artwork confirmation, an obsolete pending decode cannot overwrite latest evidence, and missing/different source context fails closed.
+
+Verification:
+- RED: `node node_modules/vitest/vitest.mjs run tests/cleaning/useCleaning.remnantReview.test.tsx` — exit 1, 1 failed / 12 passed; expected undefined but received approved review before evidence binding.
+- GREEN final: `node node_modules/vitest/vitest.mjs run tests/cleaning/useCleaning.remnantReview.test.tsx tests/cleaning/backgroundRemnantInspection.test.ts tests/cleaning/remnantReview.test.ts` — exit 0, 3 files / 58 tests passed (18:07:57, duration 2.25s).
+- `node node_modules/typescript/bin/tsc --noEmit` — final exit 0. Earlier concurrent run reported G05 strictParity/strictEvidence errors; owner changes resolved them before final run.
+- `node node_modules/eslint/bin/eslint.js hooks/useCleaning.ts lib/cleaning/remnantReview.ts lib/cleaning/backgroundRemnantInspection.ts tests/cleaning/useCleaning.remnantReview.test.tsx tests/cleaning/backgroundRemnantInspection.test.ts` — exit 0, no diagnostics.
+- Global `npx` is unavailable (missing roaming npx-cli.js), so verification invokes local CLI entrypoints directly. No full suite, provider/restart commands, index or commits performed.

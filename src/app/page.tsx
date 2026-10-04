@@ -2,6 +2,7 @@
 
 import { PageReviewNotice } from "@/components/cleaning/PageReviewNotice";
 import { translationScope } from "@/lib/cleaning/textAuthorization";
+import { backgroundEligibilityState } from "@/lib/cleaning/backgroundRemnantInspection";
 
 import { useState, useMemo, useRef, useEffect, useCallback, type SetStateAction } from "react";
 import { getWorkspacePrimaryAction } from "@/lib/workspacePrimaryAction";
@@ -16,7 +17,7 @@ import {
 import { Upload, Download, Flame, Eye, EyeOff, Undo2, Redo2, GalleryVertical, RectangleHorizontal, Menu, X, Settings, FileArchive, BookOpen, FileText, Sparkles, Loader2, Check, AlertCircle, RefreshCw, ArrowDown, ArrowUp, ChevronDown, ChevronUp, Eraser, Paintbrush, RotateCcw, ScanSearch } from "lucide-react";
 import { undoManager } from "@/lib/undoManager";
 import JSZip from "jszip";
-import { findRecoveredRegionId, useCleaning } from "@/hooks/useCleaning";
+import { findRecoveredRegionId, useCleaning, type PageRemnantTextEvidence } from "@/hooks/useCleaning";
 import {
   CleaningToolbar,
   stageLabel,
@@ -269,9 +270,9 @@ export default function WorkspacePage() {
     error: cleaningError,
     resultsByPage: cleaningResultsByPage,
     getCurrentRemnantReview,
-    currentRemnantReview,
     confirmArtworkCandidate,
     recheckPageRemnants,
+    setPageRemnantTextEvidence,
   } = useCleaning({ pages: pageUrls, pageIds, currentPage });
 
   useEffect(() => {
@@ -443,6 +444,7 @@ export default function WorkspacePage() {
     isRepairingBook,
     replaceBubbleText,
     getPageSignature,
+    getPageSourceRevision,
     cacheRevision: translationCacheRevision,
   } = useTranslation({
     currentPage,
@@ -464,6 +466,18 @@ export default function WorkspacePage() {
       });
     },
   });
+
+  const getExpectedRemnantEvidence = useCallback((pageUrl: string): PageRemnantTextEvidence => ({
+    sourceContext: getPageSourceRevision?.(pageUrl) ?? "",
+    textEvidence: (bubbleCacheRef.current.get(pageUrl) ?? []).flatMap((bubble, index) =>
+      !bubble.deleted && bubble.original_text?.trim() && bubble.box?.length === 4 && bubble.box.every(Number.isFinite)
+        ? [{ id: String(index), box: [...bubble.box] }] : []),
+  }), [bubbleCacheRef, getPageSourceRevision]);
+  const remnantEvidenceKey = JSON.stringify(pages.map(page => [page.url, getExpectedRemnantEvidence(page.url)]));
+  useEffect(() => {
+    const entries = JSON.parse(remnantEvidenceKey) as [string, PageRemnantTextEvidence][];
+    for (const [url, evidence] of entries) setPageRemnantTextEvidence?.(url, evidence);
+  }, [remnantEvidenceKey, setPageRemnantTextEvidence]);
 
   useEffect(() => {
     if (!translatedImages) return;
@@ -1225,11 +1239,15 @@ export default function WorkspacePage() {
     // failures, unresolved review evidence, unconfirmed targets and unresolved
     // background-remnant findings block publish-back; generated-text approval
     // cannot clear them. Recomputed from raw text at each attempt.
+    const publicationBubbles = JSON.parse(JSON.stringify(bubbleCacheRef.current.get(page.url) ?? [])) as TranslatedBubble[];
+    const publicationTarget = pageTargetCacheRef.current.get(page.url);
+    const publicationBackground = getCurrentRemnantReview?.(page.url, getExpectedRemnantEvidence(page.url))?.inspection;
+    const publicationSource = getPageSourceRevision?.(page.url);
     const blockers = getPageOutputBlockers(
-      bubbleCacheRef.current.get(page.url) ?? activeBubbles,
-      pageTargetCacheRef.current.get(page.url),
-      getCurrentRemnantReview?.(page.url)?.inspection,
-      cleaningResultsByPage.get(page.url)?.sourceFingerprint,
+      publicationBubbles,
+      publicationTarget,
+      publicationBackground,
+      publicationSource,
     );
     if (blockers.targetUnconfirmed || blockers.scriptIssueCount > 0 ||
         blockers.unverifiedReviewCount > 0 || blockers.backgroundBlocked) {
@@ -1275,7 +1293,11 @@ export default function WorkspacePage() {
         body: JSON.stringify({
           pageUrl: page.url,
           originUrl: page.originUrl,
-          bubbles: activeBubbles,
+          bubbles: publicationBubbles,
+          targetIdentity: publicationTarget,
+          sourceRevision: publicationSource,
+          backgroundState: publicationBackground ? backgroundEligibilityState(publicationBackground) : undefined,
+          backgroundRevision: publicationBackground?.revisionKey,
           textStyle,
           cleanUrl,
         }),
@@ -1310,14 +1332,14 @@ export default function WorkspacePage() {
       confirmedMissingTranslationsRef.current,
       {
         targetIdentities: pageTargetCacheRef.current,
-        sourceRevisions: new Map(snapshotPages.map((page) => [page.url, cleaningResultsByPage.get(page.url)?.sourceFingerprint])),
+        sourceRevisions: new Map(snapshotPages.map((page) => [page.url, getPageSourceRevision?.(page.url)])),
         backgroundInspections: new Map(snapshotPages.flatMap((page) => {
-          const review = getCurrentRemnantReview?.(page.url);
+          const review = getCurrentRemnantReview?.(page.url, getExpectedRemnantEvidence(page.url));
           return review ? [[page.url, review.inspection] as const] : [];
         })),
       },
     );
-  }, [confirmedPages, cleaningResultsByPage, pageTargetCacheRef, getCurrentRemnantReview, bubbleCacheRef]);
+  }, [confirmedPages, cleaningResultsByPage, pageTargetCacheRef, getCurrentRemnantReview, bubbleCacheRef, getPageSourceRevision, getExpectedRemnantEvidence]);
 
   // Explicit original-image substitution for one affected page, scoped to the
   // pending export snapshot. The exported bytes become the page's original.
@@ -1346,7 +1368,7 @@ export default function WorkspacePage() {
     setUnconfirmedReviewPages(collectExportReviewPages(exportSnapshotRef.current.pages, pendingReviewIndicesRef.current));
   }, [translationCacheRevision, collectExportReviewPages]);
 
-  const exportInputSignature = (pageUrl: string) => JSON.stringify([pageTargetCacheRef.current.get(pageUrl), bubbleCacheRef.current.get(pageUrl), textStyleRef.current, getCurrentRemnantReview?.(pageUrl)?.inspection.revisionKey, cleaningResultsByPage.get(pageUrl)?.sourceFingerprint, cleaningResultsByPage.get(pageUrl)?.cleanUrl]);
+  const exportInputSignature = (pageUrl: string) => JSON.stringify([pageTargetCacheRef.current.get(pageUrl), bubbleCacheRef.current.get(pageUrl), textStyleRef.current, getCurrentRemnantReview?.(pageUrl, getExpectedRemnantEvidence(pageUrl))?.inspection.revisionKey, getPageSourceRevision?.(pageUrl), cleaningResultsByPage.get(pageUrl)?.sourceFingerprint, cleaningResultsByPage.get(pageUrl)?.cleanUrl]);
 
     const renderExportImage = async (pageUrl: string, index: number, pages: WorkspaceExportPage[]): Promise<string | null> => {
       if (collectExportReviewPages(pages, [index]).length) throw new Error("กรุณาตรวจหลักฐานหน้านี้ใหม่ เลือกต้นฉบับ หรือข้ามหน้า");
@@ -1537,9 +1559,9 @@ export default function WorkspacePage() {
         const MAX_STRIP_HEIGHT = 14000;
         let currentChunk: { img: HTMLImageElement; height: number }[] = [];
         let currentHeight = 0;
-        let chunkIndex = 1;
+        const stagedChunks: Blob[] = [];
 
-        const exportChunk = async (chunk: { img: HTMLImageElement; height: number }[], index: number) => {
+        const exportChunk = async (chunk: { img: HTMLImageElement; height: number }[]) => {
           const totalH = chunk.reduce((sum, item) => sum + item.height, 0);
           const stripCanvas = document.createElement("canvas");
           stripCanvas.width = targetWidth;
@@ -1553,22 +1575,17 @@ export default function WorkspacePage() {
             yOffset += item.height;
           }
 
-          const stripFilename = generateStripFilename(index, chunkIndex > 1 ? chunkIndex : 1, pages);
           const blob = await new Promise<Blob>((resolve, reject) => {
             stripCanvas.toBlob(result => result ? resolve(result) : reject(new Error("ไม่สามารถสร้างภาพ Strip")), "image/jpeg", 0.92);
           });
           assertCurrentOutput();
-          const savedName = await saveBlob(blob, stripFilename, destDir);
-          if (savedName && savedName !== stripFilename) {
-            const toast = (await import("react-hot-toast")).default;
-            toast.success(`บันทึกเป็น "${savedName}" (พบไฟล์ชื่อซ้ำ)`);
-          }
+          stagedChunks.push(blob);
         };
 
         for (const img of loadedImages) {
           const scaledHeight = Math.round((targetWidth / img.naturalWidth) * img.naturalHeight);
           if (currentHeight + scaledHeight > MAX_STRIP_HEIGHT && currentChunk.length > 0) {
-            await exportChunk(currentChunk, chunkIndex++);
+            await exportChunk(currentChunk);
             currentChunk = [];
             currentHeight = 0;
           }
@@ -1577,11 +1594,34 @@ export default function WorkspacePage() {
         }
 
         if (currentChunk.length > 0) {
-          await exportChunk(currentChunk, chunkIndex);
+          await exportChunk(currentChunk);
+        }
+
+        let releaseBlob = stagedChunks[0];
+        let releaseFilename = generateStripFilename(1, stagedChunks.length, pages);
+        if (stagedChunks.length > 1) {
+          const archive = new JSZip();
+          for (let i = 0; i < stagedChunks.length; i++) {
+            const bytes = await new Promise<ArrayBuffer>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result as ArrayBuffer);
+              reader.onerror = () => reject(reader.error);
+              reader.readAsArrayBuffer(stagedChunks[i]);
+            });
+            archive.file(generateStripFilename(i + 1, stagedChunks.length, pages), bytes);
+          }
+          releaseBlob = await archive.generateAsync({ type: "blob" });
+          releaseFilename = generateStripFilename(1, 1, pages).replace(/\.jpg$/, ".zip");
+        }
+        assertCurrentOutput();
+        const savedName = await saveBlob(releaseBlob, releaseFilename, destDir);
+        if (savedName && savedName !== releaseFilename) {
+          const toast = (await import("react-hot-toast")).default;
+          toast.success(`บันทึกเป็น "${savedName}" (พบไฟล์ชื่อซ้ำ)`);
         }
 
         const folderLabel = destDir?.name ? ` ใน "${destDir.name}"` : "";
-        setTranslationResult(`✅ ดาวน์โหลด Webtoon Strip${folderLabel} สำเร็จ! (${loadedImages.length} หน้า)${excludedNote}`);
+        setTranslationResult(`✅ ดาวน์โหลดภาพยาว${stagedChunks.length > 1 ? " รวมทุกส่วนใน ZIP" : ""}${folderLabel} สำเร็จ! (${loadedImages.length} หน้า)${excludedNote}`);
         setTimeout(() => setTranslationResult(null), 3000);
       } catch (e) {
         console.error("Failed to generate long strip", e);
@@ -2580,6 +2620,7 @@ export default function WorkspacePage() {
               <div className="grid grid-cols-4 gap-2">
                 <button
                   onClick={() => { void requestBookExport("strip"); setIsMobileMenuOpen(false); }}
+                  title="ภาพยาว (หลายส่วนรวม ZIP)"
                   disabled={isZipping || isChoosingExport || pages.length === 0}
                   className="bg-surface text-foreground disabled:opacity-40 p-2 rounded-lg text-xs font-bold flex flex-col items-center justify-center gap-1 border border-transparent"
                 >
@@ -3091,7 +3132,7 @@ export default function WorkspacePage() {
         isFocusMode={isFocusMode}
       />
                     <RemnantReviewPanel
-                      inspection={currentRemnantReview?.inspection}
+                      inspection={pages[currentPage] ? getCurrentRemnantReview?.(pages[currentPage].url, getExpectedRemnantEvidence(pages[currentPage].url))?.inspection : undefined}
                       regions={currentCleaningResult?.regions ?? []}
                       onOpenMask={(candidate) => {
                         setMaskFocusRect(candidate.rect);
