@@ -750,7 +750,13 @@ export default function WorkspacePage() {
       setReviewIssues(issues.length > 0 ? issues : null);
       void import("react-hot-toast").then((m) => {
         if (summary.cancelled) {
-          m.default(`⏹ ยกเลิกการแก้ทั้งเล่ม (แก้สำเร็จ ${summary.pointsRepaired} จุด) — กด Undo เพื่อคืนค่าก่อนแก้`, { duration: 5000 });
+          // Cancelled repairs can also have skipped pages (skips accumulate
+          // before the cancellation); the review list opened above carries
+          // their pending target confirmation.
+          const skippedNote = summary.skipped.length > 0
+            ? ` — ข้าม ${summary.skipped.length} หน้า (ยืนยันภาษาไม่ครบ)`
+            : "";
+          m.default(`⏹ ยกเลิกการแก้ทั้งเล่ม (แก้สำเร็จ ${summary.pointsRepaired} จุด)${skippedNote} — กด Undo เพื่อคืนค่าก่อนแก้`, { duration: 5000 });
         } else if (summary.unresolved.length > 0) {
           const detail = summary.unresolved.map((page) => `หน้า ${page.pageIndex + 1} (${page.points} จุด)`).join(", ");
           const skippedNote = summary.skipped.length > 0

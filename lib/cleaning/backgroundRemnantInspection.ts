@@ -86,6 +86,8 @@ export interface BackgroundInspectionOptions {
   inkThreshold?: number;
   /** Surviving-ink ratio at or above which a cleaned area counts as a full remnant. */
   fullRemnantRatio?: number;
+  /** Surviving-ink ratio at or above which an unchanged area is detailed as "unchanged" rather than a partial glyph. */
+  unchangedRatio?: number;
   /** Surviving-ink ratio below which residue is treated as effectively removed. */
   removedRatio?: number;
   /** Mean horizontal surviving-ink run at or below which marks look line-like. */
@@ -157,6 +159,7 @@ export interface BackgroundInspectionResult {
 const DEFAULTS = {
   inkThreshold: 48,
   fullRemnantRatio: 0.5,
+  unchangedRatio: 0.8,
   removedRatio: 0.12,
   lineMeanRunMax: 2.2,
   lineCoverageMax: 0.3,
@@ -168,11 +171,14 @@ const MIN_SURVIVING_ANY = 6;
 
 /** ITU-R BT.601 luma with transparent pixels composited over white. */
 export function lumaPlaneFromRgba(rgba: Uint8Array | Uint8ClampedArray, width: number, height: number): GrayscalePlane {
+  if (width < 0 || height < 0 || rgba.length < width * height * 4) {
+    throw new Error("lumaPlaneFromRgba expects width*height*4 RGBA bytes");
+  }
   const data = new Uint8Array(width * height);
   for (let i = 0; i < data.length; i += 1) {
     const o = i * 4;
-    const alpha = rgba[o + 3] ?? 255;
-    const luma = 0.299 * (rgba[o] ?? 255) + 0.587 * (rgba[o + 1] ?? 255) + 0.114 * (rgba[o + 2] ?? 255);
+    const alpha = rgba[o + 3];
+    const luma = 0.299 * rgba[o] + 0.587 * rgba[o + 1] + 0.114 * rgba[o + 2];
     data[i] = Math.round(luma * (alpha / 255) + 255 * (1 - alpha / 255));
   }
   return { width, height, data };
@@ -434,7 +440,7 @@ function runDetection(
       // review finding, never an auto-erase instruction.
       addCandidate(makeCandidate("uncertain", "line-like", stats.bbox ?? area, 0.3, base));
     } else if (preserved) {
-      addCandidate(makeCandidate("unchanged-candidate", stats.survivingRatio >= 0.8 ? "unchanged" : "partial-glyph", stats.bbox ?? area, 0.6, base));
+      addCandidate(makeCandidate("unchanged-candidate", stats.survivingRatio >= options.unchangedRatio ? "unchanged" : "partial-glyph", stats.bbox ?? area, 0.6, base));
     } else if (stats.survivingRatio >= options.fullRemnantRatio) {
       addCandidate(makeCandidate("suspected-remnant", "full-glyph", stats.bbox ?? area, 0.55 + 0.4 * stats.survivingRatio, base));
     } else {
@@ -460,7 +466,7 @@ function runDetection(
     if (isLineLike(stats, options)) {
       addCandidate(makeCandidate("uncertain", "line-like", stats.bbox ?? area, 0.3, base));
     } else {
-      const detail: RemnantCandidateDetail = stats.survivingRatio >= 0.8 ? "unchanged" : "partial-glyph";
+      const detail: RemnantCandidateDetail = stats.survivingRatio >= options.unchangedRatio ? "unchanged" : "partial-glyph";
       addCandidate(makeCandidate("unchanged-candidate", detail, stats.bbox ?? area, 0.6, base));
     }
   }

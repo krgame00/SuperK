@@ -441,3 +441,27 @@ it("invalidate drops the cached result so the exact revision is re-inspected", (
   expect(reRun).not.toBe(first);
   expect(reRun.revisionKey).toBe(first.revisionKey);
 });
+
+it("details unchanged areas by the configurable unchangedRatio option", () => {
+  const build = (options?: { unchangedRatio?: number }) => {
+    const original = makePlane(128, 128);
+    fillRect(original, 60, 60, 10, 8, INK);
+    const clean = copyPlane(original);
+    fillRect(clean, 60, 60, 10, 3, PAGE); // 30 of 80 ink pixels erased → survivingRatio 0.625
+    return inspectBackgroundRemnants({
+      revisions: REVISIONS,
+      originalPlane: original,
+      cleanPlane: clean,
+      textEvidence: [textBox("t1", 400, 400, 600, 600)],
+      ...(options ? { options } : {}),
+    });
+  };
+  expect(build().candidates[0]?.detail).toBe("partial-glyph");
+  expect(build({ unchangedRatio: 0.6 }).candidates[0]?.detail).toBe("unchanged");
+});
+
+it("rejects RGBA buffers shorter than width*height*4 instead of padding them", () => {
+  expect(() => lumaPlaneFromRgba(new Uint8ClampedArray(4), 2, 2)).toThrow();
+  const plane = lumaPlaneFromRgba(new Uint8ClampedArray(16), 2, 2);
+  expect(plane.data).toHaveLength(4);
+});

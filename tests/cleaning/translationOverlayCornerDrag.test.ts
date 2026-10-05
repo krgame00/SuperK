@@ -477,3 +477,31 @@ describe("proportional snapshot invalidation", () => {
   });
 });
 
+
+test("a width drag invalidates the captured snapshot and recaptures it for the new frame width", async () => {
+  const { container, bubble, chromeRoot } = await renderCornerFixture(
+    "บรรทัดแรก\nบรรทัดที่สอง",
+  );
+  mockCanvasRect(container);
+  const widthHandle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  widthHandle.setPointerCapture = vi.fn();
+  widthHandle.releasePointerCapture = vi.fn();
+  (widthHandle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  const before = bubble.layoutSnapshot!;
+
+  firePointer(widthHandle, "pointerdown", 500, 500);
+  firePointer(widthHandle, "pointermove", 560, 500);
+  firePointer(widthHandle, "pointerup", 560, 500);
+  await vi.advanceTimersByTimeAsync(32);
+
+  const after = bubble.layoutSnapshot!;
+  // A width edit is a real layout change: the proportional snapshot must be
+  // re-captured for the new frame width with a fresh word wrap at the same
+  // font size (the width handle fixed-font contract).
+  expect(after.frameWidthPx).toBeGreaterThan(before.frameWidthPx);
+  expect(after.frameWidthPx).toBeCloseTo(260, 1);
+  expect(after.fontSizePx).toBe(before.fontSizePx);
+  expect(after.text).toBe(before.text);
+  expect(after.lines).not.toEqual(before.lines);
+  expect(bubble.layoutAdjustment?.layoutSnapshot).toEqual(after);
+});

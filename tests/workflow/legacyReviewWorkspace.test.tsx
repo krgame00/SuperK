@@ -385,6 +385,46 @@ test("the whole-book repair toast surfaces pages skipped for unconfirmed targets
   );
 });
 
+test("a cancelled whole-book repair still reports its skipped pages in the toast", async () => {
+  const repairWholeBook = vi.fn().mockResolvedValue({
+    pagesRepaired: 1,
+    pointsRepaired: 2,
+    cancelled: true,
+    unresolved: [],
+    skipped: [{ pageIndex: 1, pageUrl: "url-2", reason: "target-unconfirmed" }],
+  });
+  await restoreWorkspaceWith({
+    repairWholeBook,
+    inspectReviewIssues: vi.fn(() => [
+      {
+        pageUrl: ORIGINAL_URL,
+        pageIndex: 0,
+        pageTotal: 2,
+        targetId: "th",
+        targetUnconfirmed: true,
+        scriptIssues: [],
+        unverified: [],
+      },
+    ]),
+  });
+
+  fireEvent.click(screen.getAllByRole("button", { name: "เครื่องมือ" })[0]);
+  fireEvent.click(await screen.findByRole("menuitem", { name: "ตรวจคำแปลทั้งเล่ม" }));
+
+  fireEvent.click(screen.getByRole("button", { name: /แก้ตัวอักษรปนทั้งเล่ม/ }));
+  await waitFor(() => expect(repairWholeBook).toHaveBeenCalledTimes(1));
+  await waitFor(() =>
+    expect(toast).toHaveBeenCalledWith(
+      expect.stringContaining("ยกเลิกการแก้ทั้งเล่ม"),
+      expect.anything(),
+    ),
+  );
+  expect(toast).toHaveBeenCalledWith(
+    expect.stringContaining("ข้าม 1 หน้า (ยืนยันภาษาไม่ครบ)"),
+    expect.anything(),
+  );
+});
+
 test("a whole-book repair failure surfaces an error toast instead of an unhandled rejection", async () => {
   const repairWholeBook = vi
     .fn()
