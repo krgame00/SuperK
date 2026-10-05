@@ -90,3 +90,12 @@ if (typeof globalThis.FileReader !== "undefined") {
 }
 
 afterEach(cleanup);
+
+// RTL's async wrappers restore the act environment to whatever it was when
+// they started. A dangling waitFor from a previous test file sharing this
+// worker can leave the flag false, so every test must start act-enabled or
+// the first act() call logs the "testing environment is not configured"
+// error and trips any console.error assertion.
+beforeEach(() => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+});

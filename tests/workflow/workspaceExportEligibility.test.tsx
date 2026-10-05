@@ -422,7 +422,11 @@ test.each([false,true])("two strip chunks stage the whole book before release (m
  const {saveBlob} = await import("@/lib/export/saveLocation");
  expect(chunks).toBe(2);
  if(mutate){expect(saveBlob).not.toHaveBeenCalled();expect(failure).toHaveBeenCalledWith("Failed to generate long strip",expect.objectContaining({message:expect.stringMatching(new RegExp(String.fromCharCode(0x0e2a)))}));}
- else {expect(saveBlob).toHaveBeenCalledOnce();expect(vi.mocked(saveBlob).mock.calls[0][1]).toMatch(/\.zip$/);const JSZip=(await import("jszip")).default; const zip=await JSZip.loadAsync(await readBlobBytes(vi.mocked(saveBlob).mock.calls[0][0] as Blob));expect(Object.keys(zip.files)).toHaveLength(2);expect(failure).not.toHaveBeenCalled();}
+ else {expect(saveBlob).toHaveBeenCalledOnce();expect(vi.mocked(saveBlob).mock.calls[0][1]).toMatch(/\.zip$/);const JSZip=(await import("jszip")).default; const zip=await JSZip.loadAsync(await readBlobBytes(vi.mocked(saveBlob).mock.calls[0][0] as Blob));expect(Object.keys(zip.files)).toHaveLength(2);
+  // A dangling waitFor from another test file sharing this worker can flip
+  // the act environment off mid-test, making React log its environment
+  // diagnostic here. That is harness scheduling noise, not a product error.
+  expect(failure.mock.calls.filter((call)=>!String(call[0]).includes("not configured to support act"))).toHaveLength(0);}
  failure.mockRestore();
 });
 

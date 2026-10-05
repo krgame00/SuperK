@@ -4,6 +4,13 @@
 // Host/Origin handling — which direct handler invocation cannot exercise.
 import { afterAll, beforeAll, expect, test } from "vitest";
 
+import { createPageTargetIdentity } from "@/lib/extension/strictParity";
+import { withReviewIdentity } from "@/lib/translation/qualityReview";
+import {
+  inspectedBackgroundEvidence,
+  TEST_CLEAN_DATA_URL,
+} from "../helpers/extensionBackgroundEvidence";
+
 import {
   rawRequest,
   startNextTestServer,
@@ -113,12 +120,19 @@ test(
     const { pairingToken } = (await pair.json()) as { pairingToken: string };
     const auth = { authorization: `Bearer ${pairingToken}` };
 
+    // Publication now requires the full strict evidence contract (target
+    // identity, source revision, background proof, contextual reviews).
+    const sourceRevision = "a".repeat(64);
     const publish = await fetch(`${server.url}/api/extension/publish-back`, {
       method: "POST",
       headers: { ...auth, "content-type": "application/json" },
       body: JSON.stringify({
         pageUrl: "https://m.test/p.png",
-        bubbles: [{ t: "คำแปล", box: [1, 2, 3, 4] }],
+        targetIdentity: createPageTargetIdentity("th"),
+        sourceRevision,
+        ...inspectedBackgroundEvidence(sourceRevision),
+        cleanUrl: TEST_CLEAN_DATA_URL,
+        bubbles: [{ t: "คำแปล", original_text: "source", box: [1, 2, 3, 4], translationReview: withReviewIdentity({ status: "ok", sourceText: "source", reviewedText: "คำแปล" }, "th", sourceRevision) }],
       }),
     });
     expect(publish.status).toBe(200);
