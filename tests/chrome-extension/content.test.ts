@@ -193,3 +193,52 @@ it('cleans up loading scrim when translation succeeds or encounters an error', (
   expect(document.querySelector('.superk-loading-scrim-container')).toBeNull();
   expect(document.querySelector('.superk-error')).not.toBeNull();
 });
+
+it('renders translation overlay immediately upon receiving TRANSLATION_REVIEW_REQUIRED when bubbles exist', () => {
+  const app = setup();
+  app.send({ action: 'TRANSLATION_START' });
+  expect(document.querySelector('.superk-loading-scrim-container')).not.toBeNull();
+
+  app.send({
+    action: 'TRANSLATION_REVIEW_REQUIRED',
+    payload: {
+      bubbles: [{ t: 'คำแปลตรงหน้า', box: [10, 20, 100, 200] }],
+      cleanMode: 'stroke',
+    },
+  });
+
+  expect(document.querySelector('.superk-loading-scrim-container')).toBeNull();
+  const bubble = document.querySelector('.superk-text-bubble');
+  expect(bubble).not.toBeNull();
+  expect(bubble?.textContent).toBe('คำแปล\nตรงหน้า');
+  expect(document.querySelector('.superk-error')).toBeNull();
+});
+
+it('falls back to review error badge when TRANSLATION_REVIEW_REQUIRED has no bubbles', () => {
+  const app = setup();
+  app.send({
+    action: 'TRANSLATION_REVIEW_REQUIRED',
+    payload: { bubbles: [] },
+  });
+
+  const error = document.querySelector('.superk-error');
+  expect(error).not.toBeNull();
+  expect(error?.textContent).toContain('ตรวจจากต้นฉบับใน SuperK ก่อนอ่านคำแปล');
+  expect(document.querySelector('.superk-text-bubble')).toBeNull();
+});
+
+it('renders clean canvas mask as graceful fallback when cleanMode is inpainting but cleanImageBase64 is absent', () => {
+  const app = setup();
+  app.send({
+    action: 'TRANSLATION_SUCCESS',
+    cleanMode: 'inpainting',
+    cleanImageBase64: null,
+    bubbles: [{ t: 'ข้อความแปล', box: [10, 20, 100, 200] }],
+  });
+
+  expect(document.querySelector('.superk-clean-image')).toBeNull();
+  expect(document.querySelector('canvas.superk-clean-canvas')).not.toBeNull();
+  expect(document.querySelector('.superk-text-bubble')).not.toBeNull();
+});
+
+

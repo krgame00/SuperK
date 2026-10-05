@@ -1,9 +1,0 @@
-# P02 accepted integration decisions
-P01 complete 117dd36..50010a2, independent review approved. Existing P02 agent inspected only; no code changed before interruption.
-Requirements: .scratch/dense-page-text-interaction/issues/02-smooth-transform-gestures.md.
-Baseline evidence .superpowers/sdd/oct04-four-spec/P01-report.md. Actual measured costs: corner continuously retypesets/resets canvas; width duplicated fixed layout (P03); move already bitmap.
-Approved plan: capture initial rendered lines/font/selection once at pointerdown; use same canvas bitmap via CSS proportional sizing while corner dragging; scaled selection/opposite anchor computed from initial state; single final frame update; crisp redraw same position/scale/line structure on release. Persist bounded proportional-layout snapshot on bubble/OverlayAdjustment with text/font identity, lines/lineHeight/localgeometry/float font size. Invalidate snapshot for actual text/font/width edits, not movement/rotation. Corner manual sizing mode on commit (coordinate S03).
-Remove evidenced double updateBubbleFrame before/after draw; lazy read wrapper bounds in chrome only if stage dimensions zero (normal path derives rotated page bounds; retain needed root/stage zoom geometry).
-Tests RED/GREEN zero fill/measure continuous corner; exact rotated anchor/frame/line parity release/reopen/Undo; latest event exactly once; cancel/noop/page cleanup. Existing coalescing test requires previewglyphdraw and should be updated for bitmap behavior.
-Use named browser comparison node scripts/verify-dense-page-baseline.mjs --name p02 to preserve baseline; no need repeat diagnostic unless remaining risk. Hidden CPU/offscreen limits require G06 visible GPU actualapp validation.
-Expected files overlay,testoverlay,focused helper/types if needed, P02report,namedcompact artifacts. No code ownership until S01/G01 release. Fullsuite rootonceend. No provider/restart/push; explicit paths onlycommit coordinated root.

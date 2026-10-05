@@ -258,6 +258,7 @@ globalThis.SuperKServer = {
 
     const formData = new FormData();
     formData.append('image', blob, 'manga.png');
+    formData.append('cleaning_mode', 'all-text');
 
     let postRes;
     try {

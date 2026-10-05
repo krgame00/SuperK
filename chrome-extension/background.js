@@ -85,18 +85,13 @@ async function runTranslationFlow(tabId, frameId, imageUrl) {
     let sourceRevision;
     try { sourceRevision = await SuperKPolicy.originalSourceFingerprint(image.base64); }
     catch {
-      await send({action:'TRANSLATION_REVIEW_REQUIRED',payload:{bubbles:result.bubbles,targetIdentity,pageUrl:imageUrl,sourceImage:`data:${image.mimeType};base64,${image.base64}`,cleanUrl:cleanImageBase64,textStyle:settings.textStyle}});
+      await send({action:'TRANSLATION_REVIEW_REQUIRED',payload:{bubbles:result.bubbles,targetIdentity,pageUrl:imageUrl,sourceImage:`data:${image.mimeType};base64,${image.base64}`,cleanUrl:cleanImageBase64,cleanMode:settings.cleanMode,textStyle:settings.textStyle}});
       return;
     }
     result.bubbles = await SuperKPolicy.reviewTranslatedBubbles(result.bubbles, {
       targetLang: targetIdentity.targetId, sourceRevision, repairContamination: true,
       fetchImpl: (url, init) => SuperKServer.reviewRequest(url, init, settings),
     });
-    const evidence = {bubbles: result.bubbles, targetIdentity, sourceRevision};
-    if (SuperKPolicy.inspectExtensionOutput(evidence).status !== "eligible") {
-      await send({action:'TRANSLATION_REVIEW_REQUIRED',payload:{...evidence,pageUrl:imageUrl,sourceImage:`data:${image.mimeType};base64,${image.base64}`,cleanUrl:cleanImageBase64,textStyle:settings.textStyle}});
-      return;
-    }
     let visual = {
       pageStyle: { isMonochromePage: false, monochromeConfidence: 0 },
       bubbleBackgroundLuminance: {},
@@ -124,6 +119,24 @@ async function runTranslationFlow(tabId, frameId, imageUrl) {
         monochromeConfidence: visual.pageStyle?.monochromeConfidence ?? 0,
       },
     }));
+
+    const evidence = {bubbles: enrichedBubbles, targetIdentity, sourceRevision};
+    if (SuperKPolicy.inspectExtensionOutput(evidence).status !== "eligible") {
+      await send({
+        action: 'TRANSLATION_REVIEW_REQUIRED',
+        payload: {
+          ...evidence,
+          bubbles: enrichedBubbles,
+          pageUrl: imageUrl,
+          sourceImage: `data:${image.mimeType};base64,${image.base64}`,
+          cleanUrl: cleanImageBase64,
+          cleanMode: settings.cleanMode,
+          textStyle: settings.textStyle,
+          pageStyle: visual.pageStyle,
+        }
+      });
+      return;
+    }
 
     await send({
       action: "TRANSLATION_SUCCESS",
@@ -210,7 +223,7 @@ async function translateImageWithGemini(base64Data, settings, mimeType) {
   const prompt = `You are an expert manga and webtoon translator. Detect all speech bubbles, text boxes, captions, and floating text in this image. Translate to ${settings.targetLang || 'Thai'}.
 CRITICAL RULES FOR BOUNDING BOXES:
 1. For multiline paragraphs, captions, or full text overlays, merge all lines into ONE SINGLE bounding box covering the entire text block [ymin, xmin, ymax, xmax]. Do NOT split multiline paragraphs into separate single-line boxes!
-2. Ensure the bounding box tightly bounds the entire text block including top, bottom, left, and right margins.
+2. Ensure the bounding box bounds the entire text block from the topmost line of text to the bottommost line of text within the bubble (do NOT box only the middle line).
 
 Output ONLY valid JSON matching this schema:
 {

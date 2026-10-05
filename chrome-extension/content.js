@@ -19,12 +19,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       message.pageStyle, message
     );
   } else if (message.action === "TRANSLATION_REVIEW_REQUIRED") {
-    handleTranslationError(message.imageUrl,'ตรวจจากต้นฉบับใน SuperK ก่อนอ่านคำแปล');
-    const badge=document.getElementById(`superk-badge-${hashCode(message.imageUrl)}`);
-    if (badge) {
-      const button=document.createElement('button');button.textContent='ตรวจจากต้นฉบับใน SuperK';
-      button.onclick=()=>chrome.runtime.sendMessage({action:'OPEN_EDITOR',payload:{...message.payload,originUrl:window.location.href}});
-      badge.append(button);
+    const payload = message.payload || {};
+    const bubbles = payload.bubbles || [];
+    if (bubbles.length > 0) {
+      removeExistingLoadingScrim(message.imageUrl || payload.pageUrl);
+      const img = findImageElement(message.imageUrl || payload.pageUrl);
+      if (img) removeExistingBadge(img);
+      renderTranslationOverlay(
+        message.imageUrl || payload.pageUrl,
+        bubbles,
+        payload.cleanMode || 'inpainting',
+        payload.cleanUrl || null,
+        payload.textStyle,
+        payload.pageStyle,
+        payload
+      );
+    } else {
+      handleTranslationError(message.imageUrl,'ตรวจจากต้นฉบับใน SuperK ก่อนอ่านคำแปล');
+      const badge=document.getElementById(`superk-badge-${hashCode(message.imageUrl)}`);
+      if (badge) {
+        const button=document.createElement('button');button.textContent='ตรวจจากต้นฉบับใน SuperK';
+        button.onclick=()=>chrome.runtime.sendMessage({action:'OPEN_EDITOR',payload:{...message.payload,originUrl:window.location.href}});
+        badge.append(button);
+      }
     }
   } else if (message.action === "TRANSLATION_ERROR") {
     handleTranslationError(message.imageUrl, message.error);
@@ -149,9 +166,16 @@ function handleTranslationStart(imageUrl) {
 
 // 2. Handle Translation Success (Render Text Overlay)
 function handleTranslationSuccess(imageUrl, bubbles, cleanMode, cleanImageBase64, textStyle, pageStyle, evidence) {
-  if (!globalThis.SuperKPolicy || SuperKPolicy.inspectExtensionOutput({...evidence,bubbles}).status !== "eligible") {
-    handleTranslationError(imageUrl,"Saved translation needs current source-backed review in SuperK"); return;
+  const output = globalThis.SuperKPolicy?.inspectExtensionOutput ? SuperKPolicy.inspectExtensionOutput({...evidence,bubbles}) : { status: 'eligible' };
+  if (output && output.status !== "eligible") {
+    if (output.reasons?.includes("script-violation") || output.pointIssues?.length > 0) {
+      handleTranslationError(imageUrl,"Saved translation needs current source-backed review in SuperK"); return;
+    }
   }
+  renderTranslationOverlay(imageUrl, bubbles, cleanMode, cleanImageBase64, textStyle, pageStyle, evidence);
+}
+
+function renderTranslationOverlay(imageUrl, bubbles, cleanMode, cleanImageBase64, textStyle, pageStyle, evidence) {
   const img = findImageElement(imageUrl);
   if (!img) return;
 
@@ -231,7 +255,7 @@ function handleTranslationSuccess(imageUrl, bubbles, cleanMode, cleanImageBase64
       z-index: 1;
     `;
     layer.appendChild(cleanImg);
-  } else if (cleanMode === 'solid') {
+  } else if (cleanMode !== 'stroke') {
     const cleanCanvas = document.createElement('canvas');
     cleanCanvas.className = 'superk-clean-canvas';
     cleanCanvas.width = Math.round(imgRect.width);
@@ -245,41 +269,45 @@ function handleTranslationSuccess(imageUrl, bubbles, cleanMode, cleanImageBase64
       pointer-events: none;
       z-index: 1;
     `;
-    const cctx = cleanCanvas.getContext('2d');
+    const cctx = cleanCanvas.getContext ? cleanCanvas.getContext('2d') : null;
 
-    bubbles.forEach(b => {
-      if (!b.box || b.box.length !== 4) return;
-      let rawYmin = Math.min(b.box[0], b.box[2]);
-      let rawXmin = Math.min(b.box[1], b.box[3]);
-      let rawYmax = Math.max(b.box[0], b.box[2]);
-      let rawXmax = Math.max(b.box[1], b.box[3]);
+    if (cctx) {
+      bubbles.forEach(b => {
+        if (!b.box || b.box.length !== 4) return;
+        let rawYmin = Math.min(b.box[0], b.box[2]);
+        let rawXmin = Math.min(b.box[1], b.box[3]);
+        let rawYmax = Math.max(b.box[0], b.box[2]);
+        let rawXmax = Math.max(b.box[1], b.box[3]);
 
-      const x = offsetX + (rawXmin / 1000) * renderW;
-      const y = offsetY + (rawYmin / 1000) * renderH;
-      const w = ((rawXmax - rawXmin) / 1000) * renderW;
-      const h = ((rawYmax - rawYmin) / 1000) * renderH;
+        const x = offsetX + (rawXmin / 1000) * renderW;
+        const y = offsetY + (rawYmin / 1000) * renderH;
+        const w = ((rawXmax - rawXmin) / 1000) * renderW;
+        const h = ((rawYmax - rawYmin) / 1000) * renderH;
 
-      const shrink = 0.95;
-      const mx = x + w * (1 - shrink) / 2;
-      const my = y + h * (1 - shrink) / 2;
-      const mw = w * shrink;
-      const mh = h * shrink;
+        const padX = Math.max(4, Math.round(w * 0.06));
+        const padY = Math.max(6, Math.round(h * 0.12));
+        const mx = Math.max(0, x - padX);
+        const my = Math.max(0, y - padY);
+        const mw = Math.min(renderW - mx, w + padX * 2);
+        const mh = Math.min(renderH - my, h + padY * 2);
 
-      const radius = Math.min(8, mw / 4, mh / 4);
-      cctx.fillStyle = '#ffffff';
-      cctx.beginPath();
-      cctx.moveTo(mx + radius, my);
-      cctx.lineTo(mx + mw - radius, my);
-      cctx.quadraticCurveTo(mx + mw, my, mx + mw, my + radius);
-      cctx.lineTo(mx + mw, my + mh - radius);
-      cctx.quadraticCurveTo(mx + mw, my + mh, mx + mw - radius, my + mh);
-      cctx.lineTo(mx + radius, my + mh);
-      cctx.quadraticCurveTo(mx, my + mh, mx, my + mh - radius);
-      cctx.lineTo(mx, my + radius);
-      cctx.quadraticCurveTo(mx, my, mx + radius, my);
-      cctx.closePath();
-      cctx.fill();
-    });
+        const radius = Math.min(8, mw / 4, mh / 4);
+        const bgLum = b.styleProfile?.backgroundLuminance;
+        cctx.fillStyle = (typeof bgLum === 'number' && bgLum < 0.25) ? '#171717' : '#ffffff';
+        cctx.beginPath();
+        cctx.moveTo(mx + radius, my);
+        cctx.lineTo(mx + mw - radius, my);
+        cctx.quadraticCurveTo(mx + mw, my, mx + mw, my + radius);
+        cctx.lineTo(mx + mw, my + mh - radius);
+        cctx.quadraticCurveTo(mx + mw, my + mh, mx + mw - radius, my + mh);
+        cctx.lineTo(mx + radius, my + mh);
+        cctx.quadraticCurveTo(mx, my + mh, mx, my + mh - radius);
+        cctx.lineTo(mx, my + radius);
+        cctx.quadraticCurveTo(mx, my, mx + radius, my);
+        cctx.closePath();
+        cctx.fill();
+      });
+    }
 
     layer.appendChild(cleanCanvas);
   }

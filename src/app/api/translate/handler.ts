@@ -107,7 +107,7 @@ export function buildTranslationPrompt({
     `- Classify each detected text region as styleCategory: dialogue, narration, or sfx. This is metadata only and must not change translation wording.\n` +
     `Output ONLY valid JSON, no markdown, no explanation.\n` +
     `Format: {"bubbles":[{"original_text": "text found in image", "t":"translated text in Thai","box":[ymin, xmin, ymax, xmax],"styleCategory":"dialogue"}]}\n` +
-    `box: bounding box coordinates in 0-1000 scale (ymin, xmin = top-left, ymax, xmax = bottom-right).\n` +
+    `box: bounding box coordinates in 0-1000 scale (ymin, xmin = top-left, ymax, xmax = bottom-right). For multiline text in speech bubbles, the box MUST enclose ALL lines within that bubble from top to bottom.\n` +
     `ALL translations in 't' MUST be in ${targetLang || "Thai"}.\n` +
     `If no text found: {"bubbles":[]}`
   );
