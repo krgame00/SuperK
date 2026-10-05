@@ -1414,7 +1414,12 @@ export const applyTranslationOverlay = async (
         }
 
         const totalH = (lines.length - 1) * lineH;
-        const startY = (currentBh / 2) - (totalH / 2);
+        // Overflow frames anchor the first line to the top padding so the
+        // leading lines stay readable instead of symmetric clipping that can
+        // hide both the first and last lines behind the frame edges.
+        const startY = textLayoutOverflow
+          ? lineH / 2
+          : (currentBh / 2) - (totalH / 2);
         lines.forEach((l, i) => {
           const yPos = startY + i * lineH;
           if (resolvedStyle.hasOutline && ctx.lineWidth > 0) {

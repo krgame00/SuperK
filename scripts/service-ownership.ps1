@@ -11,7 +11,15 @@ function Test-SuperKServiceProcess {
     $entrypoint = $arguments[1].Replace('/', '\').ToLowerInvariant()
 
     if ($executableName -eq 'node.exe') {
-        return $entrypoint -in @(
+        # Services may be launched with a relative entrypoint from the checkout
+        # root (e.g. node .next/standalone/server.js); resolve those against
+        # this checkout before the whitelist comparison. Scoped to node because
+        # the python branch compares a module spec that is not a path.
+        $nodeEntrypoint = $arguments[1].Replace('/', '\')
+        if (-not [IO.Path]::IsPathRooted($nodeEntrypoint)) {
+            $nodeEntrypoint = Join-Path $rootPath $nodeEntrypoint
+        }
+        return $nodeEntrypoint.ToLowerInvariant() -in @(
             "$rootPath\node_modules\next\dist\bin\next",
             "$rootPath\node_modules\next\dist\server\lib\start-server.js",
             "$rootPath\.next\standalone\server.js"

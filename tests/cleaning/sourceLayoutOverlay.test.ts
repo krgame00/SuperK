@@ -5,9 +5,9 @@ import { undoManager } from '@/lib/undoManager';
 import { SOURCE_SPACE_POLICY } from '@/lib/sourceTextSpace';
 vi.mock('@/lib/colorMatching/canvasSampler',()=>({sampleBubbleRegion:()=>null,sampleRectRegion:()=>null}));
 
-let renderedFonts:string[], reads:number;
+let renderedFonts:string[], fillTextYs:number[], reads:number;
 beforeEach(()=>{
-  vi.useFakeTimers();undoManager.clear();renderedFonts=[];reads=0;
+  vi.useFakeTimers();undoManager.clear();renderedFonts=[];fillTextYs=[];reads=0;
   const storage=new Map<string,string>();
   Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:(k:string)=>storage.get(k)??null,setItem:(k:string,v:string)=>storage.set(k,v),removeItem:(k:string)=>storage.delete(k)}});
   document.body.innerHTML='<div id="pageContainer"><img /></div>';
@@ -15,7 +15,7 @@ beforeEach(()=>{
   Object.defineProperties(img,{naturalWidth:{value:1000},naturalHeight:{value:1000},complete:{value:true}});
   Object.defineProperty(document,'fonts',{configurable:true,value:{load:vi.fn().mockResolvedValue([{}]),check:()=>true}});
   const context={font:'',measureText:(s:string)=>({width:s.length*4,actualBoundingBoxAscent:75,actualBoundingBoxDescent:5}),
-    fillText:function(this:CanvasRenderingContext2D){renderedFonts.push(this.font);},
+    fillText:function(this:CanvasRenderingContext2D,_t:string,_x:number,y:number){renderedFonts.push(this.font);fillTextYs.push(y);},
     getImageData:(_x:number,_y:number,w:number)=>{
       if(w!==256) {reads++;return {data:new Uint8ClampedArray(4)};}
       const data=new Uint8ClampedArray(256*256*4).fill(255);
@@ -44,6 +44,20 @@ test('unknown source space preserves original layout, size and complete overflow
   expect([frame.style.left,frame.style.top,frame.style.width,frame.style.height]).toEqual(['10%','10%','6%','2%']);
   expect(frame.dataset.layoutOverflow).toBe('true');
   expect(renderedFonts.every(font=>font==='bold 20px sans-serif')).toBe(true);
+});
+test('overflow frames anchor the first line to the top so leading text stays readable',async()=>{
+  const text='extraordinary extraordinary extraordinary extraordinary extraordinary';
+  const b:TranslatedBubble={t:text,box:[100,100,120,160],targetFontSize:20,sourceSizing:{...sizing(),baseFontSizePx:20,
+    font:{...sizing().font!,textKey:text},evidence:{...sizing().evidence,regionKey:'100,100,120,160'}}};
+  await applyTranslationOverlay([b],'single',0,()=>{},undefined,{current:{fontFamily:'sans-serif',fontSizeMultiplier:1}},undefined,undefined,undefined,'en');
+  await vi.advanceTimersByTimeAsync(250);
+  const frame=document.querySelector<HTMLElement>('.translation-bubble-wrapper')!;
+  expect(frame.dataset.layoutOverflow).toBe('true');
+  expect(fillTextYs.length).toBeGreaterThan(0);
+  // Top-anchored: the first line's middle sits half a line below the frame
+  // top instead of the centered block whose symmetric clipping hides it.
+  expect(fillTextYs[0]).toBeGreaterThanOrEqual(0);
+  expect(fillTextYs[0]).toBeLessThan(26);
 });
 test('reliable original space allows contained growth and recalibration retains ownership metadata',async()=>{
   const text='Hello Hello Hello Hello Hello Hello';

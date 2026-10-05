@@ -17,6 +17,9 @@ test.skipIf(process.platform !== "win32")("ownership proves the service entrypoi
   const root = "C:\\SuperK";
   const cases = [
     { ExecutablePath: "C:\\Node\\node.exe", CommandLine: '"C:\\Node\\node.exe" "C:\\SuperK\\node_modules\\next\\dist\\bin\\next" dev', expected: true },
+    { ExecutablePath: "C:\\Node\\node.exe", CommandLine: 'node.exe .next/standalone/server.js', expected: true },
+    { ExecutablePath: "C:\\Node\\node.exe", CommandLine: 'node.exe node_modules/next/dist/server/lib/start-server.js', expected: true },
+    { ExecutablePath: "C:\\Node\\node.exe", CommandLine: 'node.exe .\\evil.js', expected: false },
     { ExecutablePath: "C:\\Node\\node.exe", CommandLine: 'node.exe "C:\\Other\\node_modules\\next\\dist\\bin\\next" dev', expected: false },
     { ExecutablePath: "C:\\Node\\node.exe", CommandLine: 'node.exe "C:\\SuperK-Other\\node_modules\\next\\dist\\bin\\next" dev', expected: false },
     { ExecutablePath: "C:\\Node\\node.exe", CommandLine: 'node.exe other.js --note "C:\\SuperK\\node_modules\\next\\dist\\bin\\next"', expected: false },
