@@ -27,14 +27,25 @@ test.skipIf(process.platform !== "win32")("hidden production supervisor waits fo
     }
     function Get-Command { param($Name) [pscustomobject]@{ Source='C:\\Node\\node.exe' } }
     function New-Item { param($Path, $ItemType, [switch]$Force) }
+    function Get-Item { param($LiteralPath, $Path)
+      return [pscustomobject]@{ LastWriteTime = [datetime]'2020-01-01T00:00:00' }
+    }
+    function Get-ChildItem { param($Path, [switch]$Recurse, [switch]$File, $ErrorAction)
+      if ($script:scenario -eq 'stale') { return @([pscustomobject]@{ FullName='C:\\SuperK Test\\src\\app\\page.tsx'; LastWriteTime=[datetime]'2021-01-01T00:00:00' }) }
+      return @()
+    }
     function Get-SuperKPortOwner { param($Port)
-      if ($script:scenario -eq 'reuse') {
+      if ($script:scenario -eq 'reuse' -or ($script:scenario -eq 'stale' -and $Port -eq 3000)) {
         return [pscustomobject]@{ ExecutablePath='C:\\Node\\node.exe'; CommandLine='node.exe "C:\\SuperK Test\\.next\\standalone\\server.js"' }
       }
       if ($script:scenario -eq 'foreign') {
         return [pscustomobject]@{ ExecutablePath='C:\\Node\\node.exe'; CommandLine='node.exe C:\\Other\\app.js' }
       }
       return $null
+    }
+    function Stop-SuperKServiceProcess { param($ProcessInfo, $ProjectRoot)
+      $script:events += [pscustomobject]@{ kind='stop'; pid=$ProcessInfo.ProcessId }
+      return $true
     }
     function Start-Process {
       param($FilePath, $ArgumentList, $WorkingDirectory, $WindowStyle, $RedirectStandardOutput, $RedirectStandardError, [switch]$PassThru, [switch]$Wait)
@@ -61,7 +72,11 @@ test.skipIf(process.platform !== "win32")("hidden production supervisor waits fo
     $exited = $script:events
     $script:events = @(); $script:scenario = 'build-failed'; $buildRejected = $false
     try { Start-SuperKProduction -ProjectRoot 'C:\\SuperK Test' } catch { $buildRejected = $true }
-    [pscustomobject]@{ fresh=$fresh; reuse=$reuse; foreign=$foreign; foreignRejected=$foreignRejected; exitRejected=$exitRejected; exited=$exited; buildRejected=$buildRejected; build=$script:events } | ConvertTo-Json -Depth 6 -Compress
+    $build = $script:events
+    $script:events = @(); $script:scenario = 'stale'; $script:healthCalls = 0
+    Start-SuperKProduction -ProjectRoot 'C:\\SuperK Test'
+    $stale = $script:events
+    [pscustomobject]@{ fresh=$fresh; reuse=$reuse; foreign=$foreign; foreignRejected=$foreignRejected; exitRejected=$exitRejected; exited=$exited; buildRejected=$buildRejected; build=$build; stale=$stale } | ConvertTo-Json -Depth 6 -Compress
   `;
   const result = JSON.parse(execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command], { encoding: "utf8", windowsHide: true, timeout: 15000 }).trim());
   const processes = result.fresh.filter((event: { kind: string; args: string | string[] }) => event.kind === "process" && !String(event.args).includes("sync-standalone-assets"));
@@ -85,6 +100,21 @@ test.skipIf(process.platform !== "win32")("hidden production supervisor waits fo
   expect(result.buildRejected).toBe(true);
   expect(result.build).toHaveLength(1);
   expect(result.build[0].args).toContain("build");
+  // Stale source with an owned web: the supervisor stops the running web,
+  // rebuilds and brings both services back.
+  expect(result.stale.some((event: { kind: string }) => event.kind === "stop")).toBe(true);
+  const staleBuild = result.stale.find((event: { kind: string; args: string | string[] }) => event.kind === "process" && String(event.args).includes("build"));
+  expect(staleBuild).toBeTruthy();
+  const staleStopIndex = result.stale.findIndex((event: { kind: string }) => event.kind === "stop");
+  const staleBuildIndex = result.stale.indexOf(staleBuild);
+  expect(staleStopIndex).toBeGreaterThanOrEqual(0);
+  expect(staleBuildIndex).toBeGreaterThan(staleStopIndex);
+  const staleProcesses = result.stale.filter((event: { kind: string; args: string | string[] }) => event.kind === "process" && !String(event.args).includes("sync-standalone-assets"));
+  expect(staleProcesses).toHaveLength(3);
+  expect(staleProcesses[0].args).toContain("build");
+  expect(staleProcesses[1].args).toContain("app.api:app");
+  expect(staleProcesses[2].args).toContain("standalone\\server.js");
+  expect(result.stale.at(-1)).toMatchObject({ kind: "browser", url: "http://127.0.0.1:3000" });
 });
 
 test.skipIf(process.platform !== "win32")("VBScript constructs a quoted hidden supervisor command without launching services", () => {

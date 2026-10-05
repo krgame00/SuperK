@@ -78,7 +78,26 @@ export default function RootLayout({
       lang="en"
       className={`${inter.variable} ${itim.variable} ${promptFont.variable} ${kanitFont.variable} ${sarabunFont.variable} ${mitrFont.variable} ${chakraPetchFont.variable} h-full antialiased selection:bg-primary/20 selection:text-primary`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <script
+          id="pwa-cache-cleaner"
+          dangerouslySetInnerHTML={{
+            __html: `
+              if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+                navigator.serviceWorker.getRegistrations().then(function(regs) {
+                  for (var r of regs) { r.unregister(); }
+                });
+              }
+              if (typeof window !== 'undefined' && 'caches' in window) {
+                caches.keys().then(function(keys) {
+                  for (var k of keys) { caches.delete(k); }
+                });
+              }
+            `,
+          }}
+        />
+        {children}
+      </body>
     </html>
   );
 }

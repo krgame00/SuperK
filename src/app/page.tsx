@@ -1390,13 +1390,22 @@ export default function WorkspacePage() {
     setUnconfirmedReviewPages(collectExportReviewPages(exportSnapshotRef.current.pages, pendingReviewIndicesRef.current));
   }, [translationCacheRevision, collectExportReviewPages]);
 
-  const exportInputSignature = (pageUrl: string) => JSON.stringify([pageTargetCacheRef.current.get(pageUrl), bubbleCacheRef.current.get(pageUrl), textStyleRef.current, getCurrentRemnantReview?.(pageUrl, getExpectedRemnantEvidence(pageUrl))?.inspection.revisionKey, getPageSourceRevision?.(pageUrl), cleaningResultsByPage.get(pageUrl)?.sourceFingerprint, cleaningResultsByPage.get(pageUrl)?.cleanUrl]);
+  const exportInputSignature = (pageUrl: string) => JSON.stringify([
+    pageTargetCacheRef.current.get(pageUrl),
+    bubbleCacheRef.current.get(pageUrl)?.map((b) => [b.id, b.box, b.t ?? b.translated, b.deleted, b.layoutAdjustment, b.fontSizeMultiplier, b.targetFontSize]),
+    textStyleRef.current,
+    getCurrentRemnantReview?.(pageUrl, getExpectedRemnantEvidence(pageUrl))?.inspection.revisionKey,
+    getPageSourceRevision?.(pageUrl),
+    cleaningResultsByPage.get(pageUrl)?.sourceFingerprint,
+    cleaningResultsByPage.get(pageUrl)?.cleanUrl
+  ]);
 
     const renderExportImage = async (pageUrl: string, index: number, pages: WorkspaceExportPage[]): Promise<string | null> => {
       if (collectExportReviewPages(pages, [index], allowUnreviewedExportRef.current).length) throw new Error("กรุณาตรวจหลักฐานหน้านี้ใหม่ เลือกต้นฉบับ หรือข้ามหน้า");
       const beforeSignature = exportInputSignature(pageUrl);
       const pageId = pages[index]?.id || `page_${index}`;
-      const bubbles = bubbleCacheRef.current.get(pageUrl);
+      const rawBubbles = bubbleCacheRef.current.get(pageUrl);
+      const bubbles = rawBubbles ? rawBubbles.map((b) => ({ ...b })) : rawBubbles;
       // Spilled-render reuse is intentionally not consulted here: a bubble-free
       // page's translated output is its cleaned background, and a page with
       // bubbles must re-render from those bubbles instead of stale pixels.

@@ -1,5 +1,5 @@
 import { cleanup } from "@testing-library/react";
-import { afterEach } from "vitest";
+import { afterEach, beforeEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
 
 if (typeof globalThis.ImageData === "undefined") {
@@ -97,5 +97,5 @@ afterEach(cleanup);
 // the first act() call logs the "testing environment is not configured"
 // error and trips any console.error assertion.
 beforeEach(() => {
-  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });

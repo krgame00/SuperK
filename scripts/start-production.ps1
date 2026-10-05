@@ -62,8 +62,44 @@ function Start-SuperKProduction {
         $env:TEMP = Join-Path $cacheDirectory 'temp'
     }
 
+    $needsBuild = -not (Test-Path -LiteralPath $serverPath)
+    if (-not $needsBuild) {
+        $serverTime = (Get-Item -LiteralPath $serverPath).LastWriteTime
+        $sourceDirs = @(
+            (Join-Path $rootPath 'src'),
+            (Join-Path $rootPath 'components'),
+            (Join-Path $rootPath 'lib'),
+            (Join-Path $rootPath 'public')
+        )
+        $latestSource = Get-ChildItem -Path $sourceDirs -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch '\\(\.next|node_modules|\.git)\\' } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+        $configFiles = @(
+            (Join-Path $rootPath 'next.config.ts'),
+            (Join-Path $rootPath 'package.json')
+        )
+        foreach ($cfg in $configFiles) {
+            if (Test-Path -LiteralPath $cfg) {
+                $cfgItem = Get-Item -LiteralPath $cfg
+                if ($cfgItem.LastWriteTime -gt $serverTime) {
+                    $needsBuild = $true
+                    break
+                }
+            }
+        }
+        if ($latestSource -and $latestSource.LastWriteTime -gt $serverTime) {
+            $needsBuild = $true
+        }
+    }
+
+    if ($needsBuild -and $webOwner) {
+        Stop-SuperKServiceProcess -ProcessInfo $webOwner -ProjectRoot $rootPath | Out-Null
+        $webOwner = $null
+    }
+
     if (-not $webOwner) {
-        if (-not (Test-Path -LiteralPath $serverPath)) {
+        if ($needsBuild) {
             $nextCli = Join-Path $rootPath 'node_modules\next\dist\bin\next'
             $build = Start-Process -FilePath $nodeExe -ArgumentList @("`"$nextCli`"", 'build') -WorkingDirectory $rootPath -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput (Join-Path $logDirectory 'build.log') -RedirectStandardError (Join-Path $logDirectory 'build-error.log')
             if ($build.ExitCode -ne 0) { throw 'Production build failed. See build-error.log.' }
