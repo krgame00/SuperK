@@ -602,11 +602,18 @@ export default function WorkspacePage() {
 
   const currentPageUrl = pages[currentPage]?.url;
   const translatedImagesMap = translatedImages;
+  const hasPageBubbles = Boolean(
+    currentPageUrl &&
+      ((activeBubbles.length > 0 && activeBubbles.some((b) => !b.deleted)) ||
+        (bubbleCacheRef.current.get(currentPageUrl)?.some((b) => !b.deleted) ?? false)),
+  );
+  const hasRenderedTranslation = Boolean(
+    currentPageUrl && (translatedImagesMap?.has(currentPageUrl) ?? false),
+  );
   const hasCurrentTranslation = Boolean(
     currentPageUrl &&
-      (activeBubbles.length > 0 ||
-        translationCacheRevision >= 0 /* reactive cache revision */) &&
-      (translatedImagesMap?.has(currentPageUrl) ?? false),
+      translationCacheRevision >= 0 &&
+      (hasPageBubbles || hasRenderedTranslation),
   );
   const toggleOriginalTranslated = useCallback(() => {
     setWorkspaceLayer((currentLayer) =>

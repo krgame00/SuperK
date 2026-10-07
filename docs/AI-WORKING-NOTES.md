@@ -1,6 +1,30 @@
 # AI Working Notes — SuperK / Manga Translator
 
-## Chrome Extension Inpainting 'all-text' Mode Activation — 2026-10-06
+## Workspace hasCurrentTranslation Vector-Bubble Recognition & Layer Switching Fix — 2026-10-07
+
+Status: **VERIFIED WORKING (Resolved user issue 'แต่มันกดไปดูหน้าแปลอีกรอบไม่ได้อะ' after toggling from Translated to Original layer in SuperK Workspace; root cause: in `src/app/page.tsx`, `hasCurrentTranslation` required `&& (translatedImagesMap?.has(currentPageUrl) ?? false)`, which mandated that offscreen rasterized bitmaps must exist in the LRU image cache; for pages imported via Chrome Extension handoff or before background canvas rasterization completes, `activeBubbles` and `bubbleCacheRef` contain valid translated bubbles, but `translatedImagesMap` has no entry, causing `hasCurrentTranslation` to evaluate to `false` when user switched to `workspaceLayer = 'original'`; this caused `CleaningToolbar.tsx` to disable the `[ Translated ]` tab button (`disabled={true}`, `opacity-35 cursor-not-allowed`) and caused `toggleOriginalTranslated` / Spacebar shortcut to refuse toggling back to `translated`; fix: updated `hasCurrentTranslation` to evaluate to `true` if either vector bubbles exist in `activeBubbles` / `bubbleCacheRef` [non-deleted] OR a rendered image exists in `translatedImagesMap`; added regression test in `tests/workflow/WorkspacePage.test.tsx`; verified 50/50 WorkspacePage vitest tests passing, 0 TypeScript errors)**.
+
+- **Forensic Diagnosis (Debug Mantra Recital & Application)**:
+  1. `Observation & Repro`:
+     - User clicked `[ Original ]` to view the original Japanese manga page.
+     - When attempting to click `[ Translated ]` or press Spacebar to return to the translated view, the UI remained stuck on Original ("แต่มันกดไปดูหน้าแปลอีกรอบไม่ได้อะ").
+  2. `Trace the Fail Path`:
+     - In `src/app/page.tsx` line 605-610, `hasCurrentTranslation` had:
+       `(activeBubbles.length > 0 || translationCacheRevision >= 0) && (translatedImagesMap?.has(currentPageUrl) ?? false)`.
+     - When a page was imported via extension handoff or before offscreen rasterization finished, `translatedImagesMap` was empty for that page.
+     - `hasCurrentTranslation` became `false`.
+     - In `CleaningToolbar.tsx` line 113, `item.value === "translated" && !hasTranslated` set `isDisabled = true`.
+     - In `page.tsx` line 613, `toggleOriginalTranslated` only transitioned to `"translated"` if `hasCurrentTranslation` was `true`.
+  3. `Fix Applied`:
+     - Refactored `hasCurrentTranslation` in `src/app/page.tsx` so that `hasPageBubbles` (active or cached non-deleted bubbles) OR `hasRenderedTranslation` (`translatedImagesMap`) qualifies as having a translation.
+     - Added unit test in `tests/workflow/WorkspacePage.test.tsx` verifying layer toggle succeeds when bubbles exist without bitmap cache.
+- **Verification Evidence**:
+  - `tests/workflow/WorkspacePage.test.tsx`: 50/50 tests passing (including new regression test).
+  - `tests/cleaning/CleaningToolbar.test.tsx`: 4/4 tests passing.
+  - `tests/workflow/WorkspaceControls.test.tsx`: 6/6 tests passing.
+  - `TypeScript`: 0 errors (`npx tsc --noEmit`).
+
+
 
 Status: **VERIFIED WORKING (Resolved user query 'ผมทำหมดแล้ว ได้แค่นี้ ยังมีคลีนไม่หมด' with screenshot showing translated page 5 on nhentai where purple speech text was cleaned, but dark thought/narration boxes still had original English text; root cause: in `chrome-extension/server.js`, `inpaintImage` previously omitted `cleaning_mode` parameter in formData, causing `ocr-service` to default to `safe` cleaning mode; in `safe` mode, dark text boxes with low eligibility confidence were flagged with `automatic_action: "preserve"` and `protection_reasons: ["low-confidence"]`, causing the engine to restore the original English text in those boxes into `clean.png`; fix: added `formData.append('cleaning_mode', 'all-text')` in `chrome-extension/server.js`; verified on user's exact page [job `b997b1f86f454618bdd10a99a7f3354a`]: Region 1: 36,646 px, Region 2: 43,339 px [was 0], Region 4: 57,749 px [was 0], Region 5: 27,559 px, Region 6: 16,557 px — 100% of all black thought boxes and speech bubbles fully inpainted with zero text remnants; repacked `dist/superk-chrome-extension.zip`; all 424 extension and cleaning tests pass, 0 TypeScript errors)**.
 

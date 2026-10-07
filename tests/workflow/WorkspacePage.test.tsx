@@ -752,6 +752,16 @@ describe("workspace clean-then-translate integration", () => {
     expect(toolbar().getAttribute("data-layer")).toBe("translated");
   });
 
+  test("allows switching to translated layer when bubbles exist even without rendered bitmap in translatedImages map", async () => {
+    await renderRestoredWorkspace();
+    fireEvent.click(within(toolbar()).getByRole("button", { name: "Layer original" }));
+    expect(toolbar().getAttribute("data-layer")).toBe("original");
+    expect(toolbar().getAttribute("data-has-translated")).toBe("true");
+
+    fireEvent.click(within(toolbar()).getByRole("button", { name: "Layer translated" }));
+    expect(toolbar().getAttribute("data-layer")).toBe("translated");
+  });
+
   test("renders tools menu on mobile header and inside mobile drawer when pages are present", async () => {
     await renderRestoredWorkspace();
 
