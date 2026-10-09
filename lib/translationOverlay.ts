@@ -22,6 +22,10 @@ import {
   segmentTextIntoWords,
   type FixedFontWidthResult,
 } from "./textBoxWidthLayout";
+import {
+  detectBubbleCollisions,
+  autoOrganizePageBubbles,
+} from "./bubbleLayoutOptimizer";
 
 const ADJ_KEY = "superk:overlay-adjustments";
 const WORD_WRAP_LOCALES: Record<string, string> = {
@@ -463,7 +467,7 @@ export function growBubbleFrameToFit(
   targetFontSize?: number,
   locale = "th",
 ): { width: number; height: number } {
-  const maxWidth = lockWidth ? baseWidth : Math.min(pageWidth, baseWidth * 2.5);
+  const maxWidth = lockWidth ? baseWidth : Math.min(pageWidth, baseWidth * 1.4);
   const maxHeight = Math.min(pageHeight, baseHeight * 2.5);
   let width = baseWidth;
   let height = baseHeight;
@@ -926,6 +930,25 @@ export const applyTranslationOverlay = async (
       applyNearbyStyleFallbacks(real);
     }
 
+    // Auto-organize: detect and resolve any bubble collisions or unconstrained overlaps
+    if (real.length > 0) {
+      const collisions = real.length > 1 ? detectBubbleCollisions(real, iw, ih) : [];
+      if (collisions.length > 0 || viewMode === "offscreen") {
+        const organized = autoOrganizePageBubbles(real, iw, ih, {
+          fontFamily: resolvedFontFam,
+          fontSizeMultiplier: currentTextStyle.fontSizeMultiplier || 1.0,
+          locale: wordWrapLocale,
+        });
+        for (let i = 0; i < real.length; i++) {
+          const opt = organized.optimizedBubbles[i];
+          if (opt && opt.layoutAdjustment) {
+            real[i].layoutAdjustment = opt.layoutAdjustment;
+            real[i].targetFontSize = opt.targetFontSize;
+          }
+        }
+      }
+    }
+
     real.forEach((b) => {
       let rawX = 50, rawY = 50, rawW = 20, rawH = 10;
       let isInvalidBox = false;
@@ -1099,6 +1122,8 @@ export const applyTranslationOverlay = async (
       if (!adj && !(b.sourceSizing?.mode === 'auto' && b.sourceSizing.status === 'matched')) {
         const text = (b.t || b.translated || "").trim();
         if (text) {
+          const adaptiveMinFs = Math.max(10, Math.round(minReadableFs * 0.75));
+          const maxAdaptiveScale = viewMode === "offscreen" ? 1.25 : 1.5;
           const layout = fitTextInAdaptiveBubble(
             text,
             currentBw,
@@ -1106,8 +1131,8 @@ export const applyTranslationOverlay = async (
             fontFam,
             !b.isInvalidBox,
             fontMult,
-            minReadableFs,
-            3.0,
+            adaptiveMinFs,
+            maxAdaptiveScale,
             wordWrapLocale,
           );
           const origCx = currentBx + currentBw / 2;
@@ -3020,4 +3045,11 @@ export const applyTranslationOverlay = async (
     .then(paintWhenReady)
     .catch(paintWhenReady);
 };
+
+export {
+  detectBubbleCollisions,
+  autoOrganizePageBubbles,
+  fitBubbleTextWithinBounds,
+  resolveBubbleCollisions,
+} from "./bubbleLayoutOptimizer";
 

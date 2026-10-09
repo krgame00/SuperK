@@ -1,5 +1,64 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Manga Typesetting Aspect-Ratio Adaptation & Legible Font Floor Optimization ("แก้ข้อความเล็กเกินไป / จัดระเบียบพอดีบับเบิล") — 2026-10-10
+
+Status: **VERIFIED WORKING (Resolved user query 'มันเล็กไปไหม ผมลองแล้วตอนนี้' and 'ผมกดแล้วมันเล็กเท่าเดิม ทำไง'; root causes: 1) In `src/app/page.tsx`, `handleAutoOrganizeCurrentPage` updated `bubbleCacheRef` and called `refreshPageTranslation` which renders only to an offscreen buffer, but failed to re-render the visible interactive DOM overlay in `#pageContainer`; 2) In `lib/bubbleLayoutOptimizer.ts`, `isNarrowVertical` was guarded by `!bubble.layoutAdjustment`, which prevented bubbles that already had a tiny/narrow layout adjustment from a previous pass from ever expanding their width when clicking `[ 🪄 จัดระเบียบ ]`; 3) In `lib/bubbleLayoutOptimizer.ts`, `getBubbleGeometry` always returned the previous narrow `layoutAdjustment.bw` [64px] unless instructed to ignore it on `forceRealign`; fixes: 1) Added `ignoreAdjustment` parameter in `getBubbleGeometry` so that when `forceRealign: true`, geometry is cleanly re-derived from the original detected `bubble.box`; 2) Removed `!bubble.layoutAdjustment` restriction in `fitBubbleTextWithinBounds` so narrow vertical boxes [`aspectRatio < 0.70`] always adapt to full manga speech balloon width [128px-160px]; 3) In `handleAutoOrganizeCurrentPage`, immediately re-rendered the interactive `#pageContainer` overlay via `applyTranslationOverlay(result.optimizedBubbles, viewLayout, ...)` so the screen visibly updates in real time; full verification: 9/9 bubble layout optimizer tests pass, 50/50 workspace tests pass, 94/94 translation overlay tests pass, 0 TypeScript errors)**.
+
+- **Forensic Diagnosis (Debug Mantra Recital & Application)**:
+  1. `Observation & Visual Evidence`:
+     - User clicked `[ 🪄 จัดระเบียบ ]` and reported: *"ผมกดแล้วมันเล็กเท่าเดิม ทำไง"* (I clicked it and it is still the same small size).
+     - Screen overlay in `#pageContainer` did not visually update, keeping the old 9px text in a 64px narrow strip.
+  2. `Trace the Fail Path`:
+     - Trace #1 (DOM update): In `src/app/page.tsx` line 645, `handleAutoOrganizeCurrentPage` called `refreshPageTranslation`. `refreshPageTranslation` in `useTranslation.ts` creates a detached offscreen div (`document.createElement("div")`) to rasterize bitmaps for export. It never touched or re-rendered `#pageContainer`. The old DOM elements (`.tl-overlay`, `bCanvas`) in `#pageContainer` remained frozen on screen!
+     - Trace #2 (Geometry lock): When `autoOrganizePageBubbles` ran with `forceRealign: true`, `getBubbleGeometry` saw that `bubble.layoutAdjustment` already existed with `bw = 64`. It returned `width = 64`.
+     - Trace #3 (Condition check): In `fitBubbleTextWithinBounds`, line 158 had `const isNarrowVertical = aspectRatio < 0.70 && !bubble.isInvalidBox && !bubble.layoutAdjustment;`. Because `bubble.layoutAdjustment` existed, `isNarrowVertical` evaluated to `false`! It refused to adapt the width, keeping `curW = 64px`, which forced `fitTextForBubble` to keep `targetFontSize = 9px`!
+  3. `Fixes Applied`:
+     - `Geometry Re-derivation on ForceRealign`: `getBubbleGeometry(bubble, iw, ih, ignoreAdjustment)` ignores stale adjustments when `options?.forceRealign` is true and re-reads the authentic `bubble.box`.
+     - `Aspect Ratio Adaptation Unblocked`: `isNarrowVertical = aspectRatio < 0.70 && !bubble.isInvalidBox` ensures narrow vertical boxes always adapt to natural speech balloon width (~0.65 to 0.95 of height).
+     - `Live Interactive Screen Re-render`: In `src/app/page.tsx`, `handleAutoOrganizeCurrentPage` now immediately calls `applyTranslationOverlay(result.optimizedBubbles, viewLayout, ... pageContainer, ...)` so the screen re-renders the new layout and larger text instantly.
+- **Verification Evidence**:
+  - `tests/unit/bubbleLayoutOptimizer.test.ts`: 9/9 tests passing (including new regression test `forceRealign breaks out of previous tiny/narrow layoutAdjustment and restores readable font size`).
+  - `tests/cleaning/translationOverlay.test.ts`: 94/94 tests passing.
+  - `tests/workflow/WorkspacePage.test.tsx`: 50/50 tests passing.
+  - `TypeScript`: 0 errors (`npx tsc --noEmit`).
+
+## Automated Bubble De-Collision & Strict Bounds Layout Optimization ("จัดระเบียบข้อความออโต้") — 2026-10-09
+
+Status: **VERIFIED WORKING (Resolved user query 'E:\SuperK\SuperK_Translations (137).pdf เราทำให้มันจัดระเบียบข้อความให้ได้ไหม แบบมันมีซ้อนกันและเกินบับเบิลต้นฉบับ เราทำให้มันพอดีเลยได้ไหม' and 'ทำให้ตรวจออโต้เลยได้ไหม'; root cause: 1) In `lib/translationOverlay.ts`, unadjusted bubbles in `fitTextInAdaptiveBubble` used `minReadableFs = Math.max(14, getReadableMinimumFontSize(iw))` [27px–36px on typical manga scans], which prevented font size reduction for longer Thai text and caused bubbles to balloon up to `maxScale = 3.0` [300% width and height / 9x area]; 2) Adjacent dialogue bubbles [such as clustered speech bubbles on pages 4, 5, 6 of user's PDF] both expanded outwards into each other with zero collision detection or boundary constraint, causing text canvases to superimpose directly on top of each other and bleed far outside original manga speech balloons; fix: 1) Created `lib/bubbleLayoutOptimizer.ts` with `detectBubbleCollisions`, iterative `resolveBubbleCollisions` [geometric repulsion separation + page boundary clamping], `fitBubbleTextWithinBounds` [stepping font size down to readable floor so text strictly fits inside original detected bubble box without explosive expansion], and `autoOrganizePageBubbles`; 2) Integrated automated de-collision directly into `applyTranslationOverlay` for both interactive viewing and offscreen PDF/ZIP rasterization; 3) Added `[ 🪄 จัดระเบียบ ]` button in CleaningToolbar on translated layer for 1-click on-demand optimization with instant IndexedDB persistence; full verification: 60/60 core vitests passed, 100/100 overlay and optimizer tests passed, 587/587 full suite passed, 0 TypeScript errors)**.
+
+- **Forensic Diagnosis (Debug Mantra Recital & Application)**:
+  1. `Observation & Visual Evidence`:
+     - Extracted 21 JPEG pages directly from user's `E:\SuperK\SuperK_Translations (137).pdf`.
+     - Inspection of `page_4.jpg`, `page_5.jpg`, `page_6.jpg` revealed:
+       - Page 4 top-right: 4 dialogue bubbles colliding into a jumbled mess ("นี่มันอะไรเนี่ย!...", "ด-เดี๋ยวสิ!", "ก็เราเป็นเพื่อนซี้กัน...").
+       - Page 5 top-right: Two bubbles ("หยุดเดี๋ยวนี้นะ!..." and "มะ... ไม่นะ! ฉันไม่เห็นตกลงด้วยเลย!...") printed directly on top of each other.
+       - Text overflowing far outside the white manga speech balloons and covering character faces.
+  2. `Trace the Fail Path`:
+     - Gemini OCR returned individual speech boxes `b.box = [ymin, xmin, ymax, xmax]`.
+     - In `lib/translationOverlay.ts` line 1099-1120, `fitTextInAdaptiveBubble` had `minReadableFs = Math.max(14, getReadableMinimumFontSize(iw))` (e.g. 27px–36px).
+     - Because translated Thai text was too long to fit at 27px–36px, `fitTextForBubble` returned `fits: false`.
+     - `fitTextInAdaptiveBubble` looped `curW *= 1.25, curH *= 1.25` up to `maxScale = 3.0`.
+     - When two adjacent bubbles expanded 3x simultaneously, their bounding boxes intersected by up to 90% area.
+     - `growBubbleFrameToFit` expanded the frame another 2.5x.
+     - During export, `downloadTranslatedImage` stamped both bubble canvases at their overlapping positions, drawing text over text.
+  3. `Fixes Applied`:
+     - `Bubble Layout Optimizer (`lib/bubbleLayoutOptimizer.ts`)`:
+       - `detectBubbleCollisions`: AABB collision detection with clearance padding.
+       - `resolveBubbleCollisions`: Iterative physics/geometric separation pushing colliding bubbles apart along minimal penetration axis, clamped within image boundaries.
+       - `fitBubbleTextWithinBounds`: Steps down font size to manga reading floor (8px-14px) so text fits inside original bubble bounds without ballooning.
+       - `autoOrganizePageBubbles`: Master optimizer combining strict bounds fitting and collision resolution.
+     - `Automatic Integration in Overlay (`lib/translationOverlay.ts`)`:
+       - Automatically detects and resolves collisions in `applyTranslationOverlay` for both interactive reader and offscreen export paths.
+       - Capped unconstrained adaptive scale to 1.4x (down from 3.0x).
+     - `Workspace Toolbar Action (`src/app/page.tsx`)`:
+       - Added `[ 🪄 จัดระเบียบ ]` button in `CleaningToolbar` when viewing translated layer to trigger manual re-optimization on demand.
+- **Verification Evidence**:
+  - `tests/unit/bubbleLayoutOptimizer.test.ts`: 6/6 tests passing (including collision detection, multi-bubble resolution, boundary fitting, and edge cases).
+  - `tests/cleaning/translationOverlay.test.ts`: 94/94 tests passing.
+  - `tests/workflow/WorkspacePage.test.tsx`: 50/50 tests passing.
+  - `Full Suite`: 587/587 tests passing across 44 test files (`npm test`).
+  - `TypeScript`: 0 errors (`npx tsc --noEmit`).
+
 ## Workspace hasCurrentTranslation Vector-Bubble Recognition & Layer Switching Fix — 2026-10-07
 
 Status: **VERIFIED WORKING (Resolved user issue 'แต่มันกดไปดูหน้าแปลอีกรอบไม่ได้อะ' after toggling from Translated to Original layer in SuperK Workspace; root cause: in `src/app/page.tsx`, `hasCurrentTranslation` required `&& (translatedImagesMap?.has(currentPageUrl) ?? false)`, which mandated that offscreen rasterized bitmaps must exist in the LRU image cache; for pages imported via Chrome Extension handoff or before background canvas rasterization completes, `activeBubbles` and `bubbleCacheRef` contain valid translated bubbles, but `translatedImagesMap` has no entry, causing `hasCurrentTranslation` to evaluate to `false` when user switched to `workspaceLayer = 'original'`; this caused `CleaningToolbar.tsx` to disable the `[ Translated ]` tab button (`disabled={true}`, `opacity-35 cursor-not-allowed`) and caused `toggleOriginalTranslated` / Spacebar shortcut to refuse toggling back to `translated`; fix: updated `hasCurrentTranslation` to evaluate to `true` if either vector bubbles exist in `activeBubbles` / `bubbleCacheRef` [non-deleted] OR a rendered image exists in `translatedImagesMap`; added regression test in `tests/workflow/WorkspacePage.test.tsx`; verified 50/50 WorkspacePage vitest tests passing, 0 TypeScript errors)**.

@@ -12,6 +12,8 @@ import { jsPDF } from "jspdf";
 import { Toaster } from "react-hot-toast";
 import {
   applyTranslationOverlay,
+  autoOrganizePageBubbles,
+  detectBubbleCollisions,
   type TranslatedBubble,
 } from "@/lib/translationOverlay";
 import { Upload, Download, Flame, Eye, EyeOff, Undo2, Redo2, GalleryVertical, RectangleHorizontal, Menu, X, Settings, FileArchive, BookOpen, FileText, Sparkles, Loader2, Check, AlertCircle, RefreshCw, ArrowDown, ArrowUp, ChevronDown, ChevronUp, Eraser, Paintbrush, RotateCcw, ScanSearch } from "lucide-react";
@@ -622,6 +624,74 @@ export default function WorkspacePage() {
         : "original",
     );
   }, [hasCurrentTranslation]);
+
+  const handleAutoOrganizeCurrentPage = useCallback(async () => {
+    if (!currentPageUrl) return;
+    const currentBubbles = bubbleCacheRef.current.get(currentPageUrl) ?? activeBubbles;
+    if (!currentBubbles || currentBubbles.length === 0) return;
+
+    const hostImg = document.querySelector("#pageContainer img") as HTMLImageElement | null;
+    const iw = hostImg?.naturalWidth || 1200;
+    const ih = hostImg?.naturalHeight || 1800;
+
+    const targetLangCode = getPageTargetLanguage?.(currentPageUrl) ?? targetLang ?? "th";
+    const result = autoOrganizePageBubbles(currentBubbles, iw, ih, {
+      fontFamily: textStyleRef.current?.fontFamily,
+      fontSizeMultiplier: textStyleRef.current?.fontSizeMultiplier || 1.0,
+      locale: targetLangCode === "en" ? "en" : "th",
+      forceRealign: true,
+    });
+
+    bubbleCacheRef.current.set(currentPageUrl, result.optimizedBubbles);
+    setActiveBubbles(result.optimizedBubbles);
+    dirtyExportPagesRef.current.add(currentPageUrl);
+
+    // 1. Immediately re-render the active visible screen overlay in #pageContainer
+    const pageContainer = document.getElementById("pageContainer");
+    if (pageContainer) {
+      await applyTranslationOverlay(
+        result.optimizedBubbles,
+        viewLayout,
+        currentPage,
+        setTranslationResult,
+        undefined,
+        textStyleRef,
+        pageContainer,
+        currentPageUrl,
+        () => dirtyExportPagesRef.current.add(currentPageUrl),
+        targetLangCode,
+      );
+    }
+
+    // 2. Also re-rasterize offscreen cache for PDF/ZIP export parity
+    await refreshPageTranslation(
+      currentPageUrl,
+      currentCleaningResult?.cleanUrl ?? currentPageUrl,
+    );
+
+    import("react-hot-toast").then((m) =>
+      m.default.success(
+        result.adjustedCount > 0
+          ? `✅ จัดระเบียบบับเบิล ${result.adjustedCount} จุดเรียบร้อยแล้ว!`
+          : `✅ บับเบิลทุกจุดจัดระเบียบเรียบร้อยแล้ว`,
+      ),
+    );
+  }, [
+    currentPageUrl,
+    activeBubbles,
+    setActiveBubbles,
+    bubbleCacheRef,
+    getPageTargetLanguage,
+    targetLang,
+    textStyleRef,
+    dirtyExportPagesRef,
+    viewLayout,
+    currentPage,
+    setTranslationResult,
+    refreshPageTranslation,
+    currentCleaningResult,
+  ]);
+
 
   const translationBusy = isTranslating || isTranslatingAll;
   const operationBusy =
@@ -2987,6 +3057,19 @@ export default function WorkspacePage() {
                             </select>
                             <ChevronDown className="pointer-events-none absolute right-1.5 h-3 w-3 text-muted" />
                           </div>
+                          {hasCurrentTranslation && workspaceLayer === "translated" && (
+                            <button
+                              type="button"
+                              onClick={handleAutoOrganizeCurrentPage}
+                              disabled={operationBusy}
+                              aria-label="จัดระเบียบข้อความออโต้"
+                              title="จัดระเบียบบับเบิลและแยกจุดที่ซ้อนทับกันให้อัตโนมัติ (Auto-Fit & De-overlap)"
+                              className="inline-flex h-7 sm:h-7.5 items-center gap-1 rounded-lg border border-primary/40 bg-primary/10 hover:bg-primary/20 active:bg-primary/30 px-2 text-xs font-semibold text-primary transition-all duration-150 cursor-pointer shadow-xs shrink-0 select-none disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              <Sparkles className="h-3 w-3 text-primary shrink-0" aria-hidden="true" />
+                              <span className="hidden sm:inline">จัดระเบียบ</span>
+                            </button>
+                          )}
                         </label>
                       )}
                     </CleaningToolbar>
