@@ -2048,28 +2048,99 @@ export const applyTranslationOverlay = async (
 
       const adjustBubbleFontSize = (delta: number) => {
         const oldMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
-        const newMult = Math.max(0.4, Math.min(3.0, Number((oldMult + delta).toFixed(2))));
+        const newMult = Math.max(0.4, Math.min(5.0, Number((oldMult + delta).toFixed(2))));
         if (newMult === oldMult) return;
         const snapshotBefore = b.layoutSnapshot;
         const sizingBefore = b.sourceSizing;
+        const targetFsBefore = b.targetFontSize;
+        const bxBefore = currentBx;
+        const byBefore = currentBy;
+        const bwBefore = currentBw;
+        const bhBefore = currentBh;
+        const minHeightBefore = manualMinHeightPx;
+
         b.sourceSizing = manualSourceSizing(b.sourceSizing,b.box);
         const sizingAfter = b.sourceSizing;
+
+        const text = (b.t || b.translated || "").trim();
+        if (text && typeof b.targetFontSize !== "number" && renderedFontSize > 0) {
+          const currentStyle = textStyleRef?.current || ts;
+          const globalMult = currentStyle.fontSizeMultiplier || 1.0;
+          const divisor = globalMult * oldMult;
+          if (divisor > 0) {
+            b.targetFontSize = renderedFontSize / divisor;
+          }
+        }
+        const scaleRatio = oldMult > 0 ? newMult / oldMult : 1;
+        if (delta > 0 && text) {
+          const currentStyle = textStyleRef?.current || ts;
+          const currentFontFam = resolveCanvasFontFamily(currentStyle.fontFamily);
+          const globalMult = currentStyle.fontSizeMultiplier || 1.0;
+          const baseFs = typeof b.targetFontSize === "number" ? b.targetFontSize : 16;
+          const nextEffectiveFs = Math.max(8, Math.round(baseFs * globalMult * newMult));
+          const minWordW = Math.min(
+            iw,
+            Math.max(
+              30,
+              minimumBubbleWidthAtFixedFont(
+                text,
+                nextEffectiveFs,
+                currentFontFam,
+                !b.isInvalidBox,
+                wordWrapLocale,
+              ),
+            ),
+          );
+          if (currentBw < 160 || currentBw < minWordW) {
+            const grownW = Math.min(
+              iw,
+              Math.max(28, minWordW, Math.round(currentBw * scaleRatio)),
+            );
+            const grownH = Math.min(ih, Math.max(20, Math.round(currentBh * scaleRatio)));
+            currentBx = Math.max(0, Math.min(iw - grownW, currentBx));
+            currentBy = Math.max(0, Math.min(ih - grownH, currentBy));
+            currentBw = grownW;
+            currentBh = grownH;
+            if (typeof manualMinHeightPx === "number") {
+              manualMinHeightPx = Math.min(ih, Math.round(manualMinHeightPx * scaleRatio));
+            }
+          }
+        }
+
         b.fontSizeMultiplier = newMult;
         onBubblesMutated?.();
         renderBubble();
         const snapshotAfter = b.layoutSnapshot;
+        const targetFsAfter = b.targetFontSize;
+        const bxAfter = currentBx;
+        const byAfter = currentBy;
+        const bwAfter = currentBw;
+        const bhAfter = currentBh;
+        const minHeightAfter = manualMinHeightPx;
         saveAdjustment();
         undoManager.push({
           label: delta > 0 ? "เพิ่มขนาดข้อความ" : "ลดขนาดข้อความ",
           undo: () => {
+            currentBx = bxBefore;
+            currentBy = byBefore;
+            currentBw = bwBefore;
+            currentBh = bhBefore;
             b.fontSizeMultiplier = oldMult;
+            b.targetFontSize = targetFsBefore;
+            manualMinHeightPx = minHeightBefore;
             b.sourceSizing = sizingBefore;
             b.layoutSnapshot = snapshotBefore;
             renderBubble();
             saveAdjustment();
           },
           redo: () => {
+            currentBx = bxAfter;
+            currentBy = byAfter;
+            currentBw = bwAfter;
+            currentBh = bhAfter;
             b.fontSizeMultiplier = newMult;
+            b.targetFontSize = targetFsAfter;
+            manualMinHeightPx = minHeightAfter;
             b.sourceSizing = sizingAfter;
             b.layoutSnapshot = snapshotAfter;
             renderBubble();
@@ -2218,20 +2289,24 @@ export const applyTranslationOverlay = async (
         handle.setAttribute("data-handle-position", pos);
         handle.title = title;
         const handleSize = size || 36;
-        handle.style.cssText = `position:absolute; width:${handleSize}px; height:${handleSize}px; background:#ffffff; border:2.5px solid #3b82f6; border-radius:50%; z-index:45; opacity:0; pointer-events:none; display:flex; align-items:center; justify-content:center; color:#2563eb; cursor:${cursor}; box-shadow:0 3px 10px rgba(0,0,0,0.35); transition:opacity 120ms ease, box-shadow 120ms ease, filter 120ms ease, transform 120ms ease; touch-action:none; user-select:none; transform:translate(-50%, -50%) scale(1);`;
+        const handleZIndex = id === "scale" ? 48 : id === "rotate" ? 47 : id === "move" ? 46 : 45;
+        handle.dataset.baseTranslate = "translate(-50%, -50%)";
+        handle.style.cssText = `position:absolute; width:${handleSize}px; height:${handleSize}px; background:#ffffff; border:2.5px solid #3b82f6; border-radius:50%; z-index:${handleZIndex}; opacity:0; pointer-events:none; display:flex; align-items:center; justify-content:center; color:#2563eb; cursor:${cursor}; box-shadow:0 3px 10px rgba(0,0,0,0.35); transition:opacity 120ms ease, box-shadow 120ms ease, filter 120ms ease, transform 120ms ease; touch-action:none; user-select:none; transform:translate(-50%, -50%) scale(1);`;
         handle.innerHTML = icon;
 
         handle.addEventListener('mouseenter', () => {
           handle.style.filter = 'brightness(1.05)';
           handle.style.boxShadow = '0 6px 16px rgba(37,99,235,0.45)';
           handle.style.borderColor = '#1d4ed8';
-          handle.style.transform = 'translate(-50%, -50%) scale(1.06)';
+          const baseTranslate = handle.dataset.baseTranslate || 'translate(-50%, -50%)';
+          handle.style.transform = `${baseTranslate} scale(1.06)`;
         });
         handle.addEventListener('mouseleave', () => {
           handle.style.filter = '';
           handle.style.boxShadow = '0 3px 10px rgba(0,0,0,0.35)';
           handle.style.borderColor = '#3b82f6';
-          handle.style.transform = 'translate(-50%, -50%) scale(1)';
+          const baseTranslate = handle.dataset.baseTranslate || 'translate(-50%, -50%)';
+          handle.style.transform = `${baseTranslate} scale(1)`;
         });
 
         let rStartX = 0, rStartY = 0;
@@ -2262,6 +2337,12 @@ export const applyTranslationOverlay = async (
             currentBw, currentBh, currentRotation);
           currentBx = scaleAnchor.x - point.x;
           currentBy = scaleAnchor.y - point.y;
+          if (currentRotation === 0 && currentBw <= iw && currentBh <= ih) {
+            if (currentBx < 0) currentBx = 0;
+            if (currentBy < 0) currentBy = 0;
+            if (currentBx + currentBw > iw) currentBx = Math.max(0, iw - currentBw);
+            if (currentBy + currentBh > ih) currentBy = Math.max(0, ih - currentBh);
+          }
         };
 
         const widthGeometryForDrag = (dx: number): { width: number; left: number } => {
@@ -2445,7 +2526,11 @@ export const applyTranslationOverlay = async (
             const requestedScale = 1 + (localDx*rInitBw-localDy*rInitBh)/(rInitBw*rInitBw+rInitBh*rInitBh);
             const minScale = Math.max(20/rInitBw,25/rInitBh,.4/rInitFontMult,
               rInitRenderedFontSize > 0 ? 8/rInitRenderedFontSize : 0);
-            const scale = Math.max(minScale,Math.min(3/rInitFontMult,requestedScale));
+            const maxScale = Math.max(
+              3 / rInitFontMult,
+              rInitRenderedFontSize > 0 ? 72 / rInitRenderedFontSize : 3,
+            );
+            const scale = Math.max(minScale,Math.min(maxScale,requestedScale));
             currentBw = rInitBw * scale;
             const newBh = rInitBh * scale;
             currentBy = rInitBy + (rInitBh - newBh);
@@ -2936,6 +3021,12 @@ export const applyTranslationOverlay = async (
         const scaledWidth = baseToolbarWidth * chromeScale;
         const scaledHeight = baseToolbarHeight * chromeScale;
         const rootWidth = rootRect.width || Math.max(right + 16, baseToolbarWidth + 16);
+        const boxW = right - left;
+        const boxH = bottom - top;
+        const isCompactBox = (boxW > 0 || boxH > 0) && (boxW < 36 || boxH < 36);
+        const padX = isCompactBox ? Math.round(Math.max(0, (36 - boxW) / 2) / chromeScale) : 0;
+        const padY = isCompactBox ? Math.round(Math.max(0, (36 - boxH) / 2) / chromeScale) : 0;
+        const padEastY = isCompactBox ? Math.round(Math.max(8, (44 - boxH) / 2) / chromeScale) : 0;
         const placeBelow = top < scaledHeight + 14;
         const minCenter = scaledWidth / 2 + 8;
         const maxCenter = Math.max(minCenter, rootWidth - scaledWidth / 2 - 8);
@@ -2947,10 +3038,25 @@ export const applyTranslationOverlay = async (
         toolbar.style.transform = placeBelow ? "translate(-50%, 0)" : "translate(-50%, -100%)";
 
         chromeHandles.forEach((handle) => {
-          const local = localPoints[handle.dataset.handlePosition ?? "nw"];
+          const pos = handle.dataset.handlePosition ?? "nw";
+          const local = localPoints[pos];
           const { x, y } = pointInChrome(...local);
           handle.style.left = `${x / chromeScale}px`;
           handle.style.top = `${y / chromeScale}px`;
+          let baseTranslate = "translate(-50%, -50%)";
+          if (isCompactBox) {
+            if (pos === "nw") {
+              baseTranslate = `translate(calc(-50% - ${padX}px), calc(-50% - ${padY}px))`;
+            } else if (pos === "ne") {
+              baseTranslate = `translate(calc(-50% + ${padX}px), calc(-50% - ${padY}px))`;
+            } else if (pos === "e") {
+              baseTranslate = `translate(calc(-50% + ${padX}px), calc(-50% + ${padEastY}px))`;
+            } else if (pos === "sw") {
+              baseTranslate = `translate(calc(-50% - ${padX}px), calc(-50% + ${padY}px))`;
+            }
+          }
+          handle.dataset.baseTranslate = baseTranslate;
+          handle.style.transform = `${baseTranslate} scale(1)`;
         });
         activeEditorPosition?.();
       };

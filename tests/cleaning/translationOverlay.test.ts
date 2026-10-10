@@ -2058,6 +2058,55 @@ test("allows narrowing a multi-line oval Thai bubble with the width handle when 
   expect(wrapper.dataset.layoutOverflow).toBe("false");
 });
 
+test("separates overlapping handles on a tiny bubble and allows scaling or A+ enlargement near the top edge", async () => {
+  const { container, chromeRoot, bubble, wrapper, canvas } = await renderOverlayFresh("อึก", {
+    layoutAdjustment: { bx: 480, by: 4, bw: 32, bh: 24, iw: 1000, ih: 1200 },
+    fontSizeMultiplier: 1,
+  });
+  mockCanvasRect(container, 0.5);
+  vi.spyOn(chromeRoot, "getBoundingClientRect").mockReturnValue({
+    left: 0, top: 0, right: 500, bottom: 600, width: 500, height: 600,
+  } as DOMRect);
+  vi.spyOn(wrapper, "getBoundingClientRect").mockReturnValue({
+    left: 240, top: 2, right: 256, bottom: 14, width: 16, height: 12,
+  } as DOMRect);
+
+  wrapper.focus();
+
+  const scaleHandle = chromeRoot.querySelector<HTMLElement>(".action-handle--scale")!;
+  const widthHandle = chromeRoot.querySelector<HTMLElement>(".action-handle--width")!;
+  expect(Number(scaleHandle.style.zIndex)).toBeGreaterThan(Number(widthHandle.style.zIndex));
+  expect(scaleHandle.style.transform).not.toBe(widthHandle.style.transform);
+
+  // 1. Clicking A+ repeatedly on a tiny bubble must grow both rendered font size and frame width/height
+  const ctx = canvas.getContext("2d")!;
+  const initialFontPx = parseFloat((ctx as unknown as { font: string }).font.match(/(\d+(?:\.\d+)?)px/)?.[1] ?? "0");
+  const increaseBtn = chromeRoot.querySelector<HTMLButtonElement>('[aria-label^="เพิ่มขนาดข้อความ"]')!;
+  increaseBtn.click();
+  increaseBtn.click();
+  increaseBtn.click();
+
+  const afterAPlusFontPx = parseFloat((ctx as unknown as { font: string }).font.match(/(\d+(?:\.\d+)?)px/)?.[1] ?? "0");
+  expect(afterAPlusFontPx).toBeGreaterThan(initialFontPx);
+  expect(bubble.layoutAdjustment!.bw).toBeGreaterThan(32);
+  expect(bubble.layoutAdjustment!.bh).toBeGreaterThan(24);
+
+  // 2. Dragging the scale handle on a bubble near the top edge (by ≈ 4) must not freeze when hitting y = 0
+  const widthBeforeScale = bubble.layoutAdjustment!.bw;
+  const multBeforeScale = bubble.fontSizeMultiplier!;
+  scaleHandle.setPointerCapture = vi.fn();
+  (scaleHandle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  scaleHandle.releasePointerCapture = vi.fn();
+
+  firePointer(scaleHandle, "pointerdown", 256, 2);
+  firePointer(scaleHandle, "pointermove", 310, -40);
+  firePointer(scaleHandle, "pointerup", 310, -40);
+
+  expect(bubble.layoutAdjustment!.by).toBeGreaterThanOrEqual(0);
+  expect(bubble.layoutAdjustment!.bw).toBeGreaterThan(widthBeforeScale * 1.3);
+  expect(bubble.fontSizeMultiplier!).toBeGreaterThan(multBeforeScale * 1.3);
+});
+
 test("width preview lays out the text once and draws with the computed live reflow", async () => {
   const text = "ทั้งที่ข้าอุตส่าห์แต่งตัวในแบบที่เจ้าชอบแท้ๆ";
   const { container, chromeRoot, bubble } = await renderOverlayFresh(text, {
