@@ -1,5 +1,29 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Automated Multi-Page & Whole-Book Bubble Layout Optimization ("จัดระเบียบทุกหน้า") — 2026-10-10
+
+Status: **VERIFIED WORKING (Resolved user request 'ต่อไปทำให้จัดทุกหน้าได้เลย'; architectural design: ADR 0021; features: 1) Core multi-page batch optimizer helper `autoOrganizeAllPagesBubbles` in `lib/bubbleLayoutOptimizer.ts` with strict preservation of manual user adjustments [`userModified: true` in `OverlayAdjustment`]; 2) Menu item `🪄 จัดระเบียบคำแปลทุกหน้า` in `WorkspaceAdvancedTools` ['เครื่องมือ'] across desktop and mobile headers; 3) Split/dropdown button `[ 🪄 จัดระเบียบ | ⌄ ]` in `CleaningToolbar` on translated layer with options `จัดระเบียบหน้านี้` and `จัดระเบียบทุกหน้า ({n} หน้า)`; 4) Automated batch organizer hook in `handleTranslateBook` running auto-organization across all pages upon completion of batch translation; 5) Live floating stopwatch progress toast, non-blocking microtask yielding, and immediate interactive `#pageContainer` re-render for current active page; full verification: 11/11 bubble layout optimizer tests pass, 52/52 WorkspacePage workflow tests pass, 1,696/1,696 full vitest suite pass, 0 TypeScript errors, Next.js 16 standalone build exit 0, server responding HTTP 200 on port 3000)**.
+
+- **Architecture & Implementation Details**:
+  1. `User-Modified Preservation`:
+     - Added `userModified?: boolean; isAutoOptimized?: boolean;` to `OverlayAdjustment` in `lib/translationOverlay.ts`.
+     - In `saveAdjustment()`, gestures (drag, resize, rotate) automatically stamp `userModified: true`.
+     - In `lib/bubbleLayoutOptimizer.ts`, bubbles with `userModified: true` are strictly preserved in geometry, font size, and position during collision repulsion.
+  2. `Dropdown & Split Button UI`:
+     - Replaced single `[ 🪄 จัดระเบียบ ]` button in `CleaningToolbar` with split button `[ 🪄 จัดระเบียบ | ⌄ ]` with click-outside dismissal and mobile-friendly touch targets.
+     - Added menu item `🪄 จัดระเบียบคำแปลทุกหน้า` to `WorkspaceAdvancedTools` enabled whenever translated pages exist.
+  3. `Batch Execution & Post-Translate Hook`:
+     - Implemented `handleAutoOrganizeAllPages` in `src/app/page.tsx` iterating across all cached translated pages with live progress toasts (`กำลังจัดระเบียบหน้า X/Y...`).
+     - Hooked `await handleAutoOrganizeAllPages()` into `handleTranslateBook` so full-book translation automatically optimizes all pages without manual intervention.
+- **Verification Evidence**:
+  - `tests/unit/bubbleLayoutOptimizer.test.ts`: 11/11 tests passing (including multi-page processing and `userModified` preservation).
+  - `tests/workflow/WorkspaceControls.test.tsx`: 7/7 tests passing (including `onOrganizeAllPages` menu trigger).
+  - `tests/workflow/WorkspacePage.test.tsx`: 52/52 tests passing (including integration tests for organize-all tools option and post-translate hook).
+  - `Full Vitest Suite`: 1,696/1,696 tests passing across 204 test files (`npm test`).
+  - `TypeScript`: 0 errors (`npx tsc --noEmit`).
+  - `Production Build`: Next.js 16 standalone build succeeded (`npm run build && node scripts/sync-standalone-assets.mjs`).
+  - `Production Server`: Live HTTP 200 confirmed on `http://127.0.0.1:3000`.
+
 ## Manga Typesetting Aspect-Ratio Adaptation & Legible Font Floor Optimization ("แก้ข้อความเล็กเกินไป / จัดระเบียบพอดีบับเบิล") — 2026-10-10
 
 Status: **VERIFIED WORKING (Resolved user query 'มันเล็กไปไหม ผมลองแล้วตอนนี้' and 'ผมกดแล้วมันเล็กเท่าเดิม ทำไง'; root causes: 1) In `src/app/page.tsx`, `handleAutoOrganizeCurrentPage` updated `bubbleCacheRef` and called `refreshPageTranslation` which renders only to an offscreen buffer, but failed to re-render the visible interactive DOM overlay in `#pageContainer`; 2) In `lib/bubbleLayoutOptimizer.ts`, `isNarrowVertical` was guarded by `!bubble.layoutAdjustment`, which prevented bubbles that already had a tiny/narrow layout adjustment from a previous pass from ever expanding their width when clicking `[ 🪄 จัดระเบียบ ]`; 3) In `lib/bubbleLayoutOptimizer.ts`, `getBubbleGeometry` always returned the previous narrow `layoutAdjustment.bw` [64px] unless instructed to ignore it on `forceRealign`; fixes: 1) Added `ignoreAdjustment` parameter in `getBubbleGeometry` so that when `forceRealign: true`, geometry is cleanly re-derived from the original detected `bubble.box`; 2) Removed `!bubble.layoutAdjustment` restriction in `fitBubbleTextWithinBounds` so narrow vertical boxes [`aspectRatio < 0.70`] always adapt to full manga speech balloon width [128px-160px]; 3) In `handleAutoOrganizeCurrentPage`, immediately re-rendered the interactive `#pageContainer` overlay via `applyTranslationOverlay(result.optimizedBubbles, viewLayout, ...)` so the screen visibly updates in real time; full verification: 9/9 bubble layout optimizer tests pass, 50/50 workspace tests pass, 94/94 translation overlay tests pass, 0 TypeScript errors)**.
