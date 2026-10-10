@@ -376,6 +376,6 @@ _Avoid_: Loose code in media folders, destructive deletion of dev repositories
 The state where an unpacked image folder and its corresponding compressed archive (`.zip`/`.rar`/`.7z`) coexist with verified matching content. Once archive integrity is confirmed, the unpacked folder is redundant and eligible for reclamation.
 _Avoid_: Premature folder deletion without archive verification, double-storage
 
-
-
-
+**Bubble auto-organization**:
+The geometric and typographic layout optimization process that adapts detected narrow vertical Japanese OCR speech boxes into natural manga speech balloon aspect ratios, enforces a legible font size floor (minimum reading floor), and resolves multi-bubble spatial overlap (de-collision repulsion) within page bounds while preserving explicit user manual edits.
+_Avoid_: Unconstrained ballooning, microscopic font shrinking, destructive overwrite of user layouts, manual one-by-one realignment
