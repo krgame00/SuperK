@@ -2035,6 +2035,29 @@ test("single width handle slides left and right smoothly: widening to right wrap
   expect(bubble.layoutAdjustment?.bh).toBeGreaterThanOrEqual(140);
 });
 
+test("allows narrowing a multi-line oval Thai bubble with the width handle when middle lines are wider than the balloon", async () => {
+  const text =
+    "เปลี่ยน บรรยากาศจากตัว ตนที่ยอมจำนนของเธอ บ้างสิ! หลังจากนี้ เดี๋ยว เธอจะได้เป็นแม่คนใน พริบตาเดียวแน่ เชื่อฉันสิ!";
+  const { container, chromeRoot, bubble, wrapper } = await renderOverlayFresh(text, {
+    layoutAdjustment: { bx: 100, by: 100, bw: 180, bh: 260, iw: 1000, ih: 1200 },
+    targetFontSize: 16,
+    fontSizeMultiplier: 1,
+  });
+  mockCanvasRect(container);
+  const widthHandle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  widthHandle.setPointerCapture = vi.fn();
+  (widthHandle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  widthHandle.releasePointerCapture = vi.fn();
+
+  firePointer(widthHandle, "pointerdown", 500, 500);
+  firePointer(widthHandle, "pointermove", 450, 500);
+  firePointer(widthHandle, "pointerup", 450, 500);
+
+  expect(bubble.layoutAdjustment?.bw).toBeCloseTo(130, 1);
+  expect(bubble.layoutAdjustment?.bh).toBeGreaterThanOrEqual(260);
+  expect(wrapper.dataset.layoutOverflow).toBe("false");
+});
+
 test("width preview lays out the text once and draws with the computed live reflow", async () => {
   const text = "ทั้งที่ข้าอุตส่าห์แต่งตัวในแบบที่เจ้าชอบแท้ๆ";
   const { container, chromeRoot, bubble } = await renderOverlayFresh(text, {

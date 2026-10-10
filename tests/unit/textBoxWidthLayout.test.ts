@@ -139,4 +139,52 @@ describe("layoutTextAtFixedFont", () => {
     expect(empty.requiredHeightPx).toBe(0);
     expect(tooWide.overflow).toBe(true);
   });
+
+  it("does not inflate oval whole-word minimum width or fail to settle on long multi-line Thai dialogue", () => {
+    const text =
+      "เปลี่ยน บรรยากาศจากตัว ตนที่ยอมจำนนของเธอ บ้างสิ! หลังจากนี้ เดี๋ยว เธอจะได้เป็นแม่คนใน พริบตาเดียวแน่ เชื่อฉันสิ!";
+    const measureThai = (value: string) => [...value].length * 8.8;
+
+    const rectFloor = minimumWidthForWholeWords({
+      text,
+      fontSizePx: 16,
+      isOval: false,
+      locale: "th",
+      measureText: measureThai,
+    });
+    const ovalFloor = minimumWidthForWholeWords({
+      text,
+      fontSizePx: 16,
+      isOval: true,
+      locale: "th",
+      measureText: measureThai,
+    });
+
+    expect(ovalFloor).toBeGreaterThan(rectFloor);
+    expect(ovalFloor).toBeLessThanOrEqual(Math.ceil(rectFloor * 1.3));
+
+    const wideLayout = layoutTextAtFixedFont({
+      ...base,
+      text,
+      fontSizePx: 16,
+      widthPx: 180,
+      availableHeightPx: 1000,
+      isOval: true,
+      measureText: measureThai,
+    });
+    const narrowLayout = layoutTextAtFixedFont({
+      ...base,
+      text,
+      fontSizePx: 16,
+      widthPx: 120,
+      availableHeightPx: 1000,
+      isOval: true,
+      measureText: measureThai,
+    });
+
+    expect(wideLayout.overflow).toBe(false);
+    expect(narrowLayout.overflow).toBe(false);
+    expect(narrowLayout.lines.length).toBeGreaterThan(wideLayout.lines.length);
+    expect(narrowLayout.lines.every((line) => !line.includes("ตนที่ยอมจำนนของเธอ"))).toBe(true);
+  });
 });

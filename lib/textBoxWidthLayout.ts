@@ -36,6 +36,15 @@ function allowedWidthAt(
   );
 }
 
+function singleWordAllowedWidth(
+  safeWidthPx: number,
+  fontSizePx: number,
+  isOval: boolean,
+): number {
+  if (!isOval) return safeWidthPx;
+  return allowedWidthAt(0, 2, safeWidthPx, fontSizePx, true);
+}
+
 const graphemesOf = (value: string): string[] => {
   if (typeof Intl !== "undefined" && "Segmenter" in Intl) {
     try {
@@ -96,6 +105,7 @@ function wrapForCandidate(
   const lines: string[] = [];
   let current = "";
   let wordOverflow = false;
+  const singleWordLimit = singleWordAllowedWidth(safeWidthPx, fontSizePx, isOval);
 
   const candidateWidthAt = (lineIndex: number): number =>
     allowedWidthAt(lineIndex, candidateLineCount, safeWidthPx, fontSizePx, isOval);
@@ -115,7 +125,10 @@ function wrapForCandidate(
     }
 
     if (!remaining) return;
-    if (measureText(remaining) > candidateWidthAt(lines.length)) wordOverflow = true;
+    const wordLimit = current
+      ? candidateWidthAt(lines.length)
+      : Math.max(candidateWidthAt(lines.length), singleWordLimit);
+    if (measureText(remaining) > wordLimit) wordOverflow = true;
     current += remaining;
   };
 
@@ -150,13 +163,17 @@ function linesFitTheirChords(
   widthPx: number,
   fontSizePx: number,
   isOval: boolean,
+  locale: string,
   measureText: (value: string) => number,
 ): boolean {
   const safeWidthPx = Math.max(1, widthPx * 0.88);
+  const singleWordLimit = singleWordAllowedWidth(safeWidthPx, fontSizePx, isOval);
   return lines.every((line, lineIndex) => {
     if (!isOval || lines.length <= 1) return measureText(line) <= safeWidthPx * 1.05;
     const chordWidth = allowedWidthAt(lineIndex, lines.length, safeWidthPx, fontSizePx, isOval);
-    return measureText(line) <= chordWidth * 1.05;
+    const wordCount = segmentTextIntoWords(line, locale).filter((segment) => !/^\s+$/u.test(segment)).length;
+    const effectiveChord = wordCount <= 1 ? Math.max(chordWidth, singleWordLimit) : chordWidth;
+    return measureText(line) <= effectiveChord * 1.05;
   });
 }
 
@@ -170,45 +187,21 @@ export function minimumWidthForWholeWords(input: MinimumWordWidthInput): number 
   const rectWidthPx = Math.max(1, Math.ceil(widestWordPx / 0.88));
   if (!input.isOval) return rectWidthPx;
 
-  const maxCandidates = Math.min(
-    MAX_OVAL_LINE_CANDIDATES,
-    Math.max(1, words.length + (input.text.match(/\n/g)?.length ?? 0)),
-  );
-  const fitsAtWidth = (widthPx: number): boolean => {
+  const fitsSingleWordOval = (widthPx: number): boolean => {
     const safeWidthPx = Math.max(1, widthPx * 0.88);
-    for (let candidateLineCount = 1; candidateLineCount <= maxCandidates; candidateLineCount += 1) {
-      const attempt = wrapForCandidate(
-        input.text,
-        candidateLineCount,
-        safeWidthPx,
-        input.fontSizePx,
-        true,
-        locale,
-        input.measureText,
-      );
-      if (
-        !attempt.wordOverflow
-        && attempt.lines.length <= candidateLineCount
-        && linesFitTheirChords(attempt.lines, widthPx, input.fontSizePx, true, input.measureText)
-      ) return true;
-    }
-    return false;
+    return widestWordPx <= singleWordAllowedWidth(safeWidthPx, input.fontSizePx, true) * 1.05;
   };
 
+  const twoLineChordFactor = 0.88 * Math.sqrt(0.75) * 0.95;
   let low = rectWidthPx;
-  let high = Math.max(
-    low,
-    Math.ceil(words.reduce((total, word) => total + input.measureText(word), 0) / 0.88) + 1,
-  );
-  for (let attempt = 0; attempt < 12 && !fitsAtWidth(high); attempt += 1) high *= 2;
-  if (!fitsAtWidth(high)) return high;
-
+  let high = Math.max(low + 1, Math.ceil(widestWordPx / twoLineChordFactor) + 2);
+  while (!fitsSingleWordOval(high)) high *= 2;
   for (let attempt = 0; attempt < 16; attempt += 1) {
     const middle = (low + high) / 2;
-    if (fitsAtWidth(middle)) high = middle;
+    if (fitsSingleWordOval(middle)) high = middle;
     else low = middle;
   }
-  return Math.ceil(high);
+  return Math.max(rectWidthPx + 1, Math.ceil(high));
 }
 
 /** Wrap content at a fixed visible font size, with bounded oval fitting. */
@@ -230,6 +223,7 @@ export function layoutTextAtFixedFont(input: FixedFontWidthInput): FixedFontWidt
       overflow: manualMinHeight > finiteAvailableHeight,
     };
   }
+  const locale = input.locale || "th";
   const safeWidthPx = Math.max(1, finiteWidth * 0.88);
   const graphemeCount = graphemesOf(input.text).length;
   const maxCandidates = input.isOval
@@ -237,6 +231,9 @@ export function layoutTextAtFixedFont(input: FixedFontWidthInput): FixedFontWidt
     : 1;
 
   let chosenLines: string[] = [];
+  let fallbackLines: string[] | null = null;
+  let fallbackWordOverflow = false;
+  let crossoverCandidate: number | null = null;
   let wordOverflow = false;
   let settled = false;
 
@@ -247,23 +244,42 @@ export function layoutTextAtFixedFont(input: FixedFontWidthInput): FixedFontWidt
       safeWidthPx,
       finiteFontSize,
       input.isOval,
-      input.locale || "th",
+      locale,
       input.measureText,
     );
     chosenLines = attempt.lines;
     wordOverflow = attempt.wordOverflow;
+
+    if (fallbackLines === null && (!input.isOval || chosenLines.length <= candidateLineCount)) {
+      fallbackLines = chosenLines;
+      fallbackWordOverflow = wordOverflow;
+      crossoverCandidate = candidateLineCount;
+    }
 
     const actualChordsFit = linesFitTheirChords(
       chosenLines,
       finiteWidth,
       finiteFontSize,
       input.isOval,
+      locale,
       input.measureText,
     );
 
     if ((!input.isOval || chosenLines.length <= candidateLineCount) && actualChordsFit && !wordOverflow) {
       settled = true;
       break;
+    }
+
+    if (crossoverCandidate !== null && candidateLineCount >= crossoverCandidate + 1) {
+      break;
+    }
+  }
+
+  if (!settled && fallbackLines !== null) {
+    chosenLines = fallbackLines;
+    wordOverflow = fallbackWordOverflow;
+    if (!wordOverflow) {
+      settled = true;
     }
   }
 

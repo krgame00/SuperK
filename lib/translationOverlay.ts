@@ -2309,7 +2309,7 @@ export const applyTranslationOverlay = async (
           rInitTargetFs = typeof b.targetFontSize === "number" && Number.isFinite(b.targetFontSize) && b.targetFontSize > 0
             ? b.targetFontSize
             : (typeof adj?.targetFontSize === "number" && Number.isFinite(adj.targetFontSize) && adj.targetFontSize > 0
-              ? adj.targetFontSize
+              ? (adjSx !== 1 ? Math.max(8, Math.round(adj.targetFontSize * adjSx)) : adj.targetFontSize)
               : undefined);
           rDragTargetFs = rInitTargetFs;
           rInitManualMinHeightPx = manualMinHeightPx;
@@ -2596,6 +2596,9 @@ export const applyTranslationOverlay = async (
           if (id === "scale") {
             pinScaleAnchor();
             updateBubbleFrame();
+          }
+          if (id === "width" && typeof b.targetFontSize !== "number" && typeof rDragTargetFs === "number") {
+            b.targetFontSize = rDragTargetFs;
           }
           scaleDragSnapshot = null;
           saveAdjustment();
