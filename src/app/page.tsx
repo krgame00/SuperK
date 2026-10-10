@@ -15,6 +15,7 @@ import {
   autoOrganizePageBubbles,
   autoOrganizeAllPagesBubbles,
   detectBubbleCollisions,
+  syncPageOverlayAdjustments,
   type TranslatedBubble,
 } from "@/lib/translationOverlay";
 import { Upload, Download, Flame, Eye, EyeOff, Undo2, Redo2, GalleryVertical, RectangleHorizontal, Menu, X, Settings, FileArchive, BookOpen, FileText, Sparkles, Loader2, Check, AlertCircle, RefreshCw, ArrowDown, ArrowUp, ChevronDown, ChevronUp, Eraser, Paintbrush, RotateCcw, ScanSearch } from "lucide-react";
@@ -657,6 +658,7 @@ export default function WorkspacePage() {
     });
 
     bubbleCacheRef.current.set(currentPageUrl, result.optimizedBubbles);
+    syncPageOverlayAdjustments(currentPageUrl, result.optimizedBubbles);
     setActiveBubbles(result.optimizedBubbles);
     dirtyExportPagesRef.current.add(currentPageUrl);
 
@@ -720,6 +722,47 @@ export default function WorkspacePage() {
       return;
     }
 
+    const loadPageDimensions = async (
+      pageUrl: string,
+      bubbles: TranslatedBubble[],
+    ): Promise<{ iw: number; ih: number }> => {
+      if (pageUrl === currentPageUrl) {
+        const hostImg = document.querySelector("#pageContainer img") as HTMLImageElement | null;
+        if (hostImg?.naturalWidth && hostImg?.naturalHeight) {
+          return { iw: hostImg.naturalWidth, ih: hostImg.naturalHeight };
+        }
+      }
+      const existingAdj = bubbles.find(
+        (b) => b?.layoutAdjustment && b.layoutAdjustment.iw > 0 && b.layoutAdjustment.ih > 0,
+      )?.layoutAdjustment;
+      try {
+        const probeImg = new Image();
+        const isJsdom = typeof navigator !== "undefined" && /jsdom/i.test(navigator.userAgent || "");
+        const decoded = await new Promise<{ iw: number; ih: number } | null>((resolve) => {
+          const finish = () => {
+            if (probeImg.naturalWidth > 0 && probeImg.naturalHeight > 0) {
+              resolve({ iw: probeImg.naturalWidth, ih: probeImg.naturalHeight });
+            } else {
+              resolve(null);
+            }
+          };
+          probeImg.onload = finish;
+          probeImg.onerror = () => resolve(null);
+          probeImg.src = cleaningResultsByPage?.get?.(pageUrl)?.cleanUrl ?? pageUrl;
+          if (probeImg.complete || isJsdom) {
+            finish();
+            return;
+          }
+          setTimeout(() => resolve(null), 300);
+        });
+        if (decoded) return decoded;
+      } catch {}
+      if (existingAdj) {
+        return { iw: existingAdj.iw, ih: existingAdj.ih };
+      }
+      return { iw: 1200, ih: 1800 };
+    };
+
     try {
       const toastModule = await import("react-hot-toast");
       const toast = toastModule.default as any;
@@ -735,24 +778,7 @@ export default function WorkspacePage() {
         const currentBubbles = bubbleCacheRef.current.get(pageUrl);
         if (!currentBubbles || currentBubbles.length === 0) continue;
 
-        let iw = 1200;
-        let ih = 1800;
-        if (pageUrl === currentPageUrl) {
-          const hostImg = document.querySelector("#pageContainer img") as HTMLImageElement | null;
-          if (hostImg?.naturalWidth && hostImg?.naturalHeight) {
-            iw = hostImg.naturalWidth;
-            ih = hostImg.naturalHeight;
-          }
-        } else {
-          try {
-            const probeImg = new Image();
-            probeImg.src = pageUrl;
-            if (probeImg.complete && probeImg.naturalWidth) {
-              iw = probeImg.naturalWidth;
-              ih = probeImg.naturalHeight;
-            }
-          } catch {}
-        }
+        const { iw, ih } = await loadPageDimensions(pageUrl, currentBubbles);
 
         const targetLangCode = getPageTargetLanguage?.(pageUrl) ?? targetLang ?? "th";
         const result = autoOrganizePageBubbles(currentBubbles, iw, ih, {
@@ -763,11 +789,12 @@ export default function WorkspacePage() {
         });
 
         bubbleCacheRef.current.set(pageUrl, result.optimizedBubbles);
+        syncPageOverlayAdjustments(pageUrl, result.optimizedBubbles);
         dirtyExportPagesRef.current.add(pageUrl);
         totalAdjusted += result.adjustedCount;
         processedCount++;
 
-        // If active on screen, live re-render #pageContainer
+        // If active on screen, live re-render #pageContainer and refresh offscreen bitmap
         if (pageUrl === currentPageUrl) {
           setActiveBubbles(result.optimizedBubbles);
           const pageContainer = document.getElementById("pageContainer");
@@ -785,6 +812,15 @@ export default function WorkspacePage() {
               targetLangCode,
             );
           }
+          await refreshPageTranslation(
+            currentPageUrl,
+            currentCleaningResult?.cleanUrl ?? currentPageUrl,
+          );
+        } else if (translatedImagesMap?.has(pageUrl) || viewLayout === "scroll") {
+          await refreshPageTranslation(
+            pageUrl,
+            cleaningResultsByPage?.get?.(pageUrl)?.cleanUrl ?? pageUrl,
+          );
         }
 
         if (toastId && typeof toast?.loading === "function") {
@@ -821,6 +857,10 @@ export default function WorkspacePage() {
     viewLayout,
     currentPage,
     setTranslationResult,
+    refreshPageTranslation,
+    currentCleaningResult,
+    cleaningResultsByPage,
+    translatedImagesMap,
   ]);
 
 

@@ -304,6 +304,21 @@ export const readPageOverlayAdjustments = (pageKey: string): Record<string, Over
   return all[compactOverlayPageKey(pageKey)] ?? all[pageKey] ?? {};
 };
 
+export const syncPageOverlayAdjustments = (pageKey: string, bubbles: TranslatedBubble[]): void => {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    const storagePageKey = compactOverlayPageKey(pageKey);
+    const all = readOverlayAdjustments();
+    if (!all[storagePageKey]) all[storagePageKey] = {};
+    for (const b of bubbles) {
+      if (!b || b.deleted || !b.layoutAdjustment) continue;
+      const bubbleId = bubbleKeyOf(b);
+      all[storagePageKey][bubbleId] = { ...b.layoutAdjustment };
+    }
+    saveOverlayAdjustments(all);
+  } catch {}
+};
+
 export const clearPageAdjustments = (pageIndex: number): void => {
   if (typeof window === "undefined" || !window.localStorage) return;
   try {
@@ -855,6 +870,11 @@ export const applyTranslationOverlay = async (
       // Font loading is best-effort; measurement falls back below.
     }
     if (isStaleOverlay()) return;
+    if (!img.naturalWidth && !img.complete && attempt < 25) {
+      img.addEventListener("load", () => void paint(attempt + 1), { once: true });
+      setTimeout(() => paint(attempt + 1), 50);
+      return;
+    }
     const iw = img.naturalWidth || img.offsetWidth;
     const ih = img.naturalHeight || img.offsetHeight;
     if (!iw || !ih) {
@@ -1022,10 +1042,12 @@ export const applyTranslationOverlay = async (
         b.targetFontSize = adj.targetFontSize;
       }
 
-      let currentBx = adj ? adj.bx : (rawX / 100) * iw - ((rawW / 100) * iw) / 2;
-      let currentBy = adj ? adj.by : (rawY / 100) * ih - ((rawH / 100) * ih) / 2;
-      let currentBw = adj ? adj.bw : (rawW / 100) * iw;
-      let currentBh = adj ? adj.bh : (rawH / 100) * ih;
+      const adjSx = adj?.isAutoOptimized && adj.iw > 0 ? iw / adj.iw : 1;
+      const adjSy = adj?.isAutoOptimized && adj.ih > 0 ? ih / adj.ih : 1;
+      let currentBx = adj ? adj.bx * adjSx : (rawX / 100) * iw - ((rawW / 100) * iw) / 2;
+      let currentBy = adj ? adj.by * adjSy : (rawY / 100) * ih - ((rawH / 100) * ih) / 2;
+      let currentBw = adj ? adj.bw * adjSx : (rawW / 100) * iw;
+      let currentBh = adj ? adj.bh * adjSy : (rawH / 100) * ih;
       let currentRotation = adj?.rotation !== undefined ? adj.rotation : ((b.rotation as number) || 0);
       let manualMinHeightPx = typeof adj?.manualMinHeightPx === "number"
         && Number.isFinite(adj.manualMinHeightPx)
@@ -1034,7 +1056,7 @@ export const applyTranslationOverlay = async (
       // The bubble object is the authoritative layout state; adopt a
       // proportional snapshot persisted in the legacy localStorage index so
       // reopen parity does not depend on the app-state round trip.
-      if (!b.layoutSnapshot) {
+      if (!b.layoutSnapshot && !adj?.isAutoOptimized) {
         const persistedSnapshot = adj?.layoutSnapshot ?? legacyAdj?.layoutSnapshot;
         if (persistedSnapshot) b.layoutSnapshot = persistedSnapshot;
       }
@@ -1195,7 +1217,13 @@ export const applyTranslationOverlay = async (
         wrapper.title = scriptNotice;
         wrapper.setAttribute("aria-label", [baseAriaLabel, scriptNotice].filter(Boolean).join("; "));
         const currentFontFam = resolveCanvasFontFamily(currentStyle.fontFamily);
-        const autoSizing = b.sourceSizing?.mode === 'auto' ? b.sourceSizing : undefined;
+        const isExplicitlyLaidOut = Boolean(
+          b.layoutAdjustment?.isAutoOptimized
+          || b.layoutAdjustment?.userModified
+          || adj?.isAutoOptimized
+          || adj?.userModified,
+        );
+        const autoSizing = !isExplicitlyLaidOut && b.sourceSizing?.mode === 'auto' ? b.sourceSizing : undefined;
         const discardDerivedSize = () => {
           if (b.targetFontSize === autoSizing?.baseFontSizePx) delete b.targetFontSize;
           if (adj && autoSizing?.baseFontSizePx !== undefined && adj.targetFontSize === autoSizing.baseFontSizePx) delete adj.targetFontSize;
@@ -1219,11 +1247,14 @@ export const applyTranslationOverlay = async (
         }
         const bubbleMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
         const globalMult = currentStyle.fontSizeMultiplier || 1.0;
-        const lockedFs = typeof b.targetFontSize === "number" && Number.isFinite(b.targetFontSize) && b.targetFontSize > 0
+        const rawLockedFs = typeof b.targetFontSize === "number" && Number.isFinite(b.targetFontSize) && b.targetFontSize > 0
           ? b.targetFontSize
           : (typeof adj?.targetFontSize === "number" && Number.isFinite(adj.targetFontSize) && adj.targetFontSize > 0
             ? adj.targetFontSize
             : undefined);
+        const lockedFs = typeof rawLockedFs === "number" && adjSx !== 1
+          ? Math.max(8, Math.round(rawLockedFs * adjSx))
+          : rawLockedFs;
         let fixedLayout: FixedFontWidthResult | null = null;
         let legacyFit: BubbleTextFit | null = null;
         let snapshotFit: { layout: BubbleProportionalLayout; scale: number } | null = null;
@@ -1234,7 +1265,7 @@ export const applyTranslationOverlay = async (
         // explicit scale to rescale the captured layout crisply in one pass.
         // Matched-auto bubbles always keep the fresh constrained layout so
         // source-space evidence and neighbor caps govern every render.
-        const isMatchedAuto = b.sourceSizing?.mode === "auto" && b.sourceSizing.status === "matched";
+        const isMatchedAuto = !isExplicitlyLaidOut && b.sourceSizing?.mode === "auto" && b.sourceSizing.status === "matched";
         if (text && !isMatchedAuto && isUsableLayoutSnapshot(b.layoutSnapshot, text, currentFontFam)) {
           if (snapshotScale !== 1) {
             snapshotFit = { layout: b.layoutSnapshot, scale: snapshotScale };
@@ -1252,7 +1283,7 @@ export const applyTranslationOverlay = async (
           textLayoutOverflow = snapshotFit.layout.overflow === true;
         } else {
         if (text && typeof lockedFs === "number") {
-          const matchedAuto = b.sourceSizing?.mode === 'auto' && b.sourceSizing.status === 'matched';
+          const matchedAuto = !isExplicitlyLaidOut && b.sourceSizing?.mode === 'auto' && b.sourceSizing.status === 'matched';
           const scaledFs = lockedFs * (currentStyle.fontSizeMultiplier || 1.0) * bubbleMult;
           const effectiveFs = matchedAuto ? scaledFs : Math.max(8, Math.round(scaledFs));
           const savedManualMinimum = manualMinHeightPx

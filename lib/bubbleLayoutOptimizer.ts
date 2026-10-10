@@ -2,6 +2,7 @@ import {
   type TranslatedBubble,
   type OverlayAdjustment,
   fitTextForBubble,
+  layoutBubbleAtFixedFont,
 } from "./translationOverlay";
 
 export interface BubbleRect {
@@ -140,7 +141,12 @@ export function fitBubbleTextWithinBounds(
   if (!text) return bubble;
   if (bubble.layoutAdjustment?.userModified) return bubble;
 
-  const geom = getBubbleGeometry(bubble, iw, ih, Boolean(options?.forceRealign));
+  // Always derive from canonical raw box when forceRealign is requested or when
+  // previous adjustment was auto-generated, guaranteeing 100% single-pass idempotence.
+  const ignorePrevAdjustment = Boolean(
+    options?.forceRealign || bubble.layoutAdjustment?.isAutoOptimized,
+  );
+  const geom = getBubbleGeometry(bubble, iw, ih, ignorePrevAdjustment);
   const fontFamily = options?.fontFamily || "Itim, sans-serif";
   const locale = options?.locale || "th";
   const globalMult = options?.fontSizeMultiplier || 1.0;
@@ -154,7 +160,7 @@ export function fitBubbleTextWithinBounds(
   // 1. Aspect ratio adaptation for vertical Japanese text boxes:
   // Japanese text is vertical (aspect ratio width/height often 0.18 - 0.45).
   // But the speech balloon in manga artwork is an oval/round balloon with plenty of horizontal space.
-  // We adapt width towards a balanced balloon aspect ratio (0.65 - 0.95).
+  // We adapt width towards a balanced balloon aspect ratio (>= 0.72) in one deterministic pass.
   let curW = geom.width;
   let curH = geom.height;
   const aspectRatio = geom.width / Math.max(1, geom.height);
@@ -168,7 +174,7 @@ export function fitBubbleTextWithinBounds(
       Math.min(
         iw * 0.32,
         Math.max(
-          Math.round(geom.height * 0.65),
+          Math.round(geom.height * 0.68),
           Math.round(Math.sqrt(area * 0.95)),
         ),
       ),
@@ -214,11 +220,44 @@ export function fitBubbleTextWithinBounds(
     fit = enlargedFit;
   }
 
-  // 4. Snug-fit vertical height if text occupies fewer lines than the tall box
+  // 4. Synchronize height & font size with layoutBubbleAtFixedFont so applyTranslationOverlay
+  // never expands currentBh at render time after collision resolution.
+  let fixedRenderLayout = layoutBubbleAtFixedFont(
+    text,
+    finalWidth,
+    Math.max(8, Math.round(targetFontSize * multiplier)),
+    fontFamily,
+    isOval,
+    25,
+    ih,
+    locale,
+  );
+  while (
+    targetFontSize > minFs &&
+    (fixedRenderLayout.overflow || fixedRenderLayout.requiredHeightPx > finalHeight)
+  ) {
+    targetFontSize -= 1;
+    fixedRenderLayout = layoutBubbleAtFixedFont(
+      text,
+      finalWidth,
+      Math.max(8, Math.round(targetFontSize * multiplier)),
+      fontFamily,
+      isOval,
+      25,
+      ih,
+      locale,
+    );
+  }
+
   if (fit.fits && fit.lines.length > 0) {
     const textH = (fit.lines.length - 1) * fit.lineHeight + fit.fontSize * 1.30;
-    const snugH = Math.max(Math.round(geom.height * 0.55), Math.min(finalHeight, Math.ceil(textH * 1.30)));
-    finalHeight = snugH;
+    const snugH = Math.max(
+      Math.round(geom.height * 0.55),
+      Math.min(finalHeight, Math.max(Math.ceil(textH * 1.30), fixedRenderLayout.requiredHeightPx)),
+    );
+    finalHeight = Math.max(snugH, Math.min(finalHeight, fixedRenderLayout.requiredHeightPx));
+  } else if (fixedRenderLayout.requiredHeightPx > finalHeight) {
+    finalHeight = Math.min(Math.round(ih * 0.40), fixedRenderLayout.requiredHeightPx);
   }
 
   const cx = geom.x + geom.width / 2;
@@ -239,11 +278,89 @@ export function fitBubbleTextWithinBounds(
     isAutoOptimized: true,
   };
 
-  return {
+  const nextBubble: TranslatedBubble = {
     ...bubble,
     targetFontSize,
     layoutAdjustment: updatedAdj,
   };
+  delete nextBubble.layoutSnapshot;
+  return nextBubble;
+}
+
+/**
+ * Re-verifies font size inside a collision-resolved bounding box WITHOUT expanding
+ * bw/bh or moving bx/by, preserving zero-collision guarantees from Step 2.
+ */
+function refitFontInResolvedBox(
+  bubble: TranslatedBubble,
+  iw: number,
+  ih: number,
+  options?: AutoOrganizeOptions,
+): TranslatedBubble {
+  const text = (bubble.t || bubble.translated || "").trim();
+  if (!text || bubble.layoutAdjustment?.userModified || !bubble.layoutAdjustment) {
+    return bubble;
+  }
+
+  const adj = bubble.layoutAdjustment;
+  const fontFamily = options?.fontFamily || "Itim, sans-serif";
+  const locale = options?.locale || "th";
+  const globalMult = options?.fontSizeMultiplier || 1.0;
+  const bubbleMult = typeof bubble.fontSizeMultiplier === "number" ? bubble.fontSizeMultiplier : 1.0;
+  const multiplier = globalMult * bubbleMult;
+  const minFs = options?.minFontSize ?? Math.max(12, Math.round(iw * 0.011));
+  const isOval = !bubble.isInvalidBox;
+
+  const fit = fitTextForBubble(
+    text,
+    adj.bw,
+    adj.bh,
+    fontFamily,
+    isOval,
+    multiplier,
+    minFs,
+    locale,
+  );
+  let targetFontSize = Math.min(bubble.targetFontSize ?? fit.fontSize, fit.fontSize);
+
+  let fixedRenderLayout = layoutBubbleAtFixedFont(
+    text,
+    adj.bw,
+    Math.max(8, Math.round(targetFontSize * multiplier)),
+    fontFamily,
+    isOval,
+    25,
+    ih,
+    locale,
+  );
+  while (
+    targetFontSize > minFs &&
+    (fixedRenderLayout.overflow || fixedRenderLayout.requiredHeightPx > adj.bh)
+  ) {
+    targetFontSize -= 1;
+    fixedRenderLayout = layoutBubbleAtFixedFont(
+      text,
+      adj.bw,
+      Math.max(8, Math.round(targetFontSize * multiplier)),
+      fontFamily,
+      isOval,
+      25,
+      ih,
+      locale,
+    );
+  }
+
+  const nextBubble: TranslatedBubble = {
+    ...bubble,
+    targetFontSize,
+    layoutAdjustment: {
+      ...adj,
+      targetFontSize,
+      isAutoOptimized: true,
+    },
+  };
+  delete nextBubble.layoutSnapshot;
+  return nextBubble;
 }
 
 /**
@@ -256,8 +373,14 @@ export function resolveBubbleCollisions(
   ih: number,
   options?: AutoOrganizeOptions,
 ): TranslatedBubble[] {
-  const active = bubbles.map((b) => ({ ...b }));
-  const maxIterations = 25;
+  const active = bubbles.map((b) => {
+    const clone = { ...b };
+    if (!clone.layoutAdjustment?.userModified) {
+      delete clone.layoutSnapshot;
+    }
+    return clone;
+  });
+  const maxIterations = 40;
 
   for (let iter = 0; iter < maxIterations; iter++) {
     const collisions = detectBubbleCollisions(active, iw, ih, 2);
@@ -327,8 +450,8 @@ export function resolveBubbleCollisions(
 
       // Clamp within image bounds and apply adjustments
       if (!aFixed) {
-        rA.x = Math.max(0, Math.min(iw - rA.width, rA.x));
-        rA.y = Math.max(0, Math.min(ih - rA.height, rA.y));
+        rA.x = Math.max(0, Math.min(iw - rA.width, Math.round(rA.x)));
+        rA.y = Math.max(0, Math.min(ih - rA.height, Math.round(rA.y)));
         active[idxA].layoutAdjustment = {
           bx: rA.x,
           by: rA.y,
@@ -344,8 +467,8 @@ export function resolveBubbleCollisions(
       }
 
       if (!bFixed) {
-        rB.x = Math.max(0, Math.min(iw - rB.width, rB.x));
-        rB.y = Math.max(0, Math.min(ih - rB.height, rB.y));
+        rB.x = Math.max(0, Math.min(iw - rB.width, Math.round(rB.x)));
+        rB.y = Math.max(0, Math.min(ih - rB.height, Math.round(rB.y)));
         active[idxB].layoutAdjustment = {
           bx: rB.x,
           by: rB.y,
@@ -369,7 +492,7 @@ export function resolveBubbleCollisions(
  * Master automated organizer:
  * 1. Fits each bubble strictly to its bounds with font scaling.
  * 2. Resolves collisions between overlapping bubbles.
- * 3. Re-fits text in any frames that were shifted or adjusted.
+ * 3. Re-fits font size inside any frames that were shifted or shrunk during collision resolution.
  */
 export function autoOrganizePageBubbles(
   bubbles: TranslatedBubble[],
@@ -395,11 +518,14 @@ export function autoOrganizePageBubbles(
     if (b.layoutAdjustment?.userModified) {
       return b;
     }
-    // If user already manually adjusted and forceRealign is false, preserve
+    // If already adjusted and forceRealign is false and no collisions exist, preserve
     if (b.layoutAdjustment && !options?.forceRealign && initialCollisions.length === 0) {
       return b;
     }
-    return fitBubbleTextWithinBounds(b, iw, ih, options);
+    return fitBubbleTextWithinBounds(b, iw, ih, {
+      ...options,
+      forceRealign: Boolean(options?.forceRealign || initialCollisions.length > 0),
+    });
   });
 
   // Step 2: Resolve collisions if any exist
@@ -411,11 +537,11 @@ export function autoOrganizePageBubbles(
     const remaining = detectBubbleCollisions(working, iw, ih);
     resolvedCollisionCount = postFitCollisions.length - remaining.length;
 
-    // Step 3: Re-verify text fit in adjusted boxes (preserve shifted collision coordinates)
+    // Step 3: Re-verify font fit strictly within collision-resolved boxes (never re-expand bw/bh)
     working = working.map((b) => {
       if (b.deleted || !(b.t || b.translated || "").trim()) return b;
       if (b.layoutAdjustment?.userModified) return b;
-      return fitBubbleTextWithinBounds(b, iw, ih, { ...options, forceRealign: false });
+      return refitFontInResolvedBox(b, iw, ih, options);
     });
   }
 

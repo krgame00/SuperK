@@ -7,7 +7,10 @@ import {
   autoOrganizeAllPagesBubbles,
   type BubbleRect,
 } from "../../lib/bubbleLayoutOptimizer";
-import type { TranslatedBubble } from "../../lib/translationOverlay";
+import {
+  layoutBubbleAtFixedFont,
+  type TranslatedBubble,
+} from "../../lib/translationOverlay";
 
 describe("Bubble Layout Optimizer", () => {
   const iw = 1200;
@@ -338,5 +341,95 @@ describe("Bubble Layout Optimizer", () => {
     // Total adjusted count includes all adjusted bubbles
     expect(result.totalAdjustedCount).toBeGreaterThan(0);
   });
+
+  it("single-pass convergence: running autoOrganizePageBubbles once vs twice produces identical geometry and zero collisions even for long text", () => {
+    const cluster: TranslatedBubble[] = [
+      {
+        id: "c1",
+        box: [60, 740, 170, 790], // Narrow vertical 1 near right edge with very long text (!fit.fits)
+        t: "นี่มันเกิดอะไรขึ้นกันแน่เนี่ย?! ทำไมจู่ๆ ถึงเป็นแบบนี้ไปได้ล่ะ! ฉันไม่เข้าใจเลยสักนิดเดียว ช่วยอธิบายให้ฟังหน่อยสิ!",
+      },
+      {
+        id: "c2",
+        box: [65, 795, 175, 845], // Narrow vertical 2 right next to c1 with very long text (!fit.fits)
+        t: "ด-เดี๋ยวก่อนสิ! ฟังฉันอธิบายก่อนนะ! เรื่องนี้มันมีเหตุผลจำเป็นจริงๆ นะไม่ได้ตั้งใจจะปิดบังเลย!",
+      },
+      {
+        id: "c3",
+        box: [155, 760, 265, 820], // Stacked below & overlapping with long text
+        t: "ไม่ฟังแล้ว! เธอทำเกินไปแล้วจริงๆ นะรู้ตัวไหม! ฉันจะไม่ยอมให้เรื่องนี้ผ่านไปง่ายๆ เด็ดขาด!",
+      },
+    ];
+
+    const pass1 = autoOrganizePageBubbles(cluster, 1280, 1800, { forceRealign: true });
+    expect(detectBubbleCollisions(pass1.optimizedBubbles, 1280, 1800).length).toBe(0);
+
+    // Also verify running pass2 without forceRealign (as applyTranslationOverlay does on page render) does NOT mutate or re-expand!
+    const renderPass = autoOrganizePageBubbles(pass1.optimizedBubbles, 1280, 1800, { forceRealign: false });
+    expect(detectBubbleCollisions(renderPass.optimizedBubbles, 1280, 1800).length).toBe(0);
+
+    // Running a second time with forceRealign: true must converge to the exact same geometry in 1 click!
+    const pass2 = autoOrganizePageBubbles(pass1.optimizedBubbles, 1280, 1800, { forceRealign: true });
+    expect(detectBubbleCollisions(pass2.optimizedBubbles, 1280, 1800).length).toBe(0);
+
+    for (let i = 0; i < pass1.optimizedBubbles.length; i++) {
+      const b1 = pass1.optimizedBubbles[i].layoutAdjustment!;
+      const bRender = renderPass.optimizedBubbles[i].layoutAdjustment!;
+      const b2 = pass2.optimizedBubbles[i].layoutAdjustment!;
+      expect(bRender.bx).toBe(b1.bx);
+      expect(bRender.by).toBe(b1.by);
+      expect(bRender.bw).toBe(b1.bw);
+      expect(bRender.bh).toBe(b1.bh);
+      expect(b2.bx).toBe(b1.bx);
+      expect(b2.by).toBe(b1.by);
+      expect(b2.bw).toBe(b1.bw);
+      expect(b2.bh).toBe(b1.bh);
+      expect(pass2.optimizedBubbles[i].targetFontSize).toBe(pass1.optimizedBubbles[i].targetFontSize);
+    }
+  });
+
+  it("clears stale layoutSnapshot on non-userModified bubbles so render does not revert to pre-organized wrap", () => {
+    const bubbleWithStaleSnapshot: TranslatedBubble = {
+      id: "stale-snap-1",
+      box: [100, 700, 240, 760],
+      t: "ข้อความยาวที่เคยถูกแคชไว้ในกรอบแคบๆ",
+      layoutSnapshot: {
+        text: "ข้อความยาวที่เคยถูกแคชไว้ในกรอบแคบๆ",
+        fontFamily: "Itim, sans-serif",
+        fontSizePx: 9,
+        lineHeightPx: 11.7,
+        frameWidthPx: 64,
+        frameHeightPx: 220,
+        selectionX: 0,
+        selectionY: 0,
+        selectionWidth: 64,
+        selectionHeight: 220,
+        lines: ["ข้อ", "ความ", "ยาว"],
+        globalMult: 1,
+        bubbleMult: 1,
+        overflow: true,
+      },
+    };
+
+    const res = autoOrganizePageBubbles([bubbleWithStaleSnapshot], 1200, 1800, { forceRealign: true });
+    expect(res.optimizedBubbles[0].layoutSnapshot).toBeUndefined();
+    expect(res.optimizedBubbles[0].layoutAdjustment?.layoutSnapshot).toBeUndefined();
+
+    // Verify render-time layoutBubbleAtFixedFont produces exact heightPx === adj.bh (zero render-time vertical expansion)
+    const opt = res.optimizedBubbles[0];
+    const adj = opt.layoutAdjustment!;
+    const renderLayout = layoutBubbleAtFixedFont(
+      opt.t!,
+      adj.bw,
+      opt.targetFontSize!,
+      "Itim, sans-serif",
+      true,
+      adj.bh,
+      1800,
+      "th",
+    );
+    expect(renderLayout.heightPx).toBe(adj.bh);
+  });
 });
+
 

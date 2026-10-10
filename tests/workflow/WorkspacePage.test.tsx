@@ -49,6 +49,7 @@ vi.mock("@/lib/translationOverlay", () => ({
     totalResolvedCollisions: 0,
   })),
   detectBubbleCollisions: vi.fn(() => []),
+  syncPageOverlayAdjustments: vi.fn(),
 }));
 vi.mock("@/lib/export/readabilityScan", () => ({ scanPageGeometry: vi.fn() }));
 vi.mock("@/components/cleaning/MaskLegend", () => ({
