@@ -6,7 +6,6 @@ import {
   fitBubbleTextWithinBounds,
   autoOrganizePageBubbles,
   autoOrganizeAllPagesBubbles,
-  type BubbleRect,
 } from "../../lib/bubbleLayoutOptimizer";
 import {
   layoutBubbleAtFixedFont,

@@ -792,7 +792,6 @@ export function resolveBubbleCollisions(
   bubbles: TranslatedBubble[],
   iw: number,
   ih: number,
-  options?: AutoOrganizeOptions,
 ): TranslatedBubble[] {
   const active = bubbles.map((b) => {
     const clone = { ...b };
@@ -1037,7 +1036,7 @@ export function autoOrganizePageBubbles(
   let resolvedCollisionCount = 0;
 
   if (postFitCollisions.length > 0) {
-    working = resolveBubbleCollisions(working, iw, ih, options);
+    working = resolveBubbleCollisions(working, iw, ih);
     const remaining = detectBubbleCollisions(working, iw, ih);
     resolvedCollisionCount = postFitCollisions.length - remaining.length;
 

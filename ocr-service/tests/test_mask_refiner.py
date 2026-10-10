@@ -4,9 +4,9 @@ import pytest
 from app.detector import DetectionResult, LetterboxTransform
 from app.mask_refiner import (
     MaskRefinementConfig,
+    _group_component_rects,
     build_protected_edges,
     constrained_dilate,
-    _group_component_rects,
     refine_mask,
     refine_probability_mask,
 )

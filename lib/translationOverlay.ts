@@ -908,12 +908,11 @@ export const applyTranslationOverlay = async (
     }
     if (isStaleOverlay()) return;
     if (!img.naturalWidth && !img.complete && attempt < 25) {
-      let timer: ReturnType<typeof setTimeout>;
       const onLoad = () => {
         clearTimeout(timer);
         void paint(attempt + 1);
       };
-      timer = setTimeout(() => {
+      const timer = setTimeout(() => {
         img.removeEventListener("load", onLoad);
         void paint(attempt + 1);
       }, 50);

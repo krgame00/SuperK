@@ -806,7 +806,7 @@ export default function WorkspacePage() {
 
     try {
       const toastModule = await import("react-hot-toast");
-      const toast = toastModule.default as any;
+      const toast = toastModule.default;
       const isXLarge = mode === "xlarge";
       const toastId = typeof toast?.loading === "function"
         ? toast.loading(`กำลังจัดระเบียบทุกหน้า (0/${translatedPages.length})...`)
@@ -1015,7 +1015,7 @@ export default function WorkspacePage() {
 
       try {
         const toastModule = await import("react-hot-toast");
-        const toast = toastModule.default as any;
+        const toast = toastModule.default;
         const label = bwContrastModeLabel(mode);
         const toastId =
           typeof toast?.loading === "function"
