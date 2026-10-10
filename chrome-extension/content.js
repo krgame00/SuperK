@@ -5,6 +5,28 @@ globalThis.__superKLoaded = true;
 // SuperK Manga Translator - Content Script
 
 let activeOverlays = new Map(); // Key: imgUrl or imgElement
+const MAX_CACHED_PAGES = 20;
+
+function persistOverlay(storageKey, entry, evidence) {
+  if (typeof chrome === 'undefined' || !chrome?.storage?.local?.set) return;
+  const persistedEvidence = { ...(evidence || {}) };
+  delete persistedEvidence.sourceImage;
+  delete persistedEvidence.cleanUrl;
+  const value = { ...persistedEvidence, ...entry };
+  chrome.storage.local.set({ [storageKey]: value }).then(async () => {
+    if (!chrome.storage.local.get || !chrome.storage.local.remove) return;
+    const stored = await chrome.storage.local.get(null);
+    const pageEntries = Object.entries(stored || {})
+      .filter(([key]) => key.startsWith('superk_trans_'))
+      .sort(([leftKey, left], [rightKey, right]) =>
+        (Number(left?.timestamp) || 0) - (Number(right?.timestamp) || 0) || leftKey.localeCompare(rightKey));
+    const overflow = pageEntries.length - MAX_CACHED_PAGES;
+    const evicted = pageEntries.filter(([key]) => key !== storageKey)
+      .slice(0, Math.max(0, overflow))
+      .map(([key]) => key);
+    if (evicted.length) await chrome.storage.local.remove(evicted);
+  }).catch(() => {});
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "TRANSLATION_START") {
@@ -292,8 +314,9 @@ function renderTranslationOverlay(imageUrl, bubbles, cleanMode, cleanImageBase64
         const mh = Math.min(renderH - my, h + padY * 2);
 
         const radius = Math.min(8, mw / 4, mh / 4);
-        const bgLum = b.styleProfile?.backgroundLuminance;
-        cctx.fillStyle = (typeof bgLum === 'number' && bgLum < 0.25) ? '#171717' : '#ffffff';
+        const rawBgLum = b.styleProfile?.backgroundLuminance;
+        const bgLum = typeof rawBgLum === 'number' && rawBgLum <= 1 ? rawBgLum * 255 : rawBgLum;
+        cctx.fillStyle = (typeof bgLum === 'number' && bgLum <= 65) ? '#171717' : '#ffffff';
         cctx.beginPath();
         cctx.moveTo(mx + radius, my);
         cctx.lineTo(mx + mw - radius, my);
@@ -428,10 +451,33 @@ function fitTextInBubble(text, width, height, fontFamily, fontSizeMultiplier = 1
       !isManual;
 
     // Keep cached, direct and server overlays aligned with the Web policy.
-    const bubbleTextColor = isMonochromeAuto ? '#000000' : (bubbleProfile.fill || textColor);
-    const hasOutline = !isMonochromeAuto && bubbleProfile.hasOutline !== false;
-    const bubbleTextOutline = bubbleProfile.outline || textOutline;
-    const outlineRatio = Math.max(0.04, Math.min(0.30, bubbleProfile.outlineWidthRatio || 0.09));
+    const rawBgLum = bubbleProfile.backgroundLuminance;
+    const bgLum = typeof rawBgLum === 'number' && rawBgLum <= 1 ? rawBgLum * 255 : rawBgLum;
+    const rawSamples = Array.isArray(bubbleProfile.backgroundLuminanceSamples)
+      ? bubbleProfile.backgroundLuminanceSamples.filter(value => typeof value === 'number' && Number.isFinite(value))
+      : [];
+    const bgSamples = rawSamples.map(value => value <= 1 ? value * 255 : value).sort((a, b) => a - b);
+    const minSample = bgSamples[0];
+    const maxSample = bgSamples[bgSamples.length - 1];
+    const p20 = bgSamples.length ? bgSamples[Math.floor(bgSamples.length * 0.20)] : undefined;
+    const p80 = bgSamples.length ? bgSamples[Math.floor(bgSamples.length * 0.80)] : undefined;
+    const isMixedBg = bgSamples.length >= 2 &&
+      ((maxSample - minSample >= 80 && (p20 ?? minSample) < 155) || (p20 !== undefined && p20 < 150));
+    const needsContrastOutline = (typeof bgLum === 'number' && bgLum < 170) || isMixedBg;
+    const useInvertedMonochrome = isMonochromeAuto && bubbleProfile.bwContrastMode === 'auto' &&
+      typeof bgLum === 'number' && bgLum <= 65 && (p80 === undefined || p80 <= 115);
+    const bubbleTextColor = isMonochromeAuto
+      ? (useInvertedMonochrome ? '#ffffff' : '#000000')
+      : (bubbleProfile.fill || textColor);
+    const hasOutline = isMonochromeAuto
+      ? (needsContrastOutline || useInvertedMonochrome)
+      : bubbleProfile.hasOutline !== false;
+    const bubbleTextOutline = isMonochromeAuto
+      ? (useInvertedMonochrome ? '#000000' : '#ffffff')
+      : (bubbleProfile.outline || textOutline);
+    const outlineRatio = isMonochromeAuto && hasOutline
+      ? 0.22
+      : Math.max(0.04, Math.min(0.30, bubbleProfile.outlineWidthRatio || 0.09));
 
     const outlineShadows = hasOutline ? [
       `-${outlineRatio}em -${outlineRatio}em 0 ${bubbleTextOutline}`,
@@ -554,9 +600,7 @@ function fitTextInBubble(text, width, height, fontFamily, fontSizeMultiplier = 1
 
   // Persist translation overlay in extension local storage
   if (typeof chrome !== 'undefined' && chrome?.storage?.local?.set) {
-    chrome.storage.local.set({
-      [storageKey]: {
-        ...evidence,
+    persistOverlay(storageKey, {
         imageUrl,
         bubbles,
         cleanMode,
@@ -564,8 +608,7 @@ function fitTextInBubble(text, width, height, fontFamily, fontSizeMultiplier = 1
         textStyle,
         pageStyle,
         timestamp: Date.now(),
-      },
-    }).catch(() => {});
+      }, evidence);
   }
 
   const baseW = imgRect.width;
@@ -783,6 +826,16 @@ function restoreSavedTranslations() {
 }
 
 if (typeof document !== 'undefined') {
+  const syncPublishedUpdates = () => {
+    if (typeof chrome !== 'undefined' && chrome?.runtime?.sendMessage) {
+      chrome.runtime.sendMessage({ action: 'SYNC_PUBLISHED_UPDATES' });
+    }
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') syncPublishedUpdates();
+  });
+  if (typeof window !== 'undefined') window.addEventListener('focus', syncPublishedUpdates);
+
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => setTimeout(restoreSavedTranslations, 300));
   } else {

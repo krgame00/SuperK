@@ -540,8 +540,10 @@ class CleaningPipeline:
             if (
                 item.damage_accepted
                 and residual > 0.18
-                and adaptive_roi_enabled
-                and adaptive_scope.mode == "roi"
+                and (
+                    not adaptive_roi_enabled
+                    or (adaptive_scope is not None and adaptive_scope.mode == "roi")
+                )
             ):
                 retry_base = clean_image.copy()
                 retry_base[item.support > 0] = image_rgb[item.support > 0]
@@ -578,13 +580,17 @@ class CleaningPipeline:
                 quality_attempts += 1
                 if fallback_cleaner is full_lama:
                     lama_inference_count += 1
-                cluster = next(
-                    (
-                        candidate
-                        for candidate in adaptive_scope.clusters
-                        if item.region.id in candidate.region_ids
-                    ),
-                    None,
+                cluster = (
+                    next(
+                        (
+                            candidate
+                            for candidate in adaptive_scope.clusters
+                            if item.region.id in candidate.region_ids
+                        ),
+                        None,
+                    )
+                    if adaptive_scope is not None
+                    else None
                 )
                 expanded = (
                     expanded_cluster(cluster, image_rgb.shape[1], image_rgb.shape[0])
@@ -1080,8 +1086,17 @@ def _peak_rss_mb() -> float | str:
 
             counters = _Counters()
             counters.cb = ctypes.sizeof(_Counters)
-            if ctypes.windll.psapi.GetProcessMemoryInfo(
-                ctypes.windll.kernel32.GetCurrentProcess(),
+            get_process = ctypes.windll.kernel32.GetCurrentProcess
+            get_process.restype = wintypes.HANDLE
+            get_process_memory_info = ctypes.windll.psapi.GetProcessMemoryInfo
+            get_process_memory_info.argtypes = [
+                wintypes.HANDLE,
+                ctypes.POINTER(_Counters),
+                wintypes.DWORD,
+            ]
+            get_process_memory_info.restype = wintypes.BOOL
+            if get_process_memory_info(
+                get_process(),
                 ctypes.byref(counters),
                 counters.cb,
             ):

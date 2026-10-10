@@ -3,12 +3,15 @@ import {
   GeminiRequestError,
   requestGemini,
 } from "@/lib/server/geminiRequest";
+import { requireLocalRequest } from "@/lib/server/localRequest";
 
 interface ValidationRequestBody {
   apiKey?: string;
 }
 
 export async function POST(req: Request) {
+  const denial = requireLocalRequest(req);
+  if (denial) return denial;
   let body: ValidationRequestBody;
   try {
     body = (await req.json()) as ValidationRequestBody;

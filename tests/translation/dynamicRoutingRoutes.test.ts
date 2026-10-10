@@ -118,7 +118,7 @@ describe("translation routes use shared Gemini routing for image workflow", () =
     expect(validateSuccess?.({ candidates: [{ content: { parts: [{ text: '{"bubbles":[]}' }] } }] })).toBe(true);
   });
 
-  test("text translation remains on its existing route until the shared text migration is scheduled", async () => {
+  test("text translation honors the request's user key and canonical model order", async () => {
     const response = await translateText(new Request("http://localhost/api/translate-text", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -126,12 +126,18 @@ describe("translation routes use shared Gemini routing for image workflow", () =
         bubbles: [{ t: "hello", box: [0, 0, 100, 100] }],
         targetLang: "Thai",
         modelPreference: "auto",
-        apiKey: "ignored-user-key",
+        apiKey: "user-text-key",
       }),
     }));
 
     expect(response.status).toBe(200);
-    expect(requestGeminiMock).toHaveBeenCalled();
+    expect(requestGeminiMock).toHaveBeenCalledWith(expect.objectContaining({
+      apiKeys: ["user-text-key", "server-a", "server-b"],
+      models: expect.arrayContaining(["gemini-3.5-flash-lite", "gemini-3.8-flash"]),
+    }));
+    expect(requestGeminiMock.mock.calls[0][0].models.slice(0, 5)).toEqual([
+      "gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3-flash",
+    ]);
     expect(executeMock).not.toHaveBeenCalled();
   });
 

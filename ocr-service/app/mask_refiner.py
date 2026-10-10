@@ -92,7 +92,6 @@ def complete_glyph_mask(
     h_img, w_img = image_rgb.shape[:2]
 
     for comp_idx in range(1, num_labels):
-        comp_mask = (labels == comp_idx).astype(np.uint8) * 255
         seed_area = int(stats[comp_idx, cv2.CC_STAT_AREA])
         bx = int(stats[comp_idx, cv2.CC_STAT_LEFT])
         by = int(stats[comp_idx, cv2.CC_STAT_TOP])
@@ -106,7 +105,7 @@ def complete_glyph_mask(
         y2 = min(h_img, by + bh + margin)
 
         sub_img = image_rgb[y1:y2, x1:x2]
-        sub_seed = comp_mask[y1:y2, x1:x2]
+        sub_seed = (labels[y1:y2, x1:x2] == comp_idx).astype(np.uint8) * 255
         sub_env = envelope[y1:y2, x1:x2]
         sub_prot = protected_edges[y1:y2, x1:x2]
         sub_valid = (sub_env > 0) & (sub_prot == 0)
@@ -185,23 +184,38 @@ def _refine_seed_mask(
         connectivity=8,
     )
     combined = np.zeros_like(seed_bin, dtype=np.uint8)
-    component_masks: dict[int, BinaryMask] = {}
+    rects: dict[int, PixelRect] = {}
     radii: dict[int, int] = {}
+    height, width = seed_bin.shape
     for component_id in range(1, count):
         if int(stats[component_id, cv2.CC_STAT_AREA]) < minimum_area:
             continue
-        component = np.where(labels == component_id, 255, 0).astype(np.uint8)
+        bx = int(stats[component_id, cv2.CC_STAT_LEFT])
+        by = int(stats[component_id, cv2.CC_STAT_TOP])
+        bw = int(stats[component_id, cv2.CC_STAT_WIDTH])
+        bh = int(stats[component_id, cv2.CC_STAT_HEIGHT])
+        pad = 6
+        x1 = max(0, bx - pad)
+        y1 = max(0, by - pad)
+        x2 = min(width, bx + bw + pad)
+        y2 = min(height, by + bh + pad)
+        component = (labels[y1:y2, x1:x2] == component_id).astype(np.uint8) * 255
+        sub_protected = protected_edges[y1:y2, x1:x2]
         radius = _estimate_stroke_radius(component)
         # Adaptive dilation based on estimated stroke radius (minimum 2px, up to 5px for thick stroke/shadow)
         dilation_radius = max(2, min(5, radius))
-        grown = constrained_dilate(component, protected_edges, dilation_radius)
-        grown[protected_edges > 0] = 0
+        grown = constrained_dilate(component, sub_protected, dilation_radius)
+        grown[sub_protected > 0] = 0
         grown = np.maximum(grown, component)
-        combined = np.maximum(combined, grown)
-        component_masks[component_id] = grown
+        combined[y1:y2, x1:x2] = np.maximum(combined[y1:y2, x1:x2], grown)
+        points = cv2.findNonZero(grown)
+        if points is None:
+            continue
+        rx, ry, rw, rh = cv2.boundingRect(points)
+        rects[component_id] = PixelRect(x=x1 + rx, y=y1 + ry, width=rw, height=rh)
         radii[component_id] = radius
 
-    regions = _group_regions(component_masks, radii)
+    regions = _group_component_rects(rects, radii, seed_bin.shape)
     return RefinedMask(
         mask=combined,
         regions=regions,
@@ -344,20 +358,17 @@ def _estimate_stroke_radius(component: BinaryMask) -> int:
     return min(6, max(2, round(half_stroke)))
 
 
-def _group_regions(
-    component_masks: dict[int, BinaryMask],
+def _group_component_rects(
+    rects: dict[int, PixelRect],
     radii: dict[int, int],
+    image_shape: tuple[int, ...],
 ) -> list[MaskRegion]:
-    if not component_masks:
+    if not rects:
         return []
 
-    component_ids = sorted(component_masks)
-    rects = {
-        component_id: _mask_rect(component_masks[component_id])
-        for component_id in component_ids
-    }
+    component_ids = sorted(rects)
     median_height = float(np.median([rect.height for rect in rects.values()]))
-    mask_height, mask_width = next(iter(component_masks.values())).shape
+    mask_height, mask_width = image_shape[:2]
     page_scale_floor = 0.02 * min(mask_height, mask_width)
     uncapped_gap = max(1.0, 1.5 * median_height, page_scale_floor)
     maximum_gap = min(uncapped_gap, 50.0)
@@ -389,13 +400,15 @@ def _group_regions(
 
     regions: list[MaskRegion] = []
     for index, group in enumerate(groups.values(), start=1):
-        union_mask = np.zeros_like(next(iter(component_masks.values())))
-        for component_id in group:
-            union_mask = np.maximum(union_mask, component_masks[component_id])
+        group_rects = [rects[component_id] for component_id in group]
+        left = min(rect.x for rect in group_rects)
+        top = min(rect.y for rect in group_rects)
+        right = max(rect.x + rect.width for rect in group_rects)
+        bottom = max(rect.y + rect.height for rect in group_rects)
         regions.append(
             MaskRegion(
                 id=f"region-{index}",
-                rect=_mask_rect(union_mask),
+                rect=PixelRect(x=left, y=top, width=right - left, height=bottom - top),
                 component_ids=tuple(group),
                 stroke_radius=max(radii[component_id] for component_id in group),
             ),

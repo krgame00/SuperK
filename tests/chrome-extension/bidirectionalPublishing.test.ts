@@ -24,6 +24,9 @@ describe("Bidirectional Publishing Integration (Ticket 05)", () => {
 
     // Mock chrome APIs
     const storageMap = new Map<string, any>();
+    for (let index = 0; index < 20; index += 1) {
+      storageMap.set(`superk_trans_old-${index}`, { timestamp: index + 1 });
+    }
     const messageListeners: Array<(msg: any, sender?: any, sendResponse?: any) => void> = [];
 
     (globalThis as any).chrome = {
@@ -34,7 +37,12 @@ describe("Bidirectional Publishing Integration (Ticket 05)", () => {
               storageMap.set(k, v);
             }
           }),
-          get: vi.fn(async (key) => ({ [key]: storageMap.get(key) })),
+          get: vi.fn(async (key) => key == null
+            ? Object.fromEntries(storageMap)
+            : ({ [key]: storageMap.get(key) })),
+          remove: vi.fn(async (keys) => {
+            for (const key of Array.isArray(keys) ? keys : [keys]) storageMap.delete(key);
+          }),
         },
         sync: {
           get: vi.fn(async () => ({ serverUrl: "http://127.0.0.1:3000" })),
@@ -96,7 +104,7 @@ describe("Bidirectional Publishing Integration (Ticket 05)", () => {
             textColor: "#111111",
             textOutline: "#EEEEEE",
           },
-          updatedAt: Date.now(),
+          updatedAt: -1,
         },
       ],
     };
@@ -117,10 +125,18 @@ describe("Bidirectional Publishing Integration (Ticket 05)", () => {
     const updates = await (globalThis as any).checkPublishedUpdates();
     expect(updates.length).toBe(1);
 
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    const fetchCount = fetchMock.mock.calls.length;
+    await messageListeners.at(-1)?.({ action: "SYNC_PUBLISHED_UPDATES" });
+    expect(fetchMock).toHaveBeenCalledTimes(fetchCount + 1);
+
     // 3. Verify storage cache was updated
     expect(storageMap.has(`superk_trans_${imgUrl}`)).toBe(true);
     const cached = storageMap.get(`superk_trans_${imgUrl}`);
     expect(cached.bubbles[0].t).toBe("คำแปลที่แก้ไขอย่างประณีต");
+    const cachedPages = [...storageMap.keys()].filter((key) => key.startsWith("superk_trans_"));
+    expect(cachedPages).toHaveLength(20);
+    expect(storageMap.has("superk_trans_old-0")).toBe(false);
 
     // 4. Verify DOM overlay was updated with the published text
     const overlay = document.querySelector(".superk-overlay-container");

@@ -4,6 +4,9 @@ import {
   GeminiRequestError,
   requestGemini,
 } from "@/lib/server/geminiRequest";
+import { requireLocalRequest } from "@/lib/server/localRequest";
+import { FIXED_IMAGE_MODELS } from "@/lib/translation/imageModelChoices";
+import { getSyncedExtensionSettings } from "@/src/app/api/extension/settings/handler";
 
 interface GeminiResponseData {
   promptFeedback?: {
@@ -23,7 +26,9 @@ let fixedTextKeyIndex = 0;
 
 export async function POST(req: Request) {
   try {
-    const { bubbles, targetLang, modelPreference, policy } = await req.json();
+    const denial = requireLocalRequest(req);
+    if (denial) return denial;
+    const { bubbles, targetLang, modelPreference, policy, apiKey } = await req.json();
     
     if (!bubbles || !Array.isArray(bubbles)) {
       return NextResponse.json({ error: "Missing or invalid text data" }, { status: 400 });
@@ -33,14 +38,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ text: JSON.stringify({ bubbles: [] }) });
     }
 
-    const apiKeyRaw = process.env.GEMINI_API_KEY;
-    if (!apiKeyRaw) {
+    const parseKeyList = (raw: string | undefined) =>
+      typeof raw === "string"
+        ? raw.split(/[\s,;]+/).map((key) => key.trim()).filter(Boolean)
+        : [];
+    const userApiKeyRaw = typeof apiKey === "string" && apiKey.trim()
+      ? apiKey
+      : getSyncedExtensionSettings().geminiApiKey;
+    const userKeys = Array.from(new Set(parseKeyList(userApiKeyRaw)));
+    const serverKeys = Array.from(new Set(parseKeyList(process.env.GEMINI_API_KEY)));
+    const apiKeys = Array.from(new Set([...userKeys, ...serverKeys]));
+    const rotationLength = userKeys.length > 0 ? userKeys.length : apiKeys.length;
+    if (apiKeys.length === 0) {
       return NextResponse.json({ error: "Server missing API Key. Please add GEMINI_API_KEY to .env" }, { status: 500 });
     }
-    const apiKeys = apiKeyRaw
-      .split(",")
-      .map((key) => key.trim())
-      .filter((key) => key.length > 0);
 
     const sfxDirective = policy?.sfx === "ignore"
       ? "- IGNORE all Sound Effects (SFX). Do NOT translate them."
@@ -81,40 +92,28 @@ export async function POST(req: Request) {
       ]
     };
 
-    let MODELS = [
-      "gemini-3.5-flash-lite",
-      "gemini-3.1-flash-lite",
-      "gemini-3.8-flash",
-      "gemini-3.7-flash",
-      "gemini-3.6-flash",
-      "gemini-3-flash",
-      "gemini-3.5-flash",
-      "gemini-2.5-flash",
-      "gemini-2.5-flash-lite",
-    ];
-
-    if (modelPreference && modelPreference !== "auto") {
-      MODELS = [modelPreference];
-    }
+    const models = modelPreference && modelPreference !== "auto"
+      ? [modelPreference]
+      : [...FIXED_IMAGE_MODELS];
 
     let initialKeyIndex = 0;
-    if (apiKeys.length > 0) {
-      initialKeyIndex = fixedTextKeyIndex % apiKeys.length;
-      fixedTextKeyIndex = (fixedTextKeyIndex + 1) % apiKeys.length;
+    if (rotationLength > 0) {
+      initialKeyIndex = fixedTextKeyIndex % rotationLength;
+      fixedTextKeyIndex = (fixedTextKeyIndex + 1) % rotationLength;
     }
 
     let data: GeminiResponseData;
     try {
       const result = await requestGemini<GeminiResponseData>({
         apiKeys,
-        models: MODELS,
+        models,
         payload,
         initialKeyIndex,
         attemptTimeoutMs: 15_000,
         totalBudgetMs: 60_000,
       });
-      if (apiKeys.length > 0) {
-        fixedTextKeyIndex = (result.keyIndex + 1) % apiKeys.length;
+      if (rotationLength > 0) {
+        fixedTextKeyIndex = ((result.keyIndex % rotationLength) + 1) % rotationLength;
       }
       data = result.data;
     } catch (error) {

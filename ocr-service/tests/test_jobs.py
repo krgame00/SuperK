@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import ctypes
 import json
 import os
 import threading
@@ -10,8 +11,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from app.jobs import JobState, JobStore
-from app.pipeline import PipelineOutput
+from app.jobs import JobState, JobStore, _trim_process_memory
+from app.pipeline import PipelineOutput, _peak_rss_mb
 from app.schemas import CleaningResult, JobStage, JobStatus, ManualRegionAction
 
 
@@ -49,6 +50,32 @@ def _make_png(width: int = 8, height: int = 8) -> bytes:
     buf = io.BytesIO()
     Image.new("RGB", (width, height), (255, 255, 255)).save(buf, format="PNG")
     return buf.getvalue()
+
+
+def test_windows_memory_trim_declares_process_handle_types(monkeypatch):
+    from ctypes import wintypes
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    get_process = Mock(return_value=ctypes.c_void_p(-1).value)
+    empty_working_set = Mock(return_value=1)
+    get_process_memory_info = Mock(return_value=1)
+    monkeypatch.setattr(ctypes, "windll", SimpleNamespace(
+        kernel32=SimpleNamespace(GetCurrentProcess=get_process),
+        psapi=SimpleNamespace(
+            EmptyWorkingSet=empty_working_set,
+            GetProcessMemoryInfo=get_process_memory_info,
+        ),
+    ), raising=False)
+
+    _trim_process_memory()
+    _peak_rss_mb()
+
+    assert get_process.restype is wintypes.HANDLE
+    assert empty_working_set.argtypes == [wintypes.HANDLE]
+    assert empty_working_set.restype is wintypes.BOOL
+    assert get_process_memory_info.argtypes[0] is wintypes.HANDLE
+    assert get_process_memory_info.restype is wintypes.BOOL
 
 
 def _wait_for_job(store: JobStore, job_id: str, timeout: float = 5.0) -> JobState:
@@ -278,9 +305,41 @@ def test_get_rejects_path_traversal(tmp_path: Path) -> None:
     try:
         assert store.get("../../secret") is None
         assert store.get("../other") is None
+        assert store.get("..\\escape") is None
+        assert store.delete_job("../escape") is False
+        assert store.delete_job("..\\escape") is False
         assert store.get("invalid-id-with-dash") is None
         assert store.get("12345") is None
         assert store.get("G" * 32) is None  # Non-hex character
+    finally:
+        store.shutdown()
+
+
+def test_pipeline_is_initialized_once_and_failed_jobs_are_evicted(tmp_path: Path) -> None:
+    calls = 0
+    results = []
+
+    def factory():
+        nonlocal calls
+        calls += 1
+        time.sleep(0.02)
+        return _TestPipeline()
+
+    store = JobStore(pipeline_factory=factory, cache_dir=tmp_path)
+    failed = JobState(id="a" * 32, filename="failed.png", source_bytes=b"", status=JobStatus.FAILED)
+    try:
+        with store._jobs_lock:
+            store._jobs[failed.id] = failed
+        workers = [threading.Thread(target=lambda: results.append(store._pipeline())) for _ in range(8)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+
+        store._drop_jobs_with_missing_assets()
+        assert calls == 1
+        assert len({id(result) for result in results}) == 1
+        assert store.get(failed.id) is None
     finally:
         store.shutdown()
 
@@ -447,6 +506,7 @@ def test_watchdog_fails_timed_out_job_and_discards_late_result(tmp_path: Path) -
             time.sleep(0.02)
         assert job.status == JobStatus.FAILED
         assert "timed out" in (job.error or "")
+        assert store.unload_models() is False
         # No assets or result.json may exist for the timed-out job
         assert not (tmp_path / "jobs" / job_id / "result.json").exists()
 

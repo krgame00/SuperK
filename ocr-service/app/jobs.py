@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
+import re
 import shutil
 import threading
 import time
@@ -70,10 +71,16 @@ def _trim_process_memory() -> None:
 
         try:
             import ctypes
+            from ctypes import wintypes
 
             # On Windows: EmptyWorkingSet releases idle pages back to the OS memory manager
             if hasattr(ctypes, "windll") and hasattr(ctypes.windll, "psapi") and hasattr(ctypes.windll, "kernel32"):
-                ctypes.windll.psapi.EmptyWorkingSet(ctypes.windll.kernel32.GetCurrentProcess())
+                get_process = ctypes.windll.kernel32.GetCurrentProcess
+                empty_working_set = ctypes.windll.psapi.EmptyWorkingSet
+                get_process.restype = wintypes.HANDLE
+                empty_working_set.argtypes = [wintypes.HANDLE]
+                empty_working_set.restype = wintypes.BOOL
+                empty_working_set(get_process())
             # On Linux/glibc: malloc_trim
             elif hasattr(ctypes, "CDLL"):
                 try:
@@ -154,6 +161,7 @@ class JobStore:
         self._jobs: dict[str, JobState] = {}
         self._jobs_lock = threading.RLock()
         self._pipeline_instance: Pipeline | None = None
+        self._active_workers = 0
         self._idle_timer: threading.Timer | None = None
         self._last_sweep_at = 0.0
         if self.cache_dir.exists():
@@ -225,6 +233,8 @@ class JobStore:
         return job_id
 
     def get(self, job_id: str) -> JobState | None:
+        if not isinstance(job_id, str) or re.fullmatch(r"[0-9a-f]{32}", job_id) is None:
+            return None
         with self._jobs_lock:
             job = self._jobs.get(job_id)
             if job is not None:
@@ -272,8 +282,8 @@ class JobStore:
             if self._idle_timer is not None:
                 self._idle_timer.cancel()
                 self._idle_timer = None
-        self.unload_models(force=True)
         self.executor.shutdown(wait=True, cancel_futures=False)
+        self.unload_models(force=True)
 
     # -- Retention / cleanup -------------------------------------------------
 
@@ -329,9 +339,12 @@ class JobStore:
             stale = [
                 job_id
                 for job_id, job in self._jobs.items()
-                if job.status is JobStatus.SUCCEEDED
-                and job.asset_dir is not None
-                and not job.asset_dir.exists()
+                if job.status is JobStatus.FAILED
+                or (
+                    job.status is JobStatus.SUCCEEDED
+                    and job.asset_dir is not None
+                    and not job.asset_dir.exists()
+                )
             ]
             for job_id in stale:
                 self._jobs.pop(job_id, None)
@@ -350,6 +363,8 @@ class JobStore:
 
     def delete_job(self, job_id: str) -> bool:
         """Delete one finished job's assets and registry entry."""
+        if not isinstance(job_id, str) or re.fullmatch(r"[0-9a-f]{32}", job_id) is None:
+            return False
         with self._jobs_lock:
             job = self._jobs.get(job_id)
         if job is None:
@@ -411,7 +426,7 @@ class JobStore:
             if self._idle_timer is not None:
                 self._idle_timer.cancel()
                 self._idle_timer = None
-            if self._active_job_ids() and not force:
+            if (self._active_job_ids() or self._active_workers > 0) and not force:
                 LOGGER.info("Cannot unload models: active jobs are running")
                 return False
             if self._pipeline_instance is None:
@@ -483,9 +498,18 @@ class JobStore:
         _trim_process_memory()
 
     def _pipeline(self) -> Pipeline:
-        if self._pipeline_instance is None:
-            self._pipeline_instance = self.pipeline_factory()
-        return self._pipeline_instance
+        with self._jobs_lock:
+            if self._pipeline_instance is None:
+                self._pipeline_instance = self.pipeline_factory()
+            return self._pipeline_instance
+
+    def _worker_started(self) -> None:
+        with self._jobs_lock:
+            self._active_workers += 1
+
+    def _worker_finished(self) -> None:
+        with self._jobs_lock:
+            self._active_workers = max(0, self._active_workers - 1)
 
     def _start_watchdog(self, job: JobState) -> threading.Timer | None:
         if self.job_timeout_seconds <= 0:
@@ -521,6 +545,8 @@ class JobStore:
             job.status = JobStatus.RUNNING
             job.stage = JobStage.DETECTING
             job.started_at = perf_counter()
+        self._worker_started()
+        worker_active = True
         watchdog = self._start_watchdog(job)
         try:
             image_rgb = _decode_rgb(job.source_bytes)
@@ -537,6 +563,8 @@ class JobStore:
                 ),
                 **mode_options,
             )
+            self._worker_finished()
+            worker_active = False
             self._update_progress(
                 job,
                 JobStage.ENCODING,
@@ -551,6 +579,8 @@ class JobStore:
             if watchdog is not None:
                 watchdog.cancel()
             _trim_process_memory()
+            if worker_active:
+                self._worker_finished()
             self._schedule_idle_unload_if_idle()
 
     def _run_retry(
@@ -566,6 +596,8 @@ class JobStore:
             job.status = JobStatus.RUNNING
             job.stage = JobStage.CLEANING
             job.started_at = perf_counter()
+        self._worker_started()
+        worker_active = True
         watchdog = self._start_watchdog(job)
         try:
             with parent.lock:
@@ -589,6 +621,8 @@ class JobStore:
             if retry is None:
                 raise RuntimeError("pipeline does not support region retry")
             output = retry(parent_output, region_id, mask, cleaner, action)
+            self._worker_finished()
+            worker_active = False
             self._complete(job, output, mask.shape)
         except Exception as exc:
             LOGGER.exception("retry job %s failed", job.id)
@@ -597,6 +631,8 @@ class JobStore:
             if watchdog is not None:
                 watchdog.cancel()
             _trim_process_memory()
+            if worker_active:
+                self._worker_finished()
             self._schedule_idle_unload_if_idle()
 
     def _complete(

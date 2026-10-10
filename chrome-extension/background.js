@@ -164,7 +164,9 @@ chrome.contextMenus?.onClicked?.addListener?.(async (info, tab) => {
 });
 
 chrome.runtime.onMessage?.addListener?.(async (message, sender) => {
-  if (message.action === "RETRY_TRANSLATE" && sender.tab?.id && message.imageUrl) {
+  if (message.action === "SYNC_PUBLISHED_UPDATES") {
+    await checkPublishedUpdates();
+  } else if (message.action === "RETRY_TRANSLATE" && sender.tab?.id && message.imageUrl) {
     await runTranslationFlow(sender.tab.id, sender.frameId ?? 0, message.imageUrl);
   } else if (message.action === "OPEN_EDITOR" && message.payload) {
     try {
@@ -397,6 +399,20 @@ async function saveSyncCursor(normalizedUrl, cursor) {
 
 let isSyncInProgress = false;
 
+async function pruneTranslationCache(storageKey) {
+  if (!chrome.storage?.local?.get || !chrome.storage?.local?.remove) return;
+  const stored = await chrome.storage.local.get(null);
+  const pageEntries = Object.entries(stored || {})
+    .filter(([key]) => key.startsWith("superk_trans_"))
+    .sort(([leftKey, left], [rightKey, right]) =>
+      (Number(left?.timestamp) || 0) - (Number(right?.timestamp) || 0) || leftKey.localeCompare(rightKey));
+  const overflow = pageEntries.length - 20;
+  const evicted = pageEntries.filter(([key]) => key !== storageKey)
+    .slice(0, Math.max(0, overflow))
+    .map(([key]) => key);
+  if (evicted.length) await chrome.storage.local.remove(evicted);
+}
+
 async function checkPublishedUpdates() {
   if (isSyncInProgress) return [];
   isSyncInProgress = true;
@@ -467,6 +483,7 @@ async function checkPublishedUpdates() {
               timestamp: update.updatedAt || Date.now(),
             },
           });
+          await pruneTranslationCache(storageKey);
 
           // 2. Broadcast to tabs
           if (chrome.tabs?.query) {

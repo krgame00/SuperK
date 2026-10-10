@@ -601,11 +601,6 @@ class HybridTextDetector:
                             combined_prob[by1:by2, bx1:bx2],
                             (grown > 0).astype(np.float32) * 0.90,
                         )
-                    elif np.count_nonzero(seed) > 0:
-                        combined_prob[by1:by2, bx1:bx2] = np.maximum(
-                            combined_prob[by1:by2, bx1:bx2],
-                            local_prob,
-                        )
                     continue
 
                 candidate = _extract_strokes_from_crop(crop)

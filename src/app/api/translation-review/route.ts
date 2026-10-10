@@ -4,6 +4,7 @@ import { GeminiRoutingError } from "@/lib/server/geminiCatalog";
 import { executeGeminiTranslation, geminiRoutingHttpStatus } from "@/lib/server/geminiTranslationRouter";
 import { guardQualityReview, buildQualityReviewPrompt, MAX_REVIEW_ITEMS, MAX_REVIEW_TEXT_LENGTH, type QualityReviewItem } from "@/lib/translation/qualityReview";
 import type { GlossaryEntry } from "@/lib/translation/glossary";
+import { requireLocalRequest } from "@/lib/server/localRequest";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 const REVIEW_BUDGET_MS = 45_000;
@@ -67,6 +68,8 @@ function geminiText(data: GeminiData): string | undefined {
 }
 
 export async function POST(req: Request): Promise<Response> {
+  const denial = requireLocalRequest(req);
+  if (denial) return denial;
   try {
     throwIfRequestAborted(req.signal);
     if (Number(req.headers.get("content-length") || "0") > MAX_BODY_BYTES) return NextResponse.json({ error: "Review request is too large", code: "INVALID_REQUEST" }, { status: 413 });

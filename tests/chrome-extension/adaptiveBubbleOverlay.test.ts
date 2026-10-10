@@ -181,6 +181,33 @@ describe('Adaptive Speech Bubble Overlay & Local Persistence (Ticket 03)', () =>
     expect(document.querySelector('.superk-overlay-container')).toBeNull();
   });
 
+  it('prunes duplicate image fields and retains only the 20 newest page entries', async () => {
+    for (let index = 0; index < 20; index += 1) {
+      localStorageMock[`superk_trans_page-${index}`] = {
+        timestamp: index,
+        bubbles: [],
+      };
+    }
+    const app = setup('https://manga.test/new-page.png');
+    app.send({
+      action: 'TRANSLATION_SUCCESS',
+      cleanMode: 'inpainting',
+      cleanImageBase64: 'clean-data',
+      sourceImage: 'source-data',
+      cleanUrl: 'duplicate-clean-data',
+      bubbles: [{ t: 'แปลแล้ว', box: [10, 10, 100, 100] }],
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const key = 'superk_trans_https://manga.test/new-page.png';
+    expect(localStorageMock[key]).toMatchObject({ cleanImageBase64: 'clean-data' });
+    expect(localStorageMock[key]).not.toHaveProperty('sourceImage');
+    expect(localStorageMock[key]).not.toHaveProperty('cleanUrl');
+    const cachedPages = Object.keys(localStorageMock).filter(name => name.startsWith('superk_trans_'));
+    expect(cachedPages).toHaveLength(20);
+    expect(localStorageMock).not.toHaveProperty('superk_trans_page-0');
+  });
+
   it('auto-restores saved translation overlay from chrome.storage.local on page load', async () => {
     localStorageMock['superk_trans_https://manga.test/cached-manga.png'] = {
       imageUrl: 'https://manga.test/cached-manga.png',
@@ -232,6 +259,7 @@ describe('Adaptive Speech Bubble Overlay & Local Persistence (Ticket 03)', () =>
             fill: '#ffffff',
             outline: '#000000',
             backgroundLuminance: 20,
+            bwContrastMode: 'auto',
             isMonochromePage: true,
             monochromeConfidence: 0.95,
             category: 'dialogue',
@@ -247,9 +275,54 @@ describe('Adaptive Speech Bubble Overlay & Local Persistence (Ticket 03)', () =>
     expect(rendered[0].style.color).toBe('rgb(0, 0, 0)');
     expect(rendered[0].style.textShadow).toBe('none');
 
-    // Dark bubble -> black text, no shadow
-    expect(rendered[1].style.color).toBe('rgb(0, 0, 0)');
-    expect(rendered[1].style.textShadow).toBe('none');
+    // Dark bubble -> inverted white text with a black outline
+    expect(rendered[1].style.color).toBe('rgb(255, 255, 255)');
+    expect(rendered[1].style.textShadow).toContain('#000000');
+    expect(rendered[1].style.textShadow).not.toContain('rgba(30, 30, 30, 0.80)');
+  });
+
+  it('requests a published update check when the tab becomes visible or focused', () => {
+    const app = setup();
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('focus'));
+
+    expect(app.sendMessage).toHaveBeenNthCalledWith(1, { action: 'SYNC_PUBLISHED_UPDATES' });
+    expect(app.sendMessage).toHaveBeenNthCalledWith(2, { action: 'SYNC_PUBLISHED_UPDATES' });
+  });
+
+  it('uses a dark monochrome canvas fill for luminance 30 on the 0..255 scale', () => {
+    setup();
+    let fillStyle = '';
+    const context = new Proxy({}, {
+      get: (_target, property) => property === 'fillStyle' ? fillStyle : vi.fn(),
+      set: (_target, property, value) => {
+        if (property === 'fillStyle') fillStyle = String(value);
+        return true;
+      },
+    });
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context as CanvasRenderingContext2D);
+    const addListener = (globalThis as any).chrome.runtime.onMessage.addListener as ReturnType<typeof vi.fn>;
+    const listener = addListener.mock.calls[0][0];
+    listener({
+      action: 'TRANSLATION_SUCCESS',
+      imageUrl: 'https://manga.test/page1.png',
+      cleanMode: 'solid',
+      pageStyle: { isMonochromePage: true, monochromeConfidence: 0.96 },
+      bubbles: [{
+        t: 'มืด',
+        box: [50, 50, 200, 200],
+        styleProfile: {
+          backgroundLuminance: 30,
+          isMonochromePage: true,
+          monochromeConfidence: 0.96,
+          category: 'dialogue',
+        },
+      }],
+    });
+
+    expect(fillStyle).toBe('#171717');
   });
 
   it('restores monochrome text styling without shadow from cached local storage', async () => {
@@ -335,7 +408,7 @@ describe('Adaptive Speech Bubble Overlay & Local Persistence (Ticket 03)', () =>
 
     const bubble = document.querySelector<HTMLElement>('.superk-text-bubble')!;
     expect(bubble.style.color).toBe('rgb(0, 0, 0)');
-    expect(bubble.style.textShadow).toBe('none');
+    expect(bubble.style.textShadow).toContain('#ffffff');
     expect(bubble.style.textShadow).not.toContain('rgba(30, 30, 30, 0.80)');
   });
 

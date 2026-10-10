@@ -6,9 +6,27 @@ from app.mask_refiner import (
     MaskRefinementConfig,
     build_protected_edges,
     constrained_dilate,
+    _group_component_rects,
     refine_mask,
     refine_probability_mask,
 )
+from app.schemas import PixelRect
+
+
+def test_group_component_rects_preserves_spatial_groups_without_masks() -> None:
+    rects = {
+        1: PixelRect(x=10, y=10, width=4, height=8),
+        2: PixelRect(x=18, y=10, width=4, height=8),
+        3: PixelRect(x=100, y=70, width=4, height=8),
+    }
+    regions = _group_component_rects(rects, {1: 2, 2: 3, 3: 2}, (100, 120))
+
+    assert [region.component_ids for region in regions] == [(1, 2), (3,)]
+    assert [region.rect for region in regions] == [
+        PixelRect(x=10, y=10, width=12, height=8),
+        PixelRect(x=100, y=70, width=4, height=8),
+    ]
+    assert [region.stroke_radius for region in regions] == [3, 2]
 
 
 def test_dilation_follows_glyph_not_full_box() -> None:

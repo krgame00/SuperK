@@ -6,6 +6,7 @@ import {
   getGeminiKeyLimit,
 } from "@/lib/server/geminiCatalog";
 import { geminiRoutingHttpStatus } from "@/lib/server/geminiTranslationRouter";
+import { requireLocalRequest } from "@/lib/server/localRequest";
 
 interface ModelCatalogRequestBody {
   apiKey?: string;
@@ -13,6 +14,8 @@ interface ModelCatalogRequestBody {
 }
 
 export async function POST(req: Request) {
+  const denial = requireLocalRequest(req);
+  if (denial) return denial;
   let body: ModelCatalogRequestBody;
   try {
     body = (await req.json()) as ModelCatalogRequestBody;

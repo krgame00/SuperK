@@ -1,4 +1,5 @@
 import numpy as np
+import cv2
 
 from app.compositor import compose
 
@@ -52,4 +53,24 @@ def test_compositor_feather_produces_smooth_alpha_transition() -> None:
     # Border pixels between mask and support boundary should have intermediate values (0 < val < 100)
     border_pixels = result[(support > 0) & (mask == 0)]
     assert np.any((border_pixels > 0) & (border_pixels < 100)), "Expected smooth feather gradient at border"
+
+
+def test_compositor_feathers_only_a_padded_local_crop(monkeypatch) -> None:
+    original = np.random.default_rng(20).integers(0, 256, (512, 640, 3), dtype=np.uint8)
+    repaired = np.random.default_rng(21).integers(0, 256, original.shape, dtype=np.uint8)
+    mask = np.zeros(original.shape[:2], dtype=np.uint8)
+    mask[240:270, 310:330] = 255
+    seen_shapes = []
+    distance_transform = cv2.distanceTransform
+
+    def track_distance_transform(image, *args, **kwargs):
+        seen_shapes.append(image.shape)
+        return distance_transform(image, *args, **kwargs)
+
+    monkeypatch.setattr(cv2, "distanceTransform", track_distance_transform)
+    result, support = compose(original, repaired, mask, feather_radius=4)
+
+    assert seen_shapes and all(height < 64 and width < 64 for height, width in seen_shapes)
+    assert np.array_equal(support[support > 0], np.full(np.count_nonzero(support), 255, np.uint8))
+    assert np.array_equal(result[support == 0], original[support == 0])
 

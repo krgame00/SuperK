@@ -600,6 +600,58 @@ def test_pipeline_batches_initial_residual_detection_across_regions() -> None:
     assert probe.single_calls == 0
 
 
+def test_batched_pipeline_retries_residual_region_without_adaptive_roi(monkeypatch) -> None:
+    monkeypatch.delenv("SUPERK_ENABLE_ADAPTIVE_ROI_V2", raising=False)
+    mask = np.zeros((32, 32), np.uint8)
+    mask[10:20, 12:18] = 255
+    region = MaskRegion(
+        id="region-1",
+        rect=PixelRect(x=8, y=8, width=14, height=14),
+        component_ids=(1,),
+        stroke_radius=2,
+    )
+
+    class Detector(NoTextDetector):
+        def detect(self, image: np.ndarray) -> DetectionResult:
+            return DetectionResult(
+                mask.astype(np.float32) / 255,
+                [],
+                LetterboxTransform(32, 32, 32, 1, 0, 0),
+            )
+
+    class Cleaner:
+        calls = 0
+
+        def clean(self, image, active_mask, _region):
+            self.calls += 1
+            result = image.copy()
+            result[active_mask > 0] = 1
+            return result
+
+    class BatchProbe:
+        def score(self, _image, _mask):
+            return 0.5
+
+        def score_many(self, _image, items):
+            return {item.id: 0.5 for item, _mask in items}
+
+    cleaner = Cleaner()
+    pipeline = CleaningPipeline(
+        detector=Detector(),
+        refiner=lambda _source, _detection: RefinedMask(mask, [region], np.zeros_like(mask)),
+        cleaners={"flat": cleaner},
+        residual_probe=BatchProbe(),
+        page_classifier=_comic_page,
+        protection_detector=_empty_protection,
+        eligibility_classifier=_clean_decision,
+    )
+
+    output = pipeline.run(np.zeros((32, 32, 3), np.uint8))
+
+    assert cleaner.calls == 2
+    assert output.regions[0].status is RegionStatus.NEEDS_REVIEW
+
+
 def test_ui_page_story_region_is_sent_to_cleaner() -> None:
     source = np.full((32, 32, 3), 100, np.uint8)
     mask = np.zeros((32, 32), np.uint8)
