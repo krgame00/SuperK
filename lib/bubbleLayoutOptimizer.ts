@@ -29,6 +29,7 @@ export interface AutoOrganizeOptions {
   forceRealign?: boolean;
   minFontSize?: number;
   maxEnlargeRatio?: number;
+  maxAllowedWidth?: number;
 }
 
 export interface AutoOrganizeResult {
@@ -36,6 +37,49 @@ export interface AutoOrganizeResult {
   adjustedCount: number;
   resolvedCollisionCount: number;
   unresolvedCollisionCount: number;
+}
+
+/**
+ * Detects whether a non-user-modified layoutAdjustment was corrupted (e.g. crushed into a narrow
+ * strip < 52px or teleported far from its canonical box center by the prior id-less collision bug).
+ */
+export function isCorruptedAutoAdjustment(
+  b: TranslatedBubble,
+  iw: number,
+  ih: number,
+  adjOverride?: OverlayAdjustment,
+): boolean {
+  const adj = adjOverride ?? b.layoutAdjustment;
+  if (!adj || adj.userModified || !adj.isAutoOptimized) return false;
+  const sx = adj.iw > 0 ? iw / adj.iw : 1;
+  const sy = adj.ih > 0 ? ih / adj.ih : 1;
+  const adjW = adj.bw * sx;
+  const adjH = adj.bh * sy;
+  const adjCx = (adj.bx + adj.bw / 2) * sx;
+  const adjCy = (adj.by + adj.bh / 2) * sy;
+
+  if (adjW < 52 || adjH < 28) return true;
+
+  if (b.box && Array.isArray(b.box) && b.box.length === 4) {
+    const [ymin, xmin, ymax, xmax] = b.box;
+    if (
+      typeof ymin === "number" &&
+      typeof xmin === "number" &&
+      typeof ymax === "number" &&
+      typeof xmax === "number" &&
+      !(xmin === 0 && ymin === 0 && xmax === 1000 && ymax === 1000)
+    ) {
+      const rawW = Math.max(8, ((xmax - xmin) / 1000) * iw);
+      const rawCx = ((xmin + xmax) / 2000) * iw;
+      const rawCy = ((ymin + ymax) / 2000) * ih;
+      if (adjW < Math.min(64, rawW * 0.65)) return true;
+      if (Math.abs(adjCx - rawCx) > iw * 0.22 || Math.abs(adjCy - rawCy) > ih * 0.25) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -52,7 +96,13 @@ export function getBubbleGeometry(
       ? b.id
       : (b.t || b.translated || "").slice(0, 15) || "bubble";
 
-  if ((!ignoreAdjustment || b.layoutAdjustment?.userModified) && b.layoutAdjustment && b.layoutAdjustment.iw > 0 && b.layoutAdjustment.ih > 0) {
+  if (
+    (!ignoreAdjustment || b.layoutAdjustment?.userModified) &&
+    b.layoutAdjustment &&
+    b.layoutAdjustment.iw > 0 &&
+    b.layoutAdjustment.ih > 0 &&
+    !isCorruptedAutoAdjustment(b, iw, ih)
+  ) {
     const adj = b.layoutAdjustment;
     const sx = iw / adj.iw;
     const sy = ih / adj.ih;
@@ -128,6 +178,39 @@ export function detectBubbleCollisions(
 }
 
 /**
+ * Computes a neighbor-aware horizontal width cap so adjacent vertical lobes in a
+ * double/triple speech balloon do not expand into each other and get shoved outside the balloon.
+ */
+function computeNeighborMaxWidth(
+  targetIdx: number,
+  rawRects: BubbleRect[],
+  iw: number,
+): number | undefined {
+  const rA = rawRects[targetIdx];
+  if (!rA) return undefined;
+  const cxA = rA.x + rA.width / 2;
+  let minCap: number | undefined;
+
+  for (let j = 0; j < rawRects.length; j++) {
+    if (j === targetIdx) continue;
+    const rB = rawRects[j];
+    const vOverlap = Math.min(rA.y + rA.height, rB.y + rB.height) - Math.max(rA.y, rB.y);
+    const minH = Math.min(rA.height, rB.height);
+    if (vOverlap <= minH * 0.20) continue;
+
+    const cxB = rB.x + rB.width / 2;
+    const dx = Math.abs(cxB - cxA);
+    if (dx > 8 && dx < iw * 0.25) {
+      // Allow moderate lobe expansion while preventing 600px-tall boxes from ballooning to 400px width
+      const cap = Math.max(Math.round(rA.width * 1.85), Math.round(dx * 1.68));
+      minCap = minCap === undefined ? cap : Math.min(minCap, cap);
+    }
+  }
+
+  return minCap;
+}
+
+/**
  * Fits translated text cleanly inside the original bubble bounds by stepping down
  * font size rather than expanding the bubble to 2.5x-3.0x.
  */
@@ -141,10 +224,12 @@ export function fitBubbleTextWithinBounds(
   if (!text) return bubble;
   if (bubble.layoutAdjustment?.userModified) return bubble;
 
-  // Always derive from canonical raw box when forceRealign is requested or when
-  // previous adjustment was auto-generated, guaranteeing 100% single-pass idempotence.
+  // Always derive from canonical raw box when forceRealign is requested, when
+  // previous adjustment was auto-generated, or when previous adjustment was corrupted.
   const ignorePrevAdjustment = Boolean(
-    options?.forceRealign || bubble.layoutAdjustment?.isAutoOptimized,
+    options?.forceRealign ||
+    bubble.layoutAdjustment?.isAutoOptimized ||
+    isCorruptedAutoAdjustment(bubble, iw, ih),
   );
   const geom = getBubbleGeometry(bubble, iw, ih, ignorePrevAdjustment);
   const fontFamily = options?.fontFamily || "Itim, sans-serif";
@@ -156,11 +241,9 @@ export function fitBubbleTextWithinBounds(
   // True manga readable floor: e.g. 13px on small screens, 15px-16px on 1280px, 18px-20px on 1600px+
   const minFs = options?.minFontSize ?? Math.max(13, Math.round(iw * 0.0115));
   const isOval = !bubble.isInvalidBox;
+  const maxAllowedW = options?.maxAllowedWidth ?? Math.round(iw * 0.36);
 
   // 1. Aspect ratio adaptation for vertical Japanese text boxes:
-  // Japanese text is vertical (aspect ratio width/height often 0.18 - 0.45).
-  // But the speech balloon in manga artwork is an oval/round balloon with plenty of horizontal space.
-  // We adapt width towards a balanced balloon aspect ratio (>= 0.72) in one deterministic pass.
   let curW = geom.width;
   let curH = geom.height;
   const aspectRatio = geom.width / Math.max(1, geom.height);
@@ -169,18 +252,19 @@ export function fitBubbleTextWithinBounds(
   const isNarrowVertical = aspectRatio < 0.70 && !bubble.isInvalidBox;
   if (isNarrowVertical) {
     const area = geom.width * geom.height;
-    const targetW = Math.max(
+    const desiredW = Math.max(
       geom.width,
       Math.min(
         iw * 0.32,
+        Math.round(geom.width * 2.15),
         Math.max(
           Math.round(geom.height * 0.68),
           Math.round(Math.sqrt(area * 0.95)),
         ),
       ),
     );
-    curW = targetW;
-    curH = Math.max(Math.round(geom.height * 0.85), Math.min(geom.height, Math.round(area / Math.max(1, targetW))));
+    curW = Math.max(geom.width, Math.min(maxAllowedW, desiredW));
+    curH = Math.max(Math.round(geom.height * 0.85), Math.min(geom.height, Math.round(area / Math.max(1, curW))));
   }
 
   // 2. Initial fit attempt within adapted balloon bounds
@@ -199,11 +283,14 @@ export function fitBubbleTextWithinBounds(
   let finalHeight = curH;
   let targetFontSize = fit.fontSize;
 
-  // 3. If text couldn't fit even at minFs, allow controlled expansion (max 1.35x width, 1.25x height)
+  // 3. If text couldn't fit even at minFs, allow controlled expansion capped by maxAllowedW
   if (!fit.fits) {
     const maxEnlarge = options?.maxEnlargeRatio ?? 1.35;
-    const enlargedW = Math.min(iw * 0.38, Math.round(curW * maxEnlarge));
-    const enlargedH = Math.min(ih * 0.38, Math.round(curH * Math.min(1.25, maxEnlarge)));
+    const enlargedW = Math.max(
+      curW,
+      Math.min(maxAllowedW, Math.round(iw * 0.36), Math.round(curW * maxEnlarge)),
+    );
+    const enlargedH = Math.min(Math.round(ih * 0.38), Math.round(curH * Math.min(1.25, maxEnlarge)));
     const enlargedFit = fitTextForBubble(
       text,
       enlargedW,
@@ -221,7 +308,7 @@ export function fitBubbleTextWithinBounds(
   }
 
   // 4. Synchronize height & font size with layoutBubbleAtFixedFont so applyTranslationOverlay
-  // never expands currentBh at render time after collision resolution.
+  // never expands currentBh or flags layoutOverflow at render time.
   let fixedRenderLayout = layoutBubbleAtFixedFont(
     text,
     finalWidth,
@@ -232,6 +319,8 @@ export function fitBubbleTextWithinBounds(
     ih,
     locale,
   );
+
+  // First step down down to minFs
   while (
     targetFontSize > minFs &&
     (fixedRenderLayout.overflow || fixedRenderLayout.requiredHeightPx > finalHeight)
@@ -249,7 +338,7 @@ export function fitBubbleTextWithinBounds(
     );
   }
 
-  if (fit.fits && fit.lines.length > 0) {
+  if (fit.fits && fit.lines.length > 0 && !fixedRenderLayout.overflow) {
     const textH = (fit.lines.length - 1) * fit.lineHeight + fit.fontSize * 1.30;
     const snugH = Math.max(
       Math.round(geom.height * 0.55),
@@ -257,7 +346,28 @@ export function fitBubbleTextWithinBounds(
     );
     finalHeight = Math.max(snugH, Math.min(finalHeight, fixedRenderLayout.requiredHeightPx));
   } else if (fixedRenderLayout.requiredHeightPx > finalHeight) {
-    finalHeight = Math.min(Math.round(ih * 0.40), fixedRenderLayout.requiredHeightPx);
+    finalHeight = Math.min(Math.round(ih * 0.40), Math.max(finalHeight, fixedRenderLayout.requiredHeightPx));
+  }
+
+  // If oval word-chord or vertical constraint still overflows at minFs, step down until clean fit
+  while (
+    targetFontSize > 8 &&
+    (fixedRenderLayout.overflow || fixedRenderLayout.requiredHeightPx > finalHeight)
+  ) {
+    targetFontSize -= 1;
+    fixedRenderLayout = layoutBubbleAtFixedFont(
+      text,
+      finalWidth,
+      Math.max(8, Math.round(targetFontSize * multiplier)),
+      fontFamily,
+      isOval,
+      25,
+      ih,
+      locale,
+    );
+  }
+  if (fixedRenderLayout.requiredHeightPx > finalHeight) {
+    finalHeight = Math.min(ih, fixedRenderLayout.requiredHeightPx);
   }
 
   const cx = geom.x + geom.width / 2;
@@ -334,7 +444,7 @@ function refitFontInResolvedBox(
     locale,
   );
   while (
-    targetFontSize > minFs &&
+    targetFontSize > 8 &&
     (fixedRenderLayout.overflow || fixedRenderLayout.requiredHeightPx > adj.bh)
   ) {
     targetFontSize -= 1;
@@ -380,6 +490,7 @@ export function resolveBubbleCollisions(
     }
     return clone;
   });
+  const rawRects = active.map((b) => getBubbleGeometry(b, iw, ih, true));
   const maxIterations = 40;
 
   for (let iter = 0; iter < maxIterations; iter++) {
@@ -387,9 +498,17 @@ export function resolveBubbleCollisions(
     if (collisions.length === 0) break;
 
     for (const col of collisions) {
-      const idxA = active.findIndex((b) => b === col.bubbleA || b.id === col.bubbleA.id);
-      const idxB = active.findIndex((b) => b === col.bubbleB || b.id === col.bubbleB.id);
-      if (idxA === -1 || idxB === -1) continue;
+      const idxA = active.findIndex(
+        (b) =>
+          b === col.bubbleA ||
+          (b.id !== undefined && col.bubbleA.id !== undefined && b.id === col.bubbleA.id),
+      );
+      const idxB = active.findIndex(
+        (b) =>
+          b === col.bubbleB ||
+          (b.id !== undefined && col.bubbleB.id !== undefined && b.id === col.bubbleB.id),
+      );
+      if (idxA === -1 || idxB === -1 || idxA === idxB) continue;
 
       const rA = getBubbleGeometry(active[idxA], iw, ih);
       const rB = getBubbleGeometry(active[idxB], iw, ih);
@@ -435,16 +554,21 @@ export function resolveBubbleCollisions(
         }
       }
 
-      // If at borders and still overlapping, scale non-fixed boxes down slightly
+      // If at borders and still overlapping, scale non-fixed boxes down slightly,
+      // but NEVER below a readable manga bubble width/height floor.
       if (iter > 10) {
-        const shrinkFactor = 0.95;
+        const shrinkFactor = 0.96;
+        const minWA = Math.max(72, Math.round((rawRects[idxA]?.width ?? 80) * 0.82));
+        const minHA = Math.max(48, Math.round((rawRects[idxA]?.height ?? 60) * 0.72));
+        const minWB = Math.max(72, Math.round((rawRects[idxB]?.width ?? 80) * 0.82));
+        const minHB = Math.max(48, Math.round((rawRects[idxB]?.height ?? 60) * 0.72));
         if (!aFixed) {
-          rA.width = Math.max(16, Math.round(rA.width * shrinkFactor));
-          rA.height = Math.max(16, Math.round(rA.height * shrinkFactor));
+          rA.width = Math.max(minWA, Math.round(rA.width * shrinkFactor));
+          rA.height = Math.max(minHA, Math.round(rA.height * shrinkFactor));
         }
         if (!bFixed) {
-          rB.width = Math.max(16, Math.round(rB.width * shrinkFactor));
-          rB.height = Math.max(16, Math.round(rB.height * shrinkFactor));
+          rB.width = Math.max(minWB, Math.round(rB.width * shrinkFactor));
+          rB.height = Math.max(minHB, Math.round(rB.height * shrinkFactor));
         }
       }
 
@@ -490,7 +614,7 @@ export function resolveBubbleCollisions(
 
 /**
  * Master automated organizer:
- * 1. Fits each bubble strictly to its bounds with font scaling.
+ * 1. Fits each bubble strictly to its bounds with neighbor-aware width capping and font scaling.
  * 2. Resolves collisions between overlapping bubbles.
  * 3. Re-fits font size inside any frames that were shifted or shrunk during collision resolution.
  */
@@ -509,22 +633,29 @@ export function autoOrganizePageBubbles(
     };
   }
 
+  const hasCorrupted = bubbles.some(
+    (b) => b && !b.deleted && isCorruptedAutoAdjustment(b, iw, ih),
+  );
   const initialCollisions = detectBubbleCollisions(bubbles, iw, ih);
+  const rawRects = bubbles.map((b) => getBubbleGeometry(b, iw, ih, true));
 
-  // Step 1: Fit each bubble within its detected bounds
-  let working = bubbles.map((b) => {
+  // Step 1: Fit each bubble within its detected bounds (respecting neighbor width limits)
+  let working = bubbles.map((b, idx) => {
     if (b.deleted || !(b.t || b.translated || "").trim()) return b;
     // If user explicitly modified this bubble manually, strictly preserve it!
     if (b.layoutAdjustment?.userModified) {
       return b;
     }
-    // If already adjusted and forceRealign is false and no collisions exist, preserve
-    if (b.layoutAdjustment && !options?.forceRealign && initialCollisions.length === 0) {
+    const corrupted = isCorruptedAutoAdjustment(b, iw, ih);
+    // If already adjusted and forceRealign is false and no collisions/corruption exist, preserve
+    if (b.layoutAdjustment && !corrupted && !options?.forceRealign && initialCollisions.length === 0 && !hasCorrupted) {
       return b;
     }
+    const maxAllowedWidth = computeNeighborMaxWidth(idx, rawRects, iw);
     return fitBubbleTextWithinBounds(b, iw, ih, {
       ...options,
-      forceRealign: Boolean(options?.forceRealign || initialCollisions.length > 0),
+      maxAllowedWidth,
+      forceRealign: Boolean(options?.forceRealign || initialCollisions.length > 0 || corrupted || hasCorrupted),
     });
   });
 

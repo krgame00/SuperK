@@ -430,6 +430,104 @@ describe("Bubble Layout Optimizer", () => {
     );
     expect(renderLayout.heightPx).toBe(adj.bh);
   });
+
+  it("resolves collisions on id-less OCR bubbles (Page 18 repro) without teleporting or crushing bubble[0]", () => {
+    // Real Gemini OCR bubbles do NOT have an `id` field (b.id is undefined).
+    // Previously `b.id === col.bubbleA.id` evaluated `undefined === undefined` (true) for index 0,
+    // crushing bubble[0] to 16px width and pushing it to the far right edge (x ~ 98%).
+    const page18Bubbles: TranslatedBubble[] = [
+      {
+        // Top-left double balloon, right lobe (bubble[0])
+        box: [155, 115, 510, 185],
+        t: "ฉันเปิดดูเจ้านี่ซ้ำตั้งหลายรอบตอนกินข้าว แต่...",
+      },
+      {
+        // Top-left double balloon, left lobe (bubble[1])
+        box: [165, 50, 550, 125],
+        t: "พอมาได้ยินเสียงครางของตัวเองแล้วมันยังน่าอายอยู่ดีนั่นแหละ!",
+      },
+      {
+        // Top-right oval balloon
+        box: [125, 530, 480, 620],
+        t: "ฮ่าๆ วันนั้นเนี่ยสุดยอดจริงๆ เลย!",
+      },
+      {
+        // Mid-left spiky balloon
+        box: [695, 90, 910, 165],
+        t: "เฮ้! มันไม่ตลกนะ!",
+      },
+      {
+        // Bottom-right double cloud balloon, lobe A
+        box: [790, 540, 960, 620],
+        t: "อิอิ! แต่จะบอกว่าไม่ได้ผลก็ไม่ได้นะ!",
+      },
+      {
+        // Bottom-right double cloud balloon, lobe B (colliding with lobe A)
+        box: [820, 520, 985, 605],
+        t: "งั้นเดี๋ยวเรามาลองกันใหม่อีกรอบดีไหม?",
+      },
+    ];
+
+    const res = autoOrganizePageBubbles(page18Bubbles, 1280, 1800, { forceRealign: true });
+    const remainingCollisions = detectBubbleCollisions(res.optimizedBubbles, 1280, 1800);
+    expect(remainingCollisions.length).toBe(0);
+
+    const b0 = res.optimizedBubbles[0];
+    const adj0 = b0.layoutAdjustment!;
+    // Must stay in the top-left speech balloon region (never teleported to x > 400 or right edge 1260!)
+    expect(adj0.bx).toBeLessThan(320);
+    // Must NOT be crushed into a 16-20px vertical strip!
+    expect(adj0.bw).toBeGreaterThanOrEqual(80);
+
+    // Every bubble on Page 18 must render without overflow at its resolved box & targetFontSize
+    for (const b of res.optimizedBubbles) {
+      const adj = b.layoutAdjustment!;
+      const layout = layoutBubbleAtFixedFont(
+        b.t!,
+        adj.bw,
+        b.targetFontSize!,
+        "Itim, sans-serif",
+        true,
+        adj.bh,
+        1800,
+        "th",
+      );
+      expect(layout.overflow).toBe(false);
+      expect(layout.heightPx).toBe(adj.bh);
+    }
+  });
+
+  it("automatically self-heals bubbles that were previously crushed or teleported by the id-less collision bug", () => {
+    const corruptedPage18: TranslatedBubble[] = [
+      {
+        box: [155, 115, 510, 185],
+        t: "ฉันเปิดดูเจ้านี่ซ้ำตั้งหลายรอบตอนกินข้าว แต่...",
+        targetFontSize: 12,
+        layoutAdjustment: {
+          bx: 1261, // Teleported to far right edge!
+          by: 280,
+          bw: 19,   // Crushed to 19px!
+          bh: 44,
+          iw: 1280,
+          ih: 1800,
+          targetFontSize: 12,
+          isAutoOptimized: true,
+        },
+      },
+      {
+        box: [165, 50, 550, 125],
+        t: "พอมาได้ยินเสียงครางของตัวเองแล้วมันยังน่าอายอยู่ดีนั่นแหละ!",
+      },
+    ];
+
+    // Even when called with forceRealign: false (like automatic page render), corrupted adjustments must self-heal
+    const res = autoOrganizePageBubbles(corruptedPage18, 1280, 1800, { forceRealign: false });
+    const healed0 = res.optimizedBubbles[0].layoutAdjustment!;
+    expect(healed0.bx).toBeLessThan(320);
+    expect(healed0.bw).toBeGreaterThanOrEqual(80);
+    expect(detectBubbleCollisions(res.optimizedBubbles, 1280, 1800).length).toBe(0);
+  });
 });
+
 
 

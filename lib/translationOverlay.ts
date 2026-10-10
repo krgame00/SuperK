@@ -25,6 +25,7 @@ import {
 import {
   detectBubbleCollisions,
   autoOrganizePageBubbles,
+  isCorruptedAutoAdjustment,
 } from "./bubbleLayoutOptimizer";
 
 const ADJ_KEY = "superk:overlay-adjustments";
@@ -956,8 +957,9 @@ export const applyTranslationOverlay = async (
 
     // Auto-organize: detect and resolve any bubble collisions or unconstrained overlaps
     if (real.length > 0) {
+      const hasCorrupted = real.some((b) => isCorruptedAutoAdjustment(b, iw, ih));
       const collisions = real.length > 1 ? detectBubbleCollisions(real, iw, ih) : [];
-      if (collisions.length > 0 || viewMode === "offscreen") {
+      if (collisions.length > 0 || hasCorrupted || viewMode === "offscreen") {
         const organized = autoOrganizePageBubbles(real, iw, ih, {
           fontFamily: resolvedFontFam,
           fontSizeMultiplier: currentTextStyle.fontSizeMultiplier || 1.0,
@@ -1002,7 +1004,13 @@ export const applyTranslationOverlay = async (
       const legacyBubbleId = b.id !== undefined
         ? `id-${b.id}`
         : `text-${(b.t || b.translated || "").slice(0, 10)}-${rawX.toFixed(1)}-${rawY.toFixed(1)}`;
-      const legacyAdj = savedAdj[bubbleId] ?? savedAdj[legacyBubbleId];
+      const rawLegacyAdj = savedAdj[bubbleId] ?? savedAdj[legacyBubbleId];
+      const legacyAdj = rawLegacyAdj && !isCorruptedAutoAdjustment(b, iw, ih, rawLegacyAdj)
+        ? rawLegacyAdj
+        : undefined;
+      if (b.layoutAdjustment && isCorruptedAutoAdjustment(b, iw, ih, b.layoutAdjustment)) {
+        delete b.layoutAdjustment;
+      }
       let adj = b.layoutAdjustment ?? legacyAdj;
       const hasSavedWidthFont = [b.targetFontSize, adj?.targetFontSize, legacyAdj?.targetFontSize].some(
         (targetFontSize) => typeof targetFontSize === "number"
