@@ -30,6 +30,7 @@ export interface AutoOrganizeOptions {
   minFontSize?: number;
   maxEnlargeRatio?: number;
   maxAllowedWidth?: number;
+  maxAllowedHeight?: number;
 }
 
 export interface AutoOrganizeResult {
@@ -39,9 +40,12 @@ export interface AutoOrganizeResult {
   unresolvedCollisionCount: number;
 }
 
+export const AUTO_OPTIMIZE_VERSION = 2;
+
 /**
  * Detects whether a non-user-modified layoutAdjustment was corrupted (e.g. crushed into a narrow
- * strip < 52px or teleported far from its canonical box center by the prior id-less collision bug).
+ * strip < 52px, teleported far from its canonical box center by the prior id-less collision bug,
+ * or produced by a pre-v2 auto-organizer build).
  */
 export function isCorruptedAutoAdjustment(
   b: TranslatedBubble,
@@ -51,6 +55,8 @@ export function isCorruptedAutoAdjustment(
 ): boolean {
   const adj = adjOverride ?? b.layoutAdjustment;
   if (!adj || adj.userModified || !adj.isAutoOptimized) return false;
+  if ((adj.autoOptimizeVersion ?? 0) < AUTO_OPTIMIZE_VERSION) return true;
+
   const sx = adj.iw > 0 ? iw / adj.iw : 1;
   const sy = adj.ih > 0 ? ih / adj.ih : 1;
   const adjW = adj.bw * sx;
@@ -73,7 +79,7 @@ export function isCorruptedAutoAdjustment(
       const rawCx = ((xmin + xmax) / 2000) * iw;
       const rawCy = ((ymin + ymax) / 2000) * ih;
       if (adjW < Math.min(64, rawW * 0.65)) return true;
-      if (Math.abs(adjCx - rawCx) > iw * 0.22 || Math.abs(adjCy - rawCy) > ih * 0.25) {
+      if (Math.abs(adjCx - rawCx) > iw * 0.18 || Math.abs(adjCy - rawCy) > ih * 0.22) {
         return true;
       }
     }
@@ -189,7 +195,8 @@ function computeNeighborMaxWidth(
   const rA = rawRects[targetIdx];
   if (!rA) return undefined;
   const cxA = rA.x + rA.width / 2;
-  let minCap: number | undefined;
+  let minLeftDx: number | undefined;
+  let minRightDx: number | undefined;
 
   for (let j = 0; j < rawRects.length; j++) {
     if (j === targetIdx) continue;
@@ -201,8 +208,53 @@ function computeNeighborMaxWidth(
     const cxB = rB.x + rB.width / 2;
     const dx = Math.abs(cxB - cxA);
     if (dx > 8 && dx < iw * 0.25) {
-      // Allow moderate lobe expansion while preventing 600px-tall boxes from ballooning to 400px width
-      const cap = Math.max(Math.round(rA.width * 1.85), Math.round(dx * 1.68));
+      if (cxB < cxA) {
+        minLeftDx = minLeftDx === undefined ? dx : Math.min(minLeftDx, dx);
+      } else {
+        minRightDx = minRightDx === undefined ? dx : Math.min(minRightDx, dx);
+      }
+    }
+  }
+
+  if (minLeftDx !== undefined && minRightDx !== undefined && minLeftDx < iw * 0.16 && minRightDx < iw * 0.16) {
+    // Sandwiched middle lobe in a 3-lobe cluster (e.g. Page 4 top-right "H-HANG ON!")
+    return Math.max(rA.width, Math.round(Math.min(minLeftDx, minRightDx) * 1.12));
+  }
+
+  const closestDx = Math.min(minLeftDx ?? Infinity, minRightDx ?? Infinity);
+  if (Number.isFinite(closestDx)) {
+    // Outer lobe in a 2-lobe or 3-lobe balloon
+    return Math.max(Math.round(rA.width * 1.85), Math.round(closestDx * 1.68));
+  }
+
+  return undefined;
+}
+
+/**
+ * Computes a neighbor-aware vertical height cap when two bubbles are stacked in the
+ * same vertical column (e.g. Page 3 "SHHH!" / "EVERYONE'S GONNA HEAR YOU!", Page 4 top/bottom).
+ */
+function computeNeighborMaxHeight(
+  targetIdx: number,
+  rawRects: BubbleRect[],
+  ih: number,
+): number | undefined {
+  const rA = rawRects[targetIdx];
+  if (!rA) return undefined;
+  const cyA = rA.y + rA.height / 2;
+  let minCap: number | undefined;
+
+  for (let j = 0; j < rawRects.length; j++) {
+    if (j === targetIdx) continue;
+    const rB = rawRects[j];
+    const hOverlap = Math.min(rA.x + rA.width, rB.x + rB.width) - Math.max(rA.x, rB.x);
+    const minW = Math.min(rA.width, rB.width);
+    if (hOverlap <= minW * 0.25) continue;
+
+    const cyB = rB.y + rB.height / 2;
+    const dy = Math.abs(cyB - cyA);
+    if (dy > 8 && dy < ih * 0.22) {
+      const cap = Math.max(rA.height, Math.round(dy * 1.18));
       minCap = minCap === undefined ? cap : Math.min(minCap, cap);
     }
   }
@@ -242,6 +294,7 @@ export function fitBubbleTextWithinBounds(
   const minFs = options?.minFontSize ?? Math.max(13, Math.round(iw * 0.0115));
   const isOval = !bubble.isInvalidBox;
   const maxAllowedW = options?.maxAllowedWidth ?? Math.round(iw * 0.36);
+  const maxAllowedH = options?.maxAllowedHeight ?? Math.round(ih * 0.38);
 
   // 1. Aspect ratio adaptation for vertical Japanese text boxes:
   let curW = geom.width;
@@ -283,14 +336,17 @@ export function fitBubbleTextWithinBounds(
   let finalHeight = curH;
   let targetFontSize = fit.fontSize;
 
-  // 3. If text couldn't fit even at minFs, allow controlled expansion capped by maxAllowedW
+  // 3. If text couldn't fit even at minFs, allow controlled expansion capped by maxAllowedW / maxAllowedH
   if (!fit.fits) {
     const maxEnlarge = options?.maxEnlargeRatio ?? 1.35;
     const enlargedW = Math.max(
       curW,
       Math.min(maxAllowedW, Math.round(iw * 0.36), Math.round(curW * maxEnlarge)),
     );
-    const enlargedH = Math.min(Math.round(ih * 0.38), Math.round(curH * Math.min(1.25, maxEnlarge)));
+    const enlargedH = Math.max(
+      curH,
+      Math.min(maxAllowedH, Math.round(ih * 0.38), Math.round(curH * Math.min(1.28, maxEnlarge))),
+    );
     const enlargedFit = fitTextForBubble(
       text,
       enlargedW,
@@ -320,7 +376,7 @@ export function fitBubbleTextWithinBounds(
     locale,
   );
 
-  // First step down down to minFs
+  // First step down to minFs
   while (
     targetFontSize > minFs &&
     (fixedRenderLayout.overflow || fixedRenderLayout.requiredHeightPx > finalHeight)
@@ -346,7 +402,7 @@ export function fitBubbleTextWithinBounds(
     );
     finalHeight = Math.max(snugH, Math.min(finalHeight, fixedRenderLayout.requiredHeightPx));
   } else if (fixedRenderLayout.requiredHeightPx > finalHeight) {
-    finalHeight = Math.min(Math.round(ih * 0.40), Math.max(finalHeight, fixedRenderLayout.requiredHeightPx));
+    finalHeight = Math.min(maxAllowedH, Math.max(finalHeight, fixedRenderLayout.requiredHeightPx));
   }
 
   // If oval word-chord or vertical constraint still overflows at minFs, step down until clean fit
@@ -386,6 +442,7 @@ export function fitBubbleTextWithinBounds(
     targetFontSize,
     fontSizeMultiplier: bubble.fontSizeMultiplier,
     isAutoOptimized: true,
+    autoOptimizeVersion: AUTO_OPTIMIZE_VERSION,
   };
 
   const nextBubble: TranslatedBubble = {
@@ -421,17 +478,20 @@ function refitFontInResolvedBox(
   const minFs = options?.minFontSize ?? Math.max(12, Math.round(iw * 0.011));
   const isOval = !bubble.isInvalidBox;
 
-  const fit = fitTextForBubble(
-    text,
-    adj.bw,
-    adj.bh,
-    fontFamily,
-    isOval,
-    multiplier,
-    minFs,
-    locale,
-  );
-  let targetFontSize = Math.min(bubble.targetFontSize ?? fit.fontSize, fit.fontSize);
+  let targetFontSize = bubble.targetFontSize;
+  if (typeof targetFontSize !== "number" || targetFontSize <= 0) {
+    const fit = fitTextForBubble(
+      text,
+      adj.bw,
+      adj.bh,
+      fontFamily,
+      isOval,
+      multiplier,
+      minFs,
+      locale,
+    );
+    targetFontSize = fit.fontSize;
+  }
 
   let fixedRenderLayout = layoutBubbleAtFixedFont(
     text,
@@ -467,6 +527,7 @@ function refitFontInResolvedBox(
       ...adj,
       targetFontSize,
       isAutoOptimized: true,
+      autoOptimizeVersion: AUTO_OPTIMIZE_VERSION,
     },
   };
   delete nextBubble.layoutSnapshot;
@@ -587,6 +648,7 @@ export function resolveBubbleCollisions(
           targetFontSize: active[idxA].targetFontSize,
           fontSizeMultiplier: active[idxA].fontSizeMultiplier,
           isAutoOptimized: true,
+          autoOptimizeVersion: AUTO_OPTIMIZE_VERSION,
         };
       }
 
@@ -604,6 +666,7 @@ export function resolveBubbleCollisions(
           targetFontSize: active[idxB].targetFontSize,
           fontSizeMultiplier: active[idxB].fontSizeMultiplier,
           isAutoOptimized: true,
+          autoOptimizeVersion: AUTO_OPTIMIZE_VERSION,
         };
       }
     }
@@ -614,7 +677,7 @@ export function resolveBubbleCollisions(
 
 /**
  * Master automated organizer:
- * 1. Fits each bubble strictly to its bounds with neighbor-aware width capping and font scaling.
+ * 1. Fits each bubble strictly to its bounds with neighbor-aware width/height capping and font scaling.
  * 2. Resolves collisions between overlapping bubbles.
  * 3. Re-fits font size inside any frames that were shifted or shrunk during collision resolution.
  */
@@ -639,7 +702,7 @@ export function autoOrganizePageBubbles(
   const initialCollisions = detectBubbleCollisions(bubbles, iw, ih);
   const rawRects = bubbles.map((b) => getBubbleGeometry(b, iw, ih, true));
 
-  // Step 1: Fit each bubble within its detected bounds (respecting neighbor width limits)
+  // Step 1: Fit each bubble within its detected bounds (respecting neighbor width/height limits)
   let working = bubbles.map((b, idx) => {
     if (b.deleted || !(b.t || b.translated || "").trim()) return b;
     // If user explicitly modified this bubble manually, strictly preserve it!
@@ -652,9 +715,11 @@ export function autoOrganizePageBubbles(
       return b;
     }
     const maxAllowedWidth = computeNeighborMaxWidth(idx, rawRects, iw);
+    const maxAllowedHeight = computeNeighborMaxHeight(idx, rawRects, ih);
     return fitBubbleTextWithinBounds(b, iw, ih, {
       ...options,
       maxAllowedWidth,
+      maxAllowedHeight,
       forceRealign: Boolean(options?.forceRealign || initialCollisions.length > 0 || corrupted || hasCorrupted),
     });
   });

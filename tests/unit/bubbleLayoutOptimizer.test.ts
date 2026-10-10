@@ -527,7 +527,86 @@ describe("Bubble Layout Optimizer", () => {
     expect(healed0.bw).toBeGreaterThanOrEqual(80);
     expect(detectBubbleCollisions(res.optimizedBubbles, 1280, 1800).length).toBe(0);
   });
+
+  it("handles Page 4 3-lobe cluster and top-left camera box without teleporting bubble[0] or crushing sandwiched middle lobe", () => {
+    const page4Bubbles: TranslatedBubble[] = [
+      {
+        // Top-left camera box "NOW RECORDING..." (bubble[0])
+        box: [45, 70, 115, 225],
+        t: "กำลังบันทึกภาพอยู่...",
+      },
+      {
+        // Top-right Lobe 1 top
+        box: [45, 760, 175, 825],
+        t: "นี่มันอะไรกันเนี่ย! เกิดอะไรขึ้นเนี่ย?!",
+      },
+      {
+        // Top-right Lobe 1 bottom (stacked in same column)
+        box: [185, 765, 295, 825],
+        t: "ทำไมถึงมีกล้องด้วยเนี่ย?!",
+      },
+      {
+        // Top-right Lobe 2 middle (sandwiched between Lobe 1 and Lobe 3)
+        box: [65, 825, 165, 865],
+        t: "เดี๋ยว-เดี๋ยวสิ!",
+      },
+      {
+        // Top-right Lobe 3 right
+        box: [45, 865, 295, 928],
+        t: "ก็พวกเราเป็นเพื่อนซี้กันไม่ใช่เหรอ? แล้วฉันจะปฏิเสธลงได้ยังไงล่ะ! ปล่อยให้เป็นหน้าที่ฉันเอง!",
+      },
+    ];
+
+    const res = autoOrganizePageBubbles(page4Bubbles, 1280, 1807, { forceRealign: true });
+    expect(detectBubbleCollisions(res.optimizedBubbles, 1280, 1807).length).toBe(0);
+
+    // Top-left camera box (bubble[0]) must stay in top-left (x < 250px)
+    const camAdj = res.optimizedBubbles[0].layoutAdjustment!;
+    expect(camAdj.bx).toBeLessThan(250);
+    expect(camAdj.bw).toBeGreaterThanOrEqual(120);
+
+    // Sandwiched middle lobe ("เดี๋ยว-เดี๋ยวสิ!") must stay between Lobe 1 and Lobe 3
+    const lobe1Cx = res.optimizedBubbles[1].layoutAdjustment!.bx + res.optimizedBubbles[1].layoutAdjustment!.bw / 2;
+    const lobe2Cx = res.optimizedBubbles[3].layoutAdjustment!.bx + res.optimizedBubbles[3].layoutAdjustment!.bw / 2;
+    const lobe3Cx = res.optimizedBubbles[4].layoutAdjustment!.bx + res.optimizedBubbles[4].layoutAdjustment!.bw / 2;
+    expect(lobe2Cx).toBeGreaterThan(lobe1Cx);
+    expect(lobe2Cx).toBeLessThan(lobe3Cx);
+  });
+
+  it("self-heals Page 13 pre-v2 auto-optimized bubbles that were moderately shifted out of their speech balloon", () => {
+    const page13Bubbles: TranslatedBubble[] = [
+      {
+        // Right lobe ("อื้ม... ควยอร่อยจัง!") shifted right onto the dark wooden shelf in PDF 138 (v1)
+        box: [60, 495, 165, 565], // rawCx = 678px on 1280px
+        t: "อื้ม... ควยอร่อยจัง!",
+        targetFontSize: 18,
+        layoutAdjustment: {
+          bx: 730, // Shifted right onto dark wooden shelf in v1 (without autoOptimizeVersion: 2)
+          by: 110,
+          bw: 95,
+          bh: 160,
+          iw: 1280,
+          ih: 1807,
+          targetFontSize: 18,
+          isAutoOptimized: true,
+        },
+      },
+      {
+        // Left lobe ("โดนปล่อยให้อยู่คนเดียวแบบนี้มันไม่แฟร์เลยนะ!")
+        box: [60, 410, 145, 485],
+        t: "โดนปล่อยให้อยู่คนเดียวแบบนี้มันไม่แฟร์เลยนะ!",
+      },
+    ];
+
+    const res = autoOrganizePageBubbles(page13Bubbles, 1280, 1807, { forceRealign: false });
+    expect(detectBubbleCollisions(res.optimizedBubbles, 1280, 1807).length).toBe(0);
+    const healedRightLobe = res.optimizedBubbles[0].layoutAdjustment!;
+    const healedCx = healedRightLobe.bx + healedRightLobe.bw / 2;
+    // Must be healed back near its canonical lobe center (~678px), NOT stuck at 777px!
+    expect(Math.abs(healedCx - 678)).toBeLessThan(40);
+  });
 });
+
 
 
 
