@@ -53,6 +53,7 @@ def _make_png(width: int = 8, height: int = 8) -> bytes:
 
 
 def test_windows_memory_trim_declares_process_handle_types(monkeypatch):
+    import sys
     from ctypes import wintypes
     from types import SimpleNamespace
     from unittest.mock import Mock
@@ -60,6 +61,8 @@ def test_windows_memory_trim_declares_process_handle_types(monkeypatch):
     get_process = Mock(return_value=ctypes.c_void_p(-1).value)
     empty_working_set = Mock(return_value=1)
     get_process_memory_info = Mock(return_value=1)
+    monkeypatch.setitem(sys.modules, "resource", None)
+    monkeypatch.setattr("app.pipeline.os.name", "nt")
     monkeypatch.setattr(ctypes, "windll", SimpleNamespace(
         kernel32=SimpleNamespace(GetCurrentProcess=get_process),
         psapi=SimpleNamespace(
