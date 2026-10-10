@@ -23,6 +23,8 @@ export interface WorkspaceAdvancedToolsProps {
   onEditMask: () => void;
   onTranslateBook: () => void;
   onTranslateCurrent?: () => void;
+  onOrganizeAllPages?: () => void;
+  canOrganizeAll?: boolean;
   onRetryFailedPages: () => void;
   onScanTranslations: () => void;
   onRetranslateContaminated: () => void;
@@ -40,6 +42,8 @@ export function WorkspaceAdvancedTools({
   onEditMask,
   onTranslateBook,
   onTranslateCurrent,
+  onOrganizeAllPages,
+  canOrganizeAll = true,
   onRetryFailedPages,
   onScanTranslations,
   onRetranslateContaminated,
@@ -65,6 +69,17 @@ export function WorkspaceAdvancedTools({
       disabled: busy,
       onSelect: onTranslateBook,
     },
+    ...(onOrganizeAllPages
+      ? [
+          {
+            id: "organize-all-pages",
+            label: "จัดระเบียบคำแปลทุกหน้า",
+            icon: <Sparkles className="h-4 w-4 text-primary" />,
+            disabled: busy || !canOrganizeAll,
+            onSelect: onOrganizeAllPages,
+          },
+        ]
+      : []),
     {
       id: "clean",
       label: "คลีนข้อความใหม่",

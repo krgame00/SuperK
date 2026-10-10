@@ -109,4 +109,32 @@ describe("WorkspaceControls", () => {
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
   });
+
+  test("advanced tools exposes organize all pages when handler is provided", () => {
+    const onOrganizeAllPages = vi.fn();
+    render(
+      <WorkspaceAdvancedTools
+        canClean
+        canEditMask
+        busy={false}
+        batchFailureCount={0}
+        onClean={vi.fn()}
+        onEditMask={vi.fn()}
+        onTranslateBook={vi.fn()}
+        onRetryFailedPages={vi.fn()}
+        onOrganizeAllPages={onOrganizeAllPages}
+        canOrganizeAll={true}
+        contaminatedPageCount={0}
+        onScanTranslations={vi.fn()}
+        onRetranslateContaminated={vi.fn()}
+        onOpenExportReport={vi.fn()}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: "เครื่องมือ" });
+    fireEvent.click(trigger);
+    const organizeAllItem = screen.getByRole("menuitem", { name: "จัดระเบียบคำแปลทุกหน้า" });
+    expect(organizeAllItem).toBeVisible();
+    fireEvent.click(organizeAllItem);
+    expect(onOrganizeAllPages).toHaveBeenCalledOnce();
+  });
 });
