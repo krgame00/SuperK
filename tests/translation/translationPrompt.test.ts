@@ -13,8 +13,16 @@ describe("buildTranslationPrompt script directive", () => {
     expect(buildTranslationPrompt({})).toContain("ENTIRELY in Thai script");
   });
 
+  it("applies the Thai script directive when targetLang is ISO code 'th' and forbids Latin letters in 't'", () => {
+    const prompt = buildTranslationPrompt({ targetLang: "th" });
+    expect(prompt).toContain("Translate this manga page to Thai.");
+    expect(prompt).toContain("ENTIRELY in Thai script");
+    expect(prompt).not.toContain("Latin letters are allowed");
+  });
+
   it("skips the Thai directive for non-Thai targets", () => {
     const prompt = buildTranslationPrompt({ targetLang: "Japanese" });
     expect(prompt).not.toContain("ENTIRELY in Thai script");
   });
 });
+

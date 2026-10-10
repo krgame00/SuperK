@@ -70,3 +70,35 @@ test("renders permitted normalized Thai numerals without rewriting legacy stored
   expect(bubble.t).toBe("เลข ١٢");
   expect(document.querySelector<HTMLElement>('[data-script-status="eligible"]')?.title).toContain("ตัวเลข");
 });
+test("shows visible script warning badge on blocked bubble and repairs mixed interjection on clean-script or dismiss click",async()=>{
+  const bubble:TranslatedBubble={
+    t:"ชูst... ปล่อยให้เป็นหน้าที่ร่ายเวทมนตร์ของฉันเอง ตอนนี้ล่ะ ลุยกันเลยดีกว่า!",
+    original_text:"SHH. LET ME WORK MY MAGIC. NOW, WITHOUT FURTHER ADO!",
+    box:[100,100,300,400],
+    translationReview:{
+      status:"needs_review",
+      sourceText:"SHH. LET ME WORK MY MAGIC. NOW, WITHOUT FURTHER ADO!",
+      reviewedText:"ชูst... ปล่อยให้เป็นหน้าที่ร่ายเวทมนตร์ของฉันเอง ตอนนี้ล่ะ ลุยกันเลยดีกว่า!",
+      reason:"พบตัวอักษรภาษาอื่นปน: st [U+0073 U+0074] กรุณาเทียบต้นฉบับและแก้คำแปล",
+    },
+  };
+  await paint([bubble],"th");
+  const blocked=document.querySelector<HTMLElement>('[data-script-status="blocked"]')!;
+  expect(blocked).not.toBeNull();
+  const badge=blocked.querySelector<HTMLElement>('[data-script-warning="true"]')!;
+  expect(badge).not.toBeNull();
+  expect(badge.hidden).toBe(false);
+  expect(badge.textContent).toContain("st");
+
+  blocked.dispatchEvent(new MouseEvent("dblclick",{bubbles:true}));
+  const cleanBtn=document.querySelector<HTMLButtonElement>('[data-review-action="clean-script"]')!;
+  expect(cleanBtn).not.toBeNull();
+  expect(cleanBtn.hidden).toBe(false);
+  cleanBtn.click();
+
+  expect(bubble.t).toBe("ชู่ว... ปล่อยให้เป็นหน้าที่ร่ายเวทมนตร์ของฉันเอง ตอนนี้ล่ะ ลุยกันเลยดีกว่า!");
+  expect(ink.join("")).toContain("ชู่ว");
+  expect(blocked.dataset.scriptStatus).toBe("eligible");
+  expect(badge.hidden).toBe(true);
+});
+

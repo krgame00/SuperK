@@ -90,13 +90,17 @@ export function buildTranslationPrompt({
   // page, Cyrillic glitch runs) is a recurring Gemini failure mode for Thai
   // output — forbid it explicitly; the client's script guard retries when it
   // still slips through.
-  const thaiTargetDirective =
-    !targetLang || /thai|ไทย/i.test(targetLang)
-      ? `- Write 't' ENTIRELY in Thai script. Do NOT leave any Japanese kana/kanji, Cyrillic, Hangul, or other foreign-script characters in 't' — translate or transliterate every one of them into Thai. Latin letters are allowed only for proper names, SFX and brand words.\n`
-      : "";
+  const isThaiTarget =
+    !targetLang ||
+    /^(th(?:-[a-z0-9]+)?|thai|ไทย)$/i.test(targetLang.trim()) ||
+    /thai|ไทย/i.test(targetLang);
+  const targetLanguageLabel = isThaiTarget ? "Thai" : (targetLang || "Thai");
+  const thaiTargetDirective = isThaiTarget
+    ? `- Write 't' ENTIRELY in Thai script. Do NOT leave any Japanese kana/kanji, Cyrillic, Hangul, Latin/English letters (A-Z, a-z), or other foreign-script characters in 't' — translate or transliterate every word, proper name, interjection (e.g., SHH -> ชู่ว), and sound effect into pure Thai script.\n`
+    : "";
 
   return (
-    `You are an expert manga translator. ${sourceHint}Translate this manga page to ${targetLang || "Thai"}.${retryDirective}${contextDirective}${glossaryDirective}\n` +
+    `You are an expert manga translator. ${sourceHint}Translate this manga page to ${targetLanguageLabel}.${retryDirective}${contextDirective}${glossaryDirective}\n` +
     `- Capture original_text EXACTLY as visible in each text region, preserving the source wording. Do not rewrite, translate, or guess unreadable source text.\n` +
     `- Preserve the complete source meaning in 't'. Do not omit or add meaning, invent pronouns, names, relationships, actions, or events. Preserve uncertainty and implied subjects rather than guessing. Natural phrasing must never alter meaning.\n` +
     `- Use highly natural, conversational flow appropriate for comic books. Avoid rigid word-for-word translation.\n` +
@@ -110,7 +114,7 @@ export function buildTranslationPrompt({
     `Output ONLY valid JSON, no markdown, no explanation.\n` +
     `Format: {"bubbles":[{"original_text": "text found in image", "t":"translated text in Thai","box":[ymin, xmin, ymax, xmax],"styleCategory":"dialogue"}]}\n` +
     `box: bounding box coordinates in 0-1000 scale (ymin, xmin = top-left, ymax, xmax = bottom-right). For multiline text in speech bubbles, the box MUST enclose ALL lines within that bubble from top to bottom.\n` +
-    `ALL translations in 't' MUST be in ${targetLang || "Thai"}.\n` +
+    `ALL translations in 't' MUST be in ${targetLanguageLabel}.\n` +
     `If no text found: {"bubbles":[]}`
   );
 }

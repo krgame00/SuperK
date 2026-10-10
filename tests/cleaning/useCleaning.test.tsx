@@ -1068,3 +1068,127 @@ test("clears progress when polling job fails", async () => {
   expect(result.current.progress).toBeUndefined();
   expect(result.current.error?.recovery).toBe("retry");
 });
+
+test.each([503, 404])(
+  "retryRegion with protect restores original pixels locally when backend returns %i",
+  async (statusCode) => {
+    const width = 8;
+    const height = 8;
+    const sourcePixels = new ImageData(new Uint8ClampedArray(width * height * 4), width, height);
+    const cleanPixels = new ImageData(new Uint8ClampedArray(width * height * 4), width, height);
+    const maskPixels = new ImageData(new Uint8ClampedArray(width * height * 4), width, height);
+    const submitMaskPixels = new ImageData(new Uint8ClampedArray(width * height * 4), width, height);
+
+    // At (2, 2) inside region {x: 1, y: 1, width: 4, height: 4}:
+    // Source has original ink [12, 34, 56, 255]; Clean was inpainted white [250, 250, 250, 255]
+    const idx = (2 * width + 2) * 4;
+    sourcePixels.data.set([12, 34, 56, 255], idx);
+    cleanPixels.data.set([250, 250, 250, 255], idx);
+    maskPixels.data.set([255, 255, 255, 255], idx);
+    submitMaskPixels.data.set([255, 255, 255, 255], idx);
+
+    const region = {
+      ...staleMaskRegion,
+      id: "region-1",
+      rect: { x: 1, y: 1, width: 4, height: 4 },
+    };
+
+    const sourceBlob = new Blob(["source-img"], { type: "image/png" });
+    const cleanBlob = new Blob(["clean-img"], { type: "image/png" });
+    const maskBlob = new Blob(["mask-img"], { type: "image/png" });
+    const reviewBlob = new Blob(["review-img"], { type: "image/png" });
+    const protectedBlob = new Blob(["protected-img"], { type: "image/png" });
+    const submitMaskBlob = new Blob(["submit-mask"], { type: "image/png" });
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      const blob = url.includes("clean.png")
+        ? cleanBlob
+        : url.includes("review-mask.png")
+          ? reviewBlob
+          : url.includes("protected-mask.png")
+            ? protectedBlob
+            : url.includes("mask.png")
+              ? maskBlob
+              : sourceBlob;
+      return {
+        ok: true,
+        status: 200,
+        blob: async () => blob,
+      } as Response;
+    });
+
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn().mockImplementation(async (blob: Blob) => ({
+        width,
+        height,
+        close: vi.fn(),
+        _blob: blob,
+      })),
+    );
+
+    let lastDrawnBlob: Blob | undefined;
+    const putImageDataCalls: ImageData[] = [];
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(
+      () =>
+        ({
+          drawImage: vi.fn((bitmap: { _blob?: Blob }) => {
+            lastDrawnBlob = bitmap?._blob;
+          }),
+          getImageData: vi.fn(() => {
+            if (lastDrawnBlob === sourceBlob) return new ImageData(new Uint8ClampedArray(sourcePixels.data), width, height);
+            if (lastDrawnBlob === cleanBlob) return new ImageData(new Uint8ClampedArray(cleanPixels.data), width, height);
+            if (lastDrawnBlob === maskBlob) return new ImageData(new Uint8ClampedArray(maskPixels.data), width, height);
+            if (lastDrawnBlob === submitMaskBlob) return new ImageData(new Uint8ClampedArray(submitMaskPixels.data), width, height);
+            return new ImageData(new Uint8ClampedArray(width * height * 4), width, height);
+          }),
+          putImageData: vi.fn((data: ImageData) => {
+            putImageDataCalls.push(new ImageData(new Uint8ClampedArray(data.data), data.width, data.height));
+          }),
+        }) as unknown as CanvasRenderingContext2D,
+    );
+    vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation((callback) => {
+      callback(new Blob(["updated-png"], { type: "image/png" }));
+    });
+    vi.mocked(URL.createObjectURL).mockImplementation(() => `blob:generated-${Math.random()}`);
+
+    vi.mocked(createCleaningJob).mockResolvedValue(succeededJob);
+    vi.mocked(getCleaningResult).mockResolvedValue({
+      ...cleaningResult,
+      regions: [region],
+    });
+    vi.mocked(retryCleaningRegion).mockRejectedValue(
+      new CleaningClientError(statusCode, "Backend unavailable or expired", "retry"),
+    );
+
+    const { result } = renderHook(() =>
+      useCleaning({ pages: ["blob:one"], currentPage: 0 }),
+    );
+    await act(async () => {
+      await result.current.cleanPage("blob:one", sourceBlob);
+    });
+
+    putImageDataCalls.length = 0;
+    let restored: PageCleaningResult | undefined;
+    await act(async () => {
+      restored = await result.current.retryRegion(
+        "region-1",
+        submitMaskBlob,
+        "auto",
+        "protect",
+      );
+    });
+
+    expect(restored).toBeDefined();
+    expect(result.current.error).toBeUndefined();
+    expect(createCleaningJob).toHaveBeenCalledTimes(1);
+    expect(restored?.regions[0]?.status).toBe("preserved");
+    expect(restored?.regions[0]?.textRole).toBe("protected");
+    expect(restored?.regions[0]?.automaticAction).toBe("preserve");
+    // First putImageData in local protect is the updated clean image with restored original pixel [12, 34, 56, 255]
+    expect(putImageDataCalls.length).toBeGreaterThanOrEqual(4);
+    expect(Array.from(putImageDataCalls[0].data.slice(idx, idx + 4))).toEqual([12, 34, 56, 255]);
+  },
+);
+

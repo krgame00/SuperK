@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  getBubbleGeometry,
   detectBubbleCollisions,
   resolveBubbleCollisions,
   fitBubbleTextWithinBounds,
@@ -74,7 +75,7 @@ describe("Bubble Layout Optimizer", () => {
     }
   });
 
-  it("fits long Thai text within original bubble bounds by reducing font size rather than ballooning 3x", () => {
+  it("expands frame beyond original bubble bounds for long Thai text so font stays large and easy to read (>= 20px)", () => {
     const bubble: TranslatedBubble = {
       id: 1,
       box: [200, 200, 320, 350], // w: 180px, h: 216px on 1200x1800
@@ -83,16 +84,32 @@ describe("Bubble Layout Optimizer", () => {
 
     const fitted = fitBubbleTextWithinBounds(bubble, iw, ih);
     expect(fitted.targetFontSize).toBeDefined();
-    expect(fitted.targetFontSize).toBeGreaterThanOrEqual(8);
+    // Must stay large and easy to read (>= 23px on 1200px wide page) instead of shrinking to 13-19px
+    expect(fitted.targetFontSize).toBeGreaterThanOrEqual(23);
 
-    // Frame must NOT balloon to 2.5x or 3x
     const origW = (150 / 1000) * iw; // 180px
     const origH = (120 / 1000) * ih; // 216px
     const finalW = fitted.layoutAdjustment?.bw ?? origW;
     const finalH = fitted.layoutAdjustment?.bh ?? origH;
 
-    expect(finalW).toBeLessThanOrEqual(origW * 1.15);
-    expect(finalH).toBeLessThanOrEqual(origH * 1.15);
+    // Frame expands beyond the original bubble bounds so the text is large and easy to read
+    expect(finalW).toBeGreaterThan(origW);
+    expect(finalW).toBeLessThanOrEqual(iw * 0.5);
+    expect(finalH).toBeLessThanOrEqual(ih * 0.5);
+  });
+
+  it("can still constrain within original bubble bounds when constrainToOriginalBox is true", () => {
+    const bubble: TranslatedBubble = {
+      id: 1,
+      box: [200, 200, 320, 350],
+      t: "มะ... ไม่นะ! ฉันไม่เห็นตกลงด้วยเลย! กล้าดียังไงมาแตะต้องคู่หมั้นฉันยะ!",
+    };
+
+    const fitted = fitBubbleTextWithinBounds(bubble, iw, ih, { constrainToOriginalBox: true });
+    const origW = (150 / 1000) * iw;
+    const origH = (120 / 1000) * ih;
+    expect(fitted.layoutAdjustment!.bw).toBeLessThanOrEqual(origW * 1.15);
+    expect(fitted.layoutAdjustment!.bh).toBeLessThanOrEqual(origH * 1.15);
   });
 
   it("autoOrganizePageBubbles solves multiple overlapping dialogue clusters from realistic manga pages", () => {
@@ -604,6 +621,95 @@ describe("Bubble Layout Optimizer", () => {
     const healedCx = healedRightLobe.bx + healedRightLobe.bw / 2;
     // Must be healed back near its canonical lobe center (~678px), NOT stuck at 777px!
     expect(Math.abs(healedCx - 678)).toBeLessThan(40);
+  });
+
+  it("maintains clean vertical proportions, balloon centering, and harmonious font sizes on complex multi-bubble Page 4 layout", () => {
+    const iw = 1280;
+    const ih = 1807;
+    const fullPage4: TranslatedBubble[] = [
+      {
+        // 0: Top-left rectangular sign "กำลังบันทึกภาพอยู่..."
+        box: [30, 158, 145, 228],
+        t: "กำลังบันทึกภาพอยู่...",
+      },
+      {
+        // 1: Upper-left vertical oval balloon
+        box: [110, 55, 250, 185],
+        t: "ถามอะไรเนี่ย? มองไม่เห็นเหรอว่าพวกเรากำลังจะรุมปล้ำเขาจนเละเลยนะ?",
+      },
+      {
+        // 2: Lower-left tall vertical oval balloon
+        box: [260, 52, 435, 185],
+        t: "เราจะเปลี่ยนจากลุคยอมคนเดิมๆ ของเธอมาเป็นแบบนี้แทน! หลังจากนี้ไป เดี๋ยวเธอได้เป็นแม่คนในพริบตาแน่! เชื่อใจฉันได้เลย!",
+      },
+      {
+        // 3: Right cluster left lobe
+        box: [95, 725, 185, 810],
+        t: "นี่มันอะไรเนี่ย! เกิดอะไรขึ้นเนี่ย?!",
+      },
+      {
+        // 4: Right cluster middle narrow lobe ("ด-เดี๋ยว ก่อนสิ!")
+        box: [115, 822, 165, 862],
+        t: "ด-เดี๋ยว ก่อนสิ!",
+      },
+      {
+        // 5: Right cluster lower-middle lobe
+        box: [195, 760, 260, 845],
+        t: "แล้วทำไมถึงมีกล้องด้วยเนี่ย?!",
+      },
+      {
+        // 6: Right strip top
+        box: [18, 862, 110, 932],
+        t: "ก็เราเป็นเพื่อนซี้กันนี่นา ใช่ไหมล่ะ?",
+      },
+      {
+        // 7: Right strip middle
+        box: [118, 865, 195, 932],
+        t: "แล้วฉันจะปฏิเสธได้ยังไงล่ะ!",
+      },
+      {
+        // 8: Right strip bottom
+        box: [205, 862, 285, 932],
+        t: "ปล่อยให้เป็นหน้าที่ฉันเอง!",
+      },
+    ];
+
+    const res = autoOrganizePageBubbles(fullPage4, iw, ih, { forceRealign: true });
+    expect(detectBubbleCollisions(res.optimizedBubbles, iw, ih).length).toBe(0);
+
+    // 1. Top-left camera box ("กำลังบันทึกภาพอยู่...") must stay centered inside its white rectangle,
+    // NOT pushed above its original top edge (y = 30/1000 * 1807 = 54px)!
+    const camOrig = getBubbleGeometry(fullPage4[0], iw, ih, true);
+    const camAdj = res.optimizedBubbles[0].layoutAdjustment!;
+    const camCy = camAdj.by + camAdj.bh / 2;
+    const camOrigCy = camOrig.y + camOrig.height / 2;
+    expect(Math.abs(camCy - camOrigCy)).toBeLessThanOrEqual(24);
+    expect(camAdj.by).toBeGreaterThanOrEqual(Math.floor(camOrig.y) - 10);
+
+    // 2. Lower-left tall vertical oval ("เราจะเปลี่ยนจากลุคยอมคนเดิมๆ...") must keep a vertical
+    // silhouette (width <= 1.55x original width, height > width) instead of sprawling 2.35x across hair!
+    const lowLeftOrig = getBubbleGeometry(fullPage4[2], iw, ih, true);
+    const lowLeftAdj = res.optimizedBubbles[2].layoutAdjustment!;
+    expect(lowLeftAdj.bw).toBeLessThanOrEqual(Math.round(lowLeftOrig.width * 1.55));
+    expect(lowLeftAdj.bh).toBeGreaterThan(lowLeftAdj.bw);
+
+    // 3. Upper-left oval ("ถามอะไรเนี่ย?...") must stay horizontally centered near its balloon center
+    const upLeftOrig = getBubbleGeometry(fullPage4[1], iw, ih, true);
+    const upLeftAdj = res.optimizedBubbles[1].layoutAdjustment!;
+    const upLeftCx = upLeftAdj.bx + upLeftAdj.bw / 2;
+    const upLeftOrigCx = upLeftOrig.x + upLeftOrig.width / 2;
+    expect(Math.abs(upLeftCx - upLeftOrigCx)).toBeLessThanOrEqual(28);
+
+    // 4. Middle narrow lobe ("ด-เดี๋ยว ก่อนสิ!") and lower lobe ("แล้วทำไมถึงมีกล้องด้วยเนี่ย?!")
+    // must NOT be crushed into tiny 11px-13px fonts while neighbors are 24px!
+    const fsMiddle = res.optimizedBubbles[4].targetFontSize!;
+    const fsLowerMiddle = res.optimizedBubbles[5].targetFontSize!;
+    const fsLeftLobe = res.optimizedBubbles[3].targetFontSize!;
+    const fsRightTop = res.optimizedBubbles[6].targetFontSize!;
+    expect(fsMiddle).toBeGreaterThanOrEqual(16);
+    expect(fsLowerMiddle).toBeGreaterThanOrEqual(16);
+    expect(Math.abs(fsRightTop - fsMiddle)).toBeLessThanOrEqual(6);
+    expect(Math.abs(fsLeftLobe - fsMiddle)).toBeLessThanOrEqual(6);
   });
 });
 

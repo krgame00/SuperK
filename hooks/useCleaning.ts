@@ -768,6 +768,194 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     }
   }, [cleanPage]);
 
+  const applyLocalProtectRegion = useCallback(
+    async (
+      pageUrl: string,
+      current: PageCleaningResult,
+      region: CleaningRegion,
+      mask: Blob,
+      token: number,
+    ): Promise<PageCleaningResult> => {
+      if (!current.cleanBlob || current.width <= 0 || current.height <= 0) {
+        throw new Error("Local cleaning assets are unavailable for restoring.");
+      }
+      const sourceResponse = await fetch(pageUrl, { cache: "no-store" });
+      if (!sourceResponse.ok) {
+        throw new Error("Original page image is unavailable for restoring.");
+      }
+      const sourceBlob = await sourceResponse.blob();
+      const width = current.width;
+      const height = current.height;
+
+      const readImageData = async (blob: Blob | undefined, fillBlack = false): Promise<ImageData> => {
+        if (!blob) {
+          const blank = new ImageData(new Uint8ClampedArray(width * height * 4), width, height);
+          if (fillBlack) {
+            for (let i = 3; i < blank.data.length; i += 4) blank.data[i] = 255;
+          }
+          return blank;
+        }
+        const bitmap = await createImageBitmap(blob);
+        try {
+          assertMatchingImageDimensions({ width, height }, { width: bitmap.width, height: bitmap.height });
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const context = canvas.getContext("2d");
+          if (!context) throw new Error("Cannot read image data for local restore.");
+          context.drawImage(bitmap, 0, 0);
+          return context.getImageData(0, 0, width, height);
+        } finally {
+          bitmap.close();
+        }
+      };
+
+      const encodePngBlob = async (data: ImageData): Promise<Blob> => {
+        const canvas = document.createElement("canvas");
+        canvas.width = data.width;
+        canvas.height = data.height;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Cannot encode restored image.");
+        context.putImageData(data, 0, 0);
+        return await new Promise<Blob>((resolve, reject) =>
+          canvas.toBlob(
+            (blob) => (blob ? resolve(blob) : reject(new Error("Cannot save restored image."))),
+            "image/png",
+          ),
+        );
+      };
+
+      const [sourceData, cleanData, submittedMaskData, eligibleData, reviewData, protectedData] =
+        await Promise.all([
+          readImageData(sourceBlob),
+          readImageData(current.cleanBlob),
+          readImageData(mask),
+          readImageData(current.maskBlob, true),
+          readImageData(current.reviewMaskBlob, true),
+          readImageData(current.protectedMaskBlob, true),
+        ]);
+
+      const rect = region.rect;
+      const yStart = Math.max(0, rect.y);
+      const yEnd = Math.min(height, rect.y + rect.height);
+      const xStart = Math.max(0, rect.x);
+      const xEnd = Math.min(width, rect.x + rect.width);
+
+      let selectedCount = 0;
+      for (let y = yStart; y < yEnd; y++) {
+        for (let x = xStart; x < xEnd; x++) {
+          const offset = (y * width + x) * 4;
+          if (submittedMaskData.data[offset] > 0 && submittedMaskData.data[offset + 3] > 0) {
+            selectedCount++;
+            cleanData.data[offset] = sourceData.data[offset];
+            cleanData.data[offset + 1] = sourceData.data[offset + 1];
+            cleanData.data[offset + 2] = sourceData.data[offset + 2];
+            cleanData.data[offset + 3] = sourceData.data[offset + 3];
+
+            eligibleData.data[offset] = 0;
+            eligibleData.data[offset + 1] = 0;
+            eligibleData.data[offset + 2] = 0;
+            eligibleData.data[offset + 3] = 255;
+
+            reviewData.data[offset] = 0;
+            reviewData.data[offset + 1] = 0;
+            reviewData.data[offset + 2] = 0;
+            reviewData.data[offset + 3] = 255;
+
+            protectedData.data[offset] = 255;
+            protectedData.data[offset + 1] = 255;
+            protectedData.data[offset + 2] = 255;
+            protectedData.data[offset + 3] = 255;
+          }
+        }
+      }
+
+      if (selectedCount === 0) {
+        throw new Error("authorized mask is empty");
+      }
+
+      let hasRemainingEligible = false;
+      for (let y = yStart; y < yEnd && !hasRemainingEligible; y++) {
+        for (let x = xStart; x < xEnd; x++) {
+          const offset = (y * width + x) * 4;
+          if (eligibleData.data[offset] > 16 && eligibleData.data[offset + 3] > 0) {
+            hasRemainingEligible = true;
+            break;
+          }
+        }
+      }
+
+      const partialRestore = current.cleaningMode === "all-text" && hasRemainingEligible;
+      const updatedRegions = current.regions.map((item) =>
+        item.id === region.id
+          ? {
+              ...item,
+              status: partialRestore ? item.status : ("preserved" as const),
+              textRole: partialRestore ? item.textRole : ("protected" as const),
+              automaticAction: partialRestore ? item.automaticAction : ("preserve" as const),
+              textConfirmed: partialRestore ? item.textConfirmed : false,
+              maskApproved: false,
+              approvalRevision: null,
+            }
+          : item,
+      );
+      const awaitingReview = updatedRegions.some(
+        (item) => item.status === "needs_review" && item.automaticAction === "clean",
+      );
+
+      const nextCleanBlob = await encodePngBlob(cleanData);
+      const nextMaskBlob = await encodePngBlob(eligibleData);
+      const nextReviewBlob = await encodePngBlob(reviewData);
+      const nextProtectedBlob = await encodePngBlob(protectedData);
+
+      const maskFingerprint = await fingerprintBlob(nextMaskBlob);
+      const nextCleanUrl = URL.createObjectURL(nextCleanBlob);
+      const nextMaskUrl = URL.createObjectURL(nextMaskBlob);
+      const nextReviewUrl = URL.createObjectURL(nextReviewBlob);
+      const nextProtectedUrl = URL.createObjectURL(nextProtectedBlob);
+
+      const nextResult: PageCleaningResult = {
+        ...current,
+        cleanAsset: nextCleanUrl,
+        maskAsset: nextMaskUrl,
+        reviewMaskAsset: nextReviewUrl,
+        protectedMaskAsset: nextProtectedUrl,
+        cleanUrl: nextCleanUrl,
+        maskUrl: nextMaskUrl,
+        reviewMaskUrl: nextReviewUrl,
+        protectedMaskUrl: nextProtectedUrl,
+        cleanBlob: nextCleanBlob,
+        maskBlob: nextMaskBlob,
+        reviewMaskBlob: nextReviewBlob,
+        protectedMaskBlob: nextProtectedBlob,
+        maskFingerprint,
+        regions: updatedRegions,
+        awaitingReview,
+        preparedIdentity: current.sourceFingerprint
+          ? buildPreparedIdentity(
+              current.sourceFingerprint,
+              maskFingerprint,
+              current.pipelineVersion,
+              updatedRegions,
+              current.cleaningMode,
+            )
+          : undefined,
+      };
+
+      if (token !== pageTokensRef.current.get(pageUrl) || !pagesRef.current.includes(pageUrl)) {
+        revokeResult(nextResult);
+        throw new PollingCancelled();
+      }
+
+      replaceResult(pageUrl, nextResult);
+      await inspectPageRemnants(pageUrl, nextResult, sourceBlob);
+      await persistCleaningResult(pageUrl, nextResult, token);
+      setProgressState((previous) => (previous?.pageUrl === pageUrl ? undefined : previous));
+      return nextResult;
+    },
+    [inspectPageRemnants, persistCleaningResult, replaceResult, revokeResult],
+  );
+
   const retryRegion = useCallback(
     async (
       regionId: string,
@@ -811,6 +999,26 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
             action,
           );
         } catch (caught) {
+          if (
+            action === "protect" &&
+            previousRegion &&
+            current.cleanBlob &&
+            caught instanceof CleaningClientError &&
+            (caught.status === 404 || caught.status === 503 || caught.status === 0)
+          ) {
+            const localResult = await applyLocalProtectRegion(
+              pageUrl,
+              current,
+              previousRegion,
+              maskForCurrentRegion,
+              token,
+            );
+            pushCleaningHistory(pageUrl, current, localResult);
+            return remapped
+              ? { ...localResult, maskAdjustment: "remapped", recoveredRegionId: resolvedRegionId }
+              : localResult;
+          }
+
           if (!(caught instanceof CleaningClientError) || caught.status !== 404) {
             throw caught;
           }
@@ -876,7 +1084,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
         }
       }
     },
-    [cleanPage, handleFailure, runJob, pushCleaningHistory],
+    [applyLocalProtectRegion, cleanPage, handleFailure, runJob, pushCleaningHistory],
   );
 
   useEffect(() => {

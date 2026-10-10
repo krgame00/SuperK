@@ -1237,6 +1237,8 @@ test("cleaning toolbar keeps dropdown menus unclipped (overflow-visible) and out
   fireEvent.click(organizeDropdownBtn);
   expect(screen.queryByRole("button", { name: /ดำ-ขาว ทุกหน้า/ })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: /จัดระเบียบหน้านี้/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /ขยายตัวใหญ่พิเศษ \(หน้านี้\)/ })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /จัดระเบียบทุกหน้า/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /ขยายตัวใหญ่พิเศษ \(ทุกหน้า\)/ })).toBeInTheDocument();
 });
 

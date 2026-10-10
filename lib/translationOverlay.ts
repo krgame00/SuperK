@@ -4,7 +4,28 @@ import { calibrateOutputBodyMetric, resolveSourceFontSize, sourceRegionKey, manu
 import { measureTextSelection, rotateLocalPoint, type SelectionRect } from "./textSelectionBounds";
 import { guardQualityReview, unavailableReview, invalidateQualityReview, isReviewCurrent } from "./translation/qualityReview";
 import type { TranslationReview } from "./translation/qualityReview";
-import { inspectTargetText, formatOffendingCharacters } from "./languagePolicy";
+import { inspectTargetText, formatOffendingCharacters, resolveTargetLanguage } from "./languagePolicy";
+
+export function repairExcludedScriptText(rawText: string, targetLang?: string): string {
+  const resolution = resolveTargetLanguage(targetLang);
+  let candidate = rawText;
+  if (resolution.status === "resolved" && resolution.profile.id === "th") {
+    candidate = candidate
+      .replace(/ชู+\s*st(?=[.\s!?,…]|$)/giu, "ชู่ว")
+      .replace(/ชู่+\s*st(?=[.\s!?,…]|$)/giu, "ชู่ว")
+      .replace(/\bshh+\b/giu, "ชู่ว");
+  }
+  const inspection = inspectTargetText(candidate, targetLang);
+  if (inspection.status === "blocked" && inspection.reason === "excluded-script") {
+    const offendingSet = new Set(inspection.offendingCharacters);
+    candidate = Array.from(candidate)
+      .filter((ch) => !offendingSet.has(ch))
+      .join("")
+      .replace(/[ \t]{2,}/g, " ")
+      .trim();
+  }
+  return candidate;
+}
 import {
   applyBwContrastModeToBubble,
   cloneTextStyleProfile,
@@ -1204,6 +1225,13 @@ export const applyTranslationOverlay = async (
       overflowNotice.textContent = "ข้อความล้นพื้นที่หน้า";
       overflowNotice.hidden = true;
       wrapper.appendChild(overflowNotice);
+      const scriptWarningBadge = document.createElement("span");
+      scriptWarningBadge.className = "bubble-script-warning";
+      scriptWarningBadge.setAttribute("data-script-warning", "true");
+      scriptWarningBadge.setAttribute("role", "status");
+      scriptWarningBadge.style.cssText = `position:absolute; left:4px; top:4px; z-index:21; max-width:calc(100% - 8px); padding:3px 7px; border-radius:6px; background:rgba(217,119,6,0.95); color:#fff; font:600 11px/1.35 sans-serif; pointer-events:none; box-shadow:0 2px 8px rgba(0,0,0,0.35);`;
+      scriptWarningBadge.hidden = true;
+      wrapper.appendChild(scriptWarningBadge);
       let activeEditorPosition: (() => void) | null = null;
       const ts = textStyleRef?.current || { fontFamily: "Itim, sans-serif", textColor: "#000000", textOutline: "#FFFFFF", fontSizeMultiplier: 1.0 };
       const fontFam = resolvedFontFam;
@@ -1310,6 +1338,15 @@ export const applyTranslationOverlay = async (
             ? `ซ่อนคำแปลที่ผิดอักษร: ${formatOffendingCharacters(scriptInspection.offendingCharacters)} — เปิดแก้ไขข้อความ`
             : "ยังไม่ยืนยันภาษาของหน้า — เปิดแก้ไขข้อความ"
           : scriptInspection.normalizedText !== rawText ? "แสดงตัวเลขในรูปแบบที่รองรับ โดยเก็บข้อความเดิมไว้" : "";
+        if (rawText && scriptInspection.status === "blocked" && viewMode !== "offscreen") {
+          scriptWarningBadge.hidden = false;
+          scriptWarningBadge.textContent = scriptInspection.reason === "excluded-script"
+            ? `⚠️ พบอักษรปน (${formatOffendingCharacters(scriptInspection.offendingCharacters)}) — ดับเบิลคลิกเพื่อแก้`
+            : "⚠️ ยังไม่ยืนยันภาษา — ดับเบิลคลิกเพื่อแก้";
+        } else {
+          scriptWarningBadge.hidden = true;
+          scriptWarningBadge.textContent = "";
+        }
         wrapper.title = scriptNotice;
         wrapper.setAttribute("aria-label", [baseAriaLabel, scriptNotice].filter(Boolean).join("; "));
         const currentFontFam = resolveCanvasFontFamily(currentStyle.fontFamily);
@@ -1810,7 +1847,23 @@ export const applyTranslationOverlay = async (
         const commit = (restoreFocus = true) => {
           if (isCommitted) return;
           isCommitted = true;
-          const finalVal = textarea.value.trim();
+          let finalVal = textarea.value.trim();
+          const commitInspection = inspectTargetText(finalVal, targetLanguage);
+          if (commitInspection.status === "blocked" && commitInspection.reason === "excluded-script") {
+            const cleaned = repairExcludedScriptText(finalVal, targetLanguage);
+            if (cleaned && inspectTargetText(cleaned, targetLanguage).status === "eligible") {
+              finalVal = cleaned;
+              textarea.value = cleaned;
+              if (b.translationReview) {
+                b.translationReview = {
+                  ...b.translationReview,
+                  status: "accepted",
+                  reviewedText: cleaned,
+                  reason: undefined,
+                };
+              }
+            }
+          }
           b.t = finalVal;
           b.translated = finalVal;
           invalidateQualityReview(b);
@@ -1918,19 +1971,23 @@ export const applyTranslationOverlay = async (
         };
         const updateReviewPanel = () => {
           const review = displayedReview();
+          const currentText = b.t || b.translated || "";
+          const isExcludedScript = inspectTargetText(currentText, targetLanguage).reason === "excluded-script";
           reviewPanel.hidden = !review && !b.original_text;
           reviewPanel.style.display = reviewPanel.hidden ? "none" : "grid";
           source.textContent = b.original_text ? `ต้นฉบับ: ${b.original_text}` : "ไม่มีข้อความต้นฉบับ";
           reviewStatus.textContent = review ? `${reviewLabels[review.status]}${review.reason ? `: ${review.reason}` : ""}` : "";
           suggestion.textContent = review?.suggestion ? `คำแปลที่แนะนำ: ${review.suggestion}` : "";
           const current = isReviewCurrent(b) && review?.status !== "stale";
+          cleanScript.hidden = !isExcludedScript;
+          cleanScript.disabled = !isExcludedScript;
           acceptReview.hidden = !review?.suggestion;
           acceptReview.disabled = !current || review?.status !== "suggested";
           dismissReview.hidden = !review;
           dismissReview.disabled = !current || !["suggested", "needs_review", "unavailable"].includes(review?.status ?? "");
           restoreOriginal.hidden = review?.status !== "accepted" || review.originalTranslation === undefined;
           restoreOriginal.disabled = !current;
-          for (const button of [acceptReview, dismissReview, restoreOriginal]) {
+          for (const button of [cleanScript, acceptReview, dismissReview, restoreOriginal]) {
             button.style.display = button.hidden ? "none" : "flex";
             button.style.opacity = button.disabled ? "0.5" : "1";
             button.style.cursor = button.disabled ? "default" : "pointer";
@@ -1949,6 +2006,27 @@ export const applyTranslationOverlay = async (
           updateReviewPanel();
           autoGrowEditor();
         };
+        const applyCleanScript = (nextStatus: "accepted" | "dismissed" = "accepted") => {
+          const currentText = b.t || b.translated || textarea.value || "";
+          const cleaned = repairExcludedScriptText(currentText, targetLanguage);
+          if (!cleaned) return;
+          const baseReview = b.translationReview ?? displayedReview();
+          if (baseReview) {
+            b.translationReview = {
+              ...baseReview,
+              status: nextStatus,
+              reviewedText: cleaned,
+              reason: undefined,
+              originalTranslation: baseReview.originalTranslation ?? currentText,
+            };
+          }
+          updateReviewText(cleaned);
+        };
+        const cleanScript = reviewAction("clean-script", "ลบ/แก้อักษรที่ปนอัตโนมัติ", () => {
+          applyCleanScript("accepted");
+        });
+        cleanScript.style.background = "#d97706";
+        cleanScript.style.borderColor = "#f59e0b";
         const acceptReview = reviewAction("accept", "ใช้คำแปลที่แนะนำ", () => {
           if (!checkReviewSnapshot()) return;
           const review = displayedReview();
@@ -1957,6 +2035,11 @@ export const applyTranslationOverlay = async (
           updateReviewText(review.suggestion);
         });
         const dismissReview = reviewAction("dismiss", "เก็บคำแปลปัจจุบัน", () => {
+          const currentText = b.t || b.translated || textarea.value || "";
+          if (inspectTargetText(currentText, targetLanguage).reason === "excluded-script") {
+            applyCleanScript("dismissed");
+            return;
+          }
           if (!checkReviewSnapshot()) return;
           const review = b.translationReview;
           if (!review || !["suggested", "needs_review", "unavailable"].includes(review.status)) return;

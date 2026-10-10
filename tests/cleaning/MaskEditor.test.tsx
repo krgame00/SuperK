@@ -834,6 +834,61 @@ describe("MaskEditor", () => {
     expect(undoManager.undo()).toBe("ล้าง Mask ในกรอบ");
   });
 
+  test("Clear Box followed by Apply restores original pixels via protect instead of reloading proposal mask", async () => {
+    HTMLCanvasElement.prototype.toBlob = vi.fn((callback) =>
+      callback(new Blob(["mask"], { type: "image/png" })),
+    ) as typeof HTMLCanvasElement.prototype.toBlob;
+    const onRefreshProposal = vi.fn();
+    const onResolveRegion = vi.fn().mockResolvedValue({
+      region: preservedRegion,
+      proposalMaskUrl: "blob:proposal",
+      remapped: false,
+    });
+    const onRetry = vi.fn().mockResolvedValue({ ok: true });
+    renderMaskEditor({
+      onRetry,
+      onRefreshProposal,
+      onResolveRegion,
+      proposalMaskUrl: "blob:proposal",
+    });
+
+    await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+    fireEvent.click(screen.getByText("ตัวเลือกเพิ่มเติม"));
+    fireEvent.click(screen.getByRole("button", { name: "ล้างกรอบนี้" }));
+    fireEvent.click(screen.getByRole("button", { name: "ใช้กับจุดนี้" }));
+
+    await waitFor(() =>
+      expect(onRetry).toHaveBeenCalledWith("region-1", expect.any(Blob), "auto", "protect"),
+    );
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onRefreshProposal).not.toHaveBeenCalled();
+  });
+
+  test("partial restore clears blue selection overlay and switches to cleaned view after submit", async () => {
+    HTMLCanvasElement.prototype.toBlob = vi.fn((callback) =>
+      callback(new Blob(["mask"], { type: "image/png" })),
+    ) as typeof HTMLCanvasElement.prototype.toBlob;
+    const onRetry = vi.fn().mockResolvedValue({ ok: true });
+    renderMaskEditor({ onRetry, cleanUrl: "blob:cleaned" });
+    const canvas = await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+    await waitFor(() => expect(canvas).toHaveAttribute("width", "100"));
+    const context = (canvas as HTMLCanvasElement).getContext("2d")!;
+
+    fireEvent.change(screen.getByRole("slider"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "ภาพเดิม" }));
+    fireEvent.click(screen.getByRole("button", { name: "กู้เฉพาะส่วน" }));
+    fireEvent.pointerDown(canvas, { clientX: 15, clientY: 15, pointerId: 1, button: 0 });
+    fireEvent.pointerUp(canvas, { pointerId: 1 });
+    fireEvent.click(screen.getByRole("button", { name: "ใช้กับจุดนี้" }));
+
+    await waitFor(() => expect(onRetry).toHaveBeenCalledWith("region-1", expect.any(Blob), "auto", "protect"));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("ใช้กับจุดนี้แล้ว"));
+    expect(screen.getByRole("img", { name: "ภาพที่คลีนแล้ว" })).toHaveAttribute("src", "blob:cleaned");
+    const display = vi.mocked(context.putImageData).mock.calls.at(-1)![0];
+    expect(display.data[(15 * 100 + 15) * 4 + 2]).not.toBe(255);
+    expect(display.data[(15 * 100 + 15) * 4 + 3]).toBe(0);
+  });
+
   test("Zoom controls allow zooming in, out, and resetting zoom", () => {
     renderMaskEditor();
 

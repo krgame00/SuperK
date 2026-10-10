@@ -15,6 +15,7 @@ interface ReviewRequest {
   modelPreference?: string;
   allowPreview?: boolean;
   glossary?: GlossaryEntry[];
+  mode?: "repair";
 }
 interface ReviewRow { id: string; status: "ok" | "suggested" | "needs_review"; suggestion?: string; reason?: string }
 interface GeminiData {
@@ -33,6 +34,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function boundedText(value: unknown, allowEmpty = false): value is string {
   return typeof value === "string" && value.length <= MAX_REVIEW_TEXT_LENGTH && (allowEmpty || !!value.trim());
 }
+function validGlossaryEntry(entry: unknown): boolean {
+  if (!isRecord(entry)) return false;
+  const src = entry.source !== undefined ? entry.source : entry.original;
+  const tgt = entry.target !== undefined ? entry.target : entry.translation;
+  if (!boundedText(src, true) || !boundedText(tgt, true)) return false;
+  if (entry.note !== undefined && !boundedText(entry.note, true)) return false;
+  return true;
+}
+function normalizeGlossary(glossary: unknown[] | undefined): GlossaryEntry[] {
+  if (!Array.isArray(glossary)) return [];
+  const normalized: GlossaryEntry[] = [];
+  for (const entry of glossary) {
+    if (!isRecord(entry)) continue;
+    const src = typeof entry.source === "string" ? entry.source.trim() : typeof entry.original === "string" ? entry.original.trim() : "";
+    const tgt = typeof entry.target === "string" ? entry.target.trim() : typeof entry.translation === "string" ? entry.translation.trim() : "";
+    if (!src || !tgt) continue;
+    const note = typeof entry.note === "string" && entry.note.trim() ? entry.note.trim() : undefined;
+    normalized.push({ source: src, target: tgt, ...(note ? { note } : {}) });
+  }
+  return normalized;
+}
 function validRequest(value: unknown): value is ReviewRequest {
   if (!isRecord(value) || !Array.isArray(value.items) || !value.items.length || value.items.length > MAX_REVIEW_ITEMS) return false;
   const ids = new Set<string>();
@@ -42,7 +64,8 @@ function validRequest(value: unknown): value is ReviewRequest {
   }
   if (!["targetLang", "apiKey", "modelPreference"].every(key => value[key] === undefined || boundedText(value[key], key === "apiKey"))) return false;
   if (value.allowPreview !== undefined && typeof value.allowPreview !== "boolean") return false;
-  return value.glossary === undefined || (Array.isArray(value.glossary) && value.glossary.length <= 256 && value.glossary.every(entry => isRecord(entry) && boundedText(entry.source) && boundedText(entry.target) && (entry.note === undefined || boundedText(entry.note, true))));
+  if (value.mode !== undefined && value.mode !== "repair") return false;
+  return value.glossary === undefined || (Array.isArray(value.glossary) && value.glossary.length <= 256 && value.glossary.every(validGlossaryEntry));
 }
 function parseProviderReviews(text: unknown, items: QualityReviewItem[]): ReviewRow[] {
   if (typeof text !== "string" || text.length > MAX_BODY_BYTES) throw new ReviewResponseError(502, "INVALID_REVIEW_RESPONSE");
@@ -80,7 +103,7 @@ export async function POST(req: Request): Promise<Response> {
       body = JSON.parse(raw);
     } catch { return NextResponse.json({ error: "Invalid review payload", code: "INVALID_REQUEST" }, { status: 400 }); }
     if (!validRequest(body)) return NextResponse.json({ error: "Invalid review payload", code: "INVALID_REQUEST" }, { status: 400 });
-    const prompt = buildQualityReviewPrompt(body.items, body.targetLang || "Thai", body.glossary);
+    const prompt = buildQualityReviewPrompt(body.items, body.targetLang || "Thai", normalizeGlossary(body.glossary), body.mode);
     const reviews = await withGeminiDeadline(async signal => {
       const baseUrl = process.env.SUPERK_TRANSLATE_BASE_URL;
       const apiKey = process.env.SUPERK_TRANSLATE_API_KEY;

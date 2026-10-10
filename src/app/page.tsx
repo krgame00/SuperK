@@ -672,7 +672,7 @@ export default function WorkspacePage() {
     );
   }, [hasCurrentTranslation]);
 
-  const handleAutoOrganizeCurrentPage = useCallback(async () => {
+  const handleAutoOrganizeCurrentPage = useCallback(async (mode: "readable" | "xlarge" = "readable") => {
     if (!currentPageUrl) return;
     const currentBubbles = bubbleCacheRef.current.get(currentPageUrl) ?? activeBubbles;
     if (!currentBubbles || currentBubbles.length === 0) return;
@@ -682,11 +682,19 @@ export default function WorkspacePage() {
     const ih = hostImg?.naturalHeight || 1800;
 
     const targetLangCode = getPageTargetLanguage?.(currentPageUrl) ?? targetLang ?? "th";
+    const isXLarge = mode === "xlarge";
     const result = autoOrganizePageBubbles(currentBubbles, iw, ih, {
       fontFamily: textStyleRef.current?.fontFamily,
       fontSizeMultiplier: textStyleRef.current?.fontSizeMultiplier || 1.0,
       locale: targetLangCode === "en" ? "en" : "th",
       forceRealign: true,
+      overrideUserModified: true,
+      ...(isXLarge
+        ? {
+            minFontSize: Math.max(22, Math.round(iw * 0.0195)),
+            maxEnlargeRatio: 1.75,
+          }
+        : {}),
     });
 
     bubbleCacheRef.current.set(currentPageUrl, result.optimizedBubbles);
@@ -721,7 +729,7 @@ export default function WorkspacePage() {
     import("react-hot-toast").then((m) =>
       m.default.success(
         result.adjustedCount > 0
-          ? `✅ จัดระเบียบบับเบิล ${result.adjustedCount} จุดเรียบร้อยแล้ว!`
+          ? `✅ จัดระเบียบบับเบิล (${isXLarge ? "ตัวใหญ่พิเศษ XL" : "สมดุลอ่านง่าย"}) ${result.adjustedCount} จุดเรียบร้อยแล้ว!`
           : `✅ บับเบิลทุกจุดจัดระเบียบเรียบร้อยแล้ว`,
       ),
     );
@@ -741,7 +749,7 @@ export default function WorkspacePage() {
     currentCleaningResult,
   ]);
 
-  const handleAutoOrganizeAllPages = useCallback(async () => {
+  const handleAutoOrganizeAllPages = useCallback(async (mode: "readable" | "xlarge" = "readable") => {
     if (pages.length === 0) return;
     const translatedPages = pages.filter((p) => {
       const b = bubbleCacheRef.current.get(p.url);
@@ -799,6 +807,7 @@ export default function WorkspacePage() {
     try {
       const toastModule = await import("react-hot-toast");
       const toast = toastModule.default as any;
+      const isXLarge = mode === "xlarge";
       const toastId = typeof toast?.loading === "function"
         ? toast.loading(`กำลังจัดระเบียบทุกหน้า (0/${translatedPages.length})...`)
         : undefined;
@@ -819,6 +828,13 @@ export default function WorkspacePage() {
           fontSizeMultiplier: textStyleRef.current?.fontSizeMultiplier || 1.0,
           locale: targetLangCode === "en" ? "en" : "th",
           forceRealign: true,
+          overrideUserModified: true,
+          ...(isXLarge
+            ? {
+                minFontSize: Math.max(22, Math.round(iw * 0.0195)),
+                maxEnlargeRatio: 1.75,
+              }
+            : {}),
         });
 
         bubbleCacheRef.current.set(pageUrl, result.optimizedBubbles);
@@ -3517,29 +3533,52 @@ export default function WorkspacePage() {
                                   <div
                                     role="menu"
                                     aria-label="เมนูตัวเลือกจัดระเบียบบับเบิล"
-                                    className={`absolute ${toolbarPosition === "bottom" ? "bottom-full mb-1.5" : "top-full mt-1.5"} right-0 sm:left-0 z-50 min-w-[195px] py-1 bg-surface border border-border rounded-lg shadow-2xl text-xs font-medium`}
+                                    className={`absolute ${toolbarPosition === "bottom" ? "bottom-full mb-1.5" : "top-full mt-1.5"} right-0 sm:left-0 z-50 min-w-[235px] py-1 bg-surface border border-border rounded-lg shadow-2xl text-xs font-medium`}
                                   >
                                     <button
                                       type="button"
                                       onClick={() => {
                                         setIsOrganizeMenuOpen(false);
-                                        void handleAutoOrganizeCurrentPage();
+                                        void handleAutoOrganizeCurrentPage("readable");
                                       }}
                                       className="w-full text-left px-3 py-1.5 hover:bg-surface-hover flex items-center gap-2 text-foreground transition-colors cursor-pointer"
                                     >
                                       <Sparkles className="h-3.5 w-3.5 text-primary shrink-0" />
-                                      <span>จัดระเบียบหน้านี้</span>
+                                      <span>จัดระเบียบหน้านี้ (ตัวใหญ่อ่านง่าย)</span>
                                     </button>
                                     <button
                                       type="button"
                                       onClick={() => {
                                         setIsOrganizeMenuOpen(false);
-                                        void handleAutoOrganizeAllPages();
+                                        void handleAutoOrganizeCurrentPage("xlarge");
+                                      }}
+                                      className="w-full text-left px-3 py-1.5 hover:bg-surface-hover flex items-center gap-2 text-foreground transition-colors cursor-pointer"
+                                    >
+                                      <Sparkles className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                                      <span>ขยายตัวใหญ่พิเศษ (หน้านี้)</span>
+                                    </button>
+                                    <div className="my-1 border-t border-border/60" />
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setIsOrganizeMenuOpen(false);
+                                        void handleAutoOrganizeAllPages("readable");
                                       }}
                                       className="w-full text-left px-3 py-1.5 hover:bg-surface-hover flex items-center gap-2 text-foreground transition-colors cursor-pointer"
                                     >
                                       <Sparkles className="h-3.5 w-3.5 text-primary shrink-0" />
                                       <span>จัดระเบียบทุกหน้า ({pages.length} หน้า)</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setIsOrganizeMenuOpen(false);
+                                        void handleAutoOrganizeAllPages("xlarge");
+                                      }}
+                                      className="w-full text-left px-3 py-1.5 hover:bg-surface-hover flex items-center gap-2 text-foreground transition-colors cursor-pointer"
+                                    >
+                                      <Sparkles className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                                      <span>ขยายตัวใหญ่พิเศษ (ทุกหน้า)</span>
                                     </button>
                                   </div>
                                 )}

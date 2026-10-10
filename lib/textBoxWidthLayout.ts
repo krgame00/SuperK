@@ -128,7 +128,7 @@ function wrapForCandidate(
     const wordLimit = current
       ? candidateWidthAt(lines.length)
       : Math.max(candidateWidthAt(lines.length), singleWordLimit);
-    if (measureText(remaining) > wordLimit) wordOverflow = true;
+    if (measureText(remaining) > wordLimit * 1.05) wordOverflow = true;
     current += remaining;
   };
 

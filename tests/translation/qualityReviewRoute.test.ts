@@ -144,4 +144,51 @@ describe("translation review API", () => {
     expect(prompt).toContain("Do not omit or add meaning");
     expect(prompt).toContain("invent pronouns");
   });
+
+  test("accepts mode: 'repair' and empty/legacy glossary entries and includes repair instructions in prompt", async () => {
+    execute.mockResolvedValueOnce(
+      result(
+        geminiData({
+          reviews: [
+            {
+              id: "0",
+              status: "suggested",
+              suggestion: "ชู่ว... ปล่อยให้เป็นหน้าที่ร่ายเวทมนตร์ของฉันเอง",
+              reason: "แก้ตัวอักษรภาษาอังกฤษที่ปน",
+            },
+          ],
+        }),
+      ),
+    );
+    const response = await POST(
+      request({
+        items: [
+          {
+            id: "0",
+            sourceText: "SHH. LET ME WORK MY MAGIC.",
+            translatedText: "ชูst... ปล่อยให้เป็นหน้าที่ร่ายเวทมนตร์ของฉันเอง",
+          },
+        ],
+        targetLang: "th",
+        mode: "repair",
+        glossary: [
+          { source: "", target: "" },
+          { original: "Magic", translation: "เวทมนตร์" },
+        ],
+      }),
+    );
+    expect(response.status).toBe(200);
+    const promptPayload = JSON.stringify(execute.mock.calls[0][0].payload);
+    expect(promptPayload).toContain("REPAIR MODE");
+    expect(await response.json()).toMatchObject({
+      reviews: [
+        {
+          id: "0",
+          status: "suggested",
+          suggestion: "ชู่ว... ปล่อยให้เป็นหน้าที่ร่ายเวทมนตร์ของฉันเอง",
+        },
+      ],
+    });
+  });
 });
+

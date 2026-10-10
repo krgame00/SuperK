@@ -431,6 +431,14 @@ export function MaskEditor({
       for (let x = r.x; x < r.x + r.width; x++) {
         if (x >= 0 && x < updated.width && y >= 0 && y < updated.height) {
           const offset = (y * updated.width + x) * 4;
+          if (
+            (current.data[offset + 3] > 0 && current.data[offset + 2] !== 255) ||
+            isExcludedPixel(current, offset)
+          ) {
+            updated.data[offset] = 255;
+            updated.data[offset + 1] = 0;
+            updated.data[offset + 2] = 1;
+          }
           updated.data[offset + 3] = 0;
         }
       }
@@ -651,6 +659,35 @@ export function MaskEditor({
         setStatusMessage("บันทึก Mask ไม่สำเร็จ กรุณาลองใหม่");
         return;
       }
+      if (action === "protect") {
+        const restoredId = isRecoveredResult(result) ? result.recoveredRegionId : effectiveRegionId;
+        const restoredKey = `${sourceUrl}:${restoredId}`;
+        const cleanedDraft = cloneImageData(imageData);
+        let hadVisibleBlue = false;
+        for (let idx = 0; idx < cleanedDraft.data.length; idx += 4) {
+          if (cleanedDraft.data[idx + 2] === 255 && cleanedDraft.data[idx + 3] > 0) {
+            hadVisibleBlue = true;
+            cleanedDraft.data[idx] = 255;
+            cleanedDraft.data[idx + 1] = 55;
+            cleanedDraft.data[idx + 2] = 80;
+            cleanedDraft.data[idx + 3] = 0;
+          } else if (isExcludedPixel(cleanedDraft, idx)) {
+            cleanedDraft.data[idx] = 255;
+            cleanedDraft.data[idx + 1] = 55;
+            cleanedDraft.data[idx + 2] = 80;
+            cleanedDraft.data[idx + 3] = 0;
+          }
+        }
+        imageDataRef.current = cleanedDraft;
+        regionSnapshotsRef.current.set(restoredKey, cleanedDraft);
+        loadedRegionRef.current = restoredKey;
+        if (hadVisibleBlue) {
+          renderMask(cleanedDraft);
+        }
+        snapshotOpsBase();
+        if (restoredId !== regionId) setRegionId(restoredId);
+        if (cleanUrl) setComparison("cleaned");
+      }
       if (action === "confirm-text") {
         const confirmedId = isRecoveredResult(result) ? result.recoveredRegionId : regionId;
         confirmedRegionRef.current.add(confirmedId);
@@ -735,13 +772,15 @@ export function MaskEditor({
   const handleOneClickClean = async () => {
     const imageData = imageDataRef.current;
     if (submittingRef.current || !imageData || !regionId || !selectedRegion) return;
-    if (mode === "erase" && !maskHasPixels(imageData, selectedRegion.rect)) {
+    if (!maskHasPixels(imageData, selectedRegion.rect)) {
       if (hasExcludedPixels(imageData, selectedRegion.rect)) {
         await submit("protect", false, true);
-      } else {
-        setStatusMessage("ไม่มีพื้นที่สีแดงที่จะลบ จุดนี้ยังไม่ได้เปลี่ยนภาพ");
+        return;
       }
-      return;
+      if (mode === "erase") {
+        setStatusMessage("ไม่มีพื้นที่สีแดงที่จะลบ จุดนี้ยังไม่ได้เปลี่ยนภาพ");
+        return;
+      }
     }
     submittingRef.current = true;
     setIsSubmitting(true);

@@ -994,7 +994,19 @@ export function useTranslation({
     ): Promise<void> => {
       const startRevision = getPageRevision(pageUrl);
       const startStyle = JSON.stringify(textStyleRef.current);
-      const startText = JSON.stringify(bubbles.map(b=>[b.t,b.translated,b.original_text,b.deleted,b.styleProfile]));
+      const bubbleRenderSnapshot = (list: TranslatedBubble[]) =>
+        JSON.stringify(
+          list.map((b) => [
+            b.t,
+            b.translated,
+            b.original_text,
+            b.deleted,
+            b.styleProfile?.bwContrastMode,
+            b.styleProfile?.fill,
+            b.styleProfile?.outline,
+          ]),
+        );
+      const startText = bubbleRenderSnapshot(bubbles);
       const renderTarget = targetIdentity?.policyVersion === LANGUAGE_POLICY_VERSION ? targetIdentity.targetId : undefined;
       const offscreenContainer = document.createElement("div");
       offscreenContainer.dataset.translationOffscreen = pageUrl;
@@ -1021,7 +1033,7 @@ export function useTranslation({
             cleanup();
             if (!pagesRef.current.includes(pageUrl) || getPageRevision(pageUrl) !== startRevision ||
               JSON.stringify(textStyleRef.current) !== startStyle ||
-              JSON.stringify(bubbles.map(b=>[b.t,b.translated,b.original_text,b.deleted,b.styleProfile])) !== startText) {
+              bubbleRenderSnapshot(bubbles) !== startText) {
               resolve();return;
             }
             bubbleCacheRef.current.set(pageUrl, bubbles);
