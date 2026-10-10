@@ -285,41 +285,36 @@ describe("translation quality review editor", () => {
 });
 
 describe("translation overlay live editor and keyboard controls", () => {
-  test("refreshes the shadow status after choosing a manual text color", async () => {
-    const { toolbar } = await renderOverlay("TEST", {styleProfile:{
+  test("cycles B&W contrast modes (black_on_white -> white_on_black -> pure_black -> auto) from the floating toolbar with undo/redo", async () => {
+    const { toolbar, bubble } = await renderOverlay("TEST", {styleProfile:{
       source:"auto", category:"dialogue", fill:"#000000", outline:"#ffffff", backgroundLuminance:250,
     }});
-    vi.spyOn(window, "prompt").mockReturnValue("#123456");
-    toolbar.querySelector<HTMLButtonElement>('[aria-label="เปลี่ยนสีข้อความ"]')!.click();
-    expect(toolbar.querySelector('[aria-label="เงา: มาตรฐาน"]')).not.toBeNull();
-    expect(shadowColors.at(-1)).toBe("rgba(30, 30, 30, 0.8)");
-  });
-  test("turning off the automatic artwork shadow preserves the displayed white fill and colored outline", async () => {
-    const { toolbar, bubble } = await renderOverlay("TEST", {styleProfile:{
-      source:"auto", category:"overlay_subtitle", evidenceState:"admitted", fillConfidence:.95,
-      fill:"#930a0b", outline:"#ffffff", backgroundLuminance:180,
-    }});
-    const button = toolbar.querySelector<HTMLButtonElement>('[aria-label="เงา: Auto (บาง)"]')!;
-    expect(button).not.toBeNull();
-    button.click();
-    expect(bubble.styleProfile?.manualShadowMode).toBe("off");
-    expect(bubble.styleProfile?.fill).toBe("#ffffff");
-    expect(bubble.styleProfile?.outline).toBe("#930a0b");
-    expect(drawnFillColors.at(-1)).toBe("#ffffff");
-    expect(drawnOutlineColors.at(-1)).toBe("#930a0b");
-    expect(shadowColors.at(-1)).toBe("rgba(0,0,0,0)");
-  });
+    const bwBtn = toolbar.querySelector<HTMLButtonElement>('[aria-label="สลับโหมดสี ขาว-ดำ / ดำ-ขาว"]')!;
+    expect(bwBtn).not.toBeNull();
 
-  test("shows automatic shadow-off for dialogue and lets the user enable Manual Standard", async () => {
-    const { toolbar, bubble } = await renderOverlay("TEST", {styleProfile:{
-      source:"auto", category:"dialogue", fill:"#000000", outline:"#ffffff", backgroundLuminance:250,
-    }});
-    const button = toolbar.querySelector<HTMLButtonElement>('[aria-label="เงา: Auto (ปิด)"]');
-    expect(button).not.toBeNull();
-    button!.click();
-    expect(bubble.styleProfile?.manualShadowMode).toBe("standard");
-    expect(button!.getAttribute("aria-label")).toBe("เงา: มาตรฐาน");
-    expect(shadowColors.at(-1)).toBe("rgba(30, 30, 30, 0.8)");
+    // 1st click -> black_on_white
+    bwBtn.click();
+    expect(bubble.styleProfile?.bwContrastMode).toBe("black_on_white");
+    expect(bwBtn.getAttribute("aria-label")).toBe("โหมดขาว-ดำ: ดำ-ขาว (ตัวดำ ขอบขาวหนา)");
+    expect(drawnFillColors.at(-1)).toBe("#000000");
+    expect(drawnOutlineColors.at(-1)).toBe("#ffffff");
+
+    // 2nd click -> white_on_black
+    bwBtn.click();
+    expect(bubble.styleProfile?.bwContrastMode).toBe("white_on_black");
+    expect(bwBtn.getAttribute("aria-label")).toBe("โหมดขาว-ดำ: ขาว-ดำ (ตัวขาว ขอบดำหนา)");
+    expect(drawnFillColors.at(-1)).toBe("#ffffff");
+    expect(drawnOutlineColors.at(-1)).toBe("#000000");
+
+    // 3rd click -> pure_black
+    bwBtn.click();
+    expect(bubble.styleProfile?.bwContrastMode).toBe("pure_black");
+    expect(bwBtn.getAttribute("aria-label")).toBe("โหมดขาว-ดำ: ดำล้วน");
+
+    // 4th click -> auto
+    bwBtn.click();
+    expect(bubble.styleProfile?.bwContrastMode).toBe("auto");
+    expect(bwBtn.getAttribute("aria-label")).toBe("โหมดขาว-ดำ: ออโต้");
   });
 
   test.each(["single", "offscreen"] as const)("draws white Auto interiors and source colored outlines in the %s canvas", async (mode) => {
@@ -476,82 +471,6 @@ describe("translation overlay live editor and keyboard controls", () => {
     expect(shadowBlurs.at(-1)! / shadowOffsetsX.at(-1)!).toBeCloseTo(0.06 / 0.025, 2);
   });
 
-  test("lets Manual shadow toggle between Standard and Off without changing other manual styling", async () => {
-    const { toolbar, bubble } = await renderOverlay("เลือกเงา", {
-      styleProfile: {
-        fill: "#123456",
-        outline: "#abcdef",
-        hasOutline: true,
-        outlineWidthRatio: 0.12,
-        source: "manual",
-        ownershipMode: "manual",
-      },
-    });
-
-    const shadowBtn = toolbar.querySelector<HTMLButtonElement>('[aria-label="เงา: มาตรฐาน"]')!;
-    expect(shadowBtn).not.toBeNull();
-    shadowBtn.click();
-    expect(bubble.styleProfile?.manualShadowMode).toBe("off");
-    expect(shadowColors.at(-1)).toBe("rgba(0,0,0,0)");
-    expect(bubble.styleProfile).toMatchObject({ fill: "#123456", outline: "#abcdef", ownershipMode: "manual" });
-
-    toolbar
-      .querySelector<HTMLButtonElement>('[aria-label="กลับไปใช้สไตล์ต้นฉบับอัตโนมัติ"]')!
-      .click();
-    expect(shadowBtn.getAttribute("aria-label")).toBe("เงา: Auto (ปิด)");
-    expect(shadowColors.at(-1)).toBe("rgba(0,0,0,0)");
-  });
-
-  test("keeps the complete manual style profile and offers an explicit Auto/Original reset", async () => {
-    vi.spyOn(window, "prompt").mockReturnValue("#112233");
-    const { toolbar, bubble } = await renderOverlay("กำหนดเอง", {
-      styleProfile: {
-        fill: "#445566",
-        outline: "#abcdef",
-        hasOutline: true,
-        outlineWidthRatio: 0.12,
-        opacity: 0.75,
-        fillConfidence: 0.95,
-        outlineConfidence: 0.95,
-        confidenceBand: "high",
-        source: "auto",
-        category: "dialogue",
-        fillGradient: {
-          angleDeg: 45,
-          stops: [
-            { offset: 0, color: "#445566" },
-            { offset: 1, color: "#778899" },
-          ],
-        },
-        glow: {
-          color: "#88aaff",
-          opacity: 0.6,
-          blurRatio: 0.08,
-          offsetXRatio: 0,
-          offsetYRatio: 0,
-        },
-      },
-    });
-
-    toolbar.querySelector<HTMLButtonElement>('[aria-label="เปลี่ยนสีข้อความ"]')!.click();
-    expect(bubble.styleProfile).toMatchObject({
-      fill: "#112233",
-      outline: "#abcdef",
-      hasOutline: true,
-      outlineWidthRatio: 0.12,
-      opacity: 0.75,
-      source: "manual",
-      category: "dialogue",
-      fillGradient: { angleDeg: 45 },
-      glow: { color: "#88aaff", blurRatio: 0.08 },
-    });
-
-    toolbar
-      .querySelector<HTMLButtonElement>('[aria-label="กลับไปใช้สไตล์ต้นฉบับอัตโนมัติ"]')!
-      .click();
-    expect(bubble.styleProfile?.source).not.toBe("manual");
-  });
-
   test("keeps rendered text fully visible during hover and editing", async () => {
     const { wrapper, canvas, toolbar } = await renderOverlay();
     wrapper.dispatchEvent(new MouseEvent("mouseenter"));
@@ -562,22 +481,23 @@ describe("translation overlay live editor and keyboard controls", () => {
     expect(wrapper.contains(editor)).toBe(false);
   });
 
-  test("keeps the floating toolbar compact and moves secondary actions behind a more menu", async () => {
+  test("keeps the floating toolbar minimal with only the 5 essential buttons on a single bar", async () => {
     const { toolbar } = await renderOverlay();
     const directButtons = Array.from(toolbar.children).filter(
       (node): node is HTMLButtonElement => node instanceof HTMLButtonElement,
     );
-    expect(directButtons.length).toBeLessThanOrEqual(7);
-    expect(toolbar.querySelector<HTMLButtonElement>('[aria-label="เครื่องมือเพิ่มเติม"]')).toBeTruthy();
-    expect(
-      directButtons.some((button) => button.getAttribute("aria-label")?.startsWith("เงา:")),
-    ).toBe(false);
-
-    toolbar.querySelector<HTMLButtonElement>('[aria-label="เครื่องมือเพิ่มเติม"]')!.click();
-    const moreMenu = document.querySelector<HTMLElement>("[data-bubble-more-menu]")!;
-    expect(moreMenu).toBeTruthy();
-    expect(moreMenu.querySelector<HTMLButtonElement>('[aria-label="เพิ่มขนาดข้อความ (A+ หรือคีย์ +)"]')).toBeTruthy();
-    expect(moreMenu.querySelector<HTMLButtonElement>('[aria-label^="เงา:"]')).toBeTruthy();
+    expect(directButtons.map((b) => b.getAttribute("aria-label"))).toEqual([
+      "แก้ไขข้อความ",
+      "ลดขนาดข้อความ (A- หรือคีย์ -)",
+      "เพิ่มขนาดข้อความ (A+ หรือคีย์ +)",
+      "สลับโหมดสี ขาว-ดำ / ดำ-ขาว",
+      "ลบกล่องข้อความ",
+    ]);
+    expect(toolbar.querySelector('[aria-label="ทำซ้ำกล่องข้อความ"]')).toBeNull();
+    expect(toolbar.querySelector('[aria-label="คัดลอกข้อความ"]')).toBeNull();
+    expect(toolbar.querySelector('[aria-label="เปลี่ยนสีข้อความ"]')).toBeNull();
+    expect(toolbar.querySelector('[aria-label="เครื่องมือเพิ่มเติม"]')).toBeNull();
+    expect(document.querySelector("[data-bubble-more-menu]")).toBeNull();
   });
 
   test("renders editor chrome in the dedicated unscaled chrome layer", async () => {

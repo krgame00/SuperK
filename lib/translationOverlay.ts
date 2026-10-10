@@ -2752,153 +2752,6 @@ export const applyTranslationOverlay = async (
         () => adjustBubbleFontSize(0.12)
       );
 
-      // Duplicate Button
-      const duplicateBtn = createToolBtn(
-        "ทำซ้ำกล่องข้อความ",
-        `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`,
-        () => {
-          const clone = { ...b, id: `${Date.now()}` };
-          real.push(clone);
-          bubbles.push(clone);
-          saveAdjustment();
-          onBubblesMutated?.();
-          paint();
-        }
-      );
-
-      // Copy Text Button
-      const copyBtn = createToolBtn(
-        "คัดลอกข้อความ",
-        `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`,
-        () => {
-          navigator.clipboard.writeText(b.t || b.translated || "");
-          import('react-hot-toast').then(m => m.default.success("คัดลอกข้อความแล้ว"));
-        }
-      );
-
-      // Text Color / Format Button
-      const colorBtn = createToolBtn(
-        "เปลี่ยนสีข้อความ",
-        `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 2 4 4-12 12H6v-4z"/><path d="m14 6 4 4"/></svg>`,
-        () => {
-          const resolved = resolveBubbleTextStyle(b, textStyleRef?.current || ts);
-          const newColor = prompt("ใส่รหัสสีข้อความ (เช่น #000000, #ffffff, #ef4444, #ff3399):", resolved.textColor);
-          if (newColor) {
-            const existing = b.styleProfile;
-            b.styleProfile = {
-              ...(existing ?? {}),
-              fill: newColor,
-              outline: existing?.outline ?? resolved.textOutline,
-              hasOutline: existing?.hasOutline ?? resolved.hasOutline,
-              outlineWidth: existing?.outlineWidth ?? resolved.outlineWidth,
-              outlineWidthRatio: existing?.outlineWidthRatio ?? resolved.outlineWidthRatio,
-              opacity: existing?.opacity ?? resolved.opacity,
-              fillConfidence: 1.0,
-              outlineConfidence: 1.0,
-              confidenceBand: "high",
-              refinementAttempted: existing?.refinementAttempted,
-              source: "manual",
-              ownershipMode: "manual",
-              category: existing?.category ?? inferTextStyleCategory(b),
-              fillGradient: existing?.fillGradient,
-              shadow: existing?.shadow,
-              glow: existing?.glow,
-              fallbackReason: undefined,
-              nearbySourceId: undefined,
-            };
-            shadowBtn.setAttribute("aria-label", shadowLabel());
-            shadowBtn.title = shadowLabel();
-            onBubblesMutated?.();
-            renderBubble();
-            saveAdjustment();
-          }
-        }
-      );
-
-      const shadowLabel = () => {
-        const profile = b.styleProfile;
-        if (profile?.source === "manual" || profile?.ownershipMode === "manual" ||
-            profile?.ownershipMode === "source_faithful") {
-          return resolveBubbleTextStyle(b, textStyleRef?.current || ts).shadow ? "เงา: มาตรฐาน" : "เงา: ปิด";
-        }
-        return resolveBubbleTextStyle(b, textStyleRef?.current || ts).shadow ? "เงา: Auto (บาง)" : "เงา: Auto (ปิด)";
-      };
-      const shadowBtn = createToolBtn(
-        shadowLabel(),
-        `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="6"/><path d="M14 14l6 6"/><path d="M15 7a6 6 0 0 1 2 8"/></svg>`,
-        () => {
-          const existing = b.styleProfile;
-          const resolved = resolveBubbleTextStyle(b, textStyleRef?.current || ts);
-          const nextMode = resolved.shadow ? "off" : "standard";
-          const alreadyManual = existing?.source === "manual" || existing?.ownershipMode === "manual";
-          b.styleProfile = {
-            ...(existing ?? {}),
-            fill: alreadyManual ? existing!.fill : resolved.textColor,
-            outline: alreadyManual ? existing!.outline : resolved.textOutline,
-            hasOutline: alreadyManual ? existing!.hasOutline : resolved.hasOutline,
-            outlineWidth: alreadyManual ? existing!.outlineWidth : resolved.outlineWidth,
-            outlineWidthRatio: alreadyManual ? existing!.outlineWidthRatio : resolved.outlineWidthRatio,
-            fillGradient: alreadyManual ? existing!.fillGradient : resolved.fillGradient,
-            opacity: existing?.opacity ?? resolved.opacity,
-            fillConfidence: existing?.fillConfidence ?? 1.0,
-            outlineConfidence: existing?.outlineConfidence ?? 1.0,
-            confidenceBand: existing?.confidenceBand ?? "high",
-            source: "manual",
-            ownershipMode: "manual",
-            category: existing?.category ?? inferTextStyleCategory(b),
-            manualShadowMode: nextMode,
-          };
-          shadowBtn.setAttribute("aria-label", nextMode === "off" ? "เงา: ปิด" : "เงา: มาตรฐาน");
-          shadowBtn.title = nextMode === "off" ? "เงา: ปิด" : "เงา: มาตรฐาน";
-          onBubblesMutated?.();
-          renderBubble();
-          saveAdjustment();
-        },
-      );
-
-      const originalStyleBtn = createToolBtn(
-        "กลับไปใช้สไตล์ต้นฉบับอัตโนมัติ",
-        `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/></svg>`,
-        () => {
-          let recovered: TextStyleProfile | undefined;
-          if (b.box && b.box.length === 4 && !b.isInvalidBox) {
-            const sample = sampleBubbleRegion(img, b.box);
-            if (sample) {
-              recovered = extractTextColors(sample);
-              recovered.category = inferTextStyleCategory(b);
-              if (recovered.source === "global" && !recovered.fallbackReason) {
-                recovered.fallbackReason = "low-confidence";
-              }
-            }
-          }
-          b.styleProfile = recovered;
-          applyNearbyStyleFallbacks(real);
-          shadowBtn.setAttribute("aria-label", shadowLabel());
-          shadowBtn.title = shadowLabel();
-          onBubblesMutated?.();
-          renderBubble();
-          saveAdjustment();
-        },
-      );
-
-      // Background Fill / Inpaint Button
-      const fillBtn = createToolBtn(
-        "เติมสีพื้นหลัง",
-        `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"/></svg>`,
-        () => {
-          bCanvas.style.backgroundColor = bCanvas.style.backgroundColor ? "" : "#ffffff";
-        }
-      );
-
-      // Layers / Z-Index Button
-      const layerBtn = createToolBtn(
-        "นำมาข้างหน้าสุด",
-        `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`,
-        () => {
-          tlContainer.appendChild(wrapper);
-        }
-      );
-
       // Edit Text (Pencil) Button
       const editBtn = createToolBtn(
         "แก้ไขข้อความ",
@@ -2951,8 +2804,6 @@ export const applyTranslationOverlay = async (
           b.styleProfile = updated.styleProfile;
           bwContrastBtn.setAttribute("aria-label", bwContrastLabel());
           bwContrastBtn.title = bwContrastLabel();
-          shadowBtn.setAttribute("aria-label", shadowLabel());
-          shadowBtn.title = shadowLabel();
           onBubblesMutated?.();
           renderBubble();
           saveAdjustment();
@@ -2963,8 +2814,6 @@ export const applyTranslationOverlay = async (
               b.styleProfile = cloneTextStyleProfile(prevProfile);
               bwContrastBtn.setAttribute("aria-label", bwContrastLabel());
               bwContrastBtn.title = bwContrastLabel();
-              shadowBtn.setAttribute("aria-label", shadowLabel());
-              shadowBtn.title = shadowLabel();
               renderBubble();
               saveAdjustment();
             },
@@ -2972,8 +2821,6 @@ export const applyTranslationOverlay = async (
               b.styleProfile = cloneTextStyleProfile(nextProfile);
               bwContrastBtn.setAttribute("aria-label", bwContrastLabel());
               bwContrastBtn.title = bwContrastLabel();
-              shadowBtn.setAttribute("aria-label", shadowLabel());
-              shadowBtn.title = shadowLabel();
               renderBubble();
               saveAdjustment();
             },
@@ -2981,38 +2828,12 @@ export const applyTranslationOverlay = async (
         },
       );
 
-      const moreMenu = document.createElement("div");
-      moreMenu.setAttribute("data-bubble-more-menu", "true");
-      moreMenu.style.cssText = `position:absolute; top:calc(100% + 8px); right:0; display:none; align-items:center; gap:2px; padding:5px; background:rgba(24,24,27,0.98); border:1px solid rgba(255,255,255,0.2); border-radius:10px; box-shadow:0 10px 28px rgba(0,0,0,0.5); z-index:45;`;
-      moreMenu.appendChild(decreaseFontBtn);
-      moreMenu.appendChild(increaseFontBtn);
-      moreMenu.appendChild(shadowBtn);
-      moreMenu.appendChild(originalStyleBtn);
-      moreMenu.appendChild(fillBtn);
-      moreMenu.appendChild(layerBtn);
-      moreMenu.addEventListener("click", (event) => {
-        if ((event.target as HTMLElement | null)?.closest("button")) {
-          moreMenu.style.display = "none";
-        }
-      });
-
-      const moreBtn = createToolBtn(
-        "เครื่องมือเพิ่มเติม",
-        `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>`,
-        () => {
-          moreMenu.style.display = moreMenu.style.display === "flex" ? "none" : "flex";
-        },
-      );
-
-      toolbar.appendChild(duplicateBtn);
-      toolbar.appendChild(copyBtn);
       toolbar.appendChild(editBtn);
-      toolbar.appendChild(colorBtn);
+      toolbar.appendChild(decreaseFontBtn);
+      toolbar.appendChild(increaseFontBtn);
       toolbar.appendChild(bwContrastBtn);
-      toolbar.appendChild(moreBtn);
       toolbar.appendChild(createDivider());
       toolbar.appendChild(deleteBtn);
-      toolbar.appendChild(moreMenu);
       (chromeRoot ?? wrapper).appendChild(toolbar);
 
       const positionChromeControls = () => {
@@ -3082,7 +2903,7 @@ export const applyTranslationOverlay = async (
         );
         // offsetWidth/offsetHeight already include the previous sync's zoom.
         const prevChromeZoom = Number(toolbar.style.zoom) || 1;
-        const baseToolbarWidth = toolbar.offsetWidth > 0 ? toolbar.offsetWidth / prevChromeZoom : 286;
+        const baseToolbarWidth = toolbar.offsetWidth > 0 ? toolbar.offsetWidth / prevChromeZoom : 210;
         const baseToolbarHeight = toolbar.offsetHeight > 0 ? toolbar.offsetHeight / prevChromeZoom : 46;
         toolbar.style.zoom = String(chromeScale);
         chromeHandles.forEach((handle) => {
@@ -3113,7 +2934,6 @@ export const applyTranslationOverlay = async (
       const setChromeVisible = (visible: boolean) => {
         toolbar.style.opacity = visible ? "1" : "0";
         toolbar.style.pointerEvents = visible ? "auto" : "none";
-        if (!visible) moreMenu.style.display = "none";
         chromeHandles.forEach((handle) => {
           handle.style.opacity = visible ? "1" : "0";
           handle.style.pointerEvents = visible ? "auto" : "none";
