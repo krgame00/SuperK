@@ -4,6 +4,7 @@ import {
   resolveBubbleCollisions,
   fitBubbleTextWithinBounds,
   autoOrganizePageBubbles,
+  autoOrganizeAllPagesBubbles,
   type BubbleRect,
 } from "../../lib/bubbleLayoutOptimizer";
 import type { TranslatedBubble } from "../../lib/translationOverlay";
@@ -254,6 +255,88 @@ describe("Bubble Layout Optimizer", () => {
     expect(optimized.targetFontSize).toBeGreaterThanOrEqual(16);
     // Width must NOT stay stuck at 64px!
     expect(optimized.layoutAdjustment?.bw).toBeGreaterThanOrEqual(120);
+  });
+
+  it("strictly preserves bubbles with layoutAdjustment.userModified === true even during forceRealign", () => {
+    const userBubble: TranslatedBubble = {
+      id: "manual-bubble-1",
+      box: [50, 710, 160, 760],
+      t: "ข้อความที่ฉันตั้งใจลากไว้เอง",
+      layoutAdjustment: {
+        bx: 500,
+        by: 400,
+        bw: 220,
+        bh: 140,
+        iw: 1200,
+        ih: 1800,
+        userModified: true, // Marked by user drag/resize gesture
+        targetFontSize: 28,
+      },
+    };
+
+    const result = autoOrganizePageBubbles([userBubble], 1200, 1800, { forceRealign: true });
+    const preserved = result.optimizedBubbles[0];
+
+    // Must strictly preserve the exact coordinates and font size set by the user!
+    expect(preserved.layoutAdjustment?.bx).toBe(500);
+    expect(preserved.layoutAdjustment?.by).toBe(400);
+    expect(preserved.layoutAdjustment?.bw).toBe(220);
+    expect(preserved.layoutAdjustment?.bh).toBe(140);
+    expect(preserved.layoutAdjustment?.userModified).toBe(true);
+    expect(result.adjustedCount).toBe(0);
+  });
+
+  it("autoOrganizeAllPagesBubbles processes multiple pages across a book and aggregates adjusted bubble count", () => {
+    const pages = [
+      {
+        pageUrl: "blob:page-1",
+        width: 1200,
+        height: 1800,
+        bubbles: [
+          {
+            id: 1,
+            box: [100, 100, 200, 250],
+            t: "หน้า 1 คำพูด",
+          },
+        ],
+      },
+      {
+        pageUrl: "blob:page-2",
+        width: 1200,
+        height: 1800,
+        bubbles: [
+          {
+            id: 2,
+            box: [100, 100, 200, 250],
+            t: "หน้า 2 คำพูดแรก",
+          },
+          {
+            id: 3,
+            box: [120, 140, 220, 280], // Colliding with 2
+            t: "หน้า 2 คำพูดสองซ้อน",
+          },
+        ],
+      },
+    ];
+
+    const result = autoOrganizeAllPagesBubbles(pages, { forceRealign: true });
+
+    expect(result.pageResults.size).toBe(2);
+    expect(result.pageResults.has("blob:page-1")).toBe(true);
+    expect(result.pageResults.has("blob:page-2")).toBe(true);
+
+    const p1Bubbles = result.pageResults.get("blob:page-1")!;
+    const p2Bubbles = result.pageResults.get("blob:page-2")!;
+
+    expect(p1Bubbles.length).toBe(1);
+    expect(p2Bubbles.length).toBe(2);
+
+    // Collisions on page 2 resolved
+    const p2Collisions = detectBubbleCollisions(p2Bubbles, 1200, 1800);
+    expect(p2Collisions.length).toBe(0);
+
+    // Total adjusted count includes all adjusted bubbles
+    expect(result.totalAdjustedCount).toBeGreaterThan(0);
   });
 });
 

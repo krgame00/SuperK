@@ -51,7 +51,7 @@ export function getBubbleGeometry(
       ? b.id
       : (b.t || b.translated || "").slice(0, 15) || "bubble";
 
-  if (!ignoreAdjustment && b.layoutAdjustment && b.layoutAdjustment.iw > 0 && b.layoutAdjustment.ih > 0) {
+  if ((!ignoreAdjustment || b.layoutAdjustment?.userModified) && b.layoutAdjustment && b.layoutAdjustment.iw > 0 && b.layoutAdjustment.ih > 0) {
     const adj = b.layoutAdjustment;
     const sx = iw / adj.iw;
     const sy = ih / adj.ih;
@@ -138,6 +138,7 @@ export function fitBubbleTextWithinBounds(
 ): TranslatedBubble {
   const text = (bubble.t || bubble.translated || "").trim();
   if (!text) return bubble;
+  if (bubble.layoutAdjustment?.userModified) return bubble;
 
   const geom = getBubbleGeometry(bubble, iw, ih, Boolean(options?.forceRealign));
   const fontFamily = options?.fontFamily || "Itim, sans-serif";
@@ -235,6 +236,7 @@ export function fitBubbleTextWithinBounds(
     rotation: bubble.layoutAdjustment?.rotation ?? (bubble.rotation as number) ?? 0,
     targetFontSize,
     fontSizeMultiplier: bubble.fontSizeMultiplier,
+    isAutoOptimized: true,
   };
 
   return {
@@ -282,65 +284,81 @@ export function resolveBubbleCollisions(
 
       if (xOverlap <= 0 || yOverlap <= 0) continue;
 
+      const aFixed = Boolean(active[idxA].layoutAdjustment?.userModified);
+      const bFixed = Boolean(active[idxB].layoutAdjustment?.userModified);
+      if (aFixed && bFixed) continue;
+
+      const multA = aFixed ? 0 : (bFixed ? 2 : 1);
+      const multB = bFixed ? 0 : (aFixed ? 2 : 1);
+
       // Determine separation axis: separate along the axis with smaller penetration
       if (xOverlap < yOverlap || Math.abs(dx) > Math.abs(dy)) {
         const shift = Math.ceil(xOverlap / 2) + 1;
         if (dx >= 0) {
-          rA.x = Math.max(0, rA.x - shift);
-          rB.x = Math.min(iw - rB.width, rB.x + shift);
+          if (!aFixed) rA.x = Math.max(0, rA.x - shift * multA);
+          if (!bFixed) rB.x = Math.min(iw - rB.width, rB.x + shift * multB);
         } else {
-          rA.x = Math.min(iw - rA.width, rA.x + shift);
-          rB.x = Math.max(0, rB.x - shift);
+          if (!aFixed) rA.x = Math.min(iw - rA.width, rA.x + shift * multA);
+          if (!bFixed) rB.x = Math.max(0, rB.x - shift * multB);
         }
       } else {
         const shift = Math.ceil(yOverlap / 2) + 1;
         if (dy >= 0) {
-          rA.y = Math.max(0, rA.y - shift);
-          rB.y = Math.min(ih - rB.height, rB.y + shift);
+          if (!aFixed) rA.y = Math.max(0, rA.y - shift * multA);
+          if (!bFixed) rB.y = Math.min(ih - rB.height, rB.y + shift * multB);
         } else {
-          rA.y = Math.min(ih - rA.height, rA.y + shift);
-          rB.y = Math.max(0, rB.y - shift);
+          if (!aFixed) rA.y = Math.min(ih - rA.height, rA.y + shift * multA);
+          if (!bFixed) rB.y = Math.max(0, rB.y - shift * multB);
         }
       }
 
-      // If at borders and still overlapping, scale both boxes down slightly
+      // If at borders and still overlapping, scale non-fixed boxes down slightly
       if (iter > 10) {
         const shrinkFactor = 0.95;
-        rA.width = Math.max(16, Math.round(rA.width * shrinkFactor));
-        rA.height = Math.max(16, Math.round(rA.height * shrinkFactor));
-        rB.width = Math.max(16, Math.round(rB.width * shrinkFactor));
-        rB.height = Math.max(16, Math.round(rB.height * shrinkFactor));
+        if (!aFixed) {
+          rA.width = Math.max(16, Math.round(rA.width * shrinkFactor));
+          rA.height = Math.max(16, Math.round(rA.height * shrinkFactor));
+        }
+        if (!bFixed) {
+          rB.width = Math.max(16, Math.round(rB.width * shrinkFactor));
+          rB.height = Math.max(16, Math.round(rB.height * shrinkFactor));
+        }
       }
 
-      // Clamp within image bounds
-      rA.x = Math.max(0, Math.min(iw - rA.width, rA.x));
-      rA.y = Math.max(0, Math.min(ih - rA.height, rA.y));
-      rB.x = Math.max(0, Math.min(iw - rB.width, rB.x));
-      rB.y = Math.max(0, Math.min(ih - rB.height, rB.y));
+      // Clamp within image bounds and apply adjustments
+      if (!aFixed) {
+        rA.x = Math.max(0, Math.min(iw - rA.width, rA.x));
+        rA.y = Math.max(0, Math.min(ih - rA.height, rA.y));
+        active[idxA].layoutAdjustment = {
+          bx: rA.x,
+          by: rA.y,
+          bw: rA.width,
+          bh: rA.height,
+          iw,
+          ih,
+          rotation: active[idxA].layoutAdjustment?.rotation ?? (active[idxA].rotation as number) ?? 0,
+          targetFontSize: active[idxA].targetFontSize,
+          fontSizeMultiplier: active[idxA].fontSizeMultiplier,
+          isAutoOptimized: true,
+        };
+      }
 
-      active[idxA].layoutAdjustment = {
-        bx: rA.x,
-        by: rA.y,
-        bw: rA.width,
-        bh: rA.height,
-        iw,
-        ih,
-        rotation: active[idxA].layoutAdjustment?.rotation ?? (active[idxA].rotation as number) ?? 0,
-        targetFontSize: active[idxA].targetFontSize,
-        fontSizeMultiplier: active[idxA].fontSizeMultiplier,
-      };
-
-      active[idxB].layoutAdjustment = {
-        bx: rB.x,
-        by: rB.y,
-        bw: rB.width,
-        bh: rB.height,
-        iw,
-        ih,
-        rotation: active[idxB].layoutAdjustment?.rotation ?? (active[idxB].rotation as number) ?? 0,
-        targetFontSize: active[idxB].targetFontSize,
-        fontSizeMultiplier: active[idxB].fontSizeMultiplier,
-      };
+      if (!bFixed) {
+        rB.x = Math.max(0, Math.min(iw - rB.width, rB.x));
+        rB.y = Math.max(0, Math.min(ih - rB.height, rB.y));
+        active[idxB].layoutAdjustment = {
+          bx: rB.x,
+          by: rB.y,
+          bw: rB.width,
+          bh: rB.height,
+          iw,
+          ih,
+          rotation: active[idxB].layoutAdjustment?.rotation ?? (active[idxB].rotation as number) ?? 0,
+          targetFontSize: active[idxB].targetFontSize,
+          fontSizeMultiplier: active[idxB].fontSizeMultiplier,
+          isAutoOptimized: true,
+        };
+      }
     }
   }
 
@@ -373,6 +391,10 @@ export function autoOrganizePageBubbles(
   // Step 1: Fit each bubble within its detected bounds
   let working = bubbles.map((b) => {
     if (b.deleted || !(b.t || b.translated || "").trim()) return b;
+    // If user explicitly modified this bubble manually, strictly preserve it!
+    if (b.layoutAdjustment?.userModified) {
+      return b;
+    }
     // If user already manually adjusted and forceRealign is false, preserve
     if (b.layoutAdjustment && !options?.forceRealign && initialCollisions.length === 0) {
       return b;
@@ -389,10 +411,11 @@ export function autoOrganizePageBubbles(
     const remaining = detectBubbleCollisions(working, iw, ih);
     resolvedCollisionCount = postFitCollisions.length - remaining.length;
 
-    // Step 3: Re-verify text fit in adjusted boxes
+    // Step 3: Re-verify text fit in adjusted boxes (preserve shifted collision coordinates)
     working = working.map((b) => {
       if (b.deleted || !(b.t || b.translated || "").trim()) return b;
-      return fitBubbleTextWithinBounds(b, iw, ih, options);
+      if (b.layoutAdjustment?.userModified) return b;
+      return fitBubbleTextWithinBounds(b, iw, ih, { ...options, forceRealign: false });
     });
   }
 
@@ -421,3 +444,45 @@ export function autoOrganizePageBubbles(
     unresolvedCollisionCount: finalCollisions.length,
   };
 }
+
+export interface PageToOrganize {
+  pageUrl: string;
+  bubbles: TranslatedBubble[];
+  width?: number;
+  height?: number;
+}
+
+export interface AutoOrganizeAllPagesResult {
+  pageResults: Map<string, TranslatedBubble[]>;
+  totalAdjustedCount: number;
+  totalResolvedCollisions: number;
+}
+
+/**
+ * Iterates across multiple pages in a book, organizing bubbles on each page
+ * while strictly preserving manual user edits.
+ */
+export function autoOrganizeAllPagesBubbles(
+  pages: PageToOrganize[],
+  options?: AutoOrganizeOptions,
+): AutoOrganizeAllPagesResult {
+  const pageResults = new Map<string, TranslatedBubble[]>();
+  let totalAdjustedCount = 0;
+  let totalResolvedCollisions = 0;
+
+  for (const p of pages) {
+    const iw = p.width || 1200;
+    const ih = p.height || 1800;
+    const res = autoOrganizePageBubbles(p.bubbles, iw, ih, options);
+    pageResults.set(p.pageUrl, res.optimizedBubbles);
+    totalAdjustedCount += res.adjustedCount;
+    totalResolvedCollisions += res.resolvedCollisionCount;
+  }
+
+  return {
+    pageResults,
+    totalAdjustedCount,
+    totalResolvedCollisions,
+  };
+}
+
