@@ -126,6 +126,7 @@ globalThis.SuperKServer = {
           modelPreference: settings.modelPreference,
           apiKey: settings.geminiApiKey || settings.apiKey || '',
           allowPreview: settings.allowPreviewModels === true,
+          ...(Array.isArray(settings.glossary) && settings.glossary.length > 0 ? { glossary: settings.glossary } : {}),
         }),
         signal: AbortSignal.timeout(70000),
       });

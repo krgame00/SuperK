@@ -119,9 +119,12 @@ export async function POST(req: Request) {
       data = result.data;
     } catch (error) {
       if (error instanceof GeminiRequestError) {
+        const safeMessage = [...apiKeys]
+          .sort((left, right) => right.length - left.length)
+          .reduce((message, key) => message.replaceAll(key, "[REDACTED]"), error.message);
         return NextResponse.json(
           {
-            error: error.message,
+            error: safeMessage,
             code: error.code,
             retryable: error.retryable,
           },

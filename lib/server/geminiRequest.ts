@@ -416,7 +416,7 @@ export async function requestGemini<T = unknown>(
         }
 
         const error = upstreamError(
-          upstreamMessage(data, response.status),
+          redactRouteKey(upstreamMessage(data, response.status), apiKey),
           response.status,
           retryAfterMsFromHeaders(response.headers, now()),
         );

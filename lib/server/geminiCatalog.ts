@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { FIXED_IMAGE_MODELS } from "@/lib/translation/imageModelChoices";
 
 export type GeminiWorkflow = "text" | "image";
 export type GeminiCompatibility = "unverified" | "compatible" | "incompatible";
@@ -438,6 +439,14 @@ export class GeminiCatalogManager {
       }
       if (aLatency !== undefined) return -1;
       if (bLatency !== undefined) return 1;
+
+      const aPriority = FIXED_IMAGE_MODELS.indexOf(a.id as (typeof FIXED_IMAGE_MODELS)[number]);
+      const bPriority = FIXED_IMAGE_MODELS.indexOf(b.id as (typeof FIXED_IMAGE_MODELS)[number]);
+      if (aPriority !== bPriority) {
+        const aRank = aPriority === -1 ? Number.MAX_SAFE_INTEGER : aPriority;
+        const bRank = bPriority === -1 ? Number.MAX_SAFE_INTEGER : bPriority;
+        return aRank - bRank;
+      }
       return 0;
     });
 

@@ -269,6 +269,32 @@ describe("Gemini route planning", () => {
     expect(catalog.snapshot.models.find((entry) => entry.id === "gemini-first")?.compatibility)
       .toEqual({ text: "unverified", image: "incompatible" });
   });
+
+  test("Auto enforces FIXED_IMAGE_MODELS priority order ahead of alphabetical discovery order on cold start", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () =>
+      modelsResponse([
+        model("gemini-2.5-flash-lite"),
+        model("gemini-2.5-flash"),
+        model("gemini-3.8-flash"),
+        model("gemini-3.5-flash-lite"),
+      ]),
+    );
+    const manager = new GeminiCatalogManager({ fetchImpl, persistPath: null });
+    const catalog = await manager.getCatalog({ userApiKeyRaw: "key-a", serverApiKeyRaw: "", force: true });
+
+    const routes = manager.planRoutes(catalog, {
+      workflow: "image",
+      modelPreference: "auto",
+      allowPreview: false,
+    });
+
+    expect(routes.map((route) => route.model)).toEqual([
+      "gemini-3.5-flash-lite",
+      "gemini-3.8-flash",
+      "gemini-2.5-flash",
+      "gemini-2.5-flash-lite",
+    ]);
+  });
 });
 
 describe("Gemini catalog cache persistence", () => {

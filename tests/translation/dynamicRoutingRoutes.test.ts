@@ -47,6 +47,8 @@ function successResult(model = "gemini-3.5-flash-lite") {
   };
 }
 
+const originalImageRouter = process.env.SUPERK_GEMINI_IMAGE_ROUTER;
+
 describe("translation routes use shared Gemini routing for image workflow", () => {
   beforeEach(() => {
     requestGeminiMock.mockReset();
@@ -55,7 +57,33 @@ describe("translation routes use shared Gemini routing for image workflow", () =
     requestGeminiMock.mockResolvedValue(successResult());
     delete process.env.SUPERK_TRANSLATE_BASE_URL;
     delete process.env.SUPERK_TRANSLATE_API_KEY;
+    process.env.SUPERK_GEMINI_IMAGE_ROUTER = "dynamic";
     process.env.GEMINI_API_KEY = "server-a,server-b";
+  });
+
+  test("default image translation (without SUPERK_GEMINI_IMAGE_ROUTER=dynamic) uses verified fixed requestGemini baseline", async () => {
+    delete process.env.SUPERK_GEMINI_IMAGE_ROUTER;
+
+    const response = await translateImage(new Request("http://localhost/api/translate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        imageBase64: "valid-base64",
+        mimeType: "image/png",
+        targetLang: "Thai",
+        modelPreference: "auto",
+        apiKey: "user-a,user-b",
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(requestGeminiMock).toHaveBeenCalledWith(expect.objectContaining({
+      apiKeys: ["user-a", "user-b", "server-a", "server-b"],
+      models: expect.arrayContaining(["gemini-3.5-flash-lite", "gemini-3.8-flash"]),
+    }));
+    expect(executeMock).not.toHaveBeenCalled();
+    if (originalImageRouter === undefined) delete process.env.SUPERK_GEMINI_IMAGE_ROUTER;
+    else process.env.SUPERK_GEMINI_IMAGE_ROUTER = originalImageRouter;
   });
 
   test("image translation passes ownership-scoped user and server pools to shared routing", async () => {

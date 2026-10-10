@@ -15,11 +15,12 @@ import {
   buildPolicyDirectives,
 } from "@/lib/translationPolicy";
 import {
-  type GlossaryEntry,
+  type FlexibleGlossaryEntry,
   buildGlossaryDirectives,
 } from "@/lib/translation/glossary";
 import type { TranslationObservabilityMeta } from "@/lib/translation/requestError";
 import { FIXED_IMAGE_MODELS } from "@/lib/translation/imageModelChoices";
+import { getSyncedExtensionSettings } from "@/src/app/api/extension/settings/handler";
 
 export const MAX_TRANSLATION_BODY_BYTES = 30 * 1024 * 1024;
 export const MAX_TRANSLATION_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -37,7 +38,7 @@ interface TranslationRequestPayload {
   isRetry?: boolean;
   context?: string;
   policy?: Partial<TranslationPolicy>;
-  glossary?: GlossaryEntry[];
+  glossary?: FlexibleGlossaryEntry[];
 }
 
 interface GeminiResponseData {
@@ -67,7 +68,7 @@ export function buildTranslationPrompt({
   isRetry?: boolean;
   context?: string;
   policy?: Partial<TranslationPolicy>;
-  glossary?: GlossaryEntry[];
+  glossary?: FlexibleGlossaryEntry[];
 }): string {
   const sourceHint =
     sourceLang && sourceLang !== "auto"
@@ -253,6 +254,20 @@ async function handleTranslationRequest(
       );
     }
 
+    const syncedSettings = getSyncedExtensionSettings();
+    const effectiveUserApiKey =
+      userApiKey && userApiKey.trim().length > 0
+        ? userApiKey
+        : syncedSettings.geminiApiKey && syncedSettings.geminiApiKey.trim().length > 0
+          ? syncedSettings.geminiApiKey
+          : userApiKey;
+    const effectiveGlossary =
+      glossary && glossary.length > 0
+        ? glossary
+        : syncedSettings.glossary.length > 0
+          ? syncedSettings.glossary
+          : glossary;
+
     // 9router (OpenAI-compatible) path — faster, no NSFW block
     const translateBaseUrl = process.env.SUPERK_TRANSLATE_BASE_URL;
     const translateApiKey = process.env.SUPERK_TRANSLATE_API_KEY;
@@ -267,7 +282,7 @@ async function handleTranslationRequest(
           isRetry,
           context,
           policy,
-          glossary,
+          glossary: effectiveGlossary,
           translateBaseUrl,
           translateApiKey,
           signal,
@@ -286,7 +301,8 @@ async function handleTranslationRequest(
       }
     }
 
-    // Fallback: direct Gemini API through the shared health-aware router.
+    // Fallback: direct Gemini API through the verified fixed router by default
+    // (or dynamic catalog router when SUPERK_GEMINI_IMAGE_ROUTER=dynamic).
 
     const promptText = buildTranslationPrompt({
       targetLang,
@@ -294,7 +310,7 @@ async function handleTranslationRequest(
       isRetry,
       context,
       policy,
-      glossary,
+      glossary: effectiveGlossary,
     });
 
     const payload = {
@@ -336,27 +352,30 @@ async function handleTranslationRequest(
 
     let data: GeminiResponseData;
     let translationMeta: TranslationObservabilityMeta | undefined;
-    const useFixedRouter = process.env.SUPERK_GEMINI_IMAGE_ROUTER === "fixed";
-    const keyPool = Array.from(new Set(
-      [userApiKey, process.env.GEMINI_API_KEY]
-        .filter((raw): raw is string => typeof raw === "string")
-        .flatMap((raw) => raw.split(",").map((key) => key.trim()).filter(Boolean)),
-    ));
+    const useFixedRouter = process.env.SUPERK_GEMINI_IMAGE_ROUTER !== "dynamic";
+    const parseKeyList = (raw: string | undefined) =>
+      typeof raw === "string"
+        ? raw.split(/[\s,;]+/).map((key) => key.trim()).filter(Boolean)
+        : [];
+    const userKeys = Array.from(new Set(parseKeyList(effectiveUserApiKey)));
+    const serverKeys = Array.from(new Set(parseKeyList(process.env.GEMINI_API_KEY)));
+    const keyPool = Array.from(new Set([...userKeys, ...serverKeys]));
+    const rotationLength = userKeys.length > 0 ? userKeys.length : keyPool.length;
 
     try {
       if (useFixedRouter && keyPool.length === 0) {
         return NextResponse.json({
           error: "Server missing API Key. Please add GEMINI_API_KEY to .env or enter your own in Settings",
-          code: "MISSING_KEY",
+          code: "GEMINI_API_KEY_MISSING",
         }, { status: 500 });
       }
       const models = modelPreference && modelPreference !== "auto"
         ? [modelPreference]
         : [...FIXED_IMAGE_MODELS];
       let initialKeyIndex = 0;
-      if (useFixedRouter && keyPool.length > 0) {
-        initialKeyIndex = fixedImageKeyIndex % keyPool.length;
-        fixedImageKeyIndex = (fixedImageKeyIndex + 1) % keyPool.length;
+      if (useFixedRouter && rotationLength > 0) {
+        initialKeyIndex = fixedImageKeyIndex % rotationLength;
+        fixedImageKeyIndex = (fixedImageKeyIndex + 1) % rotationLength;
       }
       const result = useFixedRouter
         ? await requestGemini<GeminiResponseData>({
@@ -371,7 +390,7 @@ async function handleTranslationRequest(
         : await executeGeminiTranslation<GeminiResponseData>({
         workflow: "image",
         signal,
-        userApiKeyRaw: userApiKey,
+        userApiKeyRaw: effectiveUserApiKey,
         serverApiKeyRaw: process.env.GEMINI_API_KEY,
         modelPreference: modelPreference || "auto",
         allowPreview: allowPreview === true,
@@ -396,7 +415,9 @@ async function handleTranslationRequest(
           }
         },
       });
-      if (useFixedRouter && keyPool.length > 0) fixedImageKeyIndex = (result.keyIndex + 1) % keyPool.length;
+      if (useFixedRouter && rotationLength > 0) {
+        fixedImageKeyIndex = (result.keyIndex + 1) % rotationLength;
+      }
       data = result.data;
       translationMeta = result.meta;
     } catch (error) {
@@ -502,7 +523,7 @@ async function handleOpenAICompatible({
   isRetry: boolean;
   context: string | undefined;
   policy?: Partial<TranslationPolicy>;
-  glossary?: GlossaryEntry[];
+  glossary?: FlexibleGlossaryEntry[];
   translateBaseUrl: string;
   translateApiKey: string;
   signal?: AbortSignal;

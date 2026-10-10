@@ -27,6 +27,9 @@ import { executeGeminiTranslation } from "@/lib/server/geminiTranslationRouter";
 import { POST as translateImage } from "@/src/app/api/translate/route";
 import { POST as translateText } from "@/src/app/api/translate-text/route";
 import { POST as validateGeminiKey } from "@/src/app/api/translate/validate-key/route";
+import { POST as syncExtensionSettings, _resetSettingsForTest } from "@/src/app/api/extension/settings/handler";
+import { getOrCreatePairingToken } from "@/lib/server/pairing";
+import { NextRequest } from "next/server";
 
 const originalApiKey = process.env.GEMINI_API_KEY;
 const originalImageRouter = process.env.SUPERK_GEMINI_IMAGE_ROUTER;
@@ -37,9 +40,11 @@ beforeEach(() => {
   vi.restoreAllMocks();
   requestGeminiMock.mockReset();
   executeGeminiTranslationMock.mockReset();
+  _resetSettingsForTest();
 });
 
 afterEach(() => {
+  _resetSettingsForTest();
   if (originalApiKey === undefined) {
     delete process.env.GEMINI_API_KEY;
   } else {
@@ -91,8 +96,21 @@ test.each(["null", "[]", "\"text\"", "{"])("image route rejects invalid JSON obj
   expect(executeGeminiTranslationMock).not.toHaveBeenCalled();
 });
 
-test("image route passes cancellation to dynamic routing", async () => {
+test("image route passes cancellation to default fixed routing and opt-in dynamic routing", async () => {
   delete process.env.SUPERK_GEMINI_IMAGE_ROUTER;
+  process.env.GEMINI_API_KEY = "server-key";
+  requestGeminiMock.mockResolvedValue(imageSuccess());
+  const fixedController = new AbortController();
+  const fixedResponse = await translateImage(new Request("http://localhost/api/translate", {
+    method: "POST", signal: fixedController.signal, headers: { "content-type": "application/json" },
+    body: JSON.stringify({ imageBase64: "test", mimeType: "image/png" }),
+  }));
+  expect(fixedResponse.status).toBe(200);
+  const fixedSignal = (requestGeminiMock.mock.calls[0][0] as { signal?: AbortSignal }).signal;
+  fixedController.abort();
+  expect(fixedSignal?.aborted).toBe(true);
+
+  process.env.SUPERK_GEMINI_IMAGE_ROUTER = "dynamic";
   executeGeminiTranslationMock.mockResolvedValue(imageSuccess());
   const controller = new AbortController();
   const response = await translateImage(new Request("http://localhost/api/translate", {
@@ -121,7 +139,7 @@ test.each([
 
 test("image route returns 504 for Gemini timeout", async () => {
   process.env.GEMINI_API_KEY = "server-key";
-  executeGeminiTranslationMock.mockRejectedValue(timeoutError());
+  requestGeminiMock.mockRejectedValue(timeoutError());
 
   const response = await translateImage(new Request("http://localhost/api/translate", {
     method: "POST",
@@ -143,7 +161,8 @@ test("image route returns 504 for Gemini timeout", async () => {
   expect(body.error).not.toBe("Internal Server Error");
 });
 
-test("image route Auto uses shared health-aware routing with a 60 second budget", async () => {
+test("image route Auto uses shared health-aware routing with a 60 second budget when SUPERK_GEMINI_IMAGE_ROUTER=dynamic", async () => {
+  process.env.SUPERK_GEMINI_IMAGE_ROUTER = "dynamic";
   process.env.GEMINI_API_KEY = "server-key-a,server-key-b";
   executeGeminiTranslationMock.mockResolvedValue(imageSuccess());
 
@@ -181,6 +200,7 @@ test("image route Auto uses shared health-aware routing with a 60 second budget"
 });
 
 test("streamed image route sends model-switch progress before the final result", async () => {
+  process.env.SUPERK_GEMINI_IMAGE_ROUTER = "dynamic";
   process.env.GEMINI_API_KEY = "server-key";
   executeGeminiTranslationMock.mockImplementation(async (options) => {
     options.onModelSwitch?.({ model: "gemini-next", fallbackCount: 1 });
@@ -208,8 +228,8 @@ test("streamed image route sends model-switch progress before the final result",
   ]);
 });
 
-test("fixed image-router switch immediately restores the prior request path", async () => {
-  process.env.SUPERK_GEMINI_IMAGE_ROUTER = "fixed";
+test("fixed image-router is the default production baseline and prioritizes user keys", async () => {
+  delete process.env.SUPERK_GEMINI_IMAGE_ROUTER;
   process.env.GEMINI_API_KEY = "server-key";
   requestGeminiMock.mockResolvedValue(imageSuccess("gemini-3.8-flash"));
 
@@ -227,6 +247,7 @@ test("fixed image-router switch immediately restores the prior request path", as
   expect(response.status).toBe(200);
   expect(requestGeminiMock).toHaveBeenCalledWith(expect.objectContaining({
     apiKeys: ["user-key", "server-key"],
+    initialKeyIndex: 0,
     models: expect.arrayContaining(["gemini-3.8-flash"]),
   }));
   expect(executeGeminiTranslationMock).not.toHaveBeenCalled();
@@ -275,7 +296,8 @@ test("fixed rollback redacts credentials echoed by an upstream error", async () 
   expect(body).not.toContain("server-secret");
 });
 
-test("image route keeps user and server credential ownership inputs separate", async () => {
+test("image route keeps user and server credential ownership inputs separate in dynamic mode", async () => {
+  process.env.SUPERK_GEMINI_IMAGE_ROUTER = "dynamic";
   process.env.GEMINI_API_KEY = "server-key,shared-key";
   executeGeminiTranslationMock.mockResolvedValue(imageSuccess());
 
@@ -303,12 +325,6 @@ test("image route keeps user and server credential ownership inputs separate", a
 
 test("image route returns structured missing-key routing failure", async () => {
   delete process.env.GEMINI_API_KEY;
-  executeGeminiTranslationMock.mockRejectedValue(
-    new GeminiRoutingError(
-      "Gemini API Key is required",
-      "GEMINI_API_KEY_MISSING",
-    ),
-  );
 
   const response = await translateImage(new Request("http://localhost/api/translate", {
     method: "POST",
@@ -330,6 +346,7 @@ test("image route returns structured missing-key routing failure", async () => {
 });
 
 test("image route propagates fail-fast retry timing from the shared router", async () => {
+  process.env.SUPERK_GEMINI_IMAGE_ROUTER = "dynamic";
   process.env.GEMINI_API_KEY = "server-key";
   executeGeminiTranslationMock.mockRejectedValue(
     new GeminiRoutingError(
@@ -478,7 +495,7 @@ test("text route returns 504 for Gemini timeout", async () => {
 
 test("image prompt translates story text and excludes interface labels", async () => {
   process.env.GEMINI_API_KEY = "server-key";
-  executeGeminiTranslationMock.mockResolvedValue(imageSuccess());
+  requestGeminiMock.mockResolvedValue(imageSuccess());
 
   const response = await translateImage(new Request("http://localhost/api/translate", {
     method: "POST",
@@ -491,7 +508,7 @@ test("image prompt translates story text and excludes interface labels", async (
   }));
   expect(response.status).toBe(200);
 
-  const options = executeGeminiTranslationMock.mock.calls[0][0];
+  const options = requestGeminiMock.mock.calls[0][0];
   const payload = options.payload as {
     contents: Array<{ parts: Array<{ text?: string }> }>;
   };
@@ -511,7 +528,7 @@ test("image prompt translates story text and excludes interface labels", async (
 
 test("image route supports custom translation policy (sfx: translate)", async () => {
   process.env.GEMINI_API_KEY = "server-key";
-  executeGeminiTranslationMock.mockResolvedValue(imageSuccess());
+  requestGeminiMock.mockResolvedValue(imageSuccess());
 
   const response = await translateImage(new Request("http://localhost/api/translate", {
     method: "POST",
@@ -525,7 +542,7 @@ test("image route supports custom translation policy (sfx: translate)", async ()
   }));
   expect(response.status).toBe(200);
 
-  const options = executeGeminiTranslationMock.mock.calls[0][0];
+  const options = requestGeminiMock.mock.calls[0][0];
   const payload = options.payload as {
     contents: Array<{ parts: Array<{ text?: string }> }>;
   };
@@ -641,3 +658,74 @@ test("text route advances initialKeyIndex round-robin and uses 15s timeout", asy
   expect(secondCall.attemptTimeoutMs).toBe(15_000);
   expect(secondCall.initialKeyIndex).toBe((firstKeyIndex + 1) % 3);
 });
+
+test("image route keeps initialKeyIndex within user-supplied keys across repeated requests before falling back to server keys", async () => {
+  delete process.env.SUPERK_GEMINI_IMAGE_ROUTER;
+  process.env.GEMINI_API_KEY = "server-0,server-1";
+  requestGeminiMock.mockResolvedValue(imageSuccess());
+
+  for (let i = 0; i < 3; i++) {
+    await translateImage(
+      new Request("http://localhost/api/translate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          imageBase64: "valid-base64",
+          mimeType: "image/png",
+          apiKey: "user-only-key",
+        }),
+      }),
+    );
+  }
+
+  for (const [call] of requestGeminiMock.mock.calls) {
+    expect(call.apiKeys).toEqual(["user-only-key", "server-0", "server-1"]);
+    expect(call.initialKeyIndex).toBe(0);
+  }
+});
+
+test("image route falls back to synced extension settings API key and glossary when omitted in request body", async () => {
+  delete process.env.SUPERK_GEMINI_IMAGE_ROUTER;
+  delete process.env.GEMINI_API_KEY;
+  requestGeminiMock.mockResolvedValue(imageSuccess());
+
+  const token = getOrCreatePairingToken();
+  await syncExtensionSettings(
+    new NextRequest("http://127.0.0.1:3000/api/extension/settings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        host: "127.0.0.1:3000",
+        origin: "http://127.0.0.1:3000",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        geminiApiKey: "synced-web-key",
+        glossary: [{ original: "Furina", translation: "ฟูริน่า" }],
+      }),
+    }),
+  );
+
+  const response = await translateImage(
+    new Request("http://localhost/api/translate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        imageBase64: "valid-base64",
+        mimeType: "image/png",
+        apiKey: "",
+      }),
+    }),
+  );
+
+  expect(response.status).toBe(200);
+  const call = requestGeminiMock.mock.calls[0][0];
+  expect(call.apiKeys).toEqual(["synced-web-key"]);
+  const payload = call.payload as {
+    contents: Array<{ parts: Array<{ text?: string }> }>;
+  };
+  const prompt = payload.contents[0].parts[0].text ?? "";
+  expect(prompt).toContain("Furina");
+  expect(prompt).toContain("ฟูริน่า");
+});
+

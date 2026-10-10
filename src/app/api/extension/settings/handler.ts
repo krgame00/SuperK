@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { geminiCatalogManager } from "@/lib/server/geminiCatalog";
 import { verifyPairingToken } from "@/lib/server/pairing";
+import type { FlexibleGlossaryEntry } from "@/lib/translation/glossary";
 
 export interface ExtensionSettingsPayload {
   geminiApiKey: string;
@@ -18,7 +19,7 @@ export interface ExtensionSettingsPayload {
       totalKeys: number;
     }>;
   };
-  glossary: Array<{ original: string; translation: string }>;
+  glossary: FlexibleGlossaryEntry[];
   textStyle: {
     fontFamily: string;
     fontSizeMultiplier: number;
@@ -57,6 +58,10 @@ export function _resetSettingsForTest() {
     ...defaultSettings,
     geminiApiKey: "",
   };
+}
+
+export function getSyncedExtensionSettings(): Readonly<ExtensionSettingsPayload> {
+  return currentSettings;
 }
 
 function isOriginAllowed(origin: string | null): boolean {
