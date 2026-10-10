@@ -15,7 +15,7 @@ import { useCleaning } from "@/hooks/useCleaning";
 import { useTranslation } from "@/hooks/useTranslation";
 import WorkspacePage from "@/src/app/page";
 import { scanPageGeometry } from "@/lib/export/readabilityScan";
-import { downloadTranslatedImage, applyTranslationOverlay } from "@/lib/translationOverlay";
+import { downloadTranslatedImage, applyTranslationOverlay, autoOrganizePageBubbles } from "@/lib/translationOverlay";
 import { saveBlob } from "@/lib/export/saveLocation";
 import { workspaceResourceManager } from "@/lib/lifecycle/workspaceResourceManager";
 import { LANGUAGE_POLICY_VERSION } from "@/lib/languagePolicy";
@@ -23,13 +23,32 @@ import { withReviewIdentity } from "@/lib/translation/qualityReview";
 
 vi.mock("@/hooks/useCleaning");
 vi.mock("@/hooks/useTranslation");
-vi.mock("react-hot-toast", () => ({
-  default: vi.fn(),
-  Toaster: () => null,
-}));
+vi.mock("react-hot-toast", () => {
+  const toastFn: any = vi.fn();
+  toastFn.loading = vi.fn(() => "mock-toast-id");
+  toastFn.success = vi.fn();
+  toastFn.error = vi.fn();
+  toastFn.dismiss = vi.fn();
+  return {
+    default: toastFn,
+    Toaster: () => null,
+  };
+});
 vi.mock("@/lib/translationOverlay", () => ({
   applyTranslationOverlay: vi.fn(),
   downloadTranslatedImage: vi.fn(),
+  autoOrganizePageBubbles: vi.fn((bubbles) => ({
+    optimizedBubbles: bubbles,
+    adjustedCount: 1,
+    resolvedCollisionCount: 0,
+    unresolvedCollisionCount: 0,
+  })),
+  autoOrganizeAllPagesBubbles: vi.fn((pages) => ({
+    pageResults: new Map(pages.map((p: any) => [p.pageUrl, p.bubbles])),
+    totalAdjustedCount: 1,
+    totalResolvedCollisions: 0,
+  })),
+  detectBubbleCollisions: vi.fn(() => []),
 }));
 vi.mock("@/lib/export/readabilityScan", () => ({ scanPageGeometry: vi.fn() }));
 vi.mock("@/components/cleaning/MaskLegend", () => ({
@@ -1122,3 +1141,59 @@ test("manual export report cannot release the snapshot during a deferred source 
     await act(async () => { finishFetch({ ok: false } as Response); });
   }
 });
+
+test("advanced tools organize-all option triggers auto-organization across pages", async () => {
+  const dummyBubble = { id: "b1", originalText: "こんにちは", text: "สวัสดี", box: [10, 10, 100, 50] };
+  vi.mocked(useTranslation).mockReturnValue({
+    ...translationMockState,
+    bubbleCacheRef: { current: new Map([[ORIGINAL_URL, [dummyBubble]]]) },
+    restoreSavedSession: vi.fn().mockResolvedValue({
+      pages: [{ url: ORIGINAL_URL, name: PAGE_NAME }],
+      currentPage: 0,
+    }),
+  } as never);
+
+  await renderRestoredWorkspace();
+
+  const toolsTrigger = screen.getAllByRole("button", { name: "เครื่องมือ" })[0];
+  fireEvent.click(toolsTrigger);
+
+  const organizeAllItem = await screen.findByRole("menuitem", { name: "จัดระเบียบคำแปลทุกหน้า" });
+  await act(async () => {
+    fireEvent.click(organizeAllItem);
+  });
+
+  expect(autoOrganizePageBubbles).toHaveBeenCalled();
+});
+
+test("batch translate book runs auto-organization after batch translation completes", async () => {
+  const dummyBubble = { id: "b1", originalText: "こんにちは", text: "สวัสดี", box: [10, 10, 100, 50] };
+  const bubbleMap = new Map([[ORIGINAL_URL, [dummyBubble]]]);
+  const mockHandleTranslateAll = vi.fn().mockImplementation(async () => {
+    bubbleMap.set(ORIGINAL_URL, [dummyBubble]);
+  });
+
+  vi.mocked(useTranslation).mockReturnValue({
+    ...translationMockState,
+    handleTranslateAll: mockHandleTranslateAll,
+    bubbleCacheRef: { current: bubbleMap },
+    restoreSavedSession: vi.fn().mockResolvedValue({
+      pages: [{ url: ORIGINAL_URL, name: PAGE_NAME }],
+      currentPage: 0,
+    }),
+  } as never);
+
+  await renderRestoredWorkspace();
+
+  const toolsTrigger = screen.getAllByRole("button", { name: "เครื่องมือ" })[0];
+  fireEvent.click(toolsTrigger);
+
+  const translateBookItem = await screen.findByRole("menuitem", { name: /^แปลทั้งเล่ม$/ });
+  await act(async () => {
+    fireEvent.click(translateBookItem);
+  });
+
+  expect(mockHandleTranslateAll).toHaveBeenCalled();
+  expect(autoOrganizePageBubbles).toHaveBeenCalled();
+});
+

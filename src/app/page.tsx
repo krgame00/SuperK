@@ -13,6 +13,7 @@ import { Toaster } from "react-hot-toast";
 import {
   applyTranslationOverlay,
   autoOrganizePageBubbles,
+  autoOrganizeAllPagesBubbles,
   detectBubbleCollisions,
   type TranslatedBubble,
 } from "@/lib/translationOverlay";
@@ -177,6 +178,19 @@ export default function WorkspacePage() {
   const [isFocusToolbarVisible, setIsFocusToolbarVisible] = useState(false);
   const [toolbarPosition, setToolbarPosition] = useState<"top" | "bottom">("top");
   const [isToolbarCollapsed, setIsToolbarCollapsed] = useState(false);
+  const [isOrganizeMenuOpen, setIsOrganizeMenuOpen] = useState(false);
+  const organizeMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOrganizeMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (organizeMenuRef.current && !organizeMenuRef.current.contains(e.target as Node)) {
+        setIsOrganizeMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isOrganizeMenuOpen]);
 
   // Restore toolbar preferences from localStorage
   useEffect(() => {
@@ -692,6 +706,123 @@ export default function WorkspacePage() {
     currentCleaningResult,
   ]);
 
+  const handleAutoOrganizeAllPages = useCallback(async () => {
+    if (pages.length === 0) return;
+    const translatedPages = pages.filter((p) => {
+      const b = bubbleCacheRef.current.get(p.url);
+      return b && b.length > 0;
+    });
+
+    if (translatedPages.length === 0) {
+      import("react-hot-toast").then((m) =>
+        m.default("ยังไม่มีหน้าที่มีคำแปลให้จัดระเบียบ", { icon: "ℹ️" }),
+      );
+      return;
+    }
+
+    try {
+      const toastModule = await import("react-hot-toast");
+      const toast = toastModule.default as any;
+      const toastId = typeof toast?.loading === "function"
+        ? toast.loading(`กำลังจัดระเบียบทุกหน้า (0/${translatedPages.length})...`)
+        : undefined;
+      let totalAdjusted = 0;
+      let processedCount = 0;
+
+      for (let i = 0; i < translatedPages.length; i++) {
+        const pageItem = translatedPages[i];
+        const pageUrl = pageItem.url;
+        const currentBubbles = bubbleCacheRef.current.get(pageUrl);
+        if (!currentBubbles || currentBubbles.length === 0) continue;
+
+        let iw = 1200;
+        let ih = 1800;
+        if (pageUrl === currentPageUrl) {
+          const hostImg = document.querySelector("#pageContainer img") as HTMLImageElement | null;
+          if (hostImg?.naturalWidth && hostImg?.naturalHeight) {
+            iw = hostImg.naturalWidth;
+            ih = hostImg.naturalHeight;
+          }
+        } else {
+          try {
+            const probeImg = new Image();
+            probeImg.src = pageUrl;
+            if (probeImg.complete && probeImg.naturalWidth) {
+              iw = probeImg.naturalWidth;
+              ih = probeImg.naturalHeight;
+            }
+          } catch {}
+        }
+
+        const targetLangCode = getPageTargetLanguage?.(pageUrl) ?? targetLang ?? "th";
+        const result = autoOrganizePageBubbles(currentBubbles, iw, ih, {
+          fontFamily: textStyleRef.current?.fontFamily,
+          fontSizeMultiplier: textStyleRef.current?.fontSizeMultiplier || 1.0,
+          locale: targetLangCode === "en" ? "en" : "th",
+          forceRealign: true,
+        });
+
+        bubbleCacheRef.current.set(pageUrl, result.optimizedBubbles);
+        dirtyExportPagesRef.current.add(pageUrl);
+        totalAdjusted += result.adjustedCount;
+        processedCount++;
+
+        // If active on screen, live re-render #pageContainer
+        if (pageUrl === currentPageUrl) {
+          setActiveBubbles(result.optimizedBubbles);
+          const pageContainer = document.getElementById("pageContainer");
+          if (pageContainer) {
+            await applyTranslationOverlay(
+              result.optimizedBubbles,
+              viewLayout,
+              currentPage,
+              setTranslationResult,
+              undefined,
+              textStyleRef,
+              pageContainer,
+              currentPageUrl,
+              () => dirtyExportPagesRef.current.add(currentPageUrl),
+              targetLangCode,
+            );
+          }
+        }
+
+        if (toastId && typeof toast?.loading === "function") {
+          toast.loading(
+            `กำลังจัดระเบียบหน้า ${i + 1}/${translatedPages.length}...`,
+            { id: toastId },
+          );
+        }
+
+        // Yield microtask so UI stays responsive
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      const summaryMsg = totalAdjusted > 0
+        ? `✅ จัดระเบียบครบทั้ง ${processedCount} หน้า (${totalAdjusted} จุด) เรียบร้อยแล้ว!`
+        : `✅ จัดระเบียบครบทั้ง ${processedCount} หน้าเรียบร้อยแล้ว`;
+      if (typeof toast?.success === "function") {
+        toast.success(summaryMsg, toastId ? { id: toastId } : undefined);
+      } else if (typeof toast === "function") {
+        toast(summaryMsg, toastId ? { id: toastId } : undefined);
+      }
+    } catch (err) {
+      console.error("Auto organize all pages failed:", err);
+    }
+  }, [
+    pages,
+    bubbleCacheRef,
+    currentPageUrl,
+    getPageTargetLanguage,
+    targetLang,
+    textStyleRef,
+    dirtyExportPagesRef,
+    setActiveBubbles,
+    viewLayout,
+    currentPage,
+    setTranslationResult,
+  ]);
+
 
   const translationBusy = isTranslating || isTranslatingAll;
   const operationBusy =
@@ -760,11 +891,12 @@ export default function WorkspacePage() {
     try {
       setWorkspaceLayer("translated");
       await handleTranslateAll();
+      await handleAutoOrganizeAllPages();
     } finally {
       uiOperationLockRef.current = false;
       setIsUiOperationBusy(false);
     }
-  }, [handleTranslateAll, operationBusy, pages.length]);
+  }, [handleAutoOrganizeAllPages, handleTranslateAll, operationBusy, pages.length]);
 
   // Whole-book foreign-script scan: the translation script guard only covers
   // pages translated after it landed, so the review flow gets an explicit
@@ -2416,6 +2548,8 @@ export default function WorkspacePage() {
                   onEditMask={() => setIsMaskEditorOpen(true)}
                   onTranslateBook={() => void handleTranslateBook()}
                   onTranslateCurrent={() => void handleTranslateCurrent()}
+                  onOrganizeAllPages={() => void handleAutoOrganizeAllPages()}
+                  canOrganizeAll={pages.some((p) => (bubbleCacheRef.current.get(p.url)?.length ?? 0) > 0)}
                   onRetryFailedPages={() => void retryFailedPages()}
                   onScanTranslations={handleScanTranslations}
                   onRetranslateContaminated={() => void handleRetranslateContaminated()}
@@ -2532,6 +2666,8 @@ export default function WorkspacePage() {
               onEditMask={() => setIsMaskEditorOpen(true)}
               onTranslateBook={() => void handleTranslateBook()}
               onTranslateCurrent={() => void handleTranslateCurrent()}
+              onOrganizeAllPages={() => void handleAutoOrganizeAllPages()}
+              canOrganizeAll={pages.some((p) => (bubbleCacheRef.current.get(p.url)?.length ?? 0) > 0)}
               onRetryFailedPages={() => void retryFailedPages()}
               onScanTranslations={handleScanTranslations}
               onRetranslateContaminated={() => void handleRetranslateContaminated()}
@@ -3058,17 +3194,55 @@ export default function WorkspacePage() {
                             <ChevronDown className="pointer-events-none absolute right-1.5 h-3 w-3 text-muted" />
                           </div>
                           {hasCurrentTranslation && workspaceLayer === "translated" && (
-                            <button
-                              type="button"
-                              onClick={handleAutoOrganizeCurrentPage}
-                              disabled={operationBusy}
-                              aria-label="จัดระเบียบข้อความออโต้"
-                              title="จัดระเบียบบับเบิลและแยกจุดที่ซ้อนทับกันให้อัตโนมัติ (Auto-Fit & De-overlap)"
-                              className="inline-flex h-7 sm:h-7.5 items-center gap-1 rounded-lg border border-primary/40 bg-primary/10 hover:bg-primary/20 active:bg-primary/30 px-2 text-xs font-semibold text-primary transition-all duration-150 cursor-pointer shadow-xs shrink-0 select-none disabled:opacity-40 disabled:cursor-not-allowed"
-                            >
-                              <Sparkles className="h-3 w-3 text-primary shrink-0" aria-hidden="true" />
-                              <span className="hidden sm:inline">จัดระเบียบ</span>
-                            </button>
+                            <div ref={organizeMenuRef} className="relative inline-flex items-center rounded-lg border border-primary/40 bg-primary/10 shadow-xs shrink-0">
+                              <button
+                                type="button"
+                                onClick={handleAutoOrganizeCurrentPage}
+                                disabled={operationBusy}
+                                aria-label="จัดระเบียบข้อความออโต้"
+                                title="จัดระเบียบบับเบิลหน้านี้ให้อัตโนมัติ (Auto-Fit & De-overlap)"
+                                className="inline-flex h-7 sm:h-7.5 items-center gap-1 hover:bg-primary/20 active:bg-primary/30 px-2 text-xs font-semibold text-primary transition-all duration-150 cursor-pointer select-none rounded-l-lg disabled:opacity-40 disabled:cursor-not-allowed"
+                              >
+                                <Sparkles className="h-3 w-3 text-primary shrink-0" aria-hidden="true" />
+                                <span className="hidden sm:inline">จัดระเบียบ</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setIsOrganizeMenuOpen((prev) => !prev)}
+                                disabled={operationBusy}
+                                aria-label="ตัวเลือกจัดระเบียบบับเบิล"
+                                title="ตัวเลือกจัดระเบียบหน้านี้ หรือทุกหน้า"
+                                className="inline-flex h-7 sm:h-7.5 items-center px-1 border-l border-primary/30 hover:bg-primary/20 active:bg-primary/30 text-primary transition-all duration-150 cursor-pointer rounded-r-lg disabled:opacity-40 disabled:cursor-not-allowed"
+                              >
+                                <ChevronDown className="h-3 w-3 shrink-0" />
+                              </button>
+                              {isOrganizeMenuOpen && (
+                                <div className="absolute top-full mt-1.5 right-0 sm:left-0 z-50 min-w-[185px] py-1 bg-surface border border-border rounded-lg shadow-xl text-xs font-medium">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setIsOrganizeMenuOpen(false);
+                                      void handleAutoOrganizeCurrentPage();
+                                    }}
+                                    className="w-full text-left px-3 py-1.5 hover:bg-surface-hover flex items-center gap-2 text-foreground transition-colors cursor-pointer"
+                                  >
+                                    <Sparkles className="h-3.5 w-3.5 text-primary shrink-0" />
+                                    <span>จัดระเบียบหน้านี้</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setIsOrganizeMenuOpen(false);
+                                      void handleAutoOrganizeAllPages();
+                                    }}
+                                    className="w-full text-left px-3 py-1.5 hover:bg-surface-hover flex items-center gap-2 text-foreground transition-colors cursor-pointer"
+                                  >
+                                    <Sparkles className="h-3.5 w-3.5 text-primary shrink-0" />
+                                    <span>จัดระเบียบทุกหน้า ({pages.length} หน้า)</span>
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                           )}
                         </label>
                       )}

@@ -29,19 +29,19 @@
 - Produces: `autoOrganizeAllPagesBubbles(pages: Array<{ pageUrl: string; bubbles: TranslatedBubble[]; width?: number; height?: number }>, options?: AutoOrganizeOptions): { pageResults: Map<string, TranslatedBubble[]>; totalAdjustedCount: number }`
 - Behavior: preserves bubbles where `b.layoutAdjustment?.userModified === true` during optimization passes.
 
-- [ ] **Step 1: Write failing unit tests in `tests/unit/bubbleLayoutOptimizer.test.ts`**
+- [x] **Step 1: Write failing unit tests in `tests/unit/bubbleLayoutOptimizer.test.ts`**
   Add tests verifying:
   1. `autoOrganizePageBubbles` preserves bubbles with `layoutAdjustment.userModified === true`.
   2. `autoOrganizeAllPagesBubbles` processes multiple pages, calculates geometry correctly for each, tags `isAutoOptimized: true`, and reports aggregate adjusted bubble counts.
-- [ ] **Step 2: Run test to confirm failure**
+- [x] **Step 2: Run test to confirm failure**
   Run `npx vitest run tests/unit/bubbleLayoutOptimizer.test.ts` and verify it fails.
-- [ ] **Step 3: Implement updates in `lib/bubbleLayoutOptimizer.ts` and `lib/translationOverlay.ts`**
+- [x] **Step 3: Implement updates in `lib/bubbleLayoutOptimizer.ts` and `lib/translationOverlay.ts`**
   - In `lib/translationOverlay.ts`, update `saveAdjustment` to set `userModified: true`.
   - In `lib/bubbleLayoutOptimizer.ts`, mark generated adjustments with `isAutoOptimized: true` and preserve any bubble with `layoutAdjustment?.userModified === true`.
   - Implement `autoOrganizeAllPagesBubbles`.
-- [ ] **Step 4: Run test to confirm pass**
+- [x] **Step 4: Run test to confirm pass**
   Run `npx vitest run tests/unit/bubbleLayoutOptimizer.test.ts` to confirm 100% green.
-- [ ] **Step 5: Commit changes**
+- [x] **Step 5: Commit changes**
   Commit with `git commit -m "feat: add autoOrganizeAllPagesBubbles and preserve user modified bubbles"`.
 
 ---
@@ -56,13 +56,13 @@
 - Consumes: `onOrganizeAllPages?: () => void`, `canOrganizeAll?: boolean` in `WorkspaceAdvancedToolsProps`
 - Produces: New menu item `🪄 จัดระเบียบคำแปลทุกหน้า` in the "เครื่องมือ" menu.
 
-- [ ] **Step 1: Write test in `tests/workflow/WorkspaceControls.test.tsx`**
+- [x] **Step 1: Write test in `tests/workflow/WorkspaceControls.test.tsx`**
   Verify the new menu item is rendered and calls `onOrganizeAllPages` when selected.
-- [ ] **Step 2: Update `WorkspaceAdvancedTools.tsx`**
+- [x] **Step 2: Update `WorkspaceAdvancedTools.tsx`**
   Add `onOrganizeAllPages` and `canOrganizeAll` props and include the menu item.
-- [ ] **Step 3: Verify tests pass**
+- [x] **Step 3: Verify tests pass**
   Run `npx vitest run tests/workflow/WorkspaceControls.test.tsx`.
-- [ ] **Step 4: Commit changes**
+- [x] **Step 4: Commit changes**
   Commit with `git commit -m "feat: add organize all pages item to WorkspaceAdvancedTools"`.
 
 ---
@@ -78,13 +78,13 @@
   - `จัดระเบียบหน้านี้`
   - `จัดระเบียบทุกหน้า ({n} หน้า)`
 
-- [ ] **Step 1: Write test in `tests/workflow/WorkspacePage.test.tsx`**
+- [x] **Step 1: Write test in `tests/workflow/WorkspacePage.test.tsx`**
   Verify clicking the organize dropdown options triggers single-page vs all-page handlers.
-- [ ] **Step 2: Implement compact dropdown in `CleaningToolbar` in `src/app/page.tsx`**
+- [x] **Step 2: Implement compact dropdown in `CleaningToolbar` in `src/app/page.tsx`**
   Add the dropdown menu with accessibility attributes, outside-click dismissal, and keyboard accessibility.
-- [ ] **Step 3: Verify tests pass**
+- [x] **Step 3: Verify tests pass**
   Run `npx vitest run tests/workflow/WorkspacePage.test.tsx`.
-- [ ] **Step 4: Commit changes**
+- [x] **Step 4: Commit changes**
   Commit with `git commit -m "feat: add organize dropdown in CleaningToolbar"`.
 
 ---
@@ -105,13 +105,13 @@
 - Hooks into `handleTranslateAll`:
   - Automatically runs per-page auto-organize upon arrival of each translated page during batch translation.
 
-- [ ] **Step 1: Write integration test in `tests/workflow/WorkspacePage.test.tsx`**
+- [x] **Step 1: Write integration test in `tests/workflow/WorkspacePage.test.tsx`**
   Verify batch organize processes all pages and updates their bubble caches.
-- [ ] **Step 2: Implement `handleAutoOrganizeAllPages` in `src/app/page.tsx`**
-- [ ] **Step 3: Wire into per-page arrival in batch translation**
-- [ ] **Step 4: Run test suite**
+- [x] **Step 2: Implement `handleAutoOrganizeAllPages` in `src/app/page.tsx`**
+- [x] **Step 3: Wire into per-page arrival in batch translation**
+- [x] **Step 4: Run test suite**
   Run `npx vitest run tests/workflow/WorkspacePage.test.tsx`.
-- [ ] **Step 5: Commit changes**
+- [x] **Step 5: Commit changes**
   Commit with `git commit -m "feat: implement handleAutoOrganizeAllPages and hook into batch translation"`.
 
 ---
