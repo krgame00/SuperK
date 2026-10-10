@@ -3429,64 +3429,69 @@ export default function WorkspacePage() {
                       position={toolbarPosition}
                       onTogglePosition={toggleToolbarPosition}
                       onCollapse={toggleToolbarCollapsed}
-                      className="flex flex-nowrap w-full max-w-5xl items-center justify-between gap-1.5 sm:gap-2 rounded-xl border border-border/80 bg-surface/90 px-2 sm:px-3 py-1.5 shadow-xl backdrop-blur-md transition-all overflow-x-auto no-scrollbar"
+                      className="relative z-30 flex flex-wrap sm:flex-nowrap w-full max-w-5xl items-center justify-between gap-1.5 sm:gap-2 rounded-xl border border-border/80 bg-surface/90 px-2 sm:px-3 py-1.5 shadow-xl backdrop-blur-md transition-all overflow-visible"
                     >
                       {pages[currentPage] && (
-                        <label className="flex flex-nowrap items-center gap-1.5 sm:gap-2 text-xs shrink-0 select-none">
-                          <span className="sr-only">
-                            หน้า {currentPage + 1} · ส่งออกหน้านี้เป็น
-                          </span>
-                          <span
-                            aria-hidden="true"
-                            className="font-medium text-foreground/80 whitespace-nowrap hidden xl:inline text-xs"
-                          >
-                            หน้า {currentPage + 1} ·
-                          </span>
-                          <span
-                            aria-hidden="true"
-                            className="font-medium text-foreground/70 whitespace-nowrap hidden sm:inline text-xs"
-                          >
-                            ส่งออก:
-                          </span>
-                          {(() => {
-                            const cachedTargetId = pageTargetCacheRef.current.get(pages[currentPage].url)?.targetId;
-                            const target = resolveTargetLanguage(cachedTargetId ?? targetLang);
-                            const isResolved = target.status === "resolved";
-                            const langLabel = isResolved ? target.profile.label : (targetLang || "ไทย");
-                            return (
-                              <span
-                                aria-label="ภาษาคำแปลของหน้า"
-                                className="hidden 2xl:inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-primary/10 text-primary border border-primary/20 shadow-xs whitespace-nowrap shrink-0"
-                              >
-                                <span className="h-1.5 w-1.5 rounded-full bg-primary shrink-0" />
-                                <span>{langLabel}</span>
-                              </span>
-                            );
-                          })()}
-                          <div className="relative inline-flex items-center shrink-0">
-                            <select
-                              aria-label="ส่งออกหน้านี้เป็น"
-                              className="appearance-none cursor-pointer rounded-lg border border-border/80 bg-background/90 hover:bg-surface-hover active:bg-surface-active px-2 sm:px-2.5 py-1 pr-5.5 text-xs font-semibold text-foreground transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-40 disabled:cursor-not-allowed shadow-xs shrink-0"
-                              value={normalizePageExportSource(pages[currentPage].exportSource)}
-                              disabled={isZipping || isChoosingExport || Boolean(pendingExportAction) || Boolean(pendingReadabilityExport)}
-                              onChange={(event) => {
-                                if (isZipping || isChoosingExport || pendingExportAction || pendingReadabilityExport) return;
-                                const source = normalizePageExportSource(event.target.value);
-                                setPages(current => current.map((page, index) => index === currentPage ? { ...page, exportSource: source } : page));
-                              }}
+                        <div className="flex flex-nowrap items-center gap-1.5 sm:gap-2 text-xs shrink-0 select-none">
+                          <label className="flex flex-nowrap items-center gap-1.5 sm:gap-2 text-xs shrink-0 select-none">
+                            <span className="sr-only">
+                              หน้า {currentPage + 1} · ส่งออกหน้านี้เป็น
+                            </span>
+                            <span
+                              aria-hidden="true"
+                              className="font-medium text-foreground/80 whitespace-nowrap hidden xl:inline text-xs"
                             >
-                              <option value="translated">พร้อมคำแปล</option>
-                              <option value="original">ต้นฉบับ</option>
-                              <option value="clean" disabled={!currentCleaningResult?.cleanUrl}>ภาพคลีน</option>
-                            </select>
-                            <ChevronDown className="pointer-events-none absolute right-1.5 h-3 w-3 text-muted" />
-                          </div>
+                              หน้า {currentPage + 1} ·
+                            </span>
+                            <span
+                              aria-hidden="true"
+                              className="font-medium text-foreground/70 whitespace-nowrap hidden sm:inline text-xs"
+                            >
+                              ส่งออก:
+                            </span>
+                            {(() => {
+                              const cachedTargetId = pageTargetCacheRef.current.get(pages[currentPage].url)?.targetId;
+                              const target = resolveTargetLanguage(cachedTargetId ?? targetLang);
+                              const isResolved = target.status === "resolved";
+                              const langLabel = isResolved ? target.profile.label : (targetLang || "ไทย");
+                              return (
+                                <span
+                                  aria-label="ภาษาคำแปลของหน้า"
+                                  className="hidden 2xl:inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-primary/10 text-primary border border-primary/20 shadow-xs whitespace-nowrap shrink-0"
+                                >
+                                  <span className="h-1.5 w-1.5 rounded-full bg-primary shrink-0" />
+                                  <span>{langLabel}</span>
+                                </span>
+                              );
+                            })()}
+                            <div className="relative inline-flex items-center shrink-0">
+                              <select
+                                aria-label="ส่งออกหน้านี้เป็น"
+                                className="appearance-none cursor-pointer rounded-lg border border-border/80 bg-background/90 hover:bg-surface-hover active:bg-surface-active px-2 sm:px-2.5 py-1 pr-5.5 text-xs font-semibold text-foreground transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-40 disabled:cursor-not-allowed shadow-xs shrink-0"
+                                value={normalizePageExportSource(pages[currentPage].exportSource)}
+                                disabled={isZipping || isChoosingExport || Boolean(pendingExportAction) || Boolean(pendingReadabilityExport)}
+                                onChange={(event) => {
+                                  if (isZipping || isChoosingExport || pendingExportAction || pendingReadabilityExport) return;
+                                  const source = normalizePageExportSource(event.target.value);
+                                  setPages(current => current.map((page, index) => index === currentPage ? { ...page, exportSource: source } : page));
+                                }}
+                              >
+                                <option value="translated">พร้อมคำแปล</option>
+                                <option value="original">ต้นฉบับ</option>
+                                <option value="clean" disabled={!currentCleaningResult?.cleanUrl}>ภาพคลีน</option>
+                              </select>
+                              <ChevronDown className="pointer-events-none absolute right-1.5 h-3 w-3 text-muted" />
+                            </div>
+                          </label>
                           {hasCurrentTranslation && workspaceLayer === "translated" && (
                             <>
                               <div ref={organizeMenuRef} className="relative inline-flex items-center rounded-lg border border-primary/40 bg-primary/10 shadow-xs shrink-0">
                                 <button
                                   type="button"
-                                  onClick={handleAutoOrganizeCurrentPage}
+                                  onClick={() => {
+                                    setIsOrganizeMenuOpen(false);
+                                    void handleAutoOrganizeCurrentPage();
+                                  }}
                                   disabled={operationBusy}
                                   aria-label="จัดระเบียบข้อความออโต้"
                                   title="จัดระเบียบบับเบิลหน้านี้ให้อัตโนมัติ (Auto-Fit & De-overlap)"
@@ -3497,7 +3502,10 @@ export default function WorkspacePage() {
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => setIsOrganizeMenuOpen((prev) => !prev)}
+                                  onClick={() => {
+                                    setIsBwContrastMenuOpen(false);
+                                    setIsOrganizeMenuOpen((prev) => !prev);
+                                  }}
                                   disabled={operationBusy}
                                   aria-label="ตัวเลือกจัดระเบียบบับเบิล"
                                   title="ตัวเลือกจัดระเบียบหน้านี้ หรือทุกหน้า"
@@ -3506,7 +3514,11 @@ export default function WorkspacePage() {
                                   <ChevronDown className="h-3 w-3 shrink-0" />
                                 </button>
                                 {isOrganizeMenuOpen && (
-                                  <div className="absolute top-full mt-1.5 right-0 sm:left-0 z-50 min-w-[185px] py-1 bg-surface border border-border rounded-lg shadow-xl text-xs font-medium">
+                                  <div
+                                    role="menu"
+                                    aria-label="เมนูตัวเลือกจัดระเบียบบับเบิล"
+                                    className={`absolute ${toolbarPosition === "bottom" ? "bottom-full mb-1.5" : "top-full mt-1.5"} right-0 sm:left-0 z-50 min-w-[195px] py-1 bg-surface border border-border rounded-lg shadow-2xl text-xs font-medium`}
+                                  >
                                     <button
                                       type="button"
                                       onClick={() => {
@@ -3536,7 +3548,10 @@ export default function WorkspacePage() {
                               <div ref={bwContrastMenuRef} className="relative inline-flex items-center rounded-lg border border-border/80 bg-background/90 shadow-xs shrink-0">
                                 <button
                                   type="button"
-                                  onClick={() => void handleApplyBwContrastCurrentPage("black_on_white")}
+                                  onClick={() => {
+                                    setIsBwContrastMenuOpen(false);
+                                    void handleApplyBwContrastCurrentPage("black_on_white");
+                                  }}
                                   disabled={operationBusy}
                                   aria-label="ปรับข้อความขาว-ดำให้อ่านง่าย"
                                   title="ปรับหน้านี้เป็นโหมด ดำ-ขาว (ตัวดำ ขอบขาวหนา) ให้อ่านง่ายบนพื้นหลังมืด/เทา"
@@ -3547,7 +3562,10 @@ export default function WorkspacePage() {
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => setIsBwContrastMenuOpen((prev) => !prev)}
+                                  onClick={() => {
+                                    setIsOrganizeMenuOpen(false);
+                                    setIsBwContrastMenuOpen((prev) => !prev);
+                                  }}
                                   disabled={operationBusy}
                                   aria-label="ตัวเลือกโหมดสีขาว-ดำ"
                                   title="เลือกโหมดสี ขาว-ดำ / ดำ-ขาว สำหรับหน้านี้หรือทุกหน้า"
@@ -3556,7 +3574,11 @@ export default function WorkspacePage() {
                                   <ChevronDown className="h-3 w-3 shrink-0" />
                                 </button>
                                 {isBwContrastMenuOpen && (
-                                  <div className="absolute top-full mt-1.5 right-0 sm:left-0 z-50 min-w-[235px] py-1.5 bg-surface border border-border rounded-lg shadow-xl text-xs font-medium">
+                                  <div
+                                    role="menu"
+                                    aria-label="เมนูตัวเลือกโหมดสีขาว-ดำ"
+                                    className={`absolute ${toolbarPosition === "bottom" ? "bottom-full mb-1.5" : "top-full mt-1.5"} right-0 sm:left-0 z-50 min-w-[240px] py-1.5 bg-surface border border-border rounded-lg shadow-2xl text-xs font-medium`}
+                                  >
                                     <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted">
                                       หน้านี้ (หน้า {currentPage + 1})
                                     </div>
@@ -3647,7 +3669,7 @@ export default function WorkspacePage() {
                               </div>
                             </>
                           )}
-                        </label>
+                        </div>
                       )}
                     </CleaningToolbar>
                     {currentPageUrl &&

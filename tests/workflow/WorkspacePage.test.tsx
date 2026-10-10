@@ -63,10 +63,12 @@ vi.mock("@/components/cleaning/CleaningToolbar", () => ({
       onClean,
       onEditMask,
       onLayerChange,
+      className,
       children,
     }: ComponentProps<typeof CleaningToolbar>) => (
       <section
         aria-label="Cleaning toolbar"
+        className={className}
         data-has-translated={String(hasTranslated)}
         data-layer={layer}
       >
@@ -1196,5 +1198,45 @@ test("batch translate book runs auto-organization after batch translation comple
 
   expect(mockHandleTranslateAll).toHaveBeenCalled();
   expect(autoOrganizePageBubbles).toHaveBeenCalled();
+});
+
+test("cleaning toolbar keeps dropdown menus unclipped (overflow-visible) and outside <label> so organize and B&W contrast dropdowns open cleanly", async () => {
+  const dummyBubble = { id: "b1", original_text: "こんにちは", translated_text: "สวัสดี", text: "สวัสดี", box: [10, 10, 100, 50] };
+  vi.mocked(useTranslation).mockReturnValue({
+    ...translationMockState,
+    activeBubbles: [dummyBubble],
+    bubbleCacheRef: { current: new Map([[ORIGINAL_URL, [dummyBubble]]]) },
+    restoreSavedSession: vi.fn().mockResolvedValue({
+      pages: [{ url: ORIGINAL_URL, name: PAGE_NAME }],
+      currentPage: 0,
+    }),
+  } as never);
+
+  await renderRestoredWorkspace();
+  fireEvent.click(screen.getByRole("button", { name: "Layer translated" }));
+
+  const cleaningToolbar = screen.getByRole("region", { name: "Cleaning toolbar" });
+  expect(cleaningToolbar.className).not.toContain("overflow-x-auto");
+  expect(cleaningToolbar.className).not.toContain("overflow-hidden");
+  expect(cleaningToolbar.className).toContain("overflow-visible");
+
+  const organizeDropdownBtn = screen.getByRole("button", { name: "ตัวเลือกจัดระเบียบบับเบิล" });
+  const bwDropdownBtn = screen.getByRole("button", { name: "ตัวเลือกโหมดสีขาว-ดำ" });
+
+  // Neither split-button dropdown should be nested inside a <label>
+  expect(organizeDropdownBtn.closest("label")).toBeNull();
+  expect(bwDropdownBtn.closest("label")).toBeNull();
+
+  // Clicking B&W contrast chevron opens all contrast options
+  fireEvent.click(bwDropdownBtn);
+  expect(screen.getByRole("button", { name: /ดำ-ขาว \(ตัวดำ ขอบขาวหนา\)/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /ขาว-ดำ \(ตัวขาว ขอบดำหนา\)/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /ดำ-ขาว ทุกหน้า/ })).toBeInTheDocument();
+
+  // Clicking Organize chevron closes B&W menu and opens Organize options
+  fireEvent.click(organizeDropdownBtn);
+  expect(screen.queryByRole("button", { name: /ดำ-ขาว ทุกหน้า/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /จัดระเบียบหน้านี้/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /จัดระเบียบทุกหน้า/ })).toBeInTheDocument();
 });
 

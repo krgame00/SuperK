@@ -57,7 +57,7 @@ export function CleaningToolbar({
       aria-label="เครื่องมือคลีนข้อความ"
       className={
         className ??
-        "flex flex-nowrap w-full max-w-5xl items-center justify-between gap-1.5 sm:gap-2 rounded-xl border border-border/70 bg-surface/90 px-2 sm:px-3 py-1.5 shadow-md backdrop-blur-md transition-all overflow-x-auto no-scrollbar"
+        "relative z-30 flex flex-wrap sm:flex-nowrap w-full max-w-5xl items-center justify-between gap-1.5 sm:gap-2 rounded-xl border border-border/70 bg-surface/90 px-2 sm:px-3 py-1.5 shadow-md backdrop-blur-md transition-all overflow-visible"
       }
     >
       <div className="flex flex-nowrap min-w-0 items-center gap-1.5 sm:gap-2 shrink-0">
