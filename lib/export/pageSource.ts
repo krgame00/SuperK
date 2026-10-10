@@ -26,7 +26,11 @@ export async function exportImageBlob(url: string, fetcher: typeof fetch = fetch
     const mime = header.match(/^data:([^;,]+)/)?.[1] ?? "application/octet-stream";
     const payload = url.slice(separator + 1);
     const binary = /;base64$/i.test(header) ? atob(payload) : decodeURIComponent(payload);
-    return new Blob([Uint8Array.from(binary, char => char.charCodeAt(0))], { type: mime });
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new Blob([bytes], { type: mime });
   }
   const response = await fetcher(url);
   if (!response.ok) throw new Error("โหลดภาพสำหรับส่งออกไม่สำเร็จ");

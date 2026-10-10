@@ -292,8 +292,8 @@ export const saveOverlayAdjustments = (adjustments: Record<string, Record<string
   } catch {}
 };
 
-const compactOverlayPageKey = (pageKey: string): string => {
-  if (pageKey.length <= 512) return pageKey;
+export const compactOverlayPageKey = (pageKey: string): string => {
+  if (!pageKey.startsWith("data:") && pageKey.length <= 512) return pageKey;
 
   // Imported pages are durable data URLs. Using the full base64 payload as a
   // localStorage object key can consume megabytes per page and silently hit
@@ -317,11 +317,19 @@ export const syncPageOverlayAdjustments = (pageKey: string, bubbles: TranslatedB
   try {
     const storagePageKey = compactOverlayPageKey(pageKey);
     const all = readOverlayAdjustments();
-    if (!all[storagePageKey]) all[storagePageKey] = {};
+    const nextPageAdj: Record<string, OverlayAdjustment> = {};
     for (const b of bubbles) {
       if (!b || b.deleted || !b.layoutAdjustment) continue;
       const bubbleId = bubbleKeyOf(b);
-      all[storagePageKey][bubbleId] = { ...b.layoutAdjustment };
+      nextPageAdj[bubbleId] = { ...b.layoutAdjustment };
+    }
+    if (Object.keys(nextPageAdj).length > 0) {
+      all[storagePageKey] = nextPageAdj;
+    } else {
+      delete all[storagePageKey];
+    }
+    if (storagePageKey !== pageKey && all[pageKey]) {
+      delete all[pageKey];
     }
     saveOverlayAdjustments(all);
   } catch {}
@@ -879,8 +887,16 @@ export const applyTranslationOverlay = async (
     }
     if (isStaleOverlay()) return;
     if (!img.naturalWidth && !img.complete && attempt < 25) {
-      img.addEventListener("load", () => void paint(attempt + 1), { once: true });
-      setTimeout(() => paint(attempt + 1), 50);
+      let timer: ReturnType<typeof setTimeout>;
+      const onLoad = () => {
+        clearTimeout(timer);
+        void paint(attempt + 1);
+      };
+      timer = setTimeout(() => {
+        img.removeEventListener("load", onLoad);
+        void paint(attempt + 1);
+      }, 50);
+      img.addEventListener("load", onLoad, { once: true });
       return;
     }
     const iw = img.naturalWidth || img.offsetWidth;
@@ -1237,7 +1253,12 @@ export const applyTranslationOverlay = async (
           height: currentBh,
         });
         const footprint = measureFootprintBackgroundLuminance(footprintSample);
-        if (footprint && footprint.isNonWhiteFootprint) {
+        if (
+          footprint &&
+          (footprint.isNonWhiteFootprint ||
+            (typeof b.styleProfile.backgroundLuminance === "number" &&
+              b.styleProfile.backgroundLuminance < 195))
+        ) {
           b.styleProfile = {
             ...b.styleProfile,
             backgroundLuminance: footprint.backgroundLuminance,

@@ -479,6 +479,7 @@ export default function WorkspacePage() {
     cancelWholeBookRepair,
     isRepairingBook,
     replaceBubbleText,
+    markPageDirty,
     getPageSignature,
     getPageSourceRevision,
     resizeSavedText,
@@ -488,16 +489,31 @@ export default function WorkspacePage() {
     pages: pageUrls,
     pageIds,
     pageNames,
-    pageOriginUrls: pages.map((p) => p.originUrl),
-    pageReaderImageUrls: pages.map((p) => p.readerImageUrl),
-    pageExportSources: pages.map((p) => normalizePageExportSource(p.exportSource)),
-    pageSourceFingerprints: new Map([
-      ...pages.flatMap(page => page.sourceFingerprint ? [[page.url, page.sourceFingerprint] as const] : []),
-      ...[...cleaningResultsByPage].flatMap(([url, result]) => result.sourceFingerprint ? [[url, result.sourceFingerprint] as const] : []),
-    ]),
+    pageOriginUrls: useMemo(() => pages.map((p) => p.originUrl), [pages]),
+    pageReaderImageUrls: useMemo(() => pages.map((p) => p.readerImageUrl), [pages]),
+    pageExportSources: useMemo(
+      () => pages.map((p) => normalizePageExportSource(p.exportSource)),
+      [pages],
+    ),
+    pageSourceFingerprints: useMemo(
+      () =>
+        new Map([
+          ...pages.flatMap((page) =>
+            page.sourceFingerprint ? ([[page.url, page.sourceFingerprint] as const]) : [],
+          ),
+          ...[...cleaningResultsByPage].flatMap(([url, result]) =>
+            result.sourceFingerprint ? ([[url, result.sourceFingerprint] as const]) : [],
+          ),
+        ]),
+      [pages, cleaningResultsByPage],
+    ),
     viewMode: "single",
     preparePageForTranslation,
-    onPageDirtied: (pageUrl) => {
+    getCleanedPageUrl: useCallback(
+      (pageUrl: string) => cleaningResultsByPage.get(pageUrl)?.cleanUrl,
+      [cleaningResultsByPage],
+    ),
+    onPageDirtied: useCallback((pageUrl: string) => {
       dirtyExportPagesRef.current.add(pageUrl);
       setConfirmedPages((prev) => {
         if (!prev.has(pageUrl)) return prev;
@@ -505,7 +521,7 @@ export default function WorkspacePage() {
         next.delete(pageUrl);
         return next;
       });
-    },
+    }, []),
   });
 
   const getExpectedRemnantEvidence = useCallback((pageUrl: string): PageRemnantTextEvidence => ({
@@ -514,11 +530,17 @@ export default function WorkspacePage() {
       !bubble.deleted && bubble.original_text?.trim() && bubble.box?.length === 4 && bubble.box.every(Number.isFinite)
         ? [{ id: String(index), box: [...bubble.box] }] : []),
   }), [bubbleCacheRef, getPageSourceRevision]);
-  const remnantEvidenceKey = JSON.stringify(pages.map(page => [page.url, getExpectedRemnantEvidence(page.url)]));
+  const remnantEvidenceKey = pages
+    .map((page, idx) => {
+      const ev = getExpectedRemnantEvidence(page.url);
+      return `${page.id ?? idx}:${ev.sourceContext}:${ev.textEvidence.map((t) => `${t.id}@${t.box.join(",")}`).join(";")}`;
+    })
+    .join("|");
   useEffect(() => {
-    const entries = JSON.parse(remnantEvidenceKey) as [string, PageRemnantTextEvidence][];
-    for (const [url, evidence] of entries) setPageRemnantTextEvidence?.(url, evidence);
-  }, [remnantEvidenceKey, setPageRemnantTextEvidence]);
+    for (const page of pages) {
+      setPageRemnantTextEvidence?.(page.url, getExpectedRemnantEvidence(page.url));
+    }
+  }, [pages, remnantEvidenceKey, translationCacheRevision, getExpectedRemnantEvidence, setPageRemnantTextEvidence]);
 
   useEffect(() => {
     if (!translatedImages) return;
@@ -671,6 +693,7 @@ export default function WorkspacePage() {
     syncPageOverlayAdjustments(currentPageUrl, result.optimizedBubbles);
     setActiveBubbles(result.optimizedBubbles);
     dirtyExportPagesRef.current.add(currentPageUrl);
+    markPageDirty?.(currentPageUrl);
 
     // 1. Immediately re-render the active visible screen overlay in #pageContainer
     const pageContainer = document.getElementById("pageContainer");
@@ -801,6 +824,7 @@ export default function WorkspacePage() {
         bubbleCacheRef.current.set(pageUrl, result.optimizedBubbles);
         syncPageOverlayAdjustments(pageUrl, result.optimizedBubbles);
         dirtyExportPagesRef.current.add(pageUrl);
+        markPageDirty?.(pageUrl);
         totalAdjusted += result.adjustedCount;
         processedCount++;
 
@@ -910,6 +934,7 @@ export default function WorkspacePage() {
       syncPageOverlayAdjustments(currentPageUrl, updated);
       setActiveBubbles(updated);
       dirtyExportPagesRef.current.add(currentPageUrl);
+      markPageDirty?.(currentPageUrl);
 
       const targetLangCode =
         getPageTargetLanguage?.(currentPageUrl) ?? targetLang ?? "th";
@@ -1008,6 +1033,7 @@ export default function WorkspacePage() {
           bubbleCacheRef.current.set(pageUrl, updated);
           syncPageOverlayAdjustments(pageUrl, updated);
           dirtyExportPagesRef.current.add(pageUrl);
+          markPageDirty?.(pageUrl);
           processedCount++;
 
           const targetLangCode =
@@ -2243,7 +2269,8 @@ export default function WorkspacePage() {
         setTimeout(() => setTranslationResult(null), 3000);
       } finally {
         setIsZipping(false);
-      exportSnapshotRef.current = null;
+        allowUnreviewedExportRef.current = false;
+        exportSnapshotRef.current = null;
       }
       return;
     }
@@ -2276,6 +2303,7 @@ export default function WorkspacePage() {
     if (failedExportPages.length > 0) {
       reportRenderFailures();
       setIsZipping(false);
+      allowUnreviewedExportRef.current = false;
       exportSnapshotRef.current = null;
       return;
     }

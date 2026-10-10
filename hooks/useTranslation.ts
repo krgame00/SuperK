@@ -141,6 +141,7 @@ interface UseTranslationProps {
     pageIndex: number,
     signal?: AbortSignal,
   ) => Promise<PreparedTranslationPage>;
+  getCleanedPageUrl?: (pageUrl: string) => string | undefined;
   onPageDirtied?: (pageUrl: string) => void;
 }
 
@@ -304,8 +305,11 @@ export function useTranslation({
   pageReaderImageUrls,
   viewMode,
   preparePageForTranslation,
+  getCleanedPageUrl,
   onPageDirtied,
 }: UseTranslationProps) {
+  const getCleanedPageUrlRef = useRef(getCleanedPageUrl);
+  getCleanedPageUrlRef.current = getCleanedPageUrl;
   const preparedSourceFingerprintsRef = useRef(new Map<string,string>());
   const suppliedSourceFingerprintsRef = useRef(pageSourceFingerprints);
   suppliedSourceFingerprintsRef.current = pageSourceFingerprints;
@@ -2571,9 +2575,10 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     const activeUrl = activePageRef.current;
     for (const pageUrl of touchedPages) {
       markPageDirty(pageUrl);
+      const backgroundUrl = getCleanedPageUrlRef.current?.(pageUrl) || pageUrl;
       void renderAndCacheTranslation(
         bubbleCacheRef.current.get(pageUrl) ?? [],
-        pageUrl,
+        backgroundUrl,
         pageUrl,
         pagesRef.current.indexOf(pageUrl),
       ).catch(() => {
@@ -2681,7 +2686,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           break;
         }
         markPageDirty(pageUrl);
-        await renderAndCacheTranslation(bubbles, pageUrl, pageUrl, pageIndex).catch(() => {
+        const backgroundUrl = getCleanedPageUrlRef.current?.(pageUrl) || pageUrl;
+        await renderAndCacheTranslation(bubbles, backgroundUrl, pageUrl, pageIndex).catch(() => {
           translatedImageCacheRef.current.delete(pageUrl);
           setTranslatedImages(new Map(translatedImageCacheRef.current));
         });

@@ -439,3 +439,87 @@ test("whole-book repair cancellation keeps completed pages and stops remaining w
   // The page after cancellation keeps its saved contaminated text.
   expect(result.current.bubbleCacheRef.current.get(PAGE_B)![0].t).toBe("สวัสดีB");
 });
+
+test("whole-book repair and its Undo/Redo render onto cleaned page background instead of raw uncleaned pageUrl", async () => {
+  const { applyTranslationOverlay } = await import("@/lib/translationOverlay");
+  const renderedBackgroundSrcs: string[] = [];
+  vi.mocked(applyTranslationOverlay).mockImplementation(
+    async (
+      _bubbles,
+      viewMode,
+      _pageIndex,
+      _setTranslationResult,
+      onComplete,
+      _textStyleRef,
+      containerOverride,
+    ) => {
+      if (viewMode === "offscreen" && containerOverride) {
+        const img = containerOverride.querySelector("img");
+        if (img) renderedBackgroundSrcs.push(img.getAttribute("src") || img.src);
+      }
+      onComplete?.("data:rendered");
+    },
+  );
+
+  vi.mocked(loadProjectSession).mockResolvedValue(makeLegacySession());
+  const cleanMap = new Map<string, string>([
+    [PAGE_A, "blob:clean-page-a"],
+    [PAGE_B, "blob:clean-page-b"],
+    [PAGE_C, "blob:clean-page-c"],
+  ]);
+  const { result } = renderHook(() =>
+    useTranslation({
+      currentPage: 0,
+      pages: PAGES,
+      pageSourceFingerprints: new Map(PAGES.map((url) => [url, `original:${url}`])),
+      viewMode: "single",
+      preparePageForTranslation: vi.fn().mockResolvedValue({
+        recognitionUrl: PAGE_A,
+        backgroundUrl: "blob:clean-page-a",
+      }),
+      getCleanedPageUrl: (url) => cleanMap.get(url),
+    }),
+  );
+
+  await act(async () => {
+    await result.current.restoreSavedSession();
+  });
+  act(() => {
+    result.current.confirmLegacyTarget();
+  });
+
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (String(input) !== "/api/translation-review") throw new Error(`unexpected fetch: ${String(input)}`);
+    const body = JSON.parse(String(init?.body)) as ReviewBody & { targetLang?: string };
+    const replacement = body.targetLang === "ja" ? "こんにちは" : "สวัสดี";
+    if (body.mode === "repair") {
+      return Response.json({
+        reviews: body.items.map((item) => ({ id: item.id, status: "suggested", suggestion: replacement })),
+      });
+    }
+    return Response.json({ reviews: body.items.map((item) => ({ id: item.id, status: "needs_review" })) });
+  });
+
+  renderedBackgroundSrcs.length = 0;
+  await act(async () => {
+    await result.current.repairWholeBook();
+  });
+
+  expect(renderedBackgroundSrcs).toEqual([
+    "blob:clean-page-a",
+    "blob:clean-page-b",
+    "blob:clean-page-c",
+  ]);
+
+  renderedBackgroundSrcs.length = 0;
+  await act(async () => {
+    expect(undoManager.undo()).not.toBeNull();
+    await Promise.resolve();
+  });
+  expect(renderedBackgroundSrcs).toEqual([
+    "blob:clean-page-a",
+    "blob:clean-page-b",
+    "blob:clean-page-c",
+  ]);
+});
+
