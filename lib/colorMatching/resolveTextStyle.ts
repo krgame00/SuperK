@@ -3,6 +3,7 @@ import { inferTextStyleCategory } from "./nearbyStyleFallback";
 import { colorDistance, extractTextColors, rgbToHex } from "./sampleTextColors";
 import {
   createDefaultStyleProfile,
+  type BwContrastMode,
   type ColorSampleRegion,
   type StyleSource,
   type TextGradientStyle,
@@ -23,6 +24,7 @@ export const TEXT_RENDER_POLICY_VERSION = "subtle-artwork-shadow-v1";
 
 function usesAutomaticShadowPolicy(bubble: TranslatedBubble): boolean {
   const profile = bubble.styleProfile;
+  if (profile?.bwContrastMode) return false;
   return !bubble.deleted && profile?.source !== "manual" && profile?.ownershipMode !== "manual" &&
     profile?.ownershipMode !== "source_faithful";
 }
@@ -31,7 +33,8 @@ function usesAutomaticShadowPolicy(bubble: TranslatedBubble): boolean {
 export function usesAutoWhiteArtwork(bubble: TranslatedBubble): boolean {
   const profile = bubble.styleProfile;
   if (!profile || bubble.deleted || profile.source === "manual" ||
-      (profile.ownershipMode && profile.ownershipMode !== "auto")) return false;
+      (profile.ownershipMode && profile.ownershipMode !== "auto") ||
+      profile.bwContrastMode) return false;
   const category = inferTextStyleCategory(bubble);
   if (category === "overlay_subtitle") return true;
   if (shouldUseMonochromeMangaStyle(profile, category)) return false;
@@ -624,6 +627,68 @@ function resolveBubbleTextStyleBase(
   const fillConf = profile.fillConfidence ?? 1.0;
   const outlineConf = profile.outlineConfidence ?? 1.0;
 
+  // Explicit B&W Contrast Modes (ดำ-ขาว / ขาว-ดำ / ดำล้วน)
+  if (profile.bwContrastMode === "black_on_white") {
+    return {
+      textColor: "#000000",
+      textOutline: "#ffffff",
+      outlineWidth: 1.0,
+      hasOutline: true,
+      outlineWidthRatio: 0.24,
+      opacity: profile.opacity ?? 1.0,
+      source: "manual",
+      fillConfidence: 1.0,
+      outlineConfidence: 1.0,
+      shadow: undefined,
+      glow: undefined,
+      readabilityHalo: undefined,
+      backgroundLuminance: profile.backgroundLuminance,
+      backgroundLuminanceSamples: profile.backgroundLuminanceSamples,
+      backgroundColor: profile.backgroundColor,
+      isAdaptiveReadable: true,
+    };
+  }
+  if (profile.bwContrastMode === "white_on_black") {
+    return {
+      textColor: "#ffffff",
+      textOutline: "#000000",
+      outlineWidth: 1.0,
+      hasOutline: true,
+      outlineWidthRatio: 0.22,
+      opacity: profile.opacity ?? 1.0,
+      source: "manual",
+      fillConfidence: 1.0,
+      outlineConfidence: 1.0,
+      shadow: undefined,
+      glow: undefined,
+      readabilityHalo: undefined,
+      backgroundLuminance: profile.backgroundLuminance,
+      backgroundLuminanceSamples: profile.backgroundLuminanceSamples,
+      backgroundColor: profile.backgroundColor,
+      isAdaptiveReadable: true,
+    };
+  }
+  if (profile.bwContrastMode === "pure_black") {
+    return {
+      textColor: "#000000",
+      textOutline: "#ffffff",
+      outlineWidth: 0,
+      hasOutline: false,
+      outlineWidthRatio: 0,
+      opacity: profile.opacity ?? 1.0,
+      source: "manual",
+      fillConfidence: 1.0,
+      outlineConfidence: 1.0,
+      shadow: undefined,
+      glow: undefined,
+      readabilityHalo: undefined,
+      backgroundLuminance: profile.backgroundLuminance,
+      backgroundLuminanceSamples: profile.backgroundLuminanceSamples,
+      backgroundColor: profile.backgroundColor,
+      isAdaptiveReadable: false,
+    };
+  }
+
   // Manual user styling is authoritative until the user explicitly returns to Auto/Original.
   // This is the only mode allowed to override the monochrome page policy.
   if (profile.ownershipMode === "manual" || profile.source === "manual") {
@@ -636,15 +701,55 @@ function resolveBubbleTextStyleBase(
     return resolveAutoWhiteArtwork(profile, category, minConfidence);
   }
 
-  // Confirmed monochrome pages use pure black text for every automatic category.
-  if (profile.ownershipMode !== "readable" && profile.ownershipMode !== "source_faithful" &&
-      shouldUseMonochromeMangaStyle(profile, category)) {
+  // Confirmed monochrome pages (or explicit bwContrastMode === "auto"):
+  // Pure black text without outline/shadow inside clean white speech balloons (ADR 0016),
+  // and high-contrast B&W outline when sitting over dark, gray screentone, or mixed backgrounds.
+  if (
+    profile.bwContrastMode === "auto" ||
+    (profile.ownershipMode !== "readable" &&
+      profile.ownershipMode !== "source_faithful" &&
+      shouldUseMonochromeMangaStyle(profile, category))
+  ) {
+    const bgLum = profile.backgroundLuminance;
+    const validSamples = (profile.backgroundLuminanceSamples ?? []).filter(
+      (s): s is number => typeof s === "number" && !Number.isNaN(s),
+    );
+    const sortedSamples = [...validSamples].sort((a, b) => a - b);
+    const minSample = sortedSamples[0];
+    const maxSample = sortedSamples[sortedSamples.length - 1];
+    const p20 =
+      sortedSamples.length > 0
+        ? sortedSamples[Math.floor(sortedSamples.length * 0.20)]
+        : undefined;
+    const p80 =
+      sortedSamples.length > 0
+        ? sortedSamples[Math.floor(sortedSamples.length * 0.80)]
+        : undefined;
+
+    const isMixedBg =
+      sortedSamples.length >= 2 &&
+      ((maxSample - minSample >= 80 && (p20 ?? minSample) < 155) ||
+        (p20 !== undefined && p20 < 150));
+    const isDarkOrGrayBg = typeof bgLum === "number" && bgLum < 170;
+    const needsContrastOutline = isDarkOrGrayBg || isMixedBg;
+
+    const useInvertedWhiteOnBlack =
+      profile.bwContrastMode === "auto" &&
+      typeof bgLum === "number" &&
+      bgLum <= 65 &&
+      (p80 === undefined || p80 <= 115);
+
+    const textColor = useInvertedWhiteOnBlack ? "#ffffff" : "#000000";
+    const textOutline = useInvertedWhiteOnBlack ? "#000000" : "#ffffff";
+    const hasOutline = useInvertedWhiteOnBlack || needsContrastOutline;
+    const outlineWidthRatio = hasOutline ? 0.22 : 0;
+
     return {
-      textColor: "#000000",
-      textOutline: "#ffffff",
-      outlineWidth: 0,
-      hasOutline: false,
-      outlineWidthRatio: 0,
+      textColor,
+      textOutline,
+      outlineWidth: hasOutline ? 1.0 : 0,
+      hasOutline,
+      outlineWidthRatio,
       opacity: profile.opacity ?? 1.0,
       source: profile.source ?? "auto",
       fillConfidence: fillConf,
@@ -656,7 +761,7 @@ function resolveBubbleTextStyleBase(
       backgroundLuminance: profile.backgroundLuminance,
       backgroundLuminanceSamples: profile.backgroundLuminanceSamples,
       backgroundColor: profile.backgroundColor,
-      isAdaptiveReadable: false,
+      isAdaptiveReadable: hasOutline,
       reviewRequired: profile.reviewRequired ? true : undefined,
     };
   }
@@ -913,7 +1018,8 @@ export function preserveManualStyleProfiles(
       !bubble.deleted &&
       (bubble.styleProfile?.source === "manual" ||
         bubble.styleProfile?.ownershipMode === "manual" ||
-        bubble.styleProfile?.ownershipMode === "readable"),
+        bubble.styleProfile?.ownershipMode === "readable" ||
+        Boolean(bubble.styleProfile?.bwContrastMode)),
   );
   if (manual.length === 0) return nextBubbles;
 
@@ -922,7 +1028,8 @@ export function preserveManualStyleProfiles(
     if (
       next.styleProfile?.source === "manual" ||
       next.styleProfile?.ownershipMode === "manual" ||
-      next.styleProfile?.ownershipMode === "readable"
+      next.styleProfile?.ownershipMode === "readable" ||
+      Boolean(next.styleProfile?.bwContrastMode)
     ) {
       continue;
     }
@@ -978,8 +1085,13 @@ export function recomputeAdaptiveReadableOnLayoutCommit(
     backgroundSample.height > 0
   ) {
     const extracted = extractTextColors(backgroundSample);
-    const newBgLum = extracted.backgroundLuminance;
-    const newBgSamples = extracted.backgroundLuminanceSamples;
+    const footprint = measureFootprintBackgroundLuminance(backgroundSample);
+    const newBgLum = footprint?.isNonWhiteFootprint
+      ? footprint.backgroundLuminance
+      : extracted.backgroundLuminance;
+    const newBgSamples = footprint?.isNonWhiteFootprint
+      ? footprint.backgroundLuminanceSamples
+      : extracted.backgroundLuminanceSamples;
     const newBgColor = extracted.backgroundColor;
 
     const ownershipMode =
@@ -1028,3 +1140,191 @@ export function recomputeAdaptiveReadableOnLayoutCommit(
 
   return bubble;
 }
+
+export interface FootprintLuminanceMeasurement {
+  backgroundLuminance: number;
+  backgroundLuminanceSamples: number[];
+  isNonWhiteFootprint: boolean;
+}
+
+/**
+ * Measures the background luminance distribution inside the rendered text footprint.
+ * - Uses percentiles (p10, p25, p50, p75, p90) of the inner core (15%..85% width/height)
+ *   so that a clean white speech balloon with < 20% thin dark ink strokes stays recognized
+ *   as a clean white balloon (`isNonWhiteFootprint === false`), whereas gray screentones,
+ *   dark hair, or mixed panels (`p25 < 170` or `p50 < 190` or `midGrayRatio >= 0.20`)
+ *   are detected (`isNonWhiteFootprint === true`) so high-contrast B&W outlines kick in.
+ */
+export function measureFootprintBackgroundLuminance(
+  sample?: ColorSampleRegion | null,
+): FootprintLuminanceMeasurement | null {
+  if (!sample || !sample.rgba || sample.width <= 0 || sample.height <= 0) {
+    return null;
+  }
+
+  const { width, height, rgba } = sample;
+  const x0 = Math.max(0, Math.floor(width * 0.12));
+  const x1 = Math.max(x0 + 1, Math.ceil(width * 0.88));
+  const y0 = Math.max(0, Math.floor(height * 0.12));
+  const y1 = Math.max(y0 + 1, Math.ceil(height * 0.88));
+
+  const lums: number[] = [];
+  let midGrayCount = 0;
+
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const idx = (y * width + x) * 4;
+      const a = rgba[idx + 3] ?? 255;
+      if (a < 32) continue;
+      const r = rgba[idx];
+      const g = rgba[idx + 1];
+      const b = rgba[idx + 2];
+      const lum = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+      lums.push(lum);
+      if (lum >= 50 && lum <= 178) {
+        midGrayCount++;
+      }
+    }
+  }
+
+  if (lums.length === 0) return null;
+
+  lums.sort((a, b) => a - b);
+  const pick = (q: number) =>
+    lums[Math.min(lums.length - 1, Math.max(0, Math.floor(lums.length * q)))];
+
+  const p10 = pick(0.10);
+  const p25 = pick(0.25);
+  const p50 = pick(0.50);
+  const p75 = pick(0.75);
+  const p90 = pick(0.90);
+  const midGrayRatio = midGrayCount / lums.length;
+
+  const isNonWhiteFootprint =
+    p25 < 170 || p50 < 195 || midGrayRatio >= 0.20;
+
+  // When non-white footprint is detected (e.g. dark hair or gray screentone after inpainting),
+  // use p35 so partial white patches don't hide the dark/gray region.
+  const effectiveLum = isNonWhiteFootprint ? pick(0.35) : p50;
+
+  return {
+    backgroundLuminance: effectiveLum,
+    backgroundLuminanceSamples: [p10, p25, p50, p75, p90],
+    isNonWhiteFootprint,
+  };
+}
+
+/**
+ * Applies a high-contrast B&W readability preset ("black_on_white", "white_on_black",
+ * "pure_black", or "auto") to a single bubble and returns a new bubble clone.
+ */
+export function applyBwContrastModeToBubble(
+  bubble: TranslatedBubble,
+  mode: BwContrastMode,
+): TranslatedBubble {
+  const baseProfile = bubble.styleProfile
+    ? cloneTextStyleProfile(bubble.styleProfile)!
+    : createDefaultStyleProfile("auto");
+
+  if (mode === "black_on_white") {
+    return {
+      ...bubble,
+      styleProfile: {
+        ...baseProfile,
+        bwContrastMode: "black_on_white",
+        ownershipMode: "manual",
+        source: "manual",
+        fill: "#000000",
+        outline: "#ffffff",
+        hasOutline: true,
+        outlineWidth: 1.0,
+        outlineWidthRatio: 0.24,
+        shadow: undefined,
+        glow: undefined,
+        isAdaptiveReadable: true,
+      },
+    };
+  }
+
+  if (mode === "white_on_black") {
+    return {
+      ...bubble,
+      styleProfile: {
+        ...baseProfile,
+        bwContrastMode: "white_on_black",
+        ownershipMode: "manual",
+        source: "manual",
+        fill: "#ffffff",
+        outline: "#000000",
+        hasOutline: true,
+        outlineWidth: 1.0,
+        outlineWidthRatio: 0.22,
+        shadow: undefined,
+        glow: undefined,
+        isAdaptiveReadable: true,
+      },
+    };
+  }
+
+  if (mode === "pure_black") {
+    return {
+      ...bubble,
+      styleProfile: {
+        ...baseProfile,
+        bwContrastMode: "pure_black",
+        ownershipMode: "manual",
+        source: "manual",
+        fill: "#000000",
+        outline: "#ffffff",
+        hasOutline: false,
+        outlineWidth: 0,
+        outlineWidthRatio: 0,
+        shadow: undefined,
+        glow: undefined,
+        isAdaptiveReadable: false,
+      },
+    };
+  }
+
+  // mode === "auto"
+  const tempBubble: TranslatedBubble = {
+    ...bubble,
+    styleProfile: {
+      ...baseProfile,
+      bwContrastMode: "auto",
+      ownershipMode: "auto",
+      source: baseProfile.source === "manual" ? "auto" : baseProfile.source,
+      isMonochromePage: true,
+      monochromeConfidence: Math.max(baseProfile.monochromeConfidence ?? 0, 0.95),
+    },
+  };
+  const resolved = resolveBubbleTextStyleBase(tempBubble);
+
+  return {
+    ...bubble,
+    styleProfile: {
+      ...tempBubble.styleProfile!,
+      fill: resolved.textColor,
+      outline: resolved.textOutline,
+      hasOutline: resolved.hasOutline,
+      outlineWidth: resolved.outlineWidth,
+      outlineWidthRatio: resolved.outlineWidthRatio,
+      shadow: undefined,
+      glow: undefined,
+      isAdaptiveReadable: resolved.isAdaptiveReadable,
+    },
+  };
+}
+
+/**
+ * Applies a B&W contrast preset to an array of bubbles (skipping deleted bubbles).
+ */
+export function applyBwContrastModeToBubbles(
+  bubbles: TranslatedBubble[],
+  mode: BwContrastMode,
+): TranslatedBubble[] {
+  return bubbles.map((b) =>
+    b.deleted ? b : applyBwContrastModeToBubble(b, mode),
+  );
+}
+

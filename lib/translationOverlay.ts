@@ -6,6 +6,9 @@ import { guardQualityReview, unavailableReview, invalidateQualityReview, isRevie
 import type { TranslationReview } from "./translation/qualityReview";
 import { inspectTargetText, formatOffendingCharacters } from "./languagePolicy";
 import {
+  applyBwContrastModeToBubble,
+  cloneTextStyleProfile,
+  measureFootprintBackgroundLuminance,
   recomputeAdaptiveReadableOnLayoutCommit,
   resolveBubbleTextStyle,
 } from "./colorMatching/resolveTextStyle";
@@ -15,7 +18,7 @@ import {
   applyNearbyStyleFallbacks,
   inferTextStyleCategory,
 } from "./colorMatching/nearbyStyleFallback";
-import type { TextStyleProfile } from "./colorMatching/types";
+import type { BwContrastMode, TextStyleProfile } from "./colorMatching/types";
 import {
   layoutTextAtFixedFont,
   minimumWidthForWholeWords,
@@ -152,6 +155,8 @@ export interface OverlayAdjustment {
   autoOptimizeVersion?: number;
   /** Bounded proportional layout snapshot captured from the last render. */
   layoutSnapshot?: BubbleProportionalLayout;
+  /** Persisted text style profile (including bwContrastMode and manual overrides). */
+  styleProfile?: TextStyleProfile;
 }
 
 /**
@@ -1071,6 +1076,18 @@ export const applyTranslationOverlay = async (
       if (adj?.targetFontSize !== undefined && b.targetFontSize === undefined) {
         b.targetFontSize = adj.targetFontSize;
       }
+      const persistedStyleProfile = adj?.styleProfile ?? legacyAdj?.styleProfile;
+      if (
+        persistedStyleProfile &&
+        (persistedStyleProfile.bwContrastMode ||
+          persistedStyleProfile.ownershipMode === "manual" ||
+          persistedStyleProfile.source === "manual") &&
+        !b.styleProfile?.bwContrastMode &&
+        b.styleProfile?.ownershipMode !== "manual" &&
+        b.styleProfile?.source !== "manual"
+      ) {
+        b.styleProfile = cloneTextStyleProfile(persistedStyleProfile);
+      }
 
       const adjSx = adj?.isAutoOptimized && adj.iw > 0 ? iw / adj.iw : 1;
       const adjSy = adj?.isAutoOptimized && adj.ih > 0 ? ih / adj.ih : 1;
@@ -1111,6 +1128,7 @@ export const applyTranslationOverlay = async (
           ...(typeof b.targetFontSize === "number" ? { targetFontSize: b.targetFontSize } : {}),
           ...(typeof manualMinHeightPx === "number" ? { manualMinHeightPx } : {}),
           ...(b.layoutSnapshot ? { layoutSnapshot: b.layoutSnapshot } : {}),
+          ...(b.styleProfile ? { styleProfile: cloneTextStyleProfile(b.styleProfile) } : {}),
         };
         b.layoutAdjustment = persistedLayout;
 
@@ -1198,6 +1216,33 @@ export const applyTranslationOverlay = async (
           currentBh = layout.height;
           currentBx = Math.max(0, Math.min(iw - currentBw, origCx - currentBw / 2));
           currentBy = Math.max(0, Math.min(ih - currentBh, origCy - currentBh / 2));
+        }
+      }
+
+      // Measure actual rendered footprint luminance on the live background image (`img`, which is the cleaned image)
+      // so bubbles whose original English white halo was erased by inpainting get their true dark/gray background luminance.
+      if (
+        img &&
+        (img.naturalWidth > 0 || img.width > 0) &&
+        b.styleProfile &&
+        (b.styleProfile.bwContrastMode === "auto" ||
+          (b.styleProfile.ownershipMode !== "manual" &&
+            b.styleProfile.source !== "manual" &&
+            !b.styleProfile.bwContrastMode))
+      ) {
+        const footprintSample = sampleRectRegion(img, {
+          x: currentBx,
+          y: currentBy,
+          width: currentBw,
+          height: currentBh,
+        });
+        const footprint = measureFootprintBackgroundLuminance(footprintSample);
+        if (footprint && footprint.isNonWhiteFootprint) {
+          b.styleProfile = {
+            ...b.styleProfile,
+            backgroundLuminance: footprint.backgroundLuminance,
+            backgroundLuminanceSamples: footprint.backgroundLuminanceSamples,
+          };
         }
       }
 
@@ -1470,9 +1515,12 @@ export const applyTranslationOverlay = async (
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.font = `bold ${fontSize}px ${currentFontFam}`;
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+        ctx.miterLimit = 2;
         ctx.strokeStyle = outlineColor;
         ctx.lineWidth = resolvedStyle.hasOutline
-          ? Math.max(1, fontSize * resolvedStyle.outlineWidthRatio)
+          ? Math.max(resolvedStyle.outlineWidthRatio >= 0.18 ? 3.2 : 1, fontSize * resolvedStyle.outlineWidthRatio)
           : 0;
 
         let fillPaint: string | CanvasGradient = textColor;
@@ -2876,6 +2924,63 @@ export const applyTranslationOverlay = async (
         true
       );
 
+      const bwContrastLabel = () => {
+        const mode = b.styleProfile?.bwContrastMode;
+        if (mode === "black_on_white") return "โหมดขาว-ดำ: ดำ-ขาว (ตัวดำ ขอบขาวหนา)";
+        if (mode === "white_on_black") return "โหมดขาว-ดำ: ขาว-ดำ (ตัวขาว ขอบดำหนา)";
+        if (mode === "pure_black") return "โหมดขาว-ดำ: ดำล้วน";
+        if (mode === "auto") return "โหมดขาว-ดำ: ออโต้";
+        return "สลับโหมดสี ขาว-ดำ / ดำ-ขาว";
+      };
+
+      const bwContrastBtn = createToolBtn(
+        bwContrastLabel(),
+        `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/></svg>`,
+        () => {
+          const currentMode = b.styleProfile?.bwContrastMode;
+          const nextMode: BwContrastMode =
+            currentMode === "black_on_white"
+              ? "white_on_black"
+              : currentMode === "white_on_black"
+                ? "pure_black"
+                : currentMode === "pure_black"
+                  ? "auto"
+                  : "black_on_white";
+          const prevProfile = cloneTextStyleProfile(b.styleProfile);
+          const updated = applyBwContrastModeToBubble(b, nextMode);
+          b.styleProfile = updated.styleProfile;
+          bwContrastBtn.setAttribute("aria-label", bwContrastLabel());
+          bwContrastBtn.title = bwContrastLabel();
+          shadowBtn.setAttribute("aria-label", shadowLabel());
+          shadowBtn.title = shadowLabel();
+          onBubblesMutated?.();
+          renderBubble();
+          saveAdjustment();
+          const nextProfile = cloneTextStyleProfile(b.styleProfile);
+          undoManager.push({
+            label: `สลับโหมดขาว-ดำ (${nextMode})`,
+            undo: () => {
+              b.styleProfile = cloneTextStyleProfile(prevProfile);
+              bwContrastBtn.setAttribute("aria-label", bwContrastLabel());
+              bwContrastBtn.title = bwContrastLabel();
+              shadowBtn.setAttribute("aria-label", shadowLabel());
+              shadowBtn.title = shadowLabel();
+              renderBubble();
+              saveAdjustment();
+            },
+            redo: () => {
+              b.styleProfile = cloneTextStyleProfile(nextProfile);
+              bwContrastBtn.setAttribute("aria-label", bwContrastLabel());
+              bwContrastBtn.title = bwContrastLabel();
+              shadowBtn.setAttribute("aria-label", shadowLabel());
+              shadowBtn.title = shadowLabel();
+              renderBubble();
+              saveAdjustment();
+            },
+          });
+        },
+      );
+
       const moreMenu = document.createElement("div");
       moreMenu.setAttribute("data-bubble-more-menu", "true");
       moreMenu.style.cssText = `position:absolute; top:calc(100% + 8px); right:0; display:none; align-items:center; gap:2px; padding:5px; background:rgba(24,24,27,0.98); border:1px solid rgba(255,255,255,0.2); border-radius:10px; box-shadow:0 10px 28px rgba(0,0,0,0.5); z-index:45;`;
@@ -2884,6 +2989,7 @@ export const applyTranslationOverlay = async (
       moreMenu.appendChild(shadowBtn);
       moreMenu.appendChild(originalStyleBtn);
       moreMenu.appendChild(fillBtn);
+      moreMenu.appendChild(layerBtn);
       moreMenu.addEventListener("click", (event) => {
         if ((event.target as HTMLElement | null)?.closest("button")) {
           moreMenu.style.display = "none";
@@ -2902,7 +3008,7 @@ export const applyTranslationOverlay = async (
       toolbar.appendChild(copyBtn);
       toolbar.appendChild(editBtn);
       toolbar.appendChild(colorBtn);
-      toolbar.appendChild(layerBtn);
+      toolbar.appendChild(bwContrastBtn);
       toolbar.appendChild(moreBtn);
       toolbar.appendChild(createDivider());
       toolbar.appendChild(deleteBtn);

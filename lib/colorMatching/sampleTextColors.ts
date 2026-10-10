@@ -784,19 +784,25 @@ export function extractTextColors(
   // The text inside a white speech bubble must be dark (#000000) to remain readable.
   if (whiteCropRatio >= 0.20) {
     const hasDarkText = darkInkCount >= 4 || darkInkInnerCoreCount >= 2;
+    const isGenuineWhiteBalloon = whiteCropRatio >= 0.38 || bgLum >= 165;
     return finalizeRecoveredProfile(
       {
         fill: "#000000",
         outline: "#ffffff",
         hasOutline: true,
-        outlineWidthRatio: 0.13,
+        outlineWidthRatio: isGenuineWhiteBalloon ? 0.13 : 0.22,
         outlineWidth: 1.0,
         opacity: sourceOpacity,
         outlineConfidence: autoConfidence,
         evidenceState: hasDarkText ? "admitted" : "rejected",
         fallbackReason: hasDarkText ? undefined : "insufficient-evidence",
-        backgroundLuminance: 255,
-        backgroundColor: "#ffffff",
+        backgroundLuminance: isGenuineWhiteBalloon ? 255 : Math.round(bgLum),
+        backgroundLuminanceSamples: isGenuineWhiteBalloon
+          ? undefined
+          : bgLuminanceSamples.length > 0
+            ? bgLuminanceSamples
+            : undefined,
+        backgroundColor: isGenuineWhiteBalloon ? "#ffffff" : rgbToHex(bgR, bgG, bgB),
       },
       hasDarkText ? autoConfidence : 0.45,
       hasDarkText ? Math.max(0.7, darkInkCount / Math.max(1, totalFgCount)) : 0.40,

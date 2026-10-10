@@ -18,7 +18,12 @@ import {
   syncPageOverlayAdjustments,
   type TranslatedBubble,
 } from "@/lib/translationOverlay";
-import { Upload, Download, Flame, Eye, EyeOff, Undo2, Redo2, GalleryVertical, RectangleHorizontal, Menu, X, Settings, FileArchive, BookOpen, FileText, Sparkles, Loader2, Check, AlertCircle, RefreshCw, ArrowDown, ArrowUp, ChevronDown, ChevronUp, Eraser, Paintbrush, RotateCcw, ScanSearch } from "lucide-react";
+import {
+  applyBwContrastModeToBubbles,
+  cloneTextStyleProfile,
+} from "@/lib/colorMatching/resolveTextStyle";
+import type { BwContrastMode } from "@/lib/colorMatching/types";
+import { Upload, Download, Flame, Eye, EyeOff, Undo2, Redo2, GalleryVertical, RectangleHorizontal, Menu, X, Settings, FileArchive, BookOpen, FileText, Sparkles, Loader2, Check, AlertCircle, RefreshCw, ArrowDown, ArrowUp, ChevronDown, ChevronUp, Eraser, Paintbrush, RotateCcw, ScanSearch, Contrast } from "lucide-react";
 import { undoManager } from "@/lib/undoManager";
 import JSZip from "jszip";
 import { findRecoveredRegionId, useCleaning, type PageRemnantTextEvidence } from "@/hooks/useCleaning";
@@ -181,17 +186,22 @@ export default function WorkspacePage() {
   const [isToolbarCollapsed, setIsToolbarCollapsed] = useState(false);
   const [isOrganizeMenuOpen, setIsOrganizeMenuOpen] = useState(false);
   const organizeMenuRef = useRef<HTMLDivElement>(null);
+  const [isBwContrastMenuOpen, setIsBwContrastMenuOpen] = useState(false);
+  const bwContrastMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!isOrganizeMenuOpen) return;
+    if (!isOrganizeMenuOpen && !isBwContrastMenuOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
       if (organizeMenuRef.current && !organizeMenuRef.current.contains(e.target as Node)) {
         setIsOrganizeMenuOpen(false);
       }
+      if (bwContrastMenuRef.current && !bwContrastMenuRef.current.contains(e.target as Node)) {
+        setIsBwContrastMenuOpen(false);
+      }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [isOrganizeMenuOpen]);
+  }, [isOrganizeMenuOpen, isBwContrastMenuOpen]);
 
   // Restore toolbar preferences from localStorage
   useEffect(() => {
@@ -862,6 +872,216 @@ export default function WorkspacePage() {
     cleaningResultsByPage,
     translatedImagesMap,
   ]);
+
+  const bwContrastModeLabel = (mode: BwContrastMode): string => {
+    switch (mode) {
+      case "black_on_white":
+        return "ดำ-ขาว (ตัวดำ ขอบขาวหนา)";
+      case "white_on_black":
+        return "ขาว-ดำ (ตัวขาว ขอบดำหนา)";
+      case "pure_black":
+        return "ดำล้วน (ไม่มีขอบ)";
+      default:
+        return "ออโต้ ขาว-ดำ";
+    }
+  };
+
+  const handleApplyBwContrastCurrentPage = useCallback(
+    async (mode: BwContrastMode) => {
+      if (!currentPageUrl) return;
+      const currentBubbles =
+        bubbleCacheRef.current.get(currentPageUrl) ?? activeBubbles;
+      if (!currentBubbles || currentBubbles.length === 0) return;
+
+      const updated = applyBwContrastModeToBubbles(currentBubbles, mode).map(
+        (b) =>
+          b.layoutAdjustment
+            ? {
+                ...b,
+                layoutAdjustment: {
+                  ...b.layoutAdjustment,
+                  styleProfile: cloneTextStyleProfile(b.styleProfile),
+                },
+              }
+            : b,
+      );
+
+      bubbleCacheRef.current.set(currentPageUrl, updated);
+      syncPageOverlayAdjustments(currentPageUrl, updated);
+      setActiveBubbles(updated);
+      dirtyExportPagesRef.current.add(currentPageUrl);
+
+      const targetLangCode =
+        getPageTargetLanguage?.(currentPageUrl) ?? targetLang ?? "th";
+      const pageContainer = document.getElementById("pageContainer");
+      if (pageContainer) {
+        await applyTranslationOverlay(
+          updated,
+          viewLayout,
+          currentPage,
+          setTranslationResult,
+          undefined,
+          textStyleRef,
+          pageContainer,
+          currentPageUrl,
+          () => dirtyExportPagesRef.current.add(currentPageUrl),
+          targetLangCode,
+        );
+      }
+
+      await refreshPageTranslation(
+        currentPageUrl,
+        currentCleaningResult?.cleanUrl ?? currentPageUrl,
+      );
+
+      import("react-hot-toast").then((m) =>
+        m.default.success(
+          `✅ ปรับโหมดสีหน้านี้เป็น "${bwContrastModeLabel(mode)}" เรียบร้อยแล้ว!`,
+        ),
+      );
+    },
+    [
+      currentPageUrl,
+      activeBubbles,
+      bubbleCacheRef,
+      setActiveBubbles,
+      dirtyExportPagesRef,
+      getPageTargetLanguage,
+      targetLang,
+      viewLayout,
+      currentPage,
+      setTranslationResult,
+      textStyleRef,
+      refreshPageTranslation,
+      currentCleaningResult,
+    ],
+  );
+
+  const handleApplyBwContrastAllPages = useCallback(
+    async (mode: BwContrastMode) => {
+      if (pages.length === 0) return;
+      const translatedPages = pages.filter((p) => {
+        const b = bubbleCacheRef.current.get(p.url);
+        return b && b.length > 0;
+      });
+
+      if (translatedPages.length === 0) {
+        import("react-hot-toast").then((m) =>
+          m.default("ยังไม่มีหน้าที่มีคำแปลให้ปรับสีข้อความ", { icon: "ℹ️" }),
+        );
+        return;
+      }
+
+      try {
+        const toastModule = await import("react-hot-toast");
+        const toast = toastModule.default as any;
+        const label = bwContrastModeLabel(mode);
+        const toastId =
+          typeof toast?.loading === "function"
+            ? toast.loading(
+                `กำลังปรับโหมด "${label}" ทุกหน้า (0/${translatedPages.length})...`,
+              )
+            : undefined;
+        let processedCount = 0;
+
+        for (let i = 0; i < translatedPages.length; i++) {
+          const pageItem = translatedPages[i];
+          const pageUrl = pageItem.url;
+          const currentBubbles = bubbleCacheRef.current.get(pageUrl);
+          if (!currentBubbles || currentBubbles.length === 0) continue;
+
+          const updated = applyBwContrastModeToBubbles(
+            currentBubbles,
+            mode,
+          ).map((b) =>
+            b.layoutAdjustment
+              ? {
+                  ...b,
+                  layoutAdjustment: {
+                    ...b.layoutAdjustment,
+                    styleProfile: cloneTextStyleProfile(b.styleProfile),
+                  },
+                }
+              : b,
+          );
+
+          bubbleCacheRef.current.set(pageUrl, updated);
+          syncPageOverlayAdjustments(pageUrl, updated);
+          dirtyExportPagesRef.current.add(pageUrl);
+          processedCount++;
+
+          const targetLangCode =
+            getPageTargetLanguage?.(pageUrl) ?? targetLang ?? "th";
+
+          if (pageUrl === currentPageUrl) {
+            setActiveBubbles(updated);
+            const pageContainer = document.getElementById("pageContainer");
+            if (pageContainer) {
+              await applyTranslationOverlay(
+                updated,
+                viewLayout,
+                currentPage,
+                setTranslationResult,
+                undefined,
+                textStyleRef,
+                pageContainer,
+                currentPageUrl,
+                () => dirtyExportPagesRef.current.add(currentPageUrl),
+                targetLangCode,
+              );
+            }
+            await refreshPageTranslation(
+              currentPageUrl,
+              currentCleaningResult?.cleanUrl ?? currentPageUrl,
+            );
+          } else if (
+            translatedImagesMap?.has(pageUrl) ||
+            viewLayout === "scroll"
+          ) {
+            await refreshPageTranslation(
+              pageUrl,
+              cleaningResultsByPage?.get?.(pageUrl)?.cleanUrl ?? pageUrl,
+            );
+          }
+
+          if (toastId && typeof toast?.loading === "function") {
+            toast.loading(
+              `กำลังปรับโหมด "${label}" หน้า ${i + 1}/${translatedPages.length}...`,
+              { id: toastId },
+            );
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+
+        const summaryMsg = `✅ ปรับโหมด "${label}" ครบทั้ง ${processedCount} หน้าเรียบร้อยแล้ว!`;
+        if (typeof toast?.success === "function") {
+          toast.success(summaryMsg, toastId ? { id: toastId } : undefined);
+        } else if (typeof toast === "function") {
+          toast(summaryMsg, toastId ? { id: toastId } : undefined);
+        }
+      } catch (err) {
+        console.error("Apply B&W contrast all pages failed:", err);
+      }
+    },
+    [
+      pages,
+      bubbleCacheRef,
+      currentPageUrl,
+      getPageTargetLanguage,
+      targetLang,
+      textStyleRef,
+      dirtyExportPagesRef,
+      setActiveBubbles,
+      viewLayout,
+      currentPage,
+      setTranslationResult,
+      refreshPageTranslation,
+      currentCleaningResult,
+      cleaningResultsByPage,
+      translatedImagesMap,
+    ],
+  );
 
 
   const translationBusy = isTranslating || isTranslatingAll;
@@ -3234,55 +3454,170 @@ export default function WorkspacePage() {
                             <ChevronDown className="pointer-events-none absolute right-1.5 h-3 w-3 text-muted" />
                           </div>
                           {hasCurrentTranslation && workspaceLayer === "translated" && (
-                            <div ref={organizeMenuRef} className="relative inline-flex items-center rounded-lg border border-primary/40 bg-primary/10 shadow-xs shrink-0">
-                              <button
-                                type="button"
-                                onClick={handleAutoOrganizeCurrentPage}
-                                disabled={operationBusy}
-                                aria-label="จัดระเบียบข้อความออโต้"
-                                title="จัดระเบียบบับเบิลหน้านี้ให้อัตโนมัติ (Auto-Fit & De-overlap)"
-                                className="inline-flex h-7 sm:h-7.5 items-center gap-1 hover:bg-primary/20 active:bg-primary/30 px-2 text-xs font-semibold text-primary transition-all duration-150 cursor-pointer select-none rounded-l-lg disabled:opacity-40 disabled:cursor-not-allowed"
-                              >
-                                <Sparkles className="h-3 w-3 text-primary shrink-0" aria-hidden="true" />
-                                <span className="hidden sm:inline">จัดระเบียบ</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setIsOrganizeMenuOpen((prev) => !prev)}
-                                disabled={operationBusy}
-                                aria-label="ตัวเลือกจัดระเบียบบับเบิล"
-                                title="ตัวเลือกจัดระเบียบหน้านี้ หรือทุกหน้า"
-                                className="inline-flex h-7 sm:h-7.5 items-center px-1 border-l border-primary/30 hover:bg-primary/20 active:bg-primary/30 text-primary transition-all duration-150 cursor-pointer rounded-r-lg disabled:opacity-40 disabled:cursor-not-allowed"
-                              >
-                                <ChevronDown className="h-3 w-3 shrink-0" />
-                              </button>
-                              {isOrganizeMenuOpen && (
-                                <div className="absolute top-full mt-1.5 right-0 sm:left-0 z-50 min-w-[185px] py-1 bg-surface border border-border rounded-lg shadow-xl text-xs font-medium">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setIsOrganizeMenuOpen(false);
-                                      void handleAutoOrganizeCurrentPage();
-                                    }}
-                                    className="w-full text-left px-3 py-1.5 hover:bg-surface-hover flex items-center gap-2 text-foreground transition-colors cursor-pointer"
-                                  >
-                                    <Sparkles className="h-3.5 w-3.5 text-primary shrink-0" />
-                                    <span>จัดระเบียบหน้านี้</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setIsOrganizeMenuOpen(false);
-                                      void handleAutoOrganizeAllPages();
-                                    }}
-                                    className="w-full text-left px-3 py-1.5 hover:bg-surface-hover flex items-center gap-2 text-foreground transition-colors cursor-pointer"
-                                  >
-                                    <Sparkles className="h-3.5 w-3.5 text-primary shrink-0" />
-                                    <span>จัดระเบียบทุกหน้า ({pages.length} หน้า)</span>
-                                  </button>
-                                </div>
-                              )}
-                            </div>
+                            <>
+                              <div ref={organizeMenuRef} className="relative inline-flex items-center rounded-lg border border-primary/40 bg-primary/10 shadow-xs shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={handleAutoOrganizeCurrentPage}
+                                  disabled={operationBusy}
+                                  aria-label="จัดระเบียบข้อความออโต้"
+                                  title="จัดระเบียบบับเบิลหน้านี้ให้อัตโนมัติ (Auto-Fit & De-overlap)"
+                                  className="inline-flex h-7 sm:h-7.5 items-center gap-1 hover:bg-primary/20 active:bg-primary/30 px-2 text-xs font-semibold text-primary transition-all duration-150 cursor-pointer select-none rounded-l-lg disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                  <Sparkles className="h-3 w-3 text-primary shrink-0" aria-hidden="true" />
+                                  <span className="hidden sm:inline">จัดระเบียบ</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setIsOrganizeMenuOpen((prev) => !prev)}
+                                  disabled={operationBusy}
+                                  aria-label="ตัวเลือกจัดระเบียบบับเบิล"
+                                  title="ตัวเลือกจัดระเบียบหน้านี้ หรือทุกหน้า"
+                                  className="inline-flex h-7 sm:h-7.5 items-center px-1 border-l border-primary/30 hover:bg-primary/20 active:bg-primary/30 text-primary transition-all duration-150 cursor-pointer rounded-r-lg disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                  <ChevronDown className="h-3 w-3 shrink-0" />
+                                </button>
+                                {isOrganizeMenuOpen && (
+                                  <div className="absolute top-full mt-1.5 right-0 sm:left-0 z-50 min-w-[185px] py-1 bg-surface border border-border rounded-lg shadow-xl text-xs font-medium">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setIsOrganizeMenuOpen(false);
+                                        void handleAutoOrganizeCurrentPage();
+                                      }}
+                                      className="w-full text-left px-3 py-1.5 hover:bg-surface-hover flex items-center gap-2 text-foreground transition-colors cursor-pointer"
+                                    >
+                                      <Sparkles className="h-3.5 w-3.5 text-primary shrink-0" />
+                                      <span>จัดระเบียบหน้านี้</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setIsOrganizeMenuOpen(false);
+                                        void handleAutoOrganizeAllPages();
+                                      }}
+                                      className="w-full text-left px-3 py-1.5 hover:bg-surface-hover flex items-center gap-2 text-foreground transition-colors cursor-pointer"
+                                    >
+                                      <Sparkles className="h-3.5 w-3.5 text-primary shrink-0" />
+                                      <span>จัดระเบียบทุกหน้า ({pages.length} หน้า)</span>
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div ref={bwContrastMenuRef} className="relative inline-flex items-center rounded-lg border border-border/80 bg-background/90 shadow-xs shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => void handleApplyBwContrastCurrentPage("black_on_white")}
+                                  disabled={operationBusy}
+                                  aria-label="ปรับข้อความขาว-ดำให้อ่านง่าย"
+                                  title="ปรับหน้านี้เป็นโหมด ดำ-ขาว (ตัวดำ ขอบขาวหนา) ให้อ่านง่ายบนพื้นหลังมืด/เทา"
+                                  className="inline-flex h-7 sm:h-7.5 items-center gap-1 hover:bg-surface-hover active:bg-surface-active px-2 text-xs font-semibold text-foreground transition-all duration-150 cursor-pointer select-none rounded-l-lg disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                  <Contrast className="h-3 w-3 text-foreground shrink-0" aria-hidden="true" />
+                                  <span className="hidden sm:inline">ขาว-ดำ</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setIsBwContrastMenuOpen((prev) => !prev)}
+                                  disabled={operationBusy}
+                                  aria-label="ตัวเลือกโหมดสีขาว-ดำ"
+                                  title="เลือกโหมดสี ขาว-ดำ / ดำ-ขาว สำหรับหน้านี้หรือทุกหน้า"
+                                  className="inline-flex h-7 sm:h-7.5 items-center px-1 border-l border-border/60 hover:bg-surface-hover active:bg-surface-active text-foreground transition-all duration-150 cursor-pointer rounded-r-lg disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                  <ChevronDown className="h-3 w-3 shrink-0" />
+                                </button>
+                                {isBwContrastMenuOpen && (
+                                  <div className="absolute top-full mt-1.5 right-0 sm:left-0 z-50 min-w-[235px] py-1.5 bg-surface border border-border rounded-lg shadow-xl text-xs font-medium">
+                                    <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted">
+                                      หน้านี้ (หน้า {currentPage + 1})
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setIsBwContrastMenuOpen(false);
+                                        void handleApplyBwContrastCurrentPage("black_on_white");
+                                      }}
+                                      className="w-full text-left px-3 py-1.5 hover:bg-surface-hover flex items-center gap-2 text-foreground transition-colors cursor-pointer"
+                                    >
+                                      <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-black text-white border border-white text-[9px] font-bold shrink-0">ก</span>
+                                      <span>ดำ-ขาว (ตัวดำ ขอบขาวหนา)</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setIsBwContrastMenuOpen(false);
+                                        void handleApplyBwContrastCurrentPage("white_on_black");
+                                      }}
+                                      className="w-full text-left px-3 py-1.5 hover:bg-surface-hover flex items-center gap-2 text-foreground transition-colors cursor-pointer"
+                                    >
+                                      <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-white text-black border border-black text-[9px] font-bold shrink-0">ก</span>
+                                      <span>ขาว-ดำ (ตัวขาว ขอบดำหนา)</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setIsBwContrastMenuOpen(false);
+                                        void handleApplyBwContrastCurrentPage("auto");
+                                      }}
+                                      className="w-full text-left px-3 py-1.5 hover:bg-surface-hover flex items-center gap-2 text-foreground transition-colors cursor-pointer"
+                                    >
+                                      <Sparkles className="h-3.5 w-3.5 text-primary shrink-0" />
+                                      <span>ออโต้ ขาว-ดำ (แยกตามพื้นหลัง)</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setIsBwContrastMenuOpen(false);
+                                        void handleApplyBwContrastCurrentPage("pure_black");
+                                      }}
+                                      className="w-full text-left px-3 py-1.5 hover:bg-surface-hover flex items-center gap-2 text-foreground transition-colors cursor-pointer"
+                                    >
+                                      <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-zinc-900 text-white text-[9px] font-bold shrink-0">ก</span>
+                                      <span>ดำล้วน (ไม่มีขอบขาว)</span>
+                                    </button>
+
+                                    <div className="my-1 border-t border-border/60" />
+                                    <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted">
+                                      ทุกหน้าในเล่ม ({pages.length} หน้า)
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setIsBwContrastMenuOpen(false);
+                                        void handleApplyBwContrastAllPages("black_on_white");
+                                      }}
+                                      className="w-full text-left px-3 py-1.5 hover:bg-surface-hover flex items-center gap-2 text-foreground transition-colors cursor-pointer"
+                                    >
+                                      <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-black text-white border border-white text-[9px] font-bold shrink-0">ก</span>
+                                      <span>ดำ-ขาว ทุกหน้า (ตัวดำ ขอบขาวหนา)</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setIsBwContrastMenuOpen(false);
+                                        void handleApplyBwContrastAllPages("white_on_black");
+                                      }}
+                                      className="w-full text-left px-3 py-1.5 hover:bg-surface-hover flex items-center gap-2 text-foreground transition-colors cursor-pointer"
+                                    >
+                                      <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-white text-black border border-black text-[9px] font-bold shrink-0">ก</span>
+                                      <span>ขาว-ดำ ทุกหน้า (ตัวขาว ขอบดำหนา)</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setIsBwContrastMenuOpen(false);
+                                        void handleApplyBwContrastAllPages("auto");
+                                      }}
+                                      className="w-full text-left px-3 py-1.5 hover:bg-surface-hover flex items-center gap-2 text-foreground transition-colors cursor-pointer"
+                                    >
+                                      <Sparkles className="h-3.5 w-3.5 text-primary shrink-0" />
+                                      <span>ออโต้ ขาว-ดำ ทุกหน้า</span>
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            </>
                           )}
                         </label>
                       )}

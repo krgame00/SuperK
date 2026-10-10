@@ -40,6 +40,11 @@ export interface TextShadowStyle {
 }
 
 export type ManualShadowMode = "standard" | "off";
+export type BwContrastMode =
+  | "auto"
+  | "black_on_white"
+  | "white_on_black"
+  | "pure_black";
 
 export interface TextStyleProfile {
   /** Version of original-pixel outline evidence; absent on older projects. */
@@ -70,6 +75,8 @@ export interface TextStyleProfile {
   ownershipMode?: "auto" | "source_faithful" | "readable" | "manual";
   /** Manual-only control for the uniform translated-text shadow. Missing means Standard for backward compatibility. */
   manualShadowMode?: ManualShadowMode;
+  /** Explicit high-contrast B&W readability mode (ดำ-ขาว / ขาว-ดำ / ดำล้วน / ออโต้) */
+  bwContrastMode?: BwContrastMode;
   /** Measured clean background luminance (0..255) beneath the text footprint */
   backgroundLuminance?: number;
   /** Measured background luminance samples across the footprint */
