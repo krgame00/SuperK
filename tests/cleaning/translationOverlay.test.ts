@@ -2477,3 +2477,68 @@ test("width drag keeps vertical selection tight during preview, restores tight h
   expect(bubble.layoutAdjustment!.bh).toBeLessThanOrEqual(heightBeforeWiden);
 });
 
+test("compact top-edge 1-line bubble keeps move/width handles clear of bottom toolbar, allows dragging anywhere on selected wrapper, and narrows without dead-zone", async () => {
+  const text = "ณ สระว่ายน้ำแห่งหนึ่ง";
+  const { container, chromeRoot, bubble, wrapper } = await renderOverlayFresh(text, {
+    box: [20, 130, 80, 540],
+    targetFontSize: 20,
+    fontSizeMultiplier: 1,
+    layoutAdjustment: {
+      bx: 68,
+      by: 8,
+      bw: 340,
+      bh: 56,
+      iw: 1000,
+      ih: 1200,
+      targetFontSize: 20,
+      isAutoOptimized: true,
+      autoOptimizeVersion: 4,
+    },
+  });
+  mockCanvasRect(container, 0.5);
+  vi.spyOn(chromeRoot, "getBoundingClientRect").mockReturnValue({
+    left: 0, top: 0, right: 500, bottom: 600, width: 500, height: 600,
+  } as DOMRect);
+
+  // Before selection, wrapper has pointer-events: none so unselected bubbles do not block neighbors
+  expect(wrapper.style.pointerEvents).toBe("none");
+
+  const selection = wrapper.querySelector<HTMLElement>(".bubble-text-selection")!;
+  firePointer(selection, "pointerdown", 120, 20);
+  firePointer(selection, "pointerup", 120, 20);
+  expect(wrapper.dataset.selected).toBe("true");
+
+  // 1. Once selected, wrapper itself accepts pointer events so dragging anywhere in the frame moves it
+  expect(wrapper.style.pointerEvents).toBe("auto");
+
+  // 2. On a compact top-edge bubble (placeBelow = true), the quick toolbar must sit below the
+  // downward-offset move (sw) and width (e) handles instead of overlapping them at the same Y coordinate
+  const toolbar = chromeRoot.querySelector<HTMLElement>(".bubble-quick-toolbar")!;
+  const moveHandle = chromeRoot.querySelector<HTMLElement>(".action-handle--move")!;
+  const widthHandle = chromeRoot.querySelector<HTMLElement>(".action-handle--width")!;
+  const chromeScale = Number(toolbar.style.zoom) || 0.6;
+  const toolbarScreenTop = Number.parseFloat(toolbar.style.top) * chromeScale;
+  const moveHandleScreenY = Number.parseFloat(moveHandle.style.top) * chromeScale + 12;
+  const widthHandleScreenY = Number.parseFloat(widthHandle.style.top) * chromeScale + 16;
+  expect(toolbarScreenTop).toBeGreaterThanOrEqual(Math.max(moveHandleScreenY, widthHandleScreenY) + 8);
+
+  // 3. Dragging on the selected wrapper moves the bubble smoothly
+  wrapper.setPointerCapture = vi.fn();
+  wrapper.releasePointerCapture = vi.fn();
+  const bxBeforeMove = bubble.layoutAdjustment!.bx;
+  firePointer(wrapper, "pointerdown", 120, 20);
+  firePointer(wrapper, "pointermove", 170, 35);
+  firePointer(wrapper, "pointerup", 170, 35);
+  expect(bubble.layoutAdjustment!.bx).toBeCloseTo(bxBeforeMove + 100, 1);
+
+  // 4. Dragging the width handle left on a wide-frame 1-line bubble tightens slack and wraps without a 150px dead-zone
+  widthHandle.setPointerCapture = vi.fn();
+  (widthHandle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  widthHandle.releasePointerCapture = vi.fn();
+  firePointer(widthHandle, "pointerdown", 210, 35);
+  firePointer(widthHandle, "pointermove", 175, 35);
+  firePointer(widthHandle, "pointerup", 175, 35);
+  expect(bubble.layoutAdjustment!.bw).toBeLessThan(260);
+});
+
+

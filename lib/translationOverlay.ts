@@ -972,6 +972,7 @@ export const applyTranslationOverlay = async (
         const oldFrame = selectedBubbleWrapper.querySelector<HTMLElement>(".bubble-text-selection");
         if (oldFrame) oldFrame.style.outline = "none";
         selectedBubbleWrapper.style.zIndex = "10";
+        selectedBubbleWrapper.style.pointerEvents = "none";
         selectedBubbleWrapper.removeAttribute("data-selected");
         chromeControlsByWrapper.get(selectedBubbleWrapper)?.setVisible(false);
       }
@@ -981,6 +982,7 @@ export const applyTranslationOverlay = async (
       const selectedFrame = wrapper.querySelector<HTMLElement>(".bubble-text-selection");
       if (selectedFrame) selectedFrame.style.outline = "1.5px dashed #3b82f6";
       wrapper.style.zIndex = "30";
+      wrapper.style.pointerEvents = viewMode === "offscreen" ? "none" : "auto";
       wrapper.setAttribute("data-selected", "true");
       const controls = chromeControlsByWrapper.get(wrapper);
       controls?.position();
@@ -2398,7 +2400,7 @@ export const applyTranslationOverlay = async (
         handle.setAttribute("data-handle-position", pos);
         handle.title = title;
         const handleSize = size || 36;
-        const handleZIndex = id === "scale" ? 48 : id === "rotate" ? 47 : id === "move" ? 46 : 45;
+        const handleZIndex = id === "scale" ? 54 : id === "rotate" ? 53 : id === "move" ? 52 : 51;
         handle.dataset.baseTranslate = "translate(-50%, -50%)";
         handle.style.cssText = `position:absolute; width:${handleSize}px; height:${handleSize}px; background:#ffffff; border:2.5px solid #3b82f6; border-radius:50%; z-index:${handleZIndex}; opacity:0; pointer-events:none; display:flex; align-items:center; justify-content:center; color:#2563eb; cursor:${cursor}; box-shadow:0 3px 10px rgba(0,0,0,0.35); transition:opacity 120ms ease, box-shadow 120ms ease, filter 120ms ease, transform 120ms ease; touch-action:none; user-select:none; transform:translate(-50%, -50%) scale(1);`;
         handle.innerHTML = icon;
@@ -2420,7 +2422,7 @@ export const applyTranslationOverlay = async (
 
         let rStartX = 0, rStartY = 0;
         let rInitBx = 0, rInitBy = 0, rInitBw = 0, rInitBh = 0;
-        let rDragInitBy = 0;
+        let rDragInitBx = 0, rDragInitBy = 0, rDragInitBw = 0;
         let rCenterX = 0, rCenterY = 0;
         let rStartAngle = 0;
         let rInitRot = 0;
@@ -2455,22 +2457,22 @@ export const applyTranslationOverlay = async (
         };
 
         const widthGeometryForDrag = (dx: number): { width: number; left: number } => {
-          const requestedWidth = Math.max(30, rInitBw + dx);
+          const requestedWidth = Math.max(30, rDragInitBw + dx);
           const minimumWidth = Math.max(30, rMinimumWordWidth);
           if (dx < 0 && minimumWidth > iw) {
-            return { width: rInitBw, left: rInitBx };
+            return { width: rDragInitBw, left: rDragInitBx };
           }
-          if (dx < 0 && rInitBw < minimumWidth) {
-            return { width: rInitBw, left: rInitBx };
+          if (dx < 0 && rDragInitBw < minimumWidth) {
+            return { width: rDragInitBw, left: rDragInitBx };
           }
           if (dx < 0 && requestedWidth <= minimumWidth) {
             const width = Math.min(minimumWidth, iw);
             return {
               width,
-              left: Math.max(0, Math.min(rInitBx, iw - width)),
+              left: Math.max(0, Math.min(rDragInitBx, iw - width)),
             };
           }
-          return { width: requestedWidth, left: rInitBx };
+          return { width: requestedWidth, left: rDragInitBx };
         };
 
         handle.addEventListener('pointerdown', (e) => {
@@ -2479,8 +2481,10 @@ export const applyTranslationOverlay = async (
           lastAppliedPreviewPointer = null;
           rStartX = e.clientX; rStartY = e.clientY;
           rInitBx = currentBx; rInitBy = currentBy;
+          rDragInitBx = currentBx;
           rDragInitBy = currentBy;
           rInitBw = currentBw; rInitBh = currentBh;
+          rDragInitBw = currentBw;
           rInitRot = currentRotation;
           rInitSnapshot = b.layoutSnapshot;
           rInitSizing = b.sourceSizing;
@@ -2505,7 +2509,6 @@ export const applyTranslationOverlay = async (
           rInitManualMinHeightPx = manualMinHeightPx;
           resizeDragActive = id === 'width' || id === 'scale';
           widthSelectionPreview = id === 'width';
-          updateBubbleFrame();
 
           if (id === 'scale' && rInitRenderedFontSize > 0) {
             const currentStyle = textStyleRef?.current || ts;
@@ -2513,9 +2516,24 @@ export const applyTranslationOverlay = async (
           }
 
           if (id === 'width') {
+            const isAutoFrame = Boolean(
+              (adj?.isAutoOptimized || b.layoutAdjustment?.isAutoOptimized) &&
+              !b.userTextSpace &&
+              typeof manualMinHeightPx !== "number",
+            );
+            if (isAutoFrame && textSelection.width > 0 && textSelection.width < currentBw * 0.85) {
+              const snugW = Math.max(30, Math.min(currentBw, Math.ceil(textSelection.width / 0.88)));
+              const snugX = Math.max(
+                0,
+                Math.min(iw - snugW, Math.round(currentBx + textSelection.x - (snugW - textSelection.width) / 2)),
+              );
+              rDragInitBx = snugX;
+              rDragInitBw = snugW;
+              currentBx = snugX;
+              currentBw = snugW;
+            }
             if (currentBy < 0 || currentBy + currentBh > ih) {
-              currentBy = Math.max(0, Math.min(Math.max(0, ih - Math.min(currentBh, ih)), currentBy));
-              rDragInitBy = currentBy;
+              rDragInitBy = Math.max(0, Math.min(Math.max(0, ih - Math.min(currentBh, ih)), currentBy));
             }
             if (manualMinHeightPx === undefined) {
               manualMinHeightPx = adj
@@ -2558,12 +2576,18 @@ export const applyTranslationOverlay = async (
             }
           }
 
+          updateBubbleFrame();
+
           const bRect = wrapper.getBoundingClientRect();
           rCenterX = bRect.left + bRect.width / 2;
           rCenterY = bRect.top + bRect.height / 2;
           rStartAngle = Math.atan2(e.clientY - rCenterY, e.clientX - rCenterX) * (180 / Math.PI);
 
-          handle.setPointerCapture(e.pointerId);
+          try {
+            handle.setPointerCapture(e.pointerId);
+          } catch {
+            // ignore
+          }
           e.stopPropagation();
         });
 
@@ -2725,7 +2749,7 @@ export const applyTranslationOverlay = async (
             const rect = tlContainer.getBoundingClientRect();
             const dx = (e.clientX - rStartX) * (iw / rect.width);
             const widthGeometry = widthGeometryForDrag(dx);
-            if (Math.abs(widthGeometry.width - rInitBw) < 0.001 && Math.abs(widthGeometry.left - rInitBx) < 0.001) return;
+            if (Math.abs(widthGeometry.width - rDragInitBw) < 0.001 && Math.abs(widthGeometry.left - rDragInitBx) < 0.001) return;
             widthDragDidMove = true;
           }
           pendingWidthPointer = { pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY };
@@ -3142,7 +3166,10 @@ export const applyTranslationOverlay = async (
         const minCenter = scaledWidth / 2 + 8;
         const maxCenter = Math.max(minCenter, rootWidth - scaledWidth / 2 - 8);
         const toolbarX = Math.max(minCenter, Math.min(maxCenter, centerX));
-        const toolbarY = placeBelow ? bottom + 10 : top - 10;
+        const bottomClearance = isCompactBox
+          ? Math.max(bottom + padY * chromeScale, (top + bottom) / 2 + padEastY * chromeScale) + 12 * chromeScale
+          : bottom;
+        const toolbarY = placeBelow ? bottomClearance + 10 : top - 10;
         toolbar.style.left = `${toolbarX / chromeScale}px`;
         toolbar.style.top = `${toolbarY / chromeScale}px`;
         toolbar.style.transformOrigin = placeBelow ? "center top" : "center bottom";
