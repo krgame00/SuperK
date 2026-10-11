@@ -5,7 +5,18 @@ import { type GlossaryEntry } from "@/lib/translation/glossary";
 import { TARGET_LANGUAGES, resolveTargetLanguage } from "@/lib/languagePolicy";
 import { MANUAL_IMAGE_MODEL_IDS } from "@/lib/translation/imageModelChoices";
 import { workspaceResourceManager } from "@/lib/lifecycle/workspaceResourceManager";
-import { Plus, Trash2, BookText, Flame, X, ChevronDown, Download, Folder, Search, Check, Sparkles, Power, AlertTriangle, Loader2 } from "lucide-react";
+import { Plus, Trash2, BookText, Flame, X, ChevronDown, Download, Folder, Search, Check, Sparkles, Power, AlertTriangle, Loader2, Upload, Type } from "lucide-react";
+import {
+  BUILTIN_MANGA_FONTS,
+  BUILTIN_CANVAS_FONT_VARS,
+  MANGA_FONT_CATEGORIES,
+  hydrateStoredCustomFonts,
+  listCustomFonts,
+  registerCustomFontFromFile,
+  removeCustomFont,
+  subscribeCustomFonts,
+  type CustomUploadedFont,
+} from "@/lib/customFonts";
 import {
   getAskExportDirectory,
   setAskExportDirectory,
@@ -170,6 +181,11 @@ export function SettingsModal({
   const [newTarget, setNewTarget] = useState("");
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
+  const [fontPickerOpen, setFontPickerOpen] = useState(false);
+  const [fontSearch, setFontSearch] = useState("");
+  const [fontCategoryFilter, setFontCategoryFilter] = useState<
+    "all" | "custom" | "manga" | "dialogue" | "action" | "narration"
+  >("all");
   const [draftTextColor, setDraftTextColor] = useState(textStyle.textColor || "#000000");
   const [draftTextOutline, setDraftTextOutline] = useState(textStyle.textOutline || "#ffffff");
   const colorCommitTimersRef = useRef<Record<"textColor" | "textOutline", number | null>>({
@@ -189,6 +205,88 @@ export function SettingsModal({
     () => isDirectoryPickerSupported(),
   );
   const [isBrave, setIsBrave] = useState(false);
+  const [customFonts, setCustomFonts] = useState<CustomUploadedFont[]>([]);
+  const [customFontMessage, setCustomFontMessage] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
+  const customFontInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    void hydrateStoredCustomFonts().then((fonts) => {
+      setCustomFonts(fonts);
+    });
+    return subscribeCustomFonts(() => {
+      void listCustomFonts().then((fonts) => {
+        setCustomFonts(fonts);
+      });
+    });
+  }, []);
+
+  const handleUploadCustomFont = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(event.target.files ?? []);
+      event.target.value = "";
+      if (files.length === 0) return;
+
+      setCustomFontMessage(null);
+      let lastUploaded: CustomUploadedFont | null = null;
+      const errors: string[] = [];
+
+      for (const file of files) {
+        try {
+          lastUploaded = await registerCustomFontFromFile(file);
+        } catch (err) {
+          errors.push(
+            err instanceof Error ? err.message : `อัปโหลด ${file.name} ไม่สำเร็จ`,
+          );
+        }
+      }
+
+      const updated = await listCustomFonts();
+      setCustomFonts(updated);
+
+      if (lastUploaded) {
+        const selectedCssValue = lastUploaded.cssValue;
+        onTextStyleChange((prev: WorkspaceTextStyle) => ({
+          ...prev,
+          fontFamily: selectedCssValue,
+        }));
+        setCustomFontMessage({
+          type: "success",
+          text: `เพิ่มและเลือกฟอนต์ "${lastUploaded.familyName}" เรียบร้อยแล้ว`,
+        });
+      } else if (errors.length > 0) {
+        setCustomFontMessage({
+          type: "error",
+          text: errors[0],
+        });
+      }
+    },
+    [onTextStyleChange],
+  );
+
+  const handleRemoveCustomFont = useCallback(
+    async (font: CustomUploadedFont) => {
+      await removeCustomFont(font.id);
+      const updated = await listCustomFonts();
+      setCustomFonts(updated);
+      if (
+        textStyle.fontFamily === font.cssValue ||
+        textStyle.fontFamily.toLowerCase().startsWith(font.familyName.toLowerCase())
+      ) {
+        onTextStyleChange((prev: WorkspaceTextStyle) => ({
+          ...prev,
+          fontFamily: "Itim, sans-serif",
+        }));
+      }
+      setCustomFontMessage({
+        type: "success",
+        text: `ลบฟอนต์ "${font.familyName}" แล้ว`,
+      });
+    },
+    [onTextStyleChange, textStyle.fontFamily],
+  );
 
   const loadGeminiCatalog = useCallback(async (force: boolean) => {
     setCatalogStatus("loading");
@@ -458,9 +556,81 @@ export function SettingsModal({
     !normalizedModelSearch ||
     "auto automatic อัตโนมัติ".includes(normalizedModelSearch);
 
+  const resolveFontPreviewCss = (cssVal: string) => {
+    const primary = (cssVal || "Itim, sans-serif")
+      .split(",")[0]
+      .replace(/^["']|["']$/g, "")
+      .trim();
+    const cssVar = BUILTIN_CANVAS_FONT_VARS[primary.toLowerCase()];
+    return cssVar ? `var(${cssVar}), "${primary}", sans-serif` : `"${primary}", sans-serif`;
+  };
+
+  const extractFontSubtitle = (label: string, familyName: string) => {
+    const prefix = `${familyName} (`;
+    if (label.startsWith(prefix) && label.endsWith(")")) {
+      return label.slice(prefix.length, -1);
+    }
+    return label;
+  };
+
+  const selectedBuiltinFont = BUILTIN_MANGA_FONTS.find((f) => f.cssValue === textStyle.fontFamily);
+  const selectedCustomFont = customFonts.find((cf) => cf.cssValue === textStyle.fontFamily);
+  const selectedFontDisplayName =
+    selectedBuiltinFont?.familyName ??
+    selectedCustomFont?.familyName ??
+    (textStyle.fontFamily || "Itim, sans-serif")
+      .split(",")[0]
+      .replace(/^["']|["']$/g, "")
+      .trim();
+  const selectedFontCategoryShort = selectedBuiltinFont
+    ? selectedBuiltinFont.categoryLabel.split(" (")[0]
+    : selectedCustomFont
+      ? "⭐ ฟอนต์ของคุณ"
+      : "ฟอนต์ที่เลือก";
+  const selectedFontSubtitle = selectedBuiltinFont
+    ? `${extractFontSubtitle(selectedBuiltinFont.label, selectedBuiltinFont.familyName)} · ${selectedFontCategoryShort}`
+    : selectedCustomFont
+      ? "⭐ ฟอนต์ที่คุณอัปโหลดเอง · บันทึกในเบราว์เซอร์"
+      : "แบบอักษรสำหรับกล่องข้อความคำแปล";
+
+  const normalizedFontSearch = fontSearch.trim().toLowerCase();
+  const visibleCustomFonts = customFonts.filter((cf) => {
+    if (fontCategoryFilter !== "all" && fontCategoryFilter !== "custom") return false;
+    if (!normalizedFontSearch) return true;
+    return [cf.familyName, cf.fileName, "custom ฟอนต์ของคุณ อัปโหลด"].some((v) =>
+      v.toLowerCase().includes(normalizedFontSearch),
+    );
+  });
+  const visibleBuiltinFonts = BUILTIN_MANGA_FONTS.filter((font) => {
+    if (fontCategoryFilter !== "all" && fontCategoryFilter !== font.category) return false;
+    if (!normalizedFontSearch) return true;
+    return [font.familyName, font.label, font.categoryLabel, font.category].some((v) =>
+      v.toLowerCase().includes(normalizedFontSearch),
+    );
+  });
+
+  const fontCategoryPills: Array<{
+    id: "all" | "custom" | "manga" | "dialogue" | "action" | "narration";
+    label: string;
+  }> = [
+    { id: "all", label: `ทั้งหมด (${BUILTIN_MANGA_FONTS.length + customFonts.length})` },
+    ...(customFonts.length > 0
+      ? [{ id: "custom" as const, label: `⭐ ของคุณ (${customFonts.length})` }]
+      : []),
+    { id: "manga", label: "🎨 มังงะ/ลายมือ" },
+    { id: "dialogue", label: "💬 บทพูด" },
+    { id: "action", label: "⚡ แอ็กชัน/SFX" },
+    { id: "narration", label: "📖 บรรยาย" },
+  ];
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
       event.preventDefault();
+      if (fontPickerOpen) {
+        setFontPickerOpen(false);
+        setFontSearch("");
+        return;
+      }
       if (modelPickerOpen) {
         setModelPickerOpen(false);
         setModelSearch("");
@@ -571,31 +741,329 @@ export function SettingsModal({
             </span>
             <div className="space-y-3">
               <div>
-                <label htmlFor="settings-font-family" className="mb-1 block text-xs text-muted">
-                  Font Family (แบบอักษร)
-                </label>
-                <div className="relative">
-                  <select
-                    id="settings-font-family"
-                    aria-label="Font Family (แบบอักษร)"
-                    value={textStyle.fontFamily}
-                    onChange={(e) =>
-                      onTextStyleChange((prev: WorkspaceTextStyle) => ({
-                        ...prev,
-                        fontFamily: e.target.value,
-                      }))
-                    }
-                    className="w-full appearance-none rounded-md border border-surface-hover bg-background px-3 py-2 pr-8 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <label htmlFor="settings-font-family" className="block text-xs text-muted">
+                    Font Family (แบบอักษร — {BUILTIN_MANGA_FONTS.length + customFonts.length} แบบ)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => customFontInputRef.current?.click()}
+                    className="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary hover:bg-primary/20 transition-colors cursor-pointer"
+                    title="อัปโหลดไฟล์ฟอนต์ .ttf, .otf, .woff หรือ .woff2 จากคอมพิวเตอร์ของคุณ"
                   >
-                    <option value="Itim, sans-serif">Itim (น่ารัก / สบายๆ)</option>
-                    <option value="Mitr, sans-serif">Mitr (อ่านง่าย / โมเดิร์น)</option>
-                    <option value="Chakra Petch, sans-serif">
-                      Chakra Petch (แอ็กชัน / หุ่นยนต์)
-                    </option>
-                    <option value="Sarabun, sans-serif">Sarabun (ทางการ / บรรยาย)</option>
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" aria-hidden="true" />
+                    <Upload className="h-3 w-3" />
+                    <span>อัปโหลดฟอนต์ (.ttf/.otf)</span>
+                  </button>
+                  <input
+                    ref={customFontInputRef}
+                    data-testid="custom-font-upload-input"
+                    type="file"
+                    accept=".ttf,.otf,.woff,.woff2"
+                    multiple
+                    onChange={handleUploadCustomFont}
+                    className="hidden"
+                  />
                 </div>
+
+                <div className="w-full max-w-full">
+                  <button
+                    id="settings-font-family"
+                    type="button"
+                    aria-label="Font Family (แบบอักษร)"
+                    aria-haspopup="listbox"
+                    aria-expanded={fontPickerOpen}
+                    aria-controls="settings-font-listbox"
+                    onClick={() => {
+                      setFontPickerOpen((open) => !open);
+                      setModelPickerOpen(false);
+                      setFontSearch("");
+                    }}
+                    className="flex w-full min-w-0 items-center justify-between gap-3 rounded-md border border-surface-hover bg-background px-3 py-2 text-left text-sm text-foreground transition-colors hover:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span
+                          className="truncate text-sm font-semibold text-foreground"
+                          style={{ fontFamily: resolveFontPreviewCss(textStyle.fontFamily) }}
+                        >
+                          {selectedFontDisplayName}
+                        </span>
+                        <span
+                          className="shrink-0 rounded bg-surface-hover/80 px-1.5 py-0.5 text-[11px] text-foreground/85"
+                          style={{ fontFamily: resolveFontPreviewCss(textStyle.fontFamily) }}
+                        >
+                          สวัสดี 123
+                        </span>
+                      </span>
+                      <span className="mt-0.5 block truncate text-[10px] font-normal text-muted">
+                        {selectedFontSubtitle}
+                      </span>
+                    </span>
+                    <ChevronDown
+                      className={`h-4 w-4 shrink-0 text-muted transition-transform ${fontPickerOpen ? "rotate-180" : ""}`}
+                      aria-hidden="true"
+                    />
+                  </button>
+
+                  {fontPickerOpen && (
+                    <div className="mt-2 overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
+                      <div className="space-y-2 border-b border-border/70 p-2">
+                        <div className="relative">
+                          <Search
+                            className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted"
+                            aria-hidden="true"
+                          />
+                          <input
+                            type="search"
+                            role="searchbox"
+                            aria-label="ค้นหาฟอนต์"
+                            autoFocus
+                            value={fontSearch}
+                            onChange={(event) => setFontSearch(event.target.value)}
+                            placeholder="ค้นหาชื่อฟอนต์ หรือสไตล์ (เช่น โชเน็น, ลายมือ, แอ็กชัน)..."
+                            className="w-full rounded-md border border-border bg-background py-1.5 pl-8 pr-3 text-xs text-foreground placeholder:text-muted/60 focus:outline-none focus:ring-1 focus:ring-primary"
+                          />
+                        </div>
+
+                        <div className="flex flex-wrap gap-1">
+                          {fontCategoryPills.map((pill) => {
+                            const active = fontCategoryFilter === pill.id;
+                            return (
+                              <button
+                                key={pill.id}
+                                type="button"
+                                onClick={() => setFontCategoryFilter(pill.id)}
+                                className={`rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors cursor-pointer ${
+                                  active
+                                    ? "border-primary/60 bg-primary/15 text-primary"
+                                    : "border-border/70 bg-background/60 text-muted hover:bg-surface-hover hover:text-foreground"
+                                }`}
+                              >
+                                {pill.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div
+                        id="settings-font-listbox"
+                        role="listbox"
+                        aria-label="รายการแบบอักษร"
+                        className="max-h-72 overflow-y-auto p-1.5 [scrollbar-width:thin]"
+                      >
+                        {visibleCustomFonts.length > 0 && (
+                          <div className="mb-1.5">
+                            <div className="px-2 py-1 text-[10px] font-semibold tracking-wide text-muted/80 uppercase">
+                              📁 ฟอนต์ที่อัปโหลดเอง (Custom Fonts)
+                            </div>
+                            {visibleCustomFonts.map((cf) => {
+                              const isSelected = textStyle.fontFamily === cf.cssValue;
+                              return (
+                                <button
+                                  key={cf.id}
+                                  type="button"
+                                  role="option"
+                                  aria-selected={isSelected}
+                                  onClick={() => {
+                                    onTextStyleChange((prev: WorkspaceTextStyle) => ({
+                                      ...prev,
+                                      fontFamily: cf.cssValue,
+                                    }));
+                                    setFontPickerOpen(false);
+                                    setFontSearch("");
+                                  }}
+                                  className={`flex w-full min-w-0 items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left transition-colors cursor-pointer ${
+                                    isSelected
+                                      ? "bg-primary/15 text-primary"
+                                      : "text-foreground hover:bg-surface-hover"
+                                  }`}
+                                >
+                                  <span className="min-w-0 flex-1">
+                                    <span className="flex min-w-0 items-baseline justify-between gap-2">
+                                      <span
+                                        className="truncate text-sm font-semibold"
+                                        style={{ fontFamily: resolveFontPreviewCss(cf.cssValue) }}
+                                      >
+                                        ⭐ {cf.familyName}
+                                      </span>
+                                      <span
+                                        className="shrink-0 text-xs opacity-85"
+                                        style={{ fontFamily: resolveFontPreviewCss(cf.cssValue) }}
+                                      >
+                                        สวัสดี!? 123
+                                      </span>
+                                    </span>
+                                    <span className="mt-0.5 block truncate text-[10px] text-muted">
+                                      ฟอนต์ของคุณ ({cf.fileName})
+                                    </span>
+                                  </span>
+                                  {isSelected && (
+                                    <Check className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {MANGA_FONT_CATEGORIES.map((cat) => {
+                          const catFonts = visibleBuiltinFonts.filter((f) => f.category === cat.id);
+                          if (catFonts.length === 0) return null;
+                          return (
+                            <div key={cat.id} className="mb-1.5 last:mb-0">
+                              <div className="px-2 py-1 text-[10px] font-semibold tracking-wide text-muted/80">
+                                {cat.label}
+                              </div>
+                              {catFonts.map((font) => {
+                                const isSelected = textStyle.fontFamily === font.cssValue;
+                                const subtitle = extractFontSubtitle(font.label, font.familyName);
+                                const fontCss = resolveFontPreviewCss(font.cssValue);
+                                return (
+                                  <button
+                                    key={font.id}
+                                    type="button"
+                                    role="option"
+                                    aria-selected={isSelected}
+                                    onClick={() => {
+                                      onTextStyleChange((prev: WorkspaceTextStyle) => ({
+                                        ...prev,
+                                        fontFamily: font.cssValue,
+                                      }));
+                                      setFontPickerOpen(false);
+                                      setFontSearch("");
+                                    }}
+                                    className={`flex w-full min-w-0 items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left transition-colors cursor-pointer ${
+                                      isSelected
+                                        ? "bg-primary/15 text-primary"
+                                        : "text-foreground hover:bg-surface-hover"
+                                    }`}
+                                  >
+                                    <span className="min-w-0 flex-1">
+                                      <span className="flex min-w-0 items-baseline justify-between gap-2">
+                                        <span
+                                          className="truncate text-sm font-semibold"
+                                          style={{ fontFamily: fontCss }}
+                                        >
+                                          {font.familyName}
+                                        </span>
+                                        <span
+                                          className="shrink-0 rounded bg-background/70 px-1.5 py-0.5 text-xs text-foreground/90"
+                                          style={{ fontFamily: fontCss }}
+                                        >
+                                          เดี๋ยวก่อน!? 123
+                                        </span>
+                                      </span>
+                                      <span className="mt-0.5 block truncate text-[10px] text-muted">
+                                        {subtitle}
+                                      </span>
+                                    </span>
+                                    {isSelected && (
+                                      <Check className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          );
+                        })}
+
+                        {visibleCustomFonts.length === 0 && visibleBuiltinFonts.length === 0 && (
+                          <div className="px-3 py-5 text-center text-xs text-muted">
+                            ไม่พบฟอนต์ที่ตรงกับคำค้นหา
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {customFontMessage && (
+                  <p
+                    role="status"
+                    className={`mt-1.5 text-[11px] ${
+                      customFontMessage.type === "error" ? "text-amber-400" : "text-emerald-400"
+                    }`}
+                  >
+                    {customFontMessage.text}
+                  </p>
+                )}
+
+                {customFonts.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {customFonts.map((cf) => {
+                      const isSelected = textStyle.fontFamily === cf.cssValue;
+                      return (
+                        <div
+                          key={cf.id}
+                          className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] transition-colors ${
+                            isSelected
+                              ? "border-primary/60 bg-primary/15 text-foreground font-medium"
+                              : "border-border/70 bg-surface/70 text-muted hover:text-foreground"
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onTextStyleChange((prev: WorkspaceTextStyle) => ({
+                                ...prev,
+                                fontFamily: cf.cssValue,
+                              }))
+                            }
+                            className="truncate max-w-[10rem] cursor-pointer"
+                            title={`เลือกใช้ฟอนต์ ${cf.familyName}`}
+                          >
+                            {cf.familyName}
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`ลบฟอนต์ ${cf.familyName}`}
+                            onClick={() => void handleRemoveCustomFont(cf)}
+                            className="ml-0.5 rounded-full p-0.5 text-muted hover:bg-red-500/20 hover:text-red-400 cursor-pointer"
+                            title={`ลบฟอนต์ ${cf.familyName}`}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {(() => {
+                  const primaryName = (textStyle.fontFamily || "Itim, sans-serif")
+                    .split(",")[0]
+                    .replace(/^["']|["']$/g, "")
+                    .trim();
+                  const cssVar = BUILTIN_CANVAS_FONT_VARS[primaryName.toLowerCase()];
+                  const previewFontFamily = cssVar
+                    ? `var(${cssVar}), "${primaryName}", sans-serif`
+                    : `"${primaryName}", sans-serif`;
+                  return (
+                    <div
+                      data-testid="font-preview-box"
+                      className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-white/95 px-3 py-2 text-center shadow-inner"
+                    >
+                      <Type className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
+                      <span
+                        className="flex-1 truncate text-base font-bold leading-snug"
+                        style={{
+                          fontFamily: previewFontFamily,
+                          color: draftTextColor || "#000000",
+                          textShadow:
+                            draftTextOutline && draftTextOutline !== "none"
+                              ? `-1px -1px 0 ${draftTextOutline}, 1px -1px 0 ${draftTextOutline}, -1px 1px 0 ${draftTextOutline}, 1px 1px 0 ${draftTextOutline}`
+                              : undefined,
+                        }}
+                      >
+                        เดี๋ยวก่อนสิ! นี่มันเรื่องอะไรกันแน่!? 123
+                      </span>
+                      <span className="shrink-0 rounded bg-neutral-200/80 px-1.5 py-0.5 text-[10px] font-medium text-neutral-700">
+                        {primaryName}
+                      </span>
+                    </div>
+                  );
+                })()}
               </div>
 
               <div className="flex items-center justify-between">
@@ -775,6 +1243,7 @@ export function SettingsModal({
                 aria-controls="settings-model-listbox"
                 onClick={() => {
                   setModelPickerOpen((open) => !open);
+                  setFontPickerOpen(false);
                   setModelSearch("");
                 }}
                 className="flex w-full min-w-0 items-center justify-between gap-3 rounded-md border border-surface-hover bg-background px-3 py-2 text-left text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"

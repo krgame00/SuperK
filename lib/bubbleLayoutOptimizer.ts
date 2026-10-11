@@ -68,6 +68,12 @@ export function isCorruptedAutoAdjustment(
 
   if (adjW < 52 || adjH < 28) return true;
 
+  // Self-heal pre-fix tall OCR boxes where a short/medium sentence was given a bloated >280px vertical frame
+  const textLen = (b.t || b.translated || "").replace(/\s+/g, "").length;
+  if (adjH > 280 && adjH > adjW * 2.25 && textLen > 0 && textLen <= 50) {
+    return true;
+  }
+
   if (b.box && Array.isArray(b.box) && b.box.length === 4) {
     const [ymin, xmin, ymax, xmax] = b.box;
     if (
@@ -409,8 +415,15 @@ export function fitBubbleTextWithinBounds(
   let finalHeight = curH;
   let targetFontSize = fit.fontSize;
 
-  // 3. Controlled expansion when text doesn't fit at preferredReadableFs
-  if (!fit.fits) {
+  const nonSpaceChars = text.replace(/\s+/g, "").length;
+  const isCrampedVerticalStack = (lines: string[], widthPx: number) =>
+    !constrainToOriginal &&
+    lines.length >= 5 &&
+    widthPx < iw * 0.135 &&
+    nonSpaceChars / Math.max(1, lines.length) < 6.2;
+
+  // 3. Controlled expansion when text doesn't fit at preferredReadableFs or wraps into a cramped 1-word-per-line stack
+  if (!fit.fits || (isCrampedVerticalStack(fit.lines, finalWidth) && finalWidth < maxAllowedW)) {
     if (constrainToOriginal) {
       const fallbackFit = fitTextForBubble(
         text,
@@ -472,7 +485,7 @@ export function fitBubbleTextWithinBounds(
         finalHeight = candH;
         targetFontSize = candFit.fontSize;
         fit = candFit;
-        if (candFit.fits) {
+        if (candFit.fits && (!isCrampedVerticalStack(candFit.lines, candW) || candW >= maxAllowedW)) {
           foundReadableFit = true;
           break;
         }
@@ -495,11 +508,13 @@ export function fitBubbleTextWithinBounds(
     }
   }
 
-  // Cap overly huge fonts on normal sentences in clustered pages so adjacent bubbles stay harmonious
-  if (!options?.minFontSize && hasCloseNeighbors && text.length >= 6) {
-    const maxClusterDialogueFs = Math.max(20, Math.round(iw * 0.0172));
-    if (targetFontSize > maxClusterDialogueFs) {
-      targetFontSize = maxClusterDialogueFs;
+  // Cap overly huge fonts on normal sentences so oversized OCR boxes don't balloon to 40px+ billboard text
+  if (!options?.minFontSize && text.length >= 6) {
+    const maxDialogueFs = hasCloseNeighbors
+      ? Math.max(20, Math.round(iw * 0.0172))
+      : Math.max(24, Math.round(iw * 0.0195));
+    if (targetFontSize > maxDialogueFs) {
+      targetFontSize = maxDialogueFs;
     }
   }
 
@@ -520,13 +535,18 @@ export function fitBubbleTextWithinBounds(
     let expandGuard = 0;
     while (
       expandGuard < 6 &&
-      (fixedRenderLayout.overflow || fixedRenderLayout.requiredHeightPx > finalHeight) &&
+      (fixedRenderLayout.overflow ||
+        fixedRenderLayout.requiredHeightPx > finalHeight ||
+        isCrampedVerticalStack(fixedRenderLayout.lines, finalWidth)) &&
       (finalWidth < maxAllowedW || finalHeight < maxAllowedH)
     ) {
       expandGuard++;
       const prevW = finalWidth;
       const prevH = finalHeight;
-      if (fixedRenderLayout.overflow && finalWidth < maxAllowedW) {
+      if (
+        (fixedRenderLayout.overflow || isCrampedVerticalStack(fixedRenderLayout.lines, finalWidth)) &&
+        finalWidth < maxAllowedW
+      ) {
         finalWidth = Math.min(maxAllowedW, Math.max(finalWidth + 14, Math.round(finalWidth * 1.14)));
       }
       if (fixedRenderLayout.requiredHeightPx > finalHeight && finalHeight < maxAllowedH) {
@@ -564,18 +584,6 @@ export function fitBubbleTextWithinBounds(
     );
   }
 
-  if (fit.fits && fit.lines.length > 0 && !fixedRenderLayout.overflow) {
-    const textH = (fit.lines.length - 1) * fit.lineHeight + fit.fontSize * 1.30;
-    const minPreserveRatio = isTallVerticalBalloon ? 0.85 : 0.65;
-    const snugH = Math.max(
-      Math.round(geom.height * minPreserveRatio),
-      Math.min(finalHeight, Math.max(Math.ceil(textH * 1.30), fixedRenderLayout.requiredHeightPx)),
-    );
-    finalHeight = Math.max(snugH, Math.min(finalHeight, fixedRenderLayout.requiredHeightPx));
-  } else if (fixedRenderLayout.requiredHeightPx > finalHeight) {
-    finalHeight = Math.min(maxAllowedH, Math.max(finalHeight, fixedRenderLayout.requiredHeightPx));
-  }
-
   // If oval word-chord or vertical constraint still overflows at minFs, allow a slight width bump
   // up to the readable word floor (~8.2% page width) before stepping down below minFs
   if (!constrainToOriginal && (fixedRenderLayout.overflow || fixedRenderLayout.requiredHeightPx > finalHeight)) {
@@ -611,19 +619,48 @@ export function fitBubbleTextWithinBounds(
       locale,
     );
   }
-  if (fixedRenderLayout.requiredHeightPx > finalHeight) {
+
+  if (!fixedRenderLayout.overflow) {
+    // Cap preserved height relative to requiredHeightPx so tall OCR boxes (e.g. 639px box for a 4-line bubble)
+    // do not produce 450-710px empty frames.
+    const maxComfortH = Math.max(
+      fixedRenderLayout.requiredHeightPx,
+      Math.round(fixedRenderLayout.requiredHeightPx * 1.25) + 12,
+    );
+    const minPreserveRatio = isTallVerticalBalloon ? 0.78 : 0.55;
+    const preservedH = Math.min(
+      maxComfortH,
+      Math.round(geom.height * minPreserveRatio),
+    );
+    finalHeight = Math.max(
+      fixedRenderLayout.requiredHeightPx,
+      Math.min(finalHeight, preservedH),
+    );
+  } else if (fixedRenderLayout.requiredHeightPx > finalHeight) {
     finalHeight = Math.min(ih, fixedRenderLayout.requiredHeightPx);
   }
 
-  // Ensure tall vertical balloons keep bh > bw
-  if (isTallVerticalBalloon && finalHeight <= finalWidth) {
-    finalHeight = Math.min(maxAllowedH, Math.max(geom.height, finalWidth + 12));
+  // Ensure tall vertical balloons with multi-line dialogue (5+ lines) keep bh > bw
+  // without inflating short 3-4 line bubbles into 450-639px empty frames.
+  if (
+    isTallVerticalBalloon &&
+    finalHeight <= finalWidth &&
+    fixedRenderLayout.lines.length >= 5
+  ) {
+    finalHeight = Math.min(
+      maxAllowedH,
+      Math.max(fixedRenderLayout.requiredHeightPx, finalWidth + 12),
+    );
   }
 
   const cx = geom.x + geom.width / 2;
   const cy = geom.y + geom.height / 2;
   const bx = Math.max(0, Math.min(iw - finalWidth, Math.round(cx - finalWidth / 2)));
   const by = Math.max(0, Math.min(ih - finalHeight, Math.round(cy - finalHeight / 2)));
+
+  const preservedStyle =
+    bubble.layoutAdjustment?.styleProfile ??
+    (bubble.styleProfile ? { ...bubble.styleProfile } : undefined);
 
   const updatedAdj: OverlayAdjustment = {
     bx,
@@ -635,6 +672,10 @@ export function fitBubbleTextWithinBounds(
     rotation: bubble.layoutAdjustment?.rotation ?? (bubble.rotation as number) ?? 0,
     targetFontSize,
     fontSizeMultiplier: bubble.fontSizeMultiplier,
+    ...(preservedStyle ? { styleProfile: preservedStyle } : {}),
+    ...(!options?.overrideUserModified && bubble.layoutAdjustment?.manualMinHeightPx !== undefined
+      ? { manualMinHeightPx: bubble.layoutAdjustment.manualMinHeightPx }
+      : {}),
     isAutoOptimized: true,
     autoOptimizeVersion: AUTO_OPTIMIZE_VERSION,
   };
@@ -714,11 +755,32 @@ function refitFontInResolvedBox(
     );
   }
 
+  let resolvedBh = adj.bh;
+  let resolvedBy = adj.by;
+  if (!fixedRenderLayout.overflow && typeof adj.manualMinHeightPx !== "number") {
+    const maxComfortH = Math.max(
+      fixedRenderLayout.requiredHeightPx,
+      Math.round(fixedRenderLayout.requiredHeightPx * 1.35) + 16,
+      resolvedBh <= adj.bw + 16 ? resolvedBh : 0,
+    );
+    if (resolvedBh > maxComfortH) {
+      const cy = resolvedBy + resolvedBh / 2;
+      resolvedBh = maxComfortH;
+      resolvedBy = Math.max(0, Math.min(ih - resolvedBh, Math.round(cy - resolvedBh / 2)));
+    }
+  }
+
+  const preservedStyle =
+    adj.styleProfile ?? (bubble.styleProfile ? { ...bubble.styleProfile } : undefined);
+
   const nextBubble: TranslatedBubble = {
     ...bubble,
     targetFontSize,
     layoutAdjustment: {
       ...adj,
+      by: resolvedBy,
+      bh: resolvedBh,
+      ...(preservedStyle ? { styleProfile: preservedStyle } : {}),
       targetFontSize,
       isAutoOptimized: true,
       autoOptimizeVersion: AUTO_OPTIMIZE_VERSION,
@@ -740,12 +802,14 @@ function harmonizeClusterFontSizes(
 ): TranslatedBubble[] {
   if (options?.minFontSize || bubbles.length < 2) return bubbles;
 
+  const readableClusterFloor = Math.max(18, Math.round(iw * 0.014));
   const rects = bubbles.map((b) => getBubbleGeometry(b, iw, ih));
   return bubbles.map((b, i) => {
     if (!b || b.deleted || b.layoutAdjustment?.userModified || !b.layoutAdjustment || !b.targetFontSize) {
       return b;
     }
     const rA = rects[i];
+    const areaA = Math.max(1, rA.width * rA.height);
     const cxA = rA.x + rA.width / 2;
     const cyA = rA.y + rA.height / 2;
 
@@ -755,6 +819,9 @@ function harmonizeClusterFontSizes(
       const nb = bubbles[j];
       if (!nb || nb.deleted || !nb.targetFontSize) continue;
       const rB = rects[j];
+      const areaB = Math.max(1, rB.width * rB.height);
+      // Ignore tiny aside/SFX boxes (< 40% area of rA) so they don't drag down main dialogue balloons
+      if (areaB < areaA * 0.40) continue;
       const cxB = rB.x + rB.width / 2;
       const cyB = rB.y + rB.height / 2;
       if (Math.abs(cxA - cxB) < iw * 0.22 && Math.abs(cyA - cyB) < ih * 0.20) {
@@ -762,7 +829,7 @@ function harmonizeClusterFontSizes(
       }
     }
 
-    const maxAllowedClusterFs = minNeighborFs + 5;
+    const maxAllowedClusterFs = Math.max(readableClusterFloor, minNeighborFs + 5);
     if (b.targetFontSize > maxAllowedClusterFs) {
       return refitFontInResolvedBox(
         {
@@ -943,16 +1010,20 @@ export function resolveBubbleCollisions(
       if (!aFixed) {
         rA.x = Math.max(0, Math.min(iw - rA.width, Math.round(rA.x)));
         rA.y = Math.max(0, Math.min(ih - rA.height, Math.round(rA.y)));
+        const prevAdjA = active[idxA].layoutAdjustment;
+        const styleA = prevAdjA?.styleProfile ?? (active[idxA].styleProfile ? { ...active[idxA].styleProfile } : undefined);
         active[idxA].layoutAdjustment = {
+          ...prevAdjA,
           bx: rA.x,
           by: rA.y,
           bw: rA.width,
           bh: rA.height,
           iw,
           ih,
-          rotation: active[idxA].layoutAdjustment?.rotation ?? (active[idxA].rotation as number) ?? 0,
+          rotation: prevAdjA?.rotation ?? (active[idxA].rotation as number) ?? 0,
           targetFontSize: active[idxA].targetFontSize,
           fontSizeMultiplier: active[idxA].fontSizeMultiplier,
+          ...(styleA ? { styleProfile: styleA } : {}),
           isAutoOptimized: true,
           autoOptimizeVersion: AUTO_OPTIMIZE_VERSION,
         };
@@ -961,16 +1032,20 @@ export function resolveBubbleCollisions(
       if (!bFixed) {
         rB.x = Math.max(0, Math.min(iw - rB.width, Math.round(rB.x)));
         rB.y = Math.max(0, Math.min(ih - rB.height, Math.round(rB.y)));
+        const prevAdjB = active[idxB].layoutAdjustment;
+        const styleB = prevAdjB?.styleProfile ?? (active[idxB].styleProfile ? { ...active[idxB].styleProfile } : undefined);
         active[idxB].layoutAdjustment = {
+          ...prevAdjB,
           bx: rB.x,
           by: rB.y,
           bw: rB.width,
           bh: rB.height,
           iw,
           ih,
-          rotation: active[idxB].layoutAdjustment?.rotation ?? (active[idxB].rotation as number) ?? 0,
+          rotation: prevAdjB?.rotation ?? (active[idxB].rotation as number) ?? 0,
           targetFontSize: active[idxB].targetFontSize,
           fontSizeMultiplier: active[idxB].fontSizeMultiplier,
+          ...(styleB ? { styleProfile: styleB } : {}),
           isAutoOptimized: true,
           autoOptimizeVersion: AUTO_OPTIMIZE_VERSION,
         };
@@ -1008,6 +1083,7 @@ export function autoOrganizePageBubbles(
   );
   const initialCollisions = detectBubbleCollisions(bubbles, iw, ih);
   const rawRects = bubbles.map((b) => getBubbleGeometry(b, iw, ih, true));
+  let anyRealigned = false;
 
   // Step 1: Fit each bubble within its detected bounds (respecting neighbor width/height limits)
   let working = bubbles.map((b, idx) => {
@@ -1021,6 +1097,7 @@ export function autoOrganizePageBubbles(
     if (b.layoutAdjustment && !corrupted && !options?.forceRealign && !options?.overrideUserModified && initialCollisions.length === 0 && !hasCorrupted) {
       return b;
     }
+    anyRealigned = true;
     const maxAllowedWidth = computeNeighborMaxWidth(idx, rawRects, iw);
     const maxAllowedHeight = computeNeighborMaxHeight(idx, rawRects, ih);
     return fitBubbleTextWithinBounds(b, iw, ih, {
@@ -1049,7 +1126,10 @@ export function autoOrganizePageBubbles(
   }
 
   // Step 4: Harmonize font sizes across adjacent cluster bubbles for visual consistency
-  working = harmonizeClusterFontSizes(working, iw, ih, options);
+  // (Only when bubbles were actually organized/realigned in this pass, so already-organized XL bubbles aren't downgraded)
+  if (anyRealigned || postFitCollisions.length > 0 || options?.forceRealign || options?.overrideUserModified || hasCorrupted) {
+    working = harmonizeClusterFontSizes(working, iw, ih, options);
+  }
 
   const finalCollisions = detectBubbleCollisions(working, iw, ih);
 

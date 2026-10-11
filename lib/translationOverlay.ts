@@ -68,16 +68,13 @@ const wordWrapLocaleOf = (language?: string): string => {
   return WORD_WRAP_LOCALES[normalized] ?? normalized;
 };
 
+import { BUILTIN_CANVAS_FONT_VARS } from "./customFonts";
+
 // next/font registers its families under build-hashed names, so canvas
 // `ctx.font = "16px Itim"` silently falls back to generic sans-serif.
 // Resolve the selected family through the CSS variable next/font set on <html>.
 const CANVAS_FONT_VARS: Record<string, string> = {
-  itim: "--font-itim",
-  prompt: "--font-prompt",
-  kanit: "--font-kanit",
-  sarabun: "--font-sarabun",
-  mitr: "--font-mitr",
-  "chakra petch": "--font-chakra-petch",
+  ...BUILTIN_CANVAS_FONT_VARS,
 };
 
 const canvasShadowColor = (color: string, opacity: number): string => {
@@ -96,17 +93,20 @@ export const resolveCanvasFontFamily = (fontFamily?: string): string => {
     return fallback;
   }
   try {
-    const primary = fallback
-      .split(",")[0]
-      .trim()
-      .replace(/^["']|["']$/g, "")
-      .toLowerCase();
-    const varName = CANVAS_FONT_VARS[primary];
-    if (!varName) return fallback;
-    const resolved = getComputedStyle(document.documentElement)
-      .getPropertyValue(varName)
-      .trim();
-    return resolved || fallback;
+    const parts = fallback.split(",").map((p) => p.trim()).filter(Boolean);
+    const rawPrimary = (parts[0] || "Itim").replace(/^["']|["']$/g, "").trim();
+    const varName = CANVAS_FONT_VARS[rawPrimary.toLowerCase()];
+    if (varName) {
+      const resolved = getComputedStyle(document.documentElement)
+        .getPropertyValue(varName)
+        .trim();
+      if (resolved) return resolved;
+    }
+    if (/\s|\d/.test(rawPrimary) && !/^["']/.test(parts[0] || "")) {
+      const rest = parts.slice(1).join(", ") || "sans-serif";
+      return `"${rawPrimary}", ${rest}`;
+    }
+    return fallback;
   } catch {
     return fallback;
   }
@@ -338,11 +338,17 @@ export const syncPageOverlayAdjustments = (pageKey: string, bubbles: TranslatedB
   try {
     const storagePageKey = compactOverlayPageKey(pageKey);
     const all = readOverlayAdjustments();
+    const existingPageAdj = all[storagePageKey] ?? all[pageKey] ?? {};
     const nextPageAdj: Record<string, OverlayAdjustment> = {};
     for (const b of bubbles) {
-      if (!b || b.deleted || !b.layoutAdjustment) continue;
+      if (!b || b.deleted) continue;
       const bubbleId = bubbleKeyOf(b);
-      nextPageAdj[bubbleId] = { ...b.layoutAdjustment };
+      const baseAdj = b.layoutAdjustment ?? existingPageAdj[bubbleId];
+      if (!baseAdj) continue;
+      nextPageAdj[bubbleId] = {
+        ...baseAdj,
+        ...(b.styleProfile ? { styleProfile: cloneTextStyleProfile(b.styleProfile) } : {}),
+      };
     }
     if (Object.keys(nextPageAdj).length > 0) {
       all[storagePageKey] = nextPageAdj;
@@ -1010,6 +1016,13 @@ export const applyTranslationOverlay = async (
       if (hasCorrupted) {
         for (const b of real) {
           const bKey = bubbleKeyOf(b);
+          const rescuedStyle =
+            b.styleProfile ??
+            b.layoutAdjustment?.styleProfile ??
+            savedAdj[bKey]?.styleProfile;
+          if (rescuedStyle && !b.styleProfile) {
+            b.styleProfile = cloneTextStyleProfile(rescuedStyle);
+          }
           if (b.layoutAdjustment && isCorruptedAutoAdjustment(b, iw, ih, b.layoutAdjustment)) {
             delete b.layoutAdjustment;
           }
@@ -1019,7 +1032,15 @@ export const applyTranslationOverlay = async (
         }
       }
       const collisions = real.length > 1 ? detectBubbleCollisions(real, iw, ih) : [];
-      if (collisions.length > 0 || hasCorrupted || viewMode === "offscreen") {
+      const allAlreadyOrganized = real.every(
+        (b) =>
+          b.layoutAdjustment &&
+          !isCorruptedAutoAdjustment(b, iw, ih, b.layoutAdjustment) &&
+          (b.layoutAdjustment.userModified ||
+            b.layoutAdjustment.isAutoOptimized ||
+            typeof b.targetFontSize === "number"),
+      );
+      if (collisions.length > 0 || hasCorrupted || (viewMode === "offscreen" && !allAlreadyOrganized)) {
         const organized = autoOrganizePageBubbles(real, iw, ih, {
           fontFamily: resolvedFontFam,
           fontSizeMultiplier: currentTextStyle.fontSizeMultiplier || 1.0,
@@ -1209,7 +1230,13 @@ export const applyTranslationOverlay = async (
       let textSelection: SelectionRect = { x: 0, y: 0, width: currentBw, height: currentBh };
       let widthSelectionPreview = false;
       const visibleSelection = (): SelectionRect => widthSelectionPreview
-        ? { x: 0, y: 0, width: currentBw, height: currentBh } : textSelection;
+        ? {
+            x: 0,
+            y: textSelection.height > 0 ? textSelection.y : 0,
+            width: currentBw,
+            height: textSelection.height > 0 ? textSelection.height : currentBh,
+          }
+        : textSelection;
       const updateSelectionFrame = () => {
         const bounds = visibleSelection();
         selectionFrame.style.left = `${bounds.x / currentBw * 100}%`;
@@ -2494,7 +2521,7 @@ export const applyTranslationOverlay = async (
               manualMinHeightPx = adj
                 ? (typeof adj.manualMinHeightPx === "number" && Number.isFinite(adj.manualMinHeightPx)
                   ? Math.max(0, adj.manualMinHeightPx)
-                  : adj.bh)
+                  : (adj.isAutoOptimized ? 25 : adj.bh))
                 : 25;
             }
             const text = (b.t || b.translated || "").trim();
@@ -2755,7 +2782,9 @@ export const applyTranslationOverlay = async (
             if (id === "scale" && scaleDragSnapshot && rInitBw > 0) {
               renderBubble(undefined, currentBw / rInitBw);
             } else if (id === "width") {
-              // The latest width preview already drew the exact committed layout.
+              // The latest width preview already drew the exact committed layout;
+              // refresh selectionFrame and chrome positions now that widthSelectionPreview is false.
+              updateBubbleFrame();
             } else {
               renderBubble();
             }

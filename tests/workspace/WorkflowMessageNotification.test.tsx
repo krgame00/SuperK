@@ -102,9 +102,9 @@ describe("WorkflowMessage Notification", () => {
     render(<WorkspacePage />);
 
     const toast = screen.getByRole("status");
-    // Should NOT be top-16 which directly overlaps top toolbar
+    // Should NOT be top-16 which directly overlaps top toolbar, and should clear PageFilmstrip (bottom-32 sm:bottom-34)
     expect(toast.className).not.toContain("top-16");
-    expect(toast.className).toMatch(/top-24|top-20|bottom-21/);
+    expect(toast.className).toMatch(/top-24|top-20|bottom-32/);
   });
 
   it("offers an explicit Auto switch on a Manual translation failure", () => {

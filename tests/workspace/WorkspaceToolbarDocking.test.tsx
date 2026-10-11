@@ -177,10 +177,17 @@ describe("Workspace Toolbar Docking and Collapse", () => {
     const togglePosBtn = screen.getByRole("button", { name: "Toggle position" });
     fireEvent.click(togglePosBtn);
 
-    // Bottom mode intentionally remains floating.
+    // Bottom mode intentionally remains floating above the full PageFilmstrip (h-9 header + h-20/sm:h-22 strip).
     expect(container?.dataset.pageControlsDock).toBe("bottom");
     expect(container?.className).toContain("absolute");
-    expect(container?.className).toContain("bottom-23");
+    expect(container?.className).toContain("z-40");
+    expect(container?.className).toContain("bottom-32");
+    expect(container?.className).toContain("sm:bottom-34");
+
+    // Collapse the filmstrip thumbnails and verify bottom dock still clears the h-9 (2.25rem) filmstrip header bar
+    const collapseFilmstripBtn = screen.getByRole("button", { name: "ซ่อนแถบหน้าตัวอย่าง" });
+    fireEvent.click(collapseFilmstripBtn);
+    expect(container?.className).toContain("bottom-12");
 
     // Click again to return to top flow docking.
     fireEvent.click(togglePosBtn);

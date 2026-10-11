@@ -1,5 +1,5 @@
 import type { PageExportSource } from "@/lib/export/pageSource";
-import { scopedRecognitionImage, withinTranslationScope, type TranslationScope } from "@/lib/cleaning/textAuthorization";
+import { withinTranslationScope, type TranslationScope } from "@/lib/cleaning/textAuthorization";
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   getTranslationRetryDelay,
@@ -38,7 +38,6 @@ import {
   applyNearbyStyleFallbacks,
   inferTextStyleCategory,
 } from "@/lib/colorMatching/nearbyStyleFallback";
-import type { TextStyleProfile } from "@/lib/colorMatching/types";
 import { type GlossaryEntry } from "@/lib/translation/glossary";
 import {
   classifyTranslationError,
@@ -556,7 +555,18 @@ export function useTranslation({
     const after = typeof update === 'function' ? update(before) : update;
     textStyleRef.current = after;
     setTextStyleState(after);
-    if (before.fontSizeMultiplier === after.fontSizeMultiplier) return;
+    if (before.fontSizeMultiplier === after.fontSizeMultiplier) {
+      if (
+        before.fontFamily !== after.fontFamily ||
+        before.textColor !== after.textColor ||
+        before.textOutline !== after.textOutline
+      ) {
+        for (const pageUrl of bubbleCacheRef.current.keys()) {
+          markPageDirty(pageUrl);
+        }
+      }
+      return;
+    }
     const entries: Array<{pageUrl:string;bubble:TranslatedBubble;before:SizeSnapshot;after:SizeSnapshot}> = [];
     for (const [pageUrl,bubbles] of bubbleCacheRef.current) {
       for (const bubble of bubbles) {
@@ -601,7 +611,7 @@ export function useTranslation({
     return [];
   };
 
-  // When currentPage changes, restore cached bubbles and re-apply overlay
+  // When currentPage or typography style changes, restore cached bubbles and re-apply overlay
   useEffect(() => {
     if (pages.length === 0) return;
     const currentKey = pages[currentPage];
@@ -635,7 +645,18 @@ export function useTranslation({
     } else {
       setActiveBubbles((prev) => (prev.length === 0 ? prev : []));
     }
-  }, [currentPage, pages, viewMode, markPageDirty, getPageTargetLanguage, isTranslating, isTranslatingAll]);
+  }, [
+    currentPage,
+    pages,
+    viewMode,
+    markPageDirty,
+    getPageTargetLanguage,
+    isTranslating,
+    isTranslatingAll,
+    textStyle.fontFamily,
+    textStyle.textColor,
+    textStyle.textOutline,
+  ]);
 
   // Save status and revision management for session reliability
   const saveRevisionRef = useRef(0);

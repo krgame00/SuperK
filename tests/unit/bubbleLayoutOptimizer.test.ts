@@ -710,7 +710,167 @@ describe("Bubble Layout Optimizer", () => {
     expect(Math.abs(fsRightTop - fsMiddle)).toBeLessThanOrEqual(6);
     expect(Math.abs(fsLeftLobe - fsMiddle)).toBeLessThanOrEqual(6);
   });
+
+  it("preserves styleProfile (bwContrastMode), rotation, fontSizeMultiplier, and manualMinHeightPx in layoutAdjustment across fit and collision resolution", () => {
+    const bwStyle = {
+      fill: "#ffffff",
+      outline: "#000000",
+      hasOutline: true,
+      outlineWidthRatio: 0.22,
+      source: "manual" as const,
+      ownershipMode: "manual" as const,
+      bwContrastMode: "white_on_black" as const,
+    };
+    const bubbles: TranslatedBubble[] = [
+      {
+        box: [155, 115, 510, 185],
+        t: "ฉันเปิดดูเจ้านี่ซ้ำตั้งหลายรอบตอนกินข้าว แต่...",
+        styleProfile: bwStyle,
+        fontSizeMultiplier: 1.15,
+        layoutAdjustment: {
+          bx: 147,
+          by: 279,
+          bw: 90,
+          bh: 639,
+          iw: 1280,
+          ih: 1800,
+          rotation: 15,
+          fontSizeMultiplier: 1.15,
+          manualMinHeightPx: 140,
+          styleProfile: bwStyle,
+          isAutoOptimized: true,
+          autoOptimizeVersion: 4,
+        },
+      },
+      {
+        box: [165, 50, 550, 125],
+        t: "พอมาได้ยินเสียงครางของตัวเองแล้วมันยังน่าอายอยู่ดีนั่นแหละ!",
+        styleProfile: bwStyle,
+      },
+    ];
+
+    const res = autoOrganizePageBubbles(bubbles, 1280, 1800, { forceRealign: true });
+    expect(res.optimizedBubbles[0].layoutAdjustment?.styleProfile?.bwContrastMode).toBe("white_on_black");
+    expect(res.optimizedBubbles[0].layoutAdjustment?.rotation).toBe(15);
+    expect(res.optimizedBubbles[0].layoutAdjustment?.fontSizeMultiplier).toBe(1.15);
+    expect(res.optimizedBubbles[0].layoutAdjustment?.manualMinHeightPx).toBe(140);
+    expect(res.optimizedBubbles[1].layoutAdjustment?.styleProfile?.bwContrastMode).toBe("white_on_black");
+  });
+
+  it("does not allow a tiny aside bubble to drag neighboring normal dialogue balloons below readable floor", () => {
+    const iw = 1280;
+    const ih = 1800;
+    const bubbles: TranslatedBubble[] = [
+      {
+        // Normal speech balloon with short exclamation (naturally fits at ~23-24px)
+        box: [100, 100, 260, 240],
+        t: "วันนี้อากาศดีจัง!",
+      },
+      {
+        // Tiny cramped aside/SFX box right next to it (locked at 10px user/tight font)
+        box: [110, 255, 140, 285],
+        t: "เสียงพึมพำเบาๆ ที่แทบไม่ได้ยินเลยสักนิดเดียวเชียวล่ะ",
+        targetFontSize: 10,
+        layoutAdjustment: {
+          bx: 326,
+          by: 198,
+          bw: 38,
+          bh: 54,
+          iw,
+          ih,
+          targetFontSize: 10,
+          userModified: true,
+        },
+      },
+    ];
+
+    const res = autoOrganizePageBubbles(bubbles, iw, ih, { forceRealign: true });
+    const mainDialogFs = res.optimizedBubbles[0].targetFontSize!;
+    // Even though the tiny aside box has a 10px font, the main balloon must stay >= 18px (not dragged to 10+5=15px!)
+    expect(mainDialogFs).toBeGreaterThanOrEqual(18);
+  });
+
+  it("preserves XL-organized font sizes when autoOrganizePageBubbles is subsequently called with forceRealign: false", () => {
+    const iw = 1280;
+    const ih = 1800;
+    const rawBubbles: TranslatedBubble[] = [
+      {
+        // Short exclamation in XL mode reaches ~27-28px
+        box: [100, 100, 250, 230],
+        t: "สุดยอดเลย!",
+      },
+      {
+        // Longer sentence right next to it in the same cluster fits around ~18-20px
+        box: [100, 250, 250, 380],
+        t: "วันนี้พวกเรามาพยายามทำให้เต็มที่ที่สุดกันเถอะนะทุกคน!",
+      },
+    ];
+
+    const xlMinFs = Math.max(22, Math.round(iw * 0.0195)); // 25px
+    const xlRes = autoOrganizePageBubbles(rawBubbles, iw, ih, {
+      forceRealign: true,
+      minFontSize: xlMinFs,
+      maxEnlargeRatio: 1.75,
+    });
+    const xlFs0 = xlRes.optimizedBubbles[0].targetFontSize!;
+    const xlFs1 = xlRes.optimizedBubbles[1].targetFontSize!;
+    expect(xlFs0).toBeGreaterThan(xlFs1 + 5);
+
+    // Simulate subsequent offscreen/page render calling autoOrganizePageBubbles without minFontSize
+    const afterRender = autoOrganizePageBubbles(xlRes.optimizedBubbles, iw, ih, {
+      forceRealign: false,
+    });
+    expect(afterRender.optimizedBubbles[0].targetFontSize).toBe(xlFs0);
+    expect(afterRender.optimizedBubbles[1].targetFontSize).toBe(xlFs1);
+  });
+
+  it("trims excessively tall OCR boxes to snug text height and widens narrow 1-word-per-line vertical stacks (Page 18 repro)", () => {
+    const iw = 1280;
+    const ih = 1800;
+    const bubbles: TranslatedBubble[] = [
+      {
+        // Tall OCR box (35.5% of page height = 639px) for a 4-line exclamation
+        box: [125, 530, 480, 620],
+        t: "ฮ่าๆ วันนั้นเนี่ยสุดยอดจริงๆ เลย!",
+      },
+      {
+        // Narrow vertical box (width ~ 68px) with 28-char sentence above a lower cloud balloon
+        box: [675, 595, 808, 648],
+        t: "การได้มานั่งดูอะไรนั้นมัน...",
+      },
+      {
+        // Lower-left cloud balloon diagonally below-left of bubble[1]
+        box: [820, 520, 965, 605],
+        t: "งั้นเดี๋ยวเรามาลองกันใหม่อีกรอบดีไหม?",
+      },
+    ];
+
+    const res = autoOrganizePageBubbles(bubbles, iw, ih, { forceRealign: true });
+    expect(detectBubbleCollisions(res.optimizedBubbles, iw, ih).length).toBe(0);
+
+    // 1. Tall OCR box for "ฮ่าๆ วันนั้นเนี่ยสุดยอดจริงๆ เลย!" must NOT keep a 450-639px height!
+    const topRightAdj = res.optimizedBubbles[0].layoutAdjustment!;
+    expect(topRightAdj.bh).toBeLessThanOrEqual(180);
+    expect(topRightAdj.by).toBeGreaterThan(200);
+
+    // 2. Narrow box for "การได้มานั่งดูอะไรนั้นมัน..." must widen so it wraps into <= 4 lines (not 6 lines of 1 word each)
+    const midRight = res.optimizedBubbles[1];
+    const midRightAdj = midRight.layoutAdjustment!;
+    expect(midRightAdj.bw).toBeGreaterThanOrEqual(115);
+    const midLayout = layoutBubbleAtFixedFont(
+      midRight.t!,
+      midRightAdj.bw,
+      midRight.targetFontSize!,
+      "Itim, sans-serif",
+      true,
+      midRightAdj.bh,
+      ih,
+      "th",
+    );
+    expect(midLayout.lines.length).toBeLessThanOrEqual(4);
+  });
 });
+
 
 
 

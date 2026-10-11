@@ -2337,3 +2337,143 @@ test("export compositing survives a font-load rejection", async () => {
 
   expect(drawImageArgs.some((args) => args[0] === canvas)).toBe(true);
 });
+
+test("offscreen render preserves XL-organized font sizes and rescues styleProfile from pre-v4 adjustments", async () => {
+  vi.resetModules();
+  mockFontAwareMeasureCtx();
+  const { applyTranslationOverlay } = await import("@/lib/translationOverlay");
+  const { autoOrganizePageBubbles } = await import("@/lib/bubbleLayoutOptimizer");
+
+  const offscreenContainer = document.createElement("div");
+  offscreenContainer.id = "offscreen-container";
+  const image = document.createElement("img");
+  Object.defineProperties(image, {
+    complete: { configurable: true, value: true },
+    naturalWidth: { configurable: true, value: 1280 },
+    naturalHeight: { configurable: true, value: 1800 },
+  });
+  offscreenContainer.appendChild(image);
+  document.body.appendChild(offscreenContainer);
+
+  const styleRef = {
+    current: {
+      fontFamily: "Itim, sans-serif",
+      textColor: "#000000",
+      textOutline: "#ffffff",
+      fontSizeMultiplier: 1,
+    },
+  };
+
+  const bwStyle = {
+    fill: "#ffffff",
+    outline: "#000000",
+    hasOutline: true,
+    outlineWidthRatio: 0.22,
+    source: "manual" as const,
+    ownershipMode: "manual" as const,
+    bwContrastMode: "white_on_black" as const,
+  };
+
+  // Organize two bubbles in XL mode (minFontSize = 25, maxEnlargeRatio = 1.75)
+  const xlRes = autoOrganizePageBubbles(
+    [
+      {
+        box: [100, 100, 250, 230],
+        t: "สุดยอดเลย!",
+        styleProfile: bwStyle,
+        layoutAdjustment: {
+          bx: 128,
+          by: 180,
+          bw: 166,
+          bh: 270,
+          iw: 1280,
+          ih: 1800,
+          styleProfile: bwStyle,
+          isAutoOptimized: true,
+          autoOptimizeVersion: 2, // Pre-v4 adjustment with styleProfile
+        },
+      },
+      {
+        box: [100, 250, 250, 380],
+        t: "วันนี้พวกเรามาพยายามทำให้เต็มที่ที่สุดกันเถอะนะทุกคน!",
+      },
+    ],
+    1280,
+    1800,
+    { forceRealign: true, minFontSize: 25, maxEnlargeRatio: 1.75 },
+  );
+
+  const xlFs0 = xlRes.optimizedBubbles[0].targetFontSize!;
+  expect(xlFs0).toBeGreaterThanOrEqual(24);
+
+  const bubblesForOffscreen = xlRes.optimizedBubbles.map((b) => ({
+    ...b,
+    layoutAdjustment: b.layoutAdjustment ? { ...b.layoutAdjustment } : undefined,
+  }));
+
+  await applyTranslationOverlay(
+    bubblesForOffscreen,
+    "offscreen",
+    -1,
+    vi.fn(),
+    undefined,
+    styleRef,
+    undefined,
+    undefined,
+    undefined,
+    "th",
+  );
+  await vi.runAllTimersAsync();
+
+  expect(bubblesForOffscreen[0].targetFontSize).toBe(xlFs0);
+  expect(bubblesForOffscreen[0].layoutAdjustment?.styleProfile?.bwContrastMode).toBe("white_on_black");
+});
+
+test("width drag keeps vertical selection tight during preview, restores tight horizontal selection on pointerup, and collapses bloated auto-optimized height", async () => {
+  const text = "ฮ่าๆ วันนั้นเนี่ยสุดยอดจริงๆ เลย!";
+  const { container, chromeRoot, bubble, wrapper } = await renderOverlayFresh(text, {
+    box: [125, 530, 480, 620],
+    targetFontSize: 20,
+    fontSizeMultiplier: 1,
+    layoutAdjustment: {
+      bx: 530,
+      by: 0,
+      bw: 110,
+      bh: 450,
+      iw: 1000,
+      ih: 1200,
+      targetFontSize: 20,
+      isAutoOptimized: true,
+      autoOptimizeVersion: 4,
+    },
+  });
+  mockCanvasRect(container);
+  const selection = wrapper.querySelector<HTMLElement>(".bubble-text-selection")!;
+  const widthHandle = chromeRoot.querySelector<HTMLElement>('[data-handle-position="e"]')!;
+  widthHandle.setPointerCapture = vi.fn();
+  (widthHandle as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => true;
+  widthHandle.releasePointerCapture = vi.fn();
+
+  // Pre-fix bloated 450px auto-optimized frame is self-healed on render to a snug height centered in its balloon
+  const heightBeforeWiden = bubble.layoutAdjustment!.bh;
+  expect(heightBeforeWiden).toBeLessThanOrEqual(200);
+  expect(bubble.layoutAdjustment!.by).toBeGreaterThan(150);
+  expect(Number.parseFloat(selection.style.width)).toBeLessThan(100);
+  expect(Number.parseFloat(selection.style.height)).toBeLessThan(100);
+
+  // During width drag preview, width is 100% of frame width, but vertical selection stays tight (< 100%)
+  firePointer(widthHandle, "pointerdown", 500, 500);
+  expect(selection.style.width).toBe("100%");
+  expect(Number.parseFloat(selection.style.height)).toBeLessThan(100);
+  firePointer(widthHandle, "pointermove", 620, 500);
+  expect(selection.style.width).toBe("100%");
+  expect(Number.parseFloat(selection.style.height)).toBeLessThan(100);
+
+  // On pointerup, selectionFrame snaps back to tight horizontal & vertical glyph bounds (< 100%),
+  // and widening the auto-optimized bubble shrinks its height to fit fewer lines!
+  firePointer(widthHandle, "pointerup", 620, 500);
+  expect(Number.parseFloat(selection.style.width)).toBeLessThan(100);
+  expect(Number.parseFloat(selection.style.height)).toBeLessThan(100);
+  expect(bubble.layoutAdjustment!.bh).toBeLessThanOrEqual(heightBeforeWiden);
+});
+

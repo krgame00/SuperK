@@ -13,8 +13,6 @@ import { Toaster } from "react-hot-toast";
 import {
   applyTranslationOverlay,
   autoOrganizePageBubbles,
-  autoOrganizeAllPagesBubbles,
-  detectBubbleCollisions,
   syncPageOverlayAdjustments,
   type TranslatedBubble,
 } from "@/lib/translationOverlay";
@@ -23,6 +21,7 @@ import {
   cloneTextStyleProfile,
 } from "@/lib/colorMatching/resolveTextStyle";
 import type { BwContrastMode } from "@/lib/colorMatching/types";
+import { hydrateStoredCustomFonts } from "@/lib/customFonts";
 import { Upload, Download, Flame, Eye, EyeOff, Undo2, Redo2, GalleryVertical, RectangleHorizontal, Menu, X, Settings, FileArchive, BookOpen, FileText, Sparkles, Loader2, Check, AlertCircle, RefreshCw, ArrowDown, ArrowUp, ChevronDown, ChevronUp, Eraser, Paintbrush, RotateCcw, ScanSearch, Contrast } from "lucide-react";
 import { undoManager } from "@/lib/undoManager";
 import JSZip from "jszip";
@@ -62,7 +61,6 @@ import {
   getAskExportDirectory,
   getOrPickExportDirectory,
   isDirectoryPickerSupported,
-  pickExportDirectory,
   saveBlob,
   type DirectoryHandleLike,
 } from "@/lib/export/saveLocation";
@@ -203,8 +201,9 @@ export default function WorkspacePage() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [isOrganizeMenuOpen, isBwContrastMenuOpen]);
 
-  // Restore toolbar preferences from localStorage
+  // Restore toolbar preferences from localStorage and hydrate custom fonts from IndexedDB
   useEffect(() => {
+    void hydrateStoredCustomFonts();
     try {
       const savedPos = localStorage.getItem("manga_clean_toolbar_position");
       if (savedPos === "top" || savedPos === "bottom") {
@@ -742,6 +741,7 @@ export default function WorkspacePage() {
     targetLang,
     textStyleRef,
     dirtyExportPagesRef,
+    markPageDirty,
     viewLayout,
     currentPage,
     setTranslationResult,
@@ -903,6 +903,7 @@ export default function WorkspacePage() {
     targetLang,
     textStyleRef,
     dirtyExportPagesRef,
+    markPageDirty,
     setActiveBubbles,
     viewLayout,
     currentPage,
@@ -987,6 +988,7 @@ export default function WorkspacePage() {
       bubbleCacheRef,
       setActiveBubbles,
       dirtyExportPagesRef,
+      markPageDirty,
       getPageTargetLanguage,
       targetLang,
       viewLayout,
@@ -1114,6 +1116,7 @@ export default function WorkspacePage() {
       targetLang,
       textStyleRef,
       dirtyExportPagesRef,
+      markPageDirty,
       setActiveBubbles,
       viewLayout,
       currentPage,
@@ -1909,7 +1912,19 @@ export default function WorkspacePage() {
 
   const exportInputSignature = (pageUrl: string) => JSON.stringify([
     pageTargetCacheRef.current.get(pageUrl),
-    bubbleCacheRef.current.get(pageUrl)?.map((b) => [b.id, b.box, b.t ?? b.translated, b.deleted, b.layoutAdjustment, b.fontSizeMultiplier, b.targetFontSize]),
+    bubbleCacheRef.current.get(pageUrl)?.map((b) => [
+      b.id,
+      b.box,
+      b.t ?? b.translated,
+      b.deleted,
+      b.layoutAdjustment,
+      b.fontSizeMultiplier,
+      b.targetFontSize,
+      b.styleProfile?.bwContrastMode,
+      b.styleProfile?.fill,
+      b.styleProfile?.outline,
+      b.styleProfile?.hasOutline,
+    ]),
     textStyleRef.current,
     getCurrentRemnantReview?.(pageUrl, getExpectedRemnantEvidence(pageUrl))?.inspection.revisionKey,
     getPageSourceRevision?.(pageUrl),
@@ -3287,8 +3302,8 @@ export default function WorkspacePage() {
                 ? "bottom-5 sm:bottom-6 slide-in-from-bottom-2"
                 : toolbarPosition === "top"
                   ? isThumbnailsCollapsed
-                    ? "bottom-5 sm:bottom-6 slide-in-from-bottom-2"
-                    : "bottom-21 sm:bottom-23 slide-in-from-bottom-2"
+                    ? "bottom-12 sm:bottom-12 slide-in-from-bottom-2"
+                    : "bottom-32 sm:bottom-34 slide-in-from-bottom-2"
                   : "top-16 sm:top-18 slide-in-from-top-2"
             }`}
             title="คลิกเพื่อปิดการแจ้งเตือน"
@@ -3320,23 +3335,23 @@ export default function WorkspacePage() {
               isFocusMode
                 ? "p-0"
                 : isThumbnailsCollapsed
-                  ? "px-1 pb-7"
-                  : "px-1 pb-20 sm:pb-22"
+                  ? "px-1 pb-9"
+                  : "px-1 pb-29 sm:pb-31"
             }`}
           >
             {/* Top controls participate in layout so they never cover manga content.
-                Bottom controls intentionally remain floating. */}
+                Bottom controls intentionally remain floating above PageFilmstrip (h-9 header + h-20/sm:h-22 strip). */}
             <div
               data-page-controls-dock={toolbarPosition}
-              className={`w-full z-30 flex justify-center pointer-events-none px-2 transition-all duration-300 ease-out ${
+              className={`w-full z-40 flex justify-center pointer-events-none px-2 transition-all duration-300 ease-out ${
                 toolbarPosition === "top"
                   ? "relative shrink-0"
                   : `absolute ${
                       isFocusMode
                         ? "bottom-3 sm:bottom-4"
                         : isThumbnailsCollapsed
-                          ? "bottom-9 sm:bottom-10"
-                          : "bottom-23 sm:bottom-25"
+                          ? "bottom-12 sm:bottom-12"
+                          : "bottom-32 sm:bottom-34"
                     } left-1/2 -translate-x-1/2`
               } ${
                 isFocusMode && !isFocusToolbarVisible
