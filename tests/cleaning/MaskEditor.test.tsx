@@ -1031,4 +1031,20 @@ describe("MaskEditor remnant navigation", () => {
     // The location is still marked so the user can inspect it manually.
     expect(await screen.findByTitle("ตำแหน่งจุดสงสัย")).toBeInTheDocument();
   });
+
+  test("keys 1, 2, and 3 switch brush modes and Ctrl+Y triggers redo", async () => {
+    renderMaskEditor();
+    const canvas = await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+    
+    fireEvent.keyDown(canvas, { key: "2" });
+    expect(screen.getByRole("status")).toHaveTextContent("โหมดกู้ภาพเดิม");
+    
+    fireEvent.keyDown(canvas, { key: "3" });
+    expect(screen.getByRole("status")).toHaveTextContent("โหมดลบ Mask");
+
+    fireEvent.keyDown(canvas, { key: "1" });
+    expect(screen.getByRole("status")).toHaveTextContent("โหมดเพิ่ม Mask");
+
+    fireEvent.keyDown(canvas, { key: "y", ctrlKey: true });
+  });
 });

@@ -139,10 +139,13 @@ def complete_glyph_mask(
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         closed = cv2.morphologyEx(cand_u8, cv2.MORPH_CLOSE, kernel)
 
-        h_cand, w_cand = closed.shape
-        flood = closed.copy()
-        flood_mask = np.zeros((h_cand + 2, w_cand + 2), dtype=np.uint8)
-        cv2.floodFill(flood, flood_mask, (0, 0), 255)
+        flood_padded = np.pad(closed, 1, mode="constant", constant_values=0)
+        flood_mask = np.zeros(
+            (flood_padded.shape[0] + 2, flood_padded.shape[1] + 2),
+            dtype=np.uint8,
+        )
+        cv2.floodFill(flood_padded, flood_mask, (0, 0), 255)
+        flood = flood_padded[1:-1, 1:-1]
         filled = closed | (255 - flood)
         filled = filled & (sub_valid.astype(np.uint8) * 255)
 

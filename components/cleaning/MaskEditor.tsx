@@ -322,7 +322,9 @@ export function MaskEditor({
     };
   }, [sourceUrl, maskUrl, proposalMaskUrl, regionId, regions, selectedRegion?.textRole]);
 
-  const drawAt = (event: React.PointerEvent<HTMLCanvasElement>) => {
+  const lastStrokePointRef = useRef<MaskPoint | null>(null);
+
+  const drawAt = (event: React.PointerEvent<HTMLCanvasElement>, appendToCurrentStroke = false) => {
     const canvas = canvasRef.current;
     const current = imageDataRef.current;
     if (submittingRef.current || !canvas || !current) return;
@@ -332,8 +334,19 @@ export function MaskEditor({
       y: (event.clientY - bounds.top) * (canvas.height / bounds.height),
     };
     setBrushPoint(point);
-    strokeOpsRef.current.push({ points: [point], radius, mode });
-    renderMask(applyEditorBrush(current, [point], radius, mode));
+    const points =
+      appendToCurrentStroke && lastStrokePointRef.current
+        ? interpolateBrushPoints(lastStrokePointRef.current, point, radius)
+        : [point];
+    lastStrokePointRef.current = point;
+
+    if (appendToCurrentStroke && strokeOpsRef.current.length > strokeStartIndexRef.current) {
+      const activeOp = strokeOpsRef.current[strokeOpsRef.current.length - 1];
+      activeOp.points.push(...points);
+    } else {
+      strokeOpsRef.current.push({ points: [...points], radius, mode });
+    }
+    renderMask(applyEditorBrush(current, points, radius, mode));
   };
 
   const startStroke = (event: React.PointerEvent<HTMLCanvasElement>) => {
@@ -347,8 +360,9 @@ export function MaskEditor({
     if (!imageDataRef.current) return;
     drawingRef.current = true;
     strokeStartIndexRef.current = strokeOpsRef.current.length;
+    lastStrokePointRef.current = null;
     event.currentTarget.setPointerCapture(event.pointerId);
-    drawAt(event);
+    drawAt(event, false);
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
@@ -360,7 +374,7 @@ export function MaskEditor({
       return;
     }
     if (drawingRef.current) {
-      drawAt(event);
+      drawAt(event, true);
     }
   };
 
@@ -369,6 +383,7 @@ export function MaskEditor({
       setIsPanning(false);
       return;
     }
+    lastStrokePointRef.current = null;
     if (!drawingRef.current || !imageDataRef.current) {
       return;
     }
@@ -586,6 +601,23 @@ export function MaskEditor({
       const nextRadius = Math.max(2, Math.min(48, radius + delta));
       setRadius(nextRadius);
       setStatusMessage(`ขนาดแปรง ${nextRadius} พิกเซล`);
+      return;
+    }
+
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && (event.key === "1" || event.key === "2" || event.key === "3")) {
+      event.preventDefault();
+      event.stopPropagation();
+      handleModeChange(event.key === "1" ? "paint" : event.key === "2" ? "restore" : "erase");
+      return;
+    }
+
+    if ((event.ctrlKey || event.metaKey) && (event.key === "y" || event.key === "Y" || ((event.key === "z" || event.key === "Z") && event.shiftKey))) {
+      event.preventDefault();
+      event.stopPropagation();
+      const action = undoManager.redo();
+      if (action) {
+        setStatusMessage("ทำซ้ำแล้ว");
+      }
       return;
     }
 
@@ -1317,6 +1349,23 @@ function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
       else reject(new Error("Unable to encode mask."));
     }, "image/png");
   });
+}
+
+function interpolateBrushPoints(from: MaskPoint, to: MaskPoint, radius: number): MaskPoint[] {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const distance = Math.hypot(dx, dy);
+  const step = Math.max(1, radius * 0.35);
+  if (distance <= step) return [to];
+  const steps = Math.ceil(distance / step);
+  const points: MaskPoint[] = [];
+  for (let i = 1; i <= steps; i++) {
+    points.push({
+      x: from.x + (dx * i) / steps,
+      y: from.y + (dy * i) / steps,
+    });
+  }
+  return points;
 }
 
 function applyEditorBrush(mask: ImageData, points: MaskPoint[], radius: number, mode: BrushMode): ImageData {
