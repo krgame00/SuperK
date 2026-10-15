@@ -660,7 +660,7 @@ export function useTranslation({
           undefined,
           currentKey,
           () => markPageDirty(currentKey),
-          getPageTargetLanguage(currentKey),
+          getPageTargetLanguage(currentKey) || targetLangRef.current || "th",
         );
       }, 100);
       return () => clearTimeout(timer);
@@ -1035,6 +1035,7 @@ export function useTranslation({
       pageIndex: number,
       targetIdentity = pageTargetCacheRef.current.get(pageUrl),
     ): Promise<void> => {
+      if (targetIdentity) pageTargetCacheRef.current.set(pageUrl, targetIdentity);
       const startRevision = getPageRevision(pageUrl);
       const startStyle = JSON.stringify(textStyleRef.current);
       const bubbleRenderSnapshot = (list: TranslatedBubble[]) =>
@@ -1473,6 +1474,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           jobTargetIdentity,
         );
         bubbleCacheRef.current.set(pageUrl, coloredBubbles);
+        pageTargetCacheRef.current.set(pageUrl, jobTargetIdentity);
         completedPagesRef.current.add(pageUrl);
         markPageDirty(pageUrl, false);
 
@@ -1667,6 +1669,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         jobTargetIdentity,
       );
       bubbleCacheRef.current.set(pageUrl, coloredBubbles);
+      pageTargetCacheRef.current.set(pageUrl, jobTargetIdentity);
       completedPagesRef.current.add(pageUrl);
       markPageDirty(pageUrl, false);
 

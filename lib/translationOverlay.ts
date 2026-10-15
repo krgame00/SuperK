@@ -857,9 +857,10 @@ export const applyTranslationOverlay = async (
   containerOverride?: Element,
   pageKeyOverride?: string,
   onBubblesMutated?: () => void,
-  targetLanguage?: string,
+  targetLanguage: string = "th",
 ) => {
-  const wordWrapLocale = wordWrapLocaleOf(targetLanguage);
+  const effectiveTarget = (targetLanguage && targetLanguage.trim()) || "th";
+  const wordWrapLocale = wordWrapLocaleOf(effectiveTarget);
   let container: Element | null | undefined = containerOverride;
   if (!container && viewMode === "offscreen") {
     container = document.getElementById("offscreen-container");
@@ -1370,7 +1371,7 @@ export const applyTranslationOverlay = async (
       ) => {
         const currentStyle = textStyleRef?.current || ts;
         const rawText = b.t || b.translated || "";
-        const scriptInspection = inspectTargetText(rawText, targetLanguage);
+        const scriptInspection = inspectTargetText(rawText, effectiveTarget);
         const text = scriptInspection.status === "eligible" ? scriptInspection.normalizedText.trim() : scriptInspection.normalizedText;
         wrapper.dataset.scriptStatus = scriptInspection.status;
         scriptNotice = scriptInspection.status === "blocked"
@@ -1888,10 +1889,10 @@ export const applyTranslationOverlay = async (
           if (isCommitted) return;
           isCommitted = true;
           let finalVal = textarea.value.trim();
-          const commitInspection = inspectTargetText(finalVal, targetLanguage);
+          const commitInspection = inspectTargetText(finalVal, effectiveTarget);
           if (commitInspection.status === "blocked" && commitInspection.reason === "excluded-script") {
-            const cleaned = repairExcludedScriptText(finalVal, targetLanguage);
-            if (cleaned && inspectTargetText(cleaned, targetLanguage).status === "eligible") {
+            const cleaned = repairExcludedScriptText(finalVal, effectiveTarget);
+            if (cleaned && inspectTargetText(cleaned, effectiveTarget).status === "eligible") {
               finalVal = cleaned;
               textarea.value = cleaned;
               if (b.translationReview) {
@@ -2003,16 +2004,16 @@ export const applyTranslationOverlay = async (
         };
         const displayedReview = () => {
           const text = b.t || b.translated || "";
-          if (inspectTargetText(text, targetLanguage).status === "blocked") {
-            return guardQualityReview(unavailableReview({id:"",sourceText:b.original_text ?? "",translatedText:text}),targetLanguage ?? "");
+          if (inspectTargetText(text, effectiveTarget).status === "blocked") {
+            return guardQualityReview(unavailableReview({id:"",sourceText:b.original_text ?? "",translatedText:text}), effectiveTarget);
           }
-          if (b.translationReview && isReviewCurrent(b)) return guardQualityReview(b.translationReview, targetLanguage ?? "");
+          if (b.translationReview && isReviewCurrent(b)) return guardQualityReview(b.translationReview, effectiveTarget);
           return b.translationReview;
         };
         const updateReviewPanel = () => {
           const review = displayedReview();
           const currentText = b.t || b.translated || "";
-          const isExcludedScript = inspectTargetText(currentText, targetLanguage).reason === "excluded-script";
+          const isExcludedScript = inspectTargetText(currentText, effectiveTarget).reason === "excluded-script";
           reviewPanel.hidden = !review && !b.original_text;
           reviewPanel.style.display = reviewPanel.hidden ? "none" : "grid";
           source.textContent = b.original_text ? `ต้นฉบับ: ${b.original_text}` : "ไม่มีข้อความต้นฉบับ";
@@ -2048,7 +2049,7 @@ export const applyTranslationOverlay = async (
         };
         const applyCleanScript = (nextStatus: "accepted" | "dismissed" = "accepted") => {
           const currentText = b.t || b.translated || textarea.value || "";
-          const cleaned = repairExcludedScriptText(currentText, targetLanguage);
+          const cleaned = repairExcludedScriptText(currentText, effectiveTarget);
           if (!cleaned) return;
           const baseReview = b.translationReview ?? displayedReview();
           if (baseReview) {
@@ -2076,7 +2077,7 @@ export const applyTranslationOverlay = async (
         });
         const dismissReview = reviewAction("dismiss", "เก็บคำแปลปัจจุบัน", () => {
           const currentText = b.t || b.translated || textarea.value || "";
-          if (inspectTargetText(currentText, targetLanguage).reason === "excluded-script") {
+          if (inspectTargetText(currentText, effectiveTarget).reason === "excluded-script") {
             applyCleanScript("dismissed");
             return;
           }
