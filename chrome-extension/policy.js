@@ -315,6 +315,29 @@ function formatOffendingCharacters(characters, limit = 24) {
     const codes = shown.map(character => `U+${character.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")}`).join(" ");
     return [visible, codes ? `[${codes}]` : "", unique.length > shown.length ? `(+${unique.length - shown.length})` : ""].filter(Boolean).join(" ");
 }
+const ALLOWED_THAI_INTL_TOKEN_RE = /(?:(?:\d+|[๐-๙]+)(?:\.\d+)?\s*(?:[kKdDgGpP]|fps|FPS|km|KM|kg|KG|cm|CM|mm|MM|mg|MG|ml|ML|gb|GB|tb|TB|mb|MB|hz|Hz|HZ|st|nd|rd|th)|(?:Lv|LV|lv|No|NO|Ver|VER|ver|Ep|EP|Ch|CH)\.?\s*\d+|(?:OK|VIP|MVP|VR|AR|AI|TV|PC|SNS|DM|VS|HP|MP|XP|EXP|NPC|PK|PVP|PVE|SSR|SR|UR|SSS|SS|[SABCDEF]-Rank|Wi-Fi|DNA|GPS|USB|ATM|CEO|PR|HR|DJ|MC|ID|RPG|BGM|OST|CD|DVD|VCD|FPS|fps))(?=$|[^A-Za-z])/gu;
+function findAllowedThaiLatinIndices(text, chars) {
+    const allowedIndices = new Set();
+    const utf16ToCpIdx = new Map();
+    let utf16Pos = 0;
+    for (let cpIdx = 0; cpIdx < chars.length; cpIdx++) {
+        utf16ToCpIdx.set(utf16Pos, cpIdx);
+        utf16Pos += chars[cpIdx].length;
+    }
+    for (const m of text.matchAll(ALLOWED_THAI_INTL_TOKEN_RE)) {
+        const startUtf16 = m.index ?? 0;
+        if (startUtf16 > 0 && /[A-Za-z]/.test(text[startUtf16 - 1]))
+            continue;
+        let curUtf16 = startUtf16;
+        for (const ch of Array.from(m[0])) {
+            const cpIdx = utf16ToCpIdx.get(curUtf16);
+            if (cpIdx !== undefined)
+                allowedIndices.add(cpIdx);
+            curUtf16 += ch.length;
+        }
+    }
+    return allowedIndices;
+}
 function inspectTargetText(text, target) {
     const resolved = resolveTargetLanguage(target);
     const base = { policyVersion: exports.LANGUAGE_POLICY_VERSION, normalizedText: text, offendingCharacters: [] };
@@ -322,7 +345,8 @@ function inspectTargetText(text, target) {
         return { ...base, status: "blocked", reason: resolved.reason };
     const { profile } = resolved;
     const chars = Array.from(text);
-    const allowed = (char) => !!char && profile.scripts.some(script => scriptMatches(char, script));
+    const allowedThaiIntl = profile.id === "th" ? findAllowedThaiLatinIndices(text, chars) : undefined;
+    const allowed = (char, idx) => !!char && ((idx !== undefined && allowedThaiIntl?.has(idx)) || profile.scripts.some(script => scriptMatches(char, script)));
     const bad = new Set();
     const normalized = [];
     for (let index = 0; index < chars.length; index++) {
@@ -346,12 +370,12 @@ function inspectTargetText(text, target) {
         }
         // Compatibility characters can conceal enclosed or mathematical letters.
         const compatibility = char.normalize("NFKC");
-        if (compatibility !== char && Array.from(compatibility).some(part => letter.test(part) && !allowed(part))) {
+        if (compatibility !== char && Array.from(compatibility).some(part => letter.test(part) && !allowed(part, index))) {
             bad.add(char);
             continue;
         }
         if (letter.test(char)) {
-            if (!allowed(char))
+            if (!allowed(char, index))
                 bad.add(char);
             continue;
         }

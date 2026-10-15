@@ -2541,4 +2541,22 @@ test("compact top-edge 1-line bubble keeps move/width handles clear of bottom to
   expect(bubble.layoutAdjustment!.bw).toBeLessThan(260);
 });
 
+test("preserves technical loan terms like 4K without script warning badge or stripping characters", async () => {
+  const text = "ชัดระดับ 4K ไปเลย";
+  const { wrapper, bubble, chromeRoot } = await renderOverlay(text, { original_text: "In 4K." });
+  expect(wrapper.dataset.scriptStatus).toBe("eligible");
+  const badge = wrapper.querySelector<HTMLElement>(".bubble-script-warning");
+  expect(badge?.hidden).toBe(true);
+  wrapper.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+  const editor = chromeRoot.querySelector<HTMLElement>("[data-translation-editor]")!;
+  expect(editor.textContent).not.toContain("พบตัวอักษรภาษาอื่นปน");
+  const textarea = editor.querySelector<HTMLTextAreaElement>("textarea")!;
+  expect(textarea.value).toBe(text);
+  const commitBtn = editor.querySelector<HTMLButtonElement>('button[aria-label="บันทึกข้อความ"]')!;
+  commitBtn.click();
+  expect(bubble.t).toBe(text);
+  expect(bubble.translated).toBe(text);
+});
+
+
 

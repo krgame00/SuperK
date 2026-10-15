@@ -335,18 +335,63 @@ function renderTranslationOverlay(imageUrl, bubbles, cleanMode, cleanImageBase64
     layer.appendChild(cleanCanvas);
   }
 
-function wrapTextAdaptive(text, safeW, safeH, fs, fontFamily, isOval) {
-  let words = [];
-  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
-    try {
-      const segmenter = new Intl.Segmenter('th', { granularity: 'word' });
-      words = Array.from(segmenter.segment(text)).map(s => s.segment);
-    } catch {
-      words = text.split(/\s+/);
+const EXT_THAI_PRE_PROTECT_RE = /(ด้วยเนี่ย|รึเปล่า|หรือเปล่า|เหรอ|รึยัง|รึไง)/gu;
+const EXT_THAI_STOLEN_CODA_RE = /^([งกนมดบยว])(ด้วยเนี่ย|เนี่ย|มั้ง|มั้ย|งี้|งั้น|รึเปล่า|รึยัง|รึไง|รึ|น่ะ|ล่ะ|อ่ะ|อะ|วะ|เว้ย|โว้ย|ฟะ|เฟ้ย|แฮะ|แหละ|จัง|จ้ะ|จ๋า|ฮะ)(?:[?!.~…"'”’)\]]*)$/u;
+
+function segmentThaiForExtension(text) {
+  if (typeof Intl === 'undefined' || !Intl.Segmenter) return text.split(/\s+/);
+  try {
+    const segmenter = new Intl.Segmenter('th', { granularity: 'word' });
+    const rawParts = [];
+    let lastIdx = 0;
+    for (const m of text.matchAll(EXT_THAI_PRE_PROTECT_RE)) {
+      const idx = m.index ?? 0;
+      if (idx > lastIdx) {
+        for (const p of segmenter.segment(text.slice(lastIdx, idx))) rawParts.push({ segment: p.segment, isWordLike: p.isWordLike });
+      }
+      const token = m[0];
+      if (token === 'ด้วยเนี่ย') rawParts.push({ segment: 'ด้วย', isWordLike: true }, { segment: 'เนี่ย', isWordLike: true });
+      else if (token === 'รึเปล่า') rawParts.push({ segment: 'รึ', isWordLike: true }, { segment: 'เปล่า', isWordLike: true });
+      else if (token === 'หรือเปล่า') rawParts.push({ segment: 'หรือ', isWordLike: true }, { segment: 'เปล่า', isWordLike: true });
+      else if (token === 'รึยัง') rawParts.push({ segment: 'รึ', isWordLike: true }, { segment: 'ยัง', isWordLike: true });
+      else if (token === 'รึไง') rawParts.push({ segment: 'รึ', isWordLike: true }, { segment: 'ไง', isWordLike: true });
+      else rawParts.push({ segment: token, isWordLike: true });
+      lastIdx = idx + token.length;
     }
-  } else {
-    words = text.split(/\s+/);
+    if (lastIdx < text.length) {
+      for (const p of segmenter.segment(text.slice(lastIdx))) rawParts.push({ segment: p.segment, isWordLike: p.isWordLike });
+    }
+    const repaired = [];
+    for (let i = 0; i < rawParts.length; i++) {
+      const cur = rawParts[i];
+      const prev = repaired[repaired.length - 1];
+      const match = cur.segment.match(EXT_THAI_STOLEN_CODA_RE);
+      if (match && prev && prev.isWordLike && /[\u0E01-\u0E4E]$/u.test(prev.segment)) {
+        const candidateWord = prev.segment + match[1];
+        if (Array.from(segmenter.segment(candidateWord)).length === 1) {
+          prev.segment = candidateWord;
+          repaired.push({ segment: match[2], isWordLike: true });
+          continue;
+        }
+      }
+      repaired.push(cur);
+    }
+    const merged = [];
+    for (const part of repaired) {
+      if (/^[\p{Pd}\p{Pe}\p{Pf}\p{Po}]+$/u.test(part.segment) && merged.length > 0 && !/^\s+$/u.test(merged[merged.length - 1])) {
+        merged[merged.length - 1] += part.segment;
+      } else {
+        merged.push(part.segment);
+      }
+    }
+    return merged;
+  } catch {
+    return text.split(/\s+/);
   }
+}
+
+function wrapTextAdaptive(text, safeW, safeH, fs, fontFamily, isOval) {
+  const words = segmentThaiForExtension(text);
 
   const tempCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
   const tempCtx = tempCanvas ? tempCanvas.getContext('2d') : null;

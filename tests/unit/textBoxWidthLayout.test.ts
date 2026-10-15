@@ -205,6 +205,8 @@ describe("layoutTextAtFixedFont", () => {
     expect(segmentTextIntoWords("ห้องด้วยเนี่ย", "th")).toEqual(["ห้อง", "ด้วย", "เนี่ย"]);
     expect(segmentTextIntoWords("ต้องด้วยเนี่ย", "th")).toEqual(["ต้อง", "ด้วย", "เนี่ย"]);
     expect(segmentTextIntoWords("ช่องด้วยเนี่ย", "th")).toEqual(["ช่อง", "ด้วย", "เนี่ย"]);
+    expect(segmentTextIntoWords("ทำไมไม่บอกด้วยเนี่ย", "th")).toEqual(["ทำไม", "ไม่", "บอก", "ด้วย", "เนี่ย"]);
+    expect(segmentTextIntoWords("เธอแตกเนี่ยเป็นยังไง", "th")).toEqual(["เธอ", "แตก", "เนี่ย", "เป็น", "ยัง", "ไง"]);
   });
 
   it("heals broken Thai particle segments like เห + รอ -> เหรอ", () => {

@@ -4,7 +4,7 @@ import { calibrateOutputBodyMetric, resolveSourceFontSize, sourceRegionKey, manu
 import { measureTextSelection, rotateLocalPoint, type SelectionRect } from "./textSelectionBounds";
 import { guardQualityReview, unavailableReview, invalidateQualityReview, isReviewCurrent } from "./translation/qualityReview";
 import type { TranslationReview } from "./translation/qualityReview";
-import { inspectTargetText, formatOffendingCharacters, resolveTargetLanguage } from "./languagePolicy";
+import { inspectTargetText, formatOffendingCharacters, resolveTargetLanguage, LANGUAGE_POLICY_VERSION } from "./languagePolicy";
 
 export function repairExcludedScriptText(rawText: string, targetLang?: string): string {
   const resolution = resolveTargetLanguage(targetLang);
@@ -1890,23 +1890,7 @@ export const applyTranslationOverlay = async (
         const commit = (restoreFocus = true) => {
           if (isCommitted) return;
           isCommitted = true;
-          let finalVal = textarea.value.trim();
-          const commitInspection = inspectTargetText(finalVal, effectiveTarget);
-          if (commitInspection.status === "blocked" && commitInspection.reason === "excluded-script") {
-            const cleaned = repairExcludedScriptText(finalVal, effectiveTarget);
-            if (cleaned && inspectTargetText(cleaned, effectiveTarget).status === "eligible") {
-              finalVal = cleaned;
-              textarea.value = cleaned;
-              if (b.translationReview) {
-                b.translationReview = {
-                  ...b.translationReview,
-                  status: "accepted",
-                  reviewedText: cleaned,
-                  reason: undefined,
-                };
-              }
-            }
-          }
+          const finalVal = textarea.value.trim();
           b.t = finalVal;
           b.translated = finalVal;
           invalidateQualityReview(b);
@@ -2012,25 +1996,31 @@ export const applyTranslationOverlay = async (
           if (b.translationReview && isReviewCurrent(b)) return guardQualityReview(b.translationReview, effectiveTarget);
           return b.translationReview;
         };
+        let isRequestingAiSuggestion = false;
         const updateReviewPanel = () => {
           const review = displayedReview();
           const currentText = b.t || b.translated || "";
           const isExcludedScript = inspectTargetText(currentText, effectiveTarget).reason === "excluded-script";
+          const autoRepairedPreview = isExcludedScript ? repairExcludedScriptText(currentText, effectiveTarget) : "";
+          const effectiveSuggestion = review?.suggestion || (b.translationReview?.suggestion && inspectTargetText(b.translationReview.suggestion, effectiveTarget).status === "eligible" ? b.translationReview.suggestion : "") || (autoRepairedPreview && autoRepairedPreview !== currentText.trim() ? autoRepairedPreview : "");
           reviewPanel.hidden = !review && !b.original_text;
           reviewPanel.style.display = reviewPanel.hidden ? "none" : "grid";
           source.textContent = b.original_text ? `ต้นฉบับ: ${b.original_text}` : "ไม่มีข้อความต้นฉบับ";
           reviewStatus.textContent = review ? `${reviewLabels[review.status]}${review.reason ? `: ${review.reason}` : ""}` : "";
-          suggestion.textContent = review?.suggestion ? `คำแปลที่แนะนำ: ${review.suggestion}` : "";
+          suggestion.textContent = effectiveSuggestion ? `💡 คำแปลที่แนะนำ: ${effectiveSuggestion}` : "";
           const current = isReviewCurrent(b) && review?.status !== "stale";
           cleanScript.hidden = !isExcludedScript;
           cleanScript.disabled = !isExcludedScript;
+          askAiReview.hidden = !b.original_text;
+          askAiReview.disabled = isRequestingAiSuggestion || !b.original_text;
+          askAiReview.textContent = isRequestingAiSuggestion ? "⏳ กำลังขอคำแนะนำ AI..." : "✨ ขอคำแนะนำจาก AI";
           acceptReview.hidden = !review?.suggestion;
           acceptReview.disabled = !current || review?.status !== "suggested";
           dismissReview.hidden = !review;
           dismissReview.disabled = !current || !["suggested", "needs_review", "unavailable"].includes(review?.status ?? "");
           restoreOriginal.hidden = review?.status !== "accepted" || review.originalTranslation === undefined;
           restoreOriginal.disabled = !current;
-          for (const button of [cleanScript, acceptReview, dismissReview, restoreOriginal]) {
+          for (const button of [cleanScript, askAiReview, acceptReview, dismissReview, restoreOriginal]) {
             button.style.display = button.hidden ? "none" : "flex";
             button.style.opacity = button.disabled ? "0.5" : "1";
             button.style.cursor = button.disabled ? "default" : "pointer";
@@ -2070,24 +2060,86 @@ export const applyTranslationOverlay = async (
         });
         cleanScript.style.background = "#d97706";
         cleanScript.style.borderColor = "#f59e0b";
+        const askAiReview = reviewAction("ask-ai", "✨ ขอคำแนะนำจาก AI", async () => {
+          if (isRequestingAiSuggestion || !b.original_text) return;
+          isRequestingAiSuggestion = true;
+          updateReviewPanel();
+          try {
+            const currentText = b.t || b.translated || textarea.value || "";
+            const apiKey = typeof localStorage !== "undefined" ? (localStorage.getItem("gemini_api_key") || "") : "";
+            const res = await fetch("/api/translation-review", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                items: [{ id: "0", sourceText: b.original_text, translatedText: currentText }],
+                targetLang: effectiveTarget || "Thai",
+                apiKey,
+                mode: "repair",
+              }),
+            });
+            if (res.ok) {
+              const data = await res.json();
+              const row = Array.isArray(data?.reviews) ? data.reviews[0] : null;
+              if (row?.suggestion && typeof row.suggestion === "string") {
+                const prevText = currentText;
+                b.translationReview = {
+                  ...(b.translationReview ?? {
+                    policyVersion: LANGUAGE_POLICY_VERSION,
+                    sourceText: b.original_text ?? "",
+                    reviewedText: prevText,
+                  }),
+                  status: "accepted",
+                  suggestion: row.suggestion.trim(),
+                  reviewedText: row.suggestion.trim(),
+                  originalTranslation: prevText,
+                  reason: row.reason || "เกลาและแก้ตัวอักษรปนด้วย AI แล้ว",
+                };
+                updateReviewText(row.suggestion.trim());
+              }
+            }
+          } catch {
+            // Fall back to local smart repair if offline/error
+          } finally {
+            isRequestingAiSuggestion = false;
+            updateReviewPanel();
+          }
+        });
+        askAiReview.style.background = "#4f46e5";
+        askAiReview.style.borderColor = "#6366f1";
         const acceptReview = reviewAction("accept", "ใช้คำแปลที่แนะนำ", () => {
           if (!checkReviewSnapshot()) return;
           const review = displayedReview();
-          if (review?.status !== "suggested" || !review.suggestion) return;
-          b.translationReview = { ...review, status: "accepted", reviewedText: review.suggestion, originalTranslation: review.originalTranslation ?? (b.t || b.translated || "") };
-          updateReviewText(review.suggestion);
+          const targetSuggestion = review?.suggestion || (b.translationReview?.suggestion && inspectTargetText(b.translationReview.suggestion, effectiveTarget).status === "eligible" ? b.translationReview.suggestion : "");
+          if (!targetSuggestion) return;
+          const baseReview = review ?? b.translationReview ?? {
+            policyVersion: LANGUAGE_POLICY_VERSION,
+            sourceText: b.original_text ?? "",
+            reviewedText: b.t || b.translated || "",
+            originalTranslation: undefined as string | undefined,
+          };
+          b.translationReview = {
+            ...baseReview,
+            status: "accepted",
+            reviewedText: targetSuggestion,
+            originalTranslation: baseReview.originalTranslation ?? (b.t || b.translated || ""),
+          };
+          updateReviewText(targetSuggestion);
         });
         const dismissReview = reviewAction("dismiss", "เก็บคำแปลปัจจุบัน", () => {
           const currentText = b.t || b.translated || textarea.value || "";
-          if (inspectTargetText(currentText, effectiveTarget).reason === "excluded-script") {
-            applyCleanScript("dismissed");
-            return;
-          }
-          if (!checkReviewSnapshot()) return;
-          const review = b.translationReview;
-          if (!review || !["suggested", "needs_review", "unavailable"].includes(review.status)) return;
-          b.translationReview = { ...review, status: "dismissed" };
+          const baseReview = b.translationReview ?? displayedReview();
+          b.translationReview = {
+            ...(baseReview ?? {
+              policyVersion: LANGUAGE_POLICY_VERSION,
+              sourceText: b.original_text ?? "",
+              reviewedText: currentText,
+            }),
+            status: "dismissed",
+            reviewedText: currentText,
+          };
           updateReviewPanel();
+          renderBubble();
+          saveAdjustment();
         });
         const restoreOriginal = reviewAction("restore", "คืนคำแปลก่อนหน้า", () => {
           if (!checkReviewSnapshot()) return;

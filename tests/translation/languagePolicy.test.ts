@@ -78,4 +78,22 @@ describe("strict script eligibility", () => {
   it.each([["en", "\u0301hello"], ["en", "a\u200Db"], ["ar", "ع\u0301"], ["ja", "か\u0301"], ["fr", "a\u05B0"], ["th", "ก\uFE0F"], ["en", "a\u0345"], ["ru", "а\u0363"]])("rejects incompatible/orphan marks for %s", (target, text) => {
     expect(inspectTargetText(text, target).status).toBe("blocked");
   });
+  it.each([
+    "เอาหน้าตอนเสร็จสมอารมณ์หมายแบบชัดระดับ 4K ไปเลย",
+    "วิดีโอ 8K ชัดมาก",
+    "จอ 1080p",
+    "ภาพยนตร์ 3D และ 2D",
+    "ระบบ AI และแว่น VR",
+    "ตกลง OK นะครับ",
+    "เปิดเครื่อง PC หรือดู TV",
+    "เกมนี้ 60 FPS ลื่นมาก",
+    "เชื่อมต่อ Wi-Fi แล้ว",
+    "ตัวละคร Lv.99 เล่นโหมด RPG",
+    "ตอนที่ Ep. 1",
+  ])("permits standard international loan tokens in Thai: %s", (text) => {
+    const result = inspectTargetText(text, "th");
+    expect(result.status).toBe("eligible");
+    expect(result.offendingCharacters).toEqual([]);
+  });
 });
+

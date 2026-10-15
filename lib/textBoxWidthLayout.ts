@@ -57,9 +57,7 @@ const graphemesOf = (value: string): string[] => {
   return Array.from(value);
 };
 
-const THAI_ORPHAN_FINALS = /^[งญนยณรวมลฬ]/;
-const THAI_CONSONANTS = /^[\u0E01-\u0E2E]/;
-const THAI_ATTACHING_MARKS = /^[\u0E30-\u0E39\u0E47-\u0E4E]/;
+const THAI_PRE_PROTECT_RE = /(ด้วยเนี่ย|รึเปล่า|หรือเปล่า|เหรอ|รึยัง|รึไง)/gu;
 const THAI_STOLEN_CODA_PARTICLE_RE = /^([งกนมดบยว])(ด้วยเนี่ย|เนี่ย|มั้ง|มั้ย|งี้|งั้น|รึเปล่า|รึยัง|รึไง|รึ|น่ะ|ล่ะ|อ่ะ|อะ|วะ|เว้ย|โว้ย|ฟะ|เฟ้ย|แฮะ|แหละ|จัง|จ้ะ|จ๋า|ฮะ)[\p{P}\s]*$/u;
 
 export function hasBrokenThaiLineBreak(lines?: string[] | null): boolean {
@@ -75,43 +73,73 @@ export function hasBrokenThaiLineBreak(lines?: string[] | null): boolean {
   return false;
 }
 
+function segmentRawWithThaiFix(
+  value: string,
+  segmenter: Intl.Segmenter,
+  locale: string,
+): Array<{ segment: string; isWordLike?: boolean }> {
+  if (!locale.toLowerCase().startsWith("th")) {
+    return Array.from(segmenter.segment(value));
+  }
+
+  const rawParts: Array<{ segment: string; isWordLike?: boolean }> = [];
+  let lastIdx = 0;
+  for (const m of value.matchAll(THAI_PRE_PROTECT_RE)) {
+    const idx = m.index ?? 0;
+    if (idx > lastIdx) {
+      for (const p of segmenter.segment(value.slice(lastIdx, idx))) {
+        rawParts.push({ segment: p.segment, isWordLike: p.isWordLike });
+      }
+    }
+    const token = m[0];
+    if (token === "ด้วยเนี่ย") {
+      rawParts.push({ segment: "ด้วย", isWordLike: true }, { segment: "เนี่ย", isWordLike: true });
+    } else if (token === "รึเปล่า") {
+      rawParts.push({ segment: "รึ", isWordLike: true }, { segment: "เปล่า", isWordLike: true });
+    } else if (token === "หรือเปล่า") {
+      rawParts.push({ segment: "หรือ", isWordLike: true }, { segment: "เปล่า", isWordLike: true });
+    } else if (token === "รึยัง") {
+      rawParts.push({ segment: "รึ", isWordLike: true }, { segment: "ยัง", isWordLike: true });
+    } else if (token === "รึไง") {
+      rawParts.push({ segment: "รึ", isWordLike: true }, { segment: "ไง", isWordLike: true });
+    } else {
+      rawParts.push({ segment: token, isWordLike: true });
+    }
+    lastIdx = idx + token.length;
+  }
+  if (lastIdx < value.length) {
+    for (const p of segmenter.segment(value.slice(lastIdx))) {
+      rawParts.push({ segment: p.segment, isWordLike: p.isWordLike });
+    }
+  }
+
+  const repaired: Array<{ segment: string; isWordLike?: boolean }> = [];
+  for (let i = 0; i < rawParts.length; i++) {
+    const cur = rawParts[i];
+    const prev = repaired[repaired.length - 1];
+    const match = cur.segment.match(THAI_STOLEN_CODA_PARTICLE_RE);
+    if (match && prev && prev.isWordLike && /[\u0E01-\u0E4E]$/u.test(prev.segment)) {
+      const coda = match[1];
+      const particle = match[2];
+      const candidateWord = prev.segment + coda;
+      if (Array.from(segmenter.segment(candidateWord)).length === 1) {
+        prev.segment = candidateWord;
+        repaired.push({ segment: particle, isWordLike: true });
+        continue;
+      }
+    }
+    repaired.push(cur);
+  }
+
+  return repaired;
+}
+
 export const segmentTextIntoWords = (value: string, locale = "th"): string[] => {
   if (typeof Intl !== "undefined" && "Segmenter" in Intl) {
     try {
       const segmenter = new Intl.Segmenter(locale, { granularity: "word" });
       const segments: string[] = [];
-      const rawParts = Array.from(segmenter.segment(value));
-
-      const pushToken = (token: string): void => {
-        if (
-          locale.startsWith("th")
-          && THAI_ORPHAN_FINALS.test(token)
-          && token.length >= 3
-          && THAI_CONSONANTS.test(token[1])
-          && THAI_ATTACHING_MARKS.test(token[2])
-          && segments.length > 0
-          && !/^\s+$/u.test(segments[segments.length - 1])
-        ) {
-          segments[segments.length - 1] += token[0];
-          const remainder = token.slice(1);
-          for (const subPart of segmenter.segment(remainder)) {
-            pushToken(subPart.segment);
-          }
-          return;
-        }
-
-        if (
-          locale.startsWith("th")
-          && token === "รอ"
-          && segments.length > 0
-          && segments[segments.length - 1] === "เห"
-        ) {
-          segments[segments.length - 1] = "เหรอ";
-          return;
-        }
-
-        segments.push(token);
-      };
+      const rawParts = segmentRawWithThaiFix(value, segmenter, locale);
 
       for (let index = 0; index < rawParts.length; index += 1) {
         const part = rawParts[index];
@@ -132,7 +160,7 @@ export const segmentTextIntoWords = (value: string, locale = "th"): string[] => 
         if (isTrailingPunctuation && segments.length > 0 && !/^\s+$/u.test(segments[segments.length - 1])) {
           segments[segments.length - 1] += segment;
         } else {
-          pushToken(segment);
+          segments.push(segment);
         }
       }
       return segments;
