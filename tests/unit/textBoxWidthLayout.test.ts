@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   layoutTextAtFixedFont,
   minimumWidthForWholeWords,
+  segmentTextIntoWords,
 } from "@/lib/textBoxWidthLayout";
 
 const measureByGrapheme = (value: string) => [...value].length * 10;
@@ -186,5 +187,34 @@ describe("layoutTextAtFixedFont", () => {
     expect(narrowLayout.overflow).toBe(false);
     expect(narrowLayout.lines.length).toBeGreaterThan(wideLayout.lines.length);
     expect(narrowLayout.lines.every((line) => !line.includes("ตนที่ยอมจำนนของเธอ"))).toBe(true);
+  });
+
+  it("heals orphan Thai final consonants mis-segmented by Intl.Segmenter", () => {
+    const raw = segmentTextIntoWords("แล้วทำไมถึงมีกล้องด้วยเนี่ย?!", "th");
+    expect(raw).toEqual([
+      "แล้ว",
+      "ทำไม",
+      "ถึง",
+      "มี",
+      "กล้อง",
+      "ด้วย",
+      "เนี่ย?!",
+    ]);
+
+    expect(segmentTextIntoWords("ห้องด้วยเนี่ย", "th")).toEqual(["ห้อง", "ด้วย", "เนี่ย"]);
+    expect(segmentTextIntoWords("ต้องด้วยเนี่ย", "th")).toEqual(["ต้อง", "ด้วย", "เนี่ย"]);
+    expect(segmentTextIntoWords("ช่องด้วยเนี่ย", "th")).toEqual(["ช่อง", "ด้วย", "เนี่ย"]);
+  });
+
+  it("heals broken Thai particle segments like เห + รอ -> เหรอ", () => {
+    expect(segmentTextIntoWords("จริงเหรอเนี่ย?!", "th")).toEqual(["จริง", "เหรอ", "เนี่ย?!"]);
+    expect(segmentTextIntoWords("ห้องนี้มีกล้องด้วยเหรอ", "th")).toEqual([
+      "ห้อง",
+      "นี้",
+      "มี",
+      "กล้อง",
+      "ด้วย",
+      "เหรอ",
+    ]);
   });
 });

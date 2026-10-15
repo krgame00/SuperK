@@ -57,12 +57,48 @@ const graphemesOf = (value: string): string[] => {
   return Array.from(value);
 };
 
+const THAI_ORPHAN_FINALS = /^[งญนยณรวมลฬ]/;
+const THAI_CONSONANTS = /^[\u0E01-\u0E2E]/;
+const THAI_ATTACHING_MARKS = /^[\u0E30-\u0E39\u0E47-\u0E4E]/;
+
 export const segmentTextIntoWords = (value: string, locale = "th"): string[] => {
   if (typeof Intl !== "undefined" && "Segmenter" in Intl) {
     try {
       const segmenter = new Intl.Segmenter(locale, { granularity: "word" });
       const segments: string[] = [];
       const rawParts = Array.from(segmenter.segment(value));
+
+      const pushToken = (token: string): void => {
+        if (
+          locale.startsWith("th")
+          && THAI_ORPHAN_FINALS.test(token)
+          && token.length >= 3
+          && THAI_CONSONANTS.test(token[1])
+          && THAI_ATTACHING_MARKS.test(token[2])
+          && segments.length > 0
+          && !/^\s+$/u.test(segments[segments.length - 1])
+        ) {
+          segments[segments.length - 1] += token[0];
+          const remainder = token.slice(1);
+          for (const subPart of segmenter.segment(remainder)) {
+            pushToken(subPart.segment);
+          }
+          return;
+        }
+
+        if (
+          locale.startsWith("th")
+          && token === "รอ"
+          && segments.length > 0
+          && segments[segments.length - 1] === "เห"
+        ) {
+          segments[segments.length - 1] = "เหรอ";
+          return;
+        }
+
+        segments.push(token);
+      };
+
       for (let index = 0; index < rawParts.length; index += 1) {
         const part = rawParts[index];
         const segment = part.segment;
@@ -82,7 +118,7 @@ export const segmentTextIntoWords = (value: string, locale = "th"): string[] => 
         if (isTrailingPunctuation && segments.length > 0 && !/^\s+$/u.test(segments[segments.length - 1])) {
           segments[segments.length - 1] += segment;
         } else {
-          segments.push(segment);
+          pushToken(segment);
         }
       }
       return segments;
