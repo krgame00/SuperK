@@ -1190,27 +1190,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     [markPageDirty],
   );
 
-  const buildPreviousPagesContext = useCallback((pageIndex: number): string | undefined => {
-    if (pageIndex <= 0) return undefined;
-    const lines: string[] = [];
-    const startIdx = Math.max(0, pageIndex - 2);
-    for (let idx = startIdx; idx < pageIndex; idx++) {
-      const prevUrl = pagesRef.current[idx];
-      if (!prevUrl) continue;
-      const prevBubbles = bubbleCacheRef.current.get(prevUrl);
-      if (!prevBubbles || prevBubbles.length === 0) continue;
-      for (const b of prevBubbles) {
-        if (!b || b.deleted) continue;
-        const src = typeof b.original_text === "string" ? b.original_text.trim() : "";
-        const tgt = (b.t || b.translated || "").trim();
-        if (!src || !tgt) continue;
-        lines.push(`[Page ${idx + 1}] "${src}" -> "${tgt}"`);
-        if (lines.length >= 12) break;
-      }
-      if (lines.length >= 12) break;
-    }
-    if (lines.length === 0) return undefined;
-    return lines.join("\n").slice(0, 1200);
+  const buildPreviousPagesContext = useCallback((_pageIndex: number): string | undefined => {
+    return undefined;
   }, []);
 
   const performTranslation = async (
@@ -1222,8 +1203,6 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     signal?: AbortSignal,
     requestedTarget = targetLangRef.current,
   ): Promise<boolean> => {
-    const previousContext = buildPreviousPagesContext(pageIndex);
-    const policyPayload = sfxMode !== "ignore" ? { sfx: sfxMode } : undefined;
     const jobTargetIdentity = createPageTargetIdentity(requestedTarget);
     if (!jobTargetIdentity) throw new Error("กรุณาเลือกภาษาปลายทางที่รองรับพร้อมรูปแบบอักษร");
     try {
@@ -1354,8 +1333,6 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
                 apiKey: userApiKey,
                 allowPreview: allowPreviewModels,
                 glossary,
-                ...(previousContext ? { context: previousContext } : {}),
-                ...(policyPayload ? { policy: policyPayload } : {}),
               }),
               signal,
             });
@@ -1540,8 +1517,6 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             apiKey: userApiKey,
             allowPreview: allowPreviewModels,
             glossary,
-            ...(previousContext ? { context: previousContext } : {}),
-            ...(policyPayload ? { policy: policyPayload } : {}),
           }),
           signal,
         });
@@ -1626,8 +1601,6 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             allowPreview: allowPreviewModels,
             isRetry: true,
             glossary,
-            ...(previousContext ? { context: previousContext } : {}),
-            ...(policyPayload ? { policy: policyPayload } : {}),
           }),
           signal,
         });
