@@ -14,8 +14,8 @@ import {
   withGeminiDeadline,
 } from "@/lib/server/geminiRequest";
 
-const DEFAULT_TRANSLATION_ATTEMPT_TIMEOUT_MS = 25_000;
-const DEFAULT_TRANSLATION_TOTAL_BUDGET_MS = 60_000;
+const DEFAULT_TRANSLATION_ATTEMPT_TIMEOUT_MS = 28_000;
+const DEFAULT_TRANSLATION_TOTAL_BUDGET_MS = 90_000;
 
 export interface ExecuteGeminiTranslationOptions<T = unknown> {
   workflow: GeminiWorkflow;

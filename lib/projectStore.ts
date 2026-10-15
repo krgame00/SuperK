@@ -913,3 +913,106 @@ const requestResult = <T>(request: IDBRequest<T>): Promise<T> =>
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
+
+export interface PortableProjectBundle {
+  format: "superk-project-v1";
+  exportedAt: number;
+  currentPage: number;
+  pages: Array<{
+    id?: string;
+    url: string;
+    name: string;
+    originUrl?: string;
+    readerImageUrl?: string;
+    exportSource?: PageExportSource;
+    sourceFingerprint?: string;
+  }>;
+  bubbleCache: [string, TranslatedBubble[]][];
+  pageTargetCache: [string, PageTargetIdentity][];
+  translatedImageCache: [string, string][];
+}
+
+export const exportPortableProjectBundle = async (): Promise<PortableProjectBundle | null> => {
+  const session = await loadProjectSession();
+  if (!session || session.pages.length === 0) return null;
+
+  const portablePages: PortableProjectBundle["pages"] = [];
+  const urlRemap = new Map<string, string>();
+
+  for (const page of session.pages) {
+    let durableUrl = page.url;
+    if (durableUrl.startsWith("blob:") && page.id && pageBlobStore.has(page.id)) {
+      const blob = pageBlobStore.get(page.id);
+      if (blob) {
+        durableUrl = await blobToDataUrl(blob, blob.type);
+      }
+    }
+    urlRemap.set(page.url, durableUrl);
+    portablePages.push({
+      id: page.id,
+      url: durableUrl,
+      name: page.name,
+      originUrl: page.originUrl,
+      readerImageUrl: page.readerImageUrl,
+      exportSource: page.exportSource,
+      sourceFingerprint: page.sourceFingerprint,
+    });
+  }
+
+  const bubbleCache: [string, TranslatedBubble[]][] = [];
+  for (const [pageUrl, bubbles] of session.bubbleCache.entries()) {
+    const mappedUrl = urlRemap.get(pageUrl) ?? pageUrl;
+    const cleanBubbles = bubbles.map((b) => {
+      const copy = { ...b };
+      delete copy.render;
+      return copy;
+    });
+    bubbleCache.push([mappedUrl, cleanBubbles]);
+  }
+
+  const pageTargetCache: [string, PageTargetIdentity][] = [];
+  for (const [pageUrl, identity] of session.pageTargetCache.entries()) {
+    pageTargetCache.push([urlRemap.get(pageUrl) ?? pageUrl, identity]);
+  }
+
+  const translatedImageCache: [string, string][] = [];
+  for (const [pageUrl, dataUrl] of session.translatedImageCache.entries()) {
+    if (typeof dataUrl === "string" && dataUrl.startsWith("data:")) {
+      translatedImageCache.push([urlRemap.get(pageUrl) ?? pageUrl, dataUrl]);
+    }
+  }
+
+  return {
+    format: "superk-project-v1",
+    exportedAt: Date.now(),
+    currentPage: session.currentPage,
+    pages: portablePages,
+    bubbleCache,
+    pageTargetCache,
+    translatedImageCache,
+  };
+};
+
+export const importPortableProjectBundle = async (
+  rawJson: string,
+): Promise<LoadedProjectSession | null> => {
+  const parsed = JSON.parse(rawJson) as Partial<PortableProjectBundle>;
+  if (
+    !parsed ||
+    parsed.format !== "superk-project-v1" ||
+    !Array.isArray(parsed.pages) ||
+    parsed.pages.length === 0
+  ) {
+    throw new Error("รูปแบบไฟล์โปรเจกต์ (.superk) ไม่ถูกต้อง");
+  }
+
+  await saveProjectSession({
+    pages: parsed.pages,
+    currentPage: typeof parsed.currentPage === "number" ? parsed.currentPage : 0,
+    bubbleCache: new Map(Array.isArray(parsed.bubbleCache) ? parsed.bubbleCache : []),
+    pageTargetCache: new Map(Array.isArray(parsed.pageTargetCache) ? parsed.pageTargetCache : []),
+    translatedImageCache: new Map(Array.isArray(parsed.translatedImageCache) ? parsed.translatedImageCache : []),
+  });
+
+  return loadProjectSession();
+};

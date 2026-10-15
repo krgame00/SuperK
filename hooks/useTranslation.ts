@@ -86,6 +86,7 @@ export interface ReviewIssuePoint {
   characters?: string;
   status?: TranslationReview["status"];
   reason?: string;
+  suggestion?: string;
 }
 
 export interface PageReviewIssues {
@@ -445,12 +446,32 @@ export function useTranslation({
     }
     return false;
   });
-  const [textStyle, setTextStyleState] = useState({
+  const [textStyle, setTextStyleState] = useState<{
+    fontFamily: string;
+    textColor: string;
+    textOutline: string;
+    fontSizeMultiplier: number;
+    categoryFonts?: Partial<Record<string, string>>;
+  }>({
     fontFamily: "Itim, sans-serif",
     textColor: "#000000",
     textOutline: "#FFFFFF",
-    fontSizeMultiplier: 1.0
+    fontSizeMultiplier: 1.0,
+    categoryFonts: {},
   });
+  const [sfxMode, setSfxModeState] = useState<"ignore" | "preserve" | "translate">(() => {
+    if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
+      const saved = localStorage.getItem("superk:sfx-policy");
+      if (saved === "preserve" || saved === "translate" || saved === "ignore") return saved;
+    }
+    return "ignore";
+  });
+  const setSfxMode = useCallback((mode: "ignore" | "preserve" | "translate") => {
+    setSfxModeState(mode);
+    if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
+      localStorage.setItem("superk:sfx-policy", mode);
+    }
+  }, []);
   const textStyleRef = useRef(textStyle);
 
   const [nsfwBypassMode, setNsfwBypassMode] = useState(false);
@@ -559,7 +580,8 @@ export function useTranslation({
       if (
         before.fontFamily !== after.fontFamily ||
         before.textColor !== after.textColor ||
-        before.textOutline !== after.textOutline
+        before.textOutline !== after.textOutline ||
+        JSON.stringify(before.categoryFonts ?? {}) !== JSON.stringify(after.categoryFonts ?? {})
       ) {
         for (const pageUrl of bubbleCacheRef.current.keys()) {
           markPageDirty(pageUrl);
@@ -1168,6 +1190,29 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     [markPageDirty],
   );
 
+  const buildPreviousPagesContext = useCallback((pageIndex: number): string | undefined => {
+    if (pageIndex <= 0) return undefined;
+    const lines: string[] = [];
+    const startIdx = Math.max(0, pageIndex - 2);
+    for (let idx = startIdx; idx < pageIndex; idx++) {
+      const prevUrl = pagesRef.current[idx];
+      if (!prevUrl) continue;
+      const prevBubbles = bubbleCacheRef.current.get(prevUrl);
+      if (!prevBubbles || prevBubbles.length === 0) continue;
+      for (const b of prevBubbles) {
+        if (!b || b.deleted) continue;
+        const src = typeof b.original_text === "string" ? b.original_text.trim() : "";
+        const tgt = (b.t || b.translated || "").trim();
+        if (!src || !tgt) continue;
+        lines.push(`[Page ${idx + 1}] "${src}" -> "${tgt}"`);
+        if (lines.length >= 12) break;
+      }
+      if (lines.length >= 12) break;
+    }
+    if (lines.length === 0) return undefined;
+    return lines.join("\n").slice(0, 1200);
+  }, []);
+
   const performTranslation = async (
     preparedPage: PreparedTranslationPage,
     pageUrl: string,
@@ -1177,6 +1222,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     signal?: AbortSignal,
     requestedTarget = targetLangRef.current,
   ): Promise<boolean> => {
+    const previousContext = buildPreviousPagesContext(pageIndex);
+    const policyPayload = sfxMode !== "ignore" ? { sfx: sfxMode } : undefined;
     const jobTargetIdentity = createPageTargetIdentity(requestedTarget);
     if (!jobTargetIdentity) throw new Error("กรุณาเลือกภาษาปลายทางที่รองรับพร้อมรูปแบบอักษร");
     try {
@@ -1307,6 +1354,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
                 apiKey: userApiKey,
                 allowPreview: allowPreviewModels,
                 glossary,
+                ...(previousContext ? { context: previousContext } : {}),
+                ...(policyPayload ? { policy: policyPayload } : {}),
               }),
               signal,
             });
@@ -1491,6 +1540,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             apiKey: userApiKey,
             allowPreview: allowPreviewModels,
             glossary,
+            ...(previousContext ? { context: previousContext } : {}),
+            ...(policyPayload ? { policy: policyPayload } : {}),
           }),
           signal,
         });
@@ -1575,6 +1626,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             allowPreview: allowPreviewModels,
             isRetry: true,
             glossary,
+            ...(previousContext ? { context: previousContext } : {}),
+            ...(policyPayload ? { policy: policyPayload } : {}),
           }),
           signal,
         });
@@ -2006,6 +2059,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           continue;
         }
         if (cancelTranslateAllRef.current) break;
+        clearVisibleTranslation(pageUrl, i);
 
         setTranslateAllProgress({
           current: batchProgressFrontier(),
@@ -2555,6 +2609,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           unverified.push({
             index, pointId, kind: "unverified", hasSource, humanConfirmable: hasSource && !!sourceRevision,
             status: review?.status ?? "unavailable", reason: review?.reason,
+            suggestion: review?.suggestion,
           });
         }
       });
@@ -2568,7 +2623,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
   // Explicit source-backed human confirmation for points whose script passes
   // but contextual AI verification is unavailable (or metadata is absent/stale).
   // Detectable script failures can never be confirmed, dismissed or accepted past.
-  const confirmPointReview = useCallback((pageUrl: string, pointIndex: number): boolean => {
+  const confirmPointReview = useCallback((pageUrl: string, pointIndex: number, useSuggestion?: boolean): boolean => {
     const bubbles = bubbleCacheRef.current.get(pageUrl)
       ?? (activePageRef.current === pageUrl ? activeBubbles : undefined);
     const bubble = bubbles?.[pointIndex];
@@ -2577,20 +2632,34 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     if (!targetId) return false;
     const sourceRevision = getPageSourceRevision(pageUrl);
     if (!sourceRevision) return false;
-    const text = bubble.t || bubble.translated || "";
+    const suggested = useSuggestion ? bubble.translationReview?.suggestion?.trim() : undefined;
+    const text = suggested || bubble.t || bubble.translated || "";
     const source = typeof bubble.original_text === "string" ? bubble.original_text : "";
     if (!source.trim()) return false;
     if (inspectTargetText(text, targetId).status === "blocked") return false;
-    // Review evidence changed: reset export confirmations but keep the render cache.
-    markPageDirty(pageUrl, false);
+    if (suggested) {
+      bubble.t = suggested;
+      bubble.translated = suggested;
+      markPageDirty(pageUrl, true);
+      const backgroundUrl = getCleanedPageUrlRef.current?.(pageUrl) || pageUrl;
+      void renderAndCacheTranslation(
+        bubbles,
+        backgroundUrl,
+        pageUrl,
+        pagesRef.current.indexOf(pageUrl),
+      ).catch(() => {});
+    } else {
+      // Review evidence changed: reset export confirmations but keep the render cache.
+      markPageDirty(pageUrl, false);
+    }
     bubble.translationReview = withReviewIdentity(
-      { status: "accepted", sourceText: source, reviewedText: text, reason: "ผู้ใช้ยืนยันกับต้นฉบับแล้ว" },
+      { status: "accepted", sourceText: source, reviewedText: text, reason: suggested ? "แก้ไขตามคำแนะนำ AI แล้ว" : "ผู้ใช้ยืนยันกับต้นฉบับแล้ว" },
       targetId,
       sourceRevision,
     );
     setCacheRevision((revision) => revision + 1);
     return true;
-  }, [activeBubbles, getPageTargetLanguage, getPageSourceRevision, markPageDirty]);
+  }, [activeBubbles, getPageTargetLanguage, getPageSourceRevision, markPageDirty, renderAndCacheTranslation]);
 
   // Undo/Redo payloads for the whole-book repair: exact pre-repair and
   // post-repair text plus review evidence per affected point only.
@@ -2757,6 +2826,70 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
   }, []);
 
 
+  const applyAllSuggestedReviews = useCallback((scope: "current" | "all" = "all"): number => {
+    const targetPages =
+      scope === "all"
+        ? [...pagesRef.current]
+        : activePageRef.current
+          ? [activePageRef.current]
+          : [];
+    if (targetPages.length === 0) return 0;
+
+    const preEntries: RepairEntry[] = [];
+    const postEntries: RepairEntry[] = [];
+
+    for (const pageUrl of targetPages) {
+      const bubbles = bubbleCacheRef.current.get(pageUrl);
+      if (!bubbles || bubbles.length === 0) continue;
+      const targetId = getPageTargetLanguage(pageUrl) ?? "th";
+      const sourceRevision = getPageSourceRevision(pageUrl);
+
+      bubbles.forEach((b, index) => {
+        if (b.deleted) return;
+        const suggested = b.translationReview?.suggestion?.trim();
+        const currentText = (b.t || b.translated || "").trim();
+        if (!suggested || suggested === currentText) return;
+        if (inspectTargetText(suggested, targetId).status === "blocked") return;
+
+        const beforeReview = b.translationReview ? { ...b.translationReview } : undefined;
+        const afterReview = withReviewIdentity(
+          {
+            status: "accepted",
+            sourceText: typeof b.original_text === "string" ? b.original_text : beforeReview?.sourceText ?? "",
+            reviewedText: suggested,
+            reason: "แก้ไขตามคำแนะนำ AI แล้ว",
+          },
+          targetId,
+          sourceRevision,
+        );
+
+        preEntries.push({
+          pageUrl,
+          index,
+          text: b.t || b.translated || "",
+          review: beforeReview,
+        });
+        postEntries.push({
+          pageUrl,
+          index,
+          text: suggested,
+          review: afterReview,
+        });
+      });
+    }
+
+    if (postEntries.length > 0) {
+      applyRepairEntries(postEntries);
+      undoManager.push({
+        label: `ใช้คำแปลที่ AI เกลาทั้งหมด (${postEntries.length} จุด)`,
+        undo: () => applyRepairEntries(preEntries),
+        redo: () => applyRepairEntries(postEntries),
+      });
+    }
+
+    return postEntries.length;
+  }, [applyRepairEntries, getPageSourceRevision, getPageTargetLanguage]);
+
   // Find & Replace support: rewrite bubble text in place so the bubble cache
   // survives (invalidating it would wipe the translations being edited).
   // Rendered images are re-rendered afterwards so they carry the new text.
@@ -2770,15 +2903,31 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         (pageUrl) => bubbleCacheRef.current.has(pageUrl),
       );
       let count = 0;
+      const preReplace: RepairEntry[] = [];
+      const postReplace: RepairEntry[] = [];
       for (const pageUrl of targets) {
-        for (const b of bubbleCacheRef.current.get(pageUrl) ?? []) {
+        const list = bubbleCacheRef.current.get(pageUrl) ?? [];
+        for (let index = 0; index < list.length; index++) {
+          const b = list[index];
+          const beforeText = b.t || b.translated || "";
+          const beforeReview = b.translationReview ? { ...b.translationReview } : undefined;
           if (options.transform(b)) {
             invalidateQualityReview(b);
+            const afterText = b.t || b.translated || "";
+            const afterReview = b.translationReview ? { ...b.translationReview } : undefined;
+            preReplace.push({ pageUrl, index, text: beforeText, review: beforeReview });
+            postReplace.push({ pageUrl, index, text: afterText, review: afterReview });
             count++;
           }
         }
       }
       if (count === 0) return 0;
+
+      undoManager.push({
+        label: `ค้นหาและแทนที่ข้อความ (${count} จุด)`,
+        undo: () => applyRepairEntries(preReplace),
+        redo: () => applyRepairEntries(postReplace),
+      });
 
       for (const pageUrl of targets) {
         markPageDirty(pageUrl);
@@ -2815,7 +2964,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
 
       return count;
     },
-    [renderAndCacheTranslation, markPageDirty],
+    [renderAndCacheTranslation, markPageDirty, applyRepairEntries],
   );
 
   const flushMemory = useCallback(() => {
@@ -2891,6 +3040,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       }
     },
     textStyle, setTextStyle,
+    sfxMode, setSfxMode,
+    buildPreviousPagesContext,
     nsfwBypassMode, setNsfwBypassMode,
     isTranslating,
     translationResult, setTranslationResult,
@@ -2943,6 +3094,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     confirmLegacyTarget,
     inspectReviewIssues,
     confirmPointReview,
+    applyAllSuggestedReviews,
     repairWholeBook,
     cancelWholeBookRepair,
     isRepairingBook,

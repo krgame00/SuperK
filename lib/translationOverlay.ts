@@ -154,8 +154,23 @@ export interface OverlayTextStyle {
   fontSizeMultiplier?: number;
   textColor?: string;
   textOutline?: string;
+  categoryFonts?: Partial<Record<string, string>>;
   [key: string]: unknown;
 }
+
+export const resolveBubbleFontFamily = (
+  bubble?: TranslatedBubble,
+  style?: OverlayTextStyle,
+): string => {
+  const category =
+    bubble?.styleProfile?.category ||
+    (bubble as { styleCategory?: string } | undefined)?.styleCategory;
+  const catFont =
+    category && style?.categoryFonts ? style.categoryFonts[category] : undefined;
+  return resolveCanvasFontFamily(
+    catFont && catFont.trim().length > 0 ? catFont : style?.fontFamily,
+  );
+};
 
 export interface OverlayAdjustment {
   bx: number;
@@ -338,15 +353,12 @@ export const syncPageOverlayAdjustments = (pageKey: string, bubbles: TranslatedB
   try {
     const storagePageKey = compactOverlayPageKey(pageKey);
     const all = readOverlayAdjustments();
-    const existingPageAdj = all[storagePageKey] ?? all[pageKey] ?? {};
     const nextPageAdj: Record<string, OverlayAdjustment> = {};
     for (const b of bubbles) {
-      if (!b || b.deleted) continue;
+      if (!b || b.deleted || !b.layoutAdjustment) continue;
       const bubbleId = bubbleKeyOf(b);
-      const baseAdj = b.layoutAdjustment ?? existingPageAdj[bubbleId];
-      if (!baseAdj) continue;
       nextPageAdj[bubbleId] = {
-        ...baseAdj,
+        ...b.layoutAdjustment,
         ...(b.styleProfile ? { styleProfile: cloneTextStyleProfile(b.styleProfile) } : {}),
       };
     }
@@ -1262,7 +1274,7 @@ export const applyTranslationOverlay = async (
       wrapper.appendChild(scriptWarningBadge);
       let activeEditorPosition: (() => void) | null = null;
       const ts = textStyleRef?.current || { fontFamily: "Itim, sans-serif", textColor: "#000000", textOutline: "#FFFFFF", fontSizeMultiplier: 1.0 };
-      const fontFam = resolvedFontFam;
+      const fontFam = resolveBubbleFontFamily(b, ts);
       const fontMult = ts.fontSizeMultiplier || 1.0;
       const minReadableFs = Math.max(14, getReadableMinimumFontSize(iw));
 
@@ -1377,7 +1389,7 @@ export const applyTranslationOverlay = async (
         }
         wrapper.title = scriptNotice;
         wrapper.setAttribute("aria-label", [baseAriaLabel, scriptNotice].filter(Boolean).join("; "));
-        const currentFontFam = resolveCanvasFontFamily(currentStyle.fontFamily);
+        const currentFontFam = resolveBubbleFontFamily(b, currentStyle);
         const isExplicitlyLaidOut = Boolean(
           b.layoutAdjustment?.isAutoOptimized
           || b.layoutAdjustment?.userModified

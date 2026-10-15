@@ -97,13 +97,28 @@ globalThis.SuperKServer = {
       const payload=JSON.parse(init.body);
       const routes=await this.discoverGeminiRoutes(settings.apiKey,{modelPreference:settings.modelPreference||'auto',allowPreview:settings.allowPreviewModels===true});
       const route=routes[0]; if (!route) throw error;
+      const reviewPrompt = SuperKPolicy.buildQualityReviewPrompt(payload.items,payload.targetLang,payload.glossary||[]);
       const response=await fetch('https://generativelanguage.googleapis.com/v1beta/interactions',{
         method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':route.apiKey},signal:init.signal,
-        body:JSON.stringify({model:route.model,store:false,input:SuperKPolicy.buildQualityReviewPrompt(payload.items,payload.targetLang,payload.glossary||[])})});
-      if (!response.ok) return response;
-      const data=await response.json();
-      const text=(data.steps||[]).filter(step=>step.type==='model_output').flatMap(step=>step.content||[]).filter(part=>part.type==='text').map(part=>part.text).join('');
-      return new Response(JSON.stringify(JSON.parse(text.replace(/```json|```/gi,'').trim())),{status:200,headers:{'Content-Type':'application/json'}});
+        body:JSON.stringify({model:route.model,store:false,input:reviewPrompt})}).catch(() => null);
+      if (response && response.ok) {
+        const data=await response.json();
+        const text=(data.steps||[]).filter(step=>step.type==='model_output').flatMap(step=>step.content||[]).filter(part=>part.type==='text').map(part=>part.text).join('');
+        return new Response(JSON.stringify(JSON.parse(text.replace(/```json|```/gi,'').trim())),{status:200,headers:{'Content-Type':'application/json'}});
+      }
+      const fallbackRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${route.model}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': route.apiKey },
+        signal: init.signal,
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: reviewPrompt }] }],
+          generationConfig: { responseMimeType: 'application/json', temperature: 0.1 },
+        }),
+      });
+      if (!fallbackRes.ok) return fallbackRes;
+      const fbData = await fallbackRes.json();
+      const fbText = (fbData.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
+      return new Response(JSON.stringify(JSON.parse(fbText.replace(/```json|```/gi, '').trim())), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
   },
 

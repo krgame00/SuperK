@@ -51,6 +51,7 @@ import { normalizePageExportSource, resolvePageExportUrl, exportImageBlob, expor
 import { scanPageGeometry, type PageGeometryResult, type ReadabilityFinding } from "@/lib/export/readabilityScan";
 import { readabilityAcknowledgmentKey, type ReadabilityPageSnapshot } from "@/lib/export/readabilityAcknowledgment";
 import {
+  deriveProjectExportName,
   generateArchiveFilename,
   generateComicInfoXml,
   generateStripFilename,
@@ -453,6 +454,8 @@ export default function WorkspacePage() {
     setSourceLang,
     textStyle,
     setTextStyle,
+    sfxMode,
+    setSfxMode,
     restoreSavedSession,
     clearSavedSession,
     saveStatus,
@@ -474,6 +477,7 @@ export default function WorkspacePage() {
     confirmLegacyTarget,
     inspectReviewIssues,
     confirmPointReview,
+    applyAllSuggestedReviews,
     repairWholeBook,
     cancelWholeBookRepair,
     isRepairingBook,
@@ -671,10 +675,16 @@ export default function WorkspacePage() {
     );
   }, [hasCurrentTranslation]);
 
-  const handleAutoOrganizeCurrentPage = useCallback(async (mode: "readable" | "xlarge" = "readable") => {
+  const handleAutoOrganizeCurrentPage = useCallback(async (mode: "readable" | "xlarge" = "readable", overrideManual = true) => {
     if (!currentPageUrl) return;
     const currentBubbles = bubbleCacheRef.current.get(currentPageUrl) ?? activeBubbles;
     if (!currentBubbles || currentBubbles.length === 0) return;
+
+    const beforeBubbles = currentBubbles.map((b) => ({
+      ...b,
+      layoutAdjustment: b.layoutAdjustment ? { ...b.layoutAdjustment } : undefined,
+      styleProfile: b.styleProfile ? { ...b.styleProfile } : undefined,
+    }));
 
     const hostImg = document.querySelector("#pageContainer img") as HTMLImageElement | null;
     const iw = hostImg?.naturalWidth || 1200;
@@ -687,7 +697,7 @@ export default function WorkspacePage() {
       fontSizeMultiplier: textStyleRef.current?.fontSizeMultiplier || 1.0,
       locale: targetLangCode === "en" ? "en" : "th",
       forceRealign: true,
-      overrideUserModified: true,
+      overrideUserModified: overrideManual,
       ...(isXLarge
         ? {
             minFontSize: Math.max(22, Math.round(iw * 0.0195)),
@@ -695,6 +705,30 @@ export default function WorkspacePage() {
           }
         : {}),
     });
+
+    const afterBubbles = result.optimizedBubbles.map((b) => ({
+      ...b,
+      layoutAdjustment: b.layoutAdjustment ? { ...b.layoutAdjustment } : undefined,
+      styleProfile: b.styleProfile ? { ...b.styleProfile } : undefined,
+    }));
+
+    if (result.adjustedCount > 0) {
+      const targetUrl = currentPageUrl;
+      const restorePageSnapshot = (snapshot: TranslatedBubble[]) => {
+        bubbleCacheRef.current.set(targetUrl, snapshot);
+        syncPageOverlayAdjustments(targetUrl, snapshot);
+        if (pagesRef.current[currentPageRef.current]?.url === targetUrl) {
+          setActiveBubbles(snapshot);
+        }
+        dirtyExportPagesRef.current.add(targetUrl);
+        markPageDirty?.(targetUrl);
+      };
+      undoManager.push({
+        label: `จัดระเบียบบับเบิลหน้า ${currentPage + 1}`,
+        undo: () => restorePageSnapshot(beforeBubbles),
+        redo: () => restorePageSnapshot(afterBubbles),
+      });
+    }
 
     bubbleCacheRef.current.set(currentPageUrl, result.optimizedBubbles);
     syncPageOverlayAdjustments(currentPageUrl, result.optimizedBubbles);
@@ -813,6 +847,8 @@ export default function WorkspacePage() {
         : undefined;
       let totalAdjusted = 0;
       let processedCount = 0;
+      const beforeByPage = new Map<string, TranslatedBubble[]>();
+      const afterByPage = new Map<string, TranslatedBubble[]>();
 
       for (let i = 0; i < translatedPages.length; i++) {
         const pageItem = translatedPages[i];
@@ -828,7 +864,7 @@ export default function WorkspacePage() {
           fontSizeMultiplier: textStyleRef.current?.fontSizeMultiplier || 1.0,
           locale: targetLangCode === "en" ? "en" : "th",
           forceRealign: true,
-          overrideUserModified: true,
+          overrideUserModified: false,
           ...(isXLarge
             ? {
                 minFontSize: Math.max(22, Math.round(iw * 0.0195)),
@@ -837,6 +873,24 @@ export default function WorkspacePage() {
             : {}),
         });
 
+        if (result.adjustedCount > 0) {
+          beforeByPage.set(
+            pageUrl,
+            currentBubbles.map((b) => ({
+              ...b,
+              layoutAdjustment: b.layoutAdjustment ? { ...b.layoutAdjustment } : undefined,
+              styleProfile: b.styleProfile ? { ...b.styleProfile } : undefined,
+            })),
+          );
+          afterByPage.set(
+            pageUrl,
+            result.optimizedBubbles.map((b) => ({
+              ...b,
+              layoutAdjustment: b.layoutAdjustment ? { ...b.layoutAdjustment } : undefined,
+              styleProfile: b.styleProfile ? { ...b.styleProfile } : undefined,
+            })),
+          );
+        }
         bubbleCacheRef.current.set(pageUrl, result.optimizedBubbles);
         syncPageOverlayAdjustments(pageUrl, result.optimizedBubbles);
         dirtyExportPagesRef.current.add(pageUrl);
@@ -884,8 +938,27 @@ export default function WorkspacePage() {
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
 
+      if (totalAdjusted > 0 && afterByPage.size > 0) {
+        const applyBookSnapshot = (snapshotMap: Map<string, TranslatedBubble[]>) => {
+          snapshotMap.forEach((bubbles, url) => {
+            bubbleCacheRef.current.set(url, bubbles);
+            syncPageOverlayAdjustments(url, bubbles);
+            dirtyExportPagesRef.current.add(url);
+            markPageDirty?.(url);
+            if (pagesRef.current[currentPageRef.current]?.url === url) {
+              setActiveBubbles(bubbles);
+            }
+          });
+        };
+        undoManager.push({
+          label: `จัดระเบียบทุกหน้า (${totalAdjusted} จุด)`,
+          undo: () => applyBookSnapshot(beforeByPage),
+          redo: () => applyBookSnapshot(afterByPage),
+        });
+      }
+
       const summaryMsg = totalAdjusted > 0
-        ? `✅ จัดระเบียบครบทั้ง ${processedCount} หน้า (${totalAdjusted} จุด) เรียบร้อยแล้ว!`
+        ? `✅ จัดระเบียบครบทั้ง ${processedCount} หน้า (${totalAdjusted} จุด) เรียบร้อยแล้ว! (กด Ctrl+Z ย้อนกลับได้)`
         : `✅ จัดระเบียบครบทั้ง ${processedCount} หน้าเรียบร้อยแล้ว`;
       if (typeof toast?.success === "function") {
         toast.success(summaryMsg, toastId ? { id: toastId } : undefined);
@@ -934,6 +1007,11 @@ export default function WorkspacePage() {
         bubbleCacheRef.current.get(currentPageUrl) ?? activeBubbles;
       if (!currentBubbles || currentBubbles.length === 0) return;
 
+      const beforeBw = currentBubbles.map((b) => ({
+        ...b,
+        layoutAdjustment: b.layoutAdjustment ? { ...b.layoutAdjustment } : undefined,
+        styleProfile: cloneTextStyleProfile(b.styleProfile),
+      }));
       const updated = applyBwContrastModeToBubbles(currentBubbles, mode).map(
         (b) =>
           b.layoutAdjustment
@@ -946,6 +1024,22 @@ export default function WorkspacePage() {
               }
             : b,
       );
+
+      const targetUrl = currentPageUrl;
+      const applyBwSnapshot = (snapshot: TranslatedBubble[]) => {
+        bubbleCacheRef.current.set(targetUrl, snapshot);
+        syncPageOverlayAdjustments(targetUrl, snapshot);
+        if (pagesRef.current[currentPageRef.current]?.url === targetUrl) {
+          setActiveBubbles(snapshot);
+        }
+        dirtyExportPagesRef.current.add(targetUrl);
+        markPageDirty?.(targetUrl);
+      };
+      undoManager.push({
+        label: `ปรับโหมดสี "${bwContrastModeLabel(mode)}" หน้า ${currentPage + 1}`,
+        undo: () => applyBwSnapshot(beforeBw),
+        redo: () => applyBwSnapshot(updated),
+      });
 
       bubbleCacheRef.current.set(currentPageUrl, updated);
       syncPageOverlayAdjustments(currentPageUrl, updated);
@@ -1696,8 +1790,72 @@ export default function WorkspacePage() {
     return () => { window.removeEventListener('keydown', handleKeyDown); unsub(); };
   }, [handleTranslateCurrent, toggleOriginalTranslated, setCurrentPage]);
 
-  // Clear undo stack when changing pages
-  useEffect(() => { undoManager.clear(); }, [currentPage]);
+  // Retain undo stack across page navigation so whole-book operations remain undoable
+
+  const handleAutoExtractGlossary = useCallback(async () => {
+    const { extractGlossaryCandidatesFromBubbles } = await import("@/lib/translation/glossary");
+    const allBubbles: TranslatedBubble[] = [];
+    for (const p of pages) {
+      const list = bubbleCacheRef.current.get(p.url);
+      if (list && list.length > 0) allBubbles.push(...list);
+    }
+    const candidates = extractGlossaryCandidatesFromBubbles(allBubbles, glossary);
+    const toast = (await import("react-hot-toast")).default;
+    if (candidates.length === 0) {
+      toast("ไม่พบชื่อเฉพาะหรือคำศัพท์ซ้ำใหม่ๆ จากหน้าที่แปลแล้ว", { icon: "ℹ️" });
+      return;
+    }
+    setGlossary([...glossary, ...candidates]);
+    toast.success(`✨ เพิ่มคำศัพท์/ชื่อเฉพาะใหม่ ${candidates.length} คำเข้า Glossary แล้ว!`);
+  }, [pages, bubbleCacheRef, glossary, setGlossary]);
+
+  const handleExportProjectFile = useCallback(async () => {
+    const toast = (await import("react-hot-toast")).default;
+    try {
+      const { exportPortableProjectBundle } = await import("@/lib/projectStore");
+      const bundle = await exportPortableProjectBundle();
+      if (!bundle) {
+        toast.error("ยังไม่มีข้อมูลโปรเจกต์ให้บันทึก");
+        return;
+      }
+      const blob = new Blob([JSON.stringify(bundle)], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${deriveProjectExportName(pages, "SuperK_Project")}.superk.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("💾 บันทึกไฟล์โปรเจกต์ (.superk.json) เรียบร้อยแล้ว!");
+    } catch {
+      toast.error("บันทึกไฟล์โปรเจกต์ไม่สำเร็จ");
+    }
+  }, [pages]);
+
+  const handleImportProjectFile = useCallback(() => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json,.superk,.superk.json,application/json";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const toast = (await import("react-hot-toast")).default;
+      try {
+        const { importPortableProjectBundle } = await import("@/lib/projectStore");
+        const raw = await file.text();
+        await importPortableProjectBundle(raw);
+        const restored = await restoreSavedSession();
+        if (restored && restored.pages.length > 0) {
+          setPages(restored.pages);
+          setCurrentPage(restored.currentPage);
+          setSavedSessionData(null);
+          toast.success(`📂 เปิดโปรเจกต์สำเร็จ (${restored.pages.length} หน้า)!`);
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "ไม่สามารถเปิดไฟล์โปรเจกต์นี้ได้");
+      }
+    };
+    input.click();
+  }, [restoreSavedSession, setCurrentPage]);
 
   const handleFindReplace = ({
     find,
@@ -2554,7 +2712,7 @@ export default function WorkspacePage() {
               const blob = new Blob([rawBlob], { type: mimeType });
               const pageId = `page_zip_${Date.now()}_${fileIdx}_${zIdx}`;
               pageBlobStore.set(pageId, blob, mimeType);
-              const durableUrl = await blobToDataUrl(blob);
+              const durableUrl = pageBlobStore.getOrCreateObjectUrl(pageId) ?? await blobToDataUrl(blob);
               newPages.push({ id: pageId, url: durableUrl, name: zipFile.name });
             }
           } catch (e) {
@@ -2600,7 +2758,7 @@ export default function WorkspacePage() {
               if (!blob) continue;
               const pageId = `page_pdf_${Date.now()}_${fileIdx}_${i}`;
               pageBlobStore.set(pageId, blob, "image/jpeg");
-              const durableUrl = await blobToDataUrl(blob);
+              const durableUrl = pageBlobStore.getOrCreateObjectUrl(pageId) ?? await blobToDataUrl(blob);
               newPages.push({ id: pageId, url: durableUrl, name: `${file.name.replace('.pdf', '')}_page${i}.jpg` });
             }
           } catch (e) {
@@ -2617,7 +2775,7 @@ export default function WorkspacePage() {
           const typedBlob = file.type === resolvedMime ? file : new Blob([file], { type: resolvedMime });
           const pageId = `page_img_${Date.now()}_${fileIdx}`;
           pageBlobStore.set(pageId, typedBlob, resolvedMime);
-          const durableUrl = await blobToDataUrl(typedBlob);
+          const durableUrl = pageBlobStore.getOrCreateObjectUrl(pageId) ?? await blobToDataUrl(typedBlob);
           newPages.push({ id: pageId, url: durableUrl, name: file.name });
         }
       }
@@ -2873,6 +3031,10 @@ export default function WorkspacePage() {
                   onScanTranslations={handleScanTranslations}
                   onRetranslateContaminated={() => void handleRetranslateContaminated()}
                   onOpenExportReport={handleOpenExportReport}
+                  onOpenFindReplace={() => setIsFindReplaceOpen(true)}
+                  onOpenShortcuts={() => setIsShortcutsOpen(true)}
+                  onExportProjectFile={() => void handleExportProjectFile()}
+                  onImportProjectFile={handleImportProjectFile}
                   triggerRef={advancedToolsTriggerRef}
                 />
 
@@ -2991,6 +3153,8 @@ export default function WorkspacePage() {
               onScanTranslations={handleScanTranslations}
               onRetranslateContaminated={() => void handleRetranslateContaminated()}
               onOpenExportReport={handleOpenExportReport}
+              onOpenFindReplace={() => setIsFindReplaceOpen(true)}
+              onOpenShortcuts={() => setIsShortcutsOpen(true)}
             />
           )}
           {pages.length > 0 && (
@@ -4026,6 +4190,9 @@ export default function WorkspacePage() {
         }}
         glossary={glossary}
         onGlossaryChange={setGlossary}
+        onAutoExtractGlossary={() => void handleAutoExtractGlossary()}
+        sfxMode={sfxMode}
+        onSfxModeChange={setSfxMode}
         nsfwBypassMode={nsfwBypassMode}
         onNsfwBypassModeChange={setNsfwBypassMode}
         autoProceedOnReview={autoProceedOnReview}
@@ -4116,6 +4283,26 @@ export default function WorkspacePage() {
                     ยกเลิก
                   </button>
                 )}
+                {reviewIssues.some((p) => p.unverified.some((pt) => pt.suggestion)) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const applied = applyAllSuggestedReviews?.("all") ?? 0;
+                      const issues = inspectReviewIssues();
+                      setReviewIssues(issues.length > 0 ? issues : null);
+                      if (applied > 0) {
+                        void import("react-hot-toast").then((m) =>
+                          m.default(`✨ ใช้คำแปลที่ AI เกลาทั้งหมด ${applied} จุดเรียบร้อยแล้ว (กด Ctrl+Z ย้อนกลับได้)`, { duration: 3500 }),
+                        );
+                      }
+                    }}
+                    disabled={isRepairingBook || operationBusy}
+                    aria-label="ใช้คำแปลที่เกลาทั้งหมด"
+                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md transition-colors cursor-pointer disabled:opacity-40 flex items-center gap-1.5"
+                  >
+                    ✨ ใช้คำแปลที่เกลาทั้งหมด
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => void handleRepairWholeBook()}
@@ -4179,7 +4366,21 @@ export default function WorkspacePage() {
                   {page.unverified.map((point) => (
                     <div key={`unverified-${point.index}`} className="flex flex-wrap items-center gap-2 text-foreground">
                       <span className="font-medium">จุด #{point.pointId}</span>
-                      <span className="text-muted">{point.hasSource ? "สคริปต์ผ่าน แต่ยังไม่ได้ตรวจบริบท" : "ไม่มีข้อความต้นฉบับ กรุณาตรวจจากภาพ"}</span>
+                      <span className="text-muted">{point.suggestion ? `คำแนะนำ AI: "${point.suggestion}"` : point.hasSource ? "สคริปต์ผ่าน แต่ยังไม่ได้ตรวจบริบท" : "ไม่มีข้อความต้นฉบับ กรุณาตรวจจากภาพ"}</span>
+                      {point.suggestion && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            confirmPointReview(page.pageUrl, point.index, true);
+                            const issues = inspectReviewIssues();
+                            setReviewIssues(issues.length > 0 ? issues : null);
+                          }}
+                          aria-label={`ใช้คำแปลที่เกลาจุดที่ ${point.pointId}`}
+                          className="px-2 py-1 rounded bg-indigo-600/15 text-indigo-400 border border-indigo-500/30 text-[11px] font-medium hover:bg-indigo-600/25 transition-colors cursor-pointer"
+                        >
+                          ✨ ใช้คำแปลที่เกลา
+                        </button>
+                      )}
                       {point.humanConfirmable && (
                         <button
                           type="button"

@@ -51,17 +51,13 @@ End Function
 ' 4. Subroutine to spawn detached background process with zero window popup (SW_HIDE = 0)
 Sub StartHiddenProcess(cmdLine, workDir)
     On Error Resume Next
-    Dim objWMIService, objStartup, objConfig, objProcess, intPID
-    Set objWMIService = GetObject("winmgmts:\\.\root\cimv2")
-    Set objStartup = objWMIService.Get("Win32_ProcessStartup")
-    Set objConfig = objStartup.SpawnInstance_
-    objConfig.ShowWindow = 0
-    Set objProcess = objWMIService.Get("Win32_Process")
-    objProcess.Create cmdLine, workDir, objConfig, intPID
-    Set objProcess = Nothing
-    Set objConfig = Nothing
-    Set objStartup = Nothing
-    Set objWMIService = Nothing
+    Dim prevDir
+    prevDir = WshShell.CurrentDirectory
+    If FSO.FolderExists(workDir) Then
+        WshShell.CurrentDirectory = workDir
+    End If
+    WshShell.Run cmdLine, 0, False
+    WshShell.CurrentDirectory = prevDir
     On Error GoTo 0
 End Sub
 

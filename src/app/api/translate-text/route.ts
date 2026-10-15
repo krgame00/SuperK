@@ -111,6 +111,7 @@ export async function POST(req: Request) {
         initialKeyIndex,
         attemptTimeoutMs: 15_000,
         totalBudgetMs: 60_000,
+        signal: req.signal,
       });
       if (rotationLength > 0) {
         fixedTextKeyIndex = ((result.keyIndex % rotationLength) + 1) % rotationLength;
@@ -150,6 +151,14 @@ export async function POST(req: Request) {
     }
 
     const cleanText = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+    try {
+      const parsed = JSON.parse(cleanText);
+      if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.bubbles)) {
+        return NextResponse.json({ error: "รูปแบบผลลัพธ์ JSON จาก AI ไม่ถูกต้อง (ไม่พบอาร์เรย์ bubbles)" }, { status: 502 });
+      }
+    } catch {
+      return NextResponse.json({ error: "ผลลัพธ์จาก AI ไม่ใช่ JSON ที่ถูกต้อง" }, { status: 502 });
+    }
     return NextResponse.json({ text: cleanText });
 
   } catch (error) {

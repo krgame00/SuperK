@@ -9,6 +9,7 @@ export interface KeyboardShortcutsDialogProps {
 }
 
 const SHORTCUTS = [
+  { key: "T", desc: "แปลหน้าปัจจุบัน (Translate Current Page)" },
   { key: "Space / Eye", desc: "สลับดูภาพต้นฉบับ กับ คำแปล" },
   { key: "Ctrl + Z", desc: "Undo ย้อนกลับการแก้ไขล่าสุด" },
   { key: "Ctrl + Y / Shift+Ctrl+Z", desc: "Redo ทำซ้ำการแก้ไข" },
@@ -18,6 +19,7 @@ const SHORTCUTS = [
   { key: "Arrow Left / Right", desc: "สลับไปหน้าก่อนหน้า / ถัดไป" },
   { key: "F", desc: "โหมดโฟกัสเต็มหน้าจอ (Focus Mode)" },
   { key: "B", desc: "ซ่อน / แสดงแถบเครื่องมือบน (ในโหมดโฟกัส)" },
+  { key: "?", desc: "เปิด / ปิดหน้าต่างคีย์ลัดนี้" },
   { key: "Escape", desc: "ยกเลิกการเลือก / ปิดหน้าต่าง / ออกจากโฟกัส" },
 ];
 

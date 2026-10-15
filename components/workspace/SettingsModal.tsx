@@ -34,6 +34,7 @@ export interface WorkspaceTextStyle {
   fontSizeMultiplier: number;
   textColor: string;
   textOutline: string;
+  categoryFonts?: Partial<Record<string, string>>;
 }
 
 interface GeminiCatalogModelView {
@@ -137,6 +138,9 @@ export interface SettingsModalProps {
   onNsfwBypassModeChange?: (enabled: boolean) => void;
   autoProceedOnReview?: boolean;
   onAutoProceedOnReviewChange?: (enabled: boolean) => void;
+  sfxMode?: "ignore" | "preserve" | "translate";
+  onSfxModeChange?: (mode: "ignore" | "preserve" | "translate") => void;
+  onAutoExtractGlossary?: () => void;
 }
 
 export function SettingsModal({
@@ -163,6 +167,9 @@ export function SettingsModal({
   onNsfwBypassModeChange,
   autoProceedOnReview = true,
   onAutoProceedOnReviewChange,
+  sfxMode = "ignore",
+  onSfxModeChange,
+  onAutoExtractGlossary,
 }: SettingsModalProps): ReactElement | null {
   const targetResolution = resolveTargetLanguage(targetLang);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -1215,6 +1222,161 @@ export function SettingsModal({
                 <Plus className="h-3.5 w-3.5" />
               </button>
             </form>
+
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-border/50">
+              {onAutoExtractGlossary && (
+                <button
+                  type="button"
+                  aria-label="สกัดคำศัพท์จากหน้าที่แปลแล้ว"
+                  onClick={onAutoExtractGlossary}
+                  className="w-full rounded border border-primary/40 bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary hover:bg-primary/20 transition-colors cursor-pointer"
+                >
+                  ✨ สกัดชื่อเฉพาะ/คำศัพท์จากหน้าที่แปลแล้ว
+                </button>
+              )}
+              <button
+                type="button"
+                aria-label="ส่งออกคลังคำศัพท์ (.json)"
+                disabled={glossary.length === 0}
+                onClick={() => {
+                  const blob = new Blob([JSON.stringify(glossary, null, 2)], {
+                    type: "application/json;charset=utf-8",
+                  });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `superk-glossary-${new Date().toISOString().slice(0, 10)}.json`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="flex-1 rounded border border-surface-hover bg-surface px-2 py-1 text-[11px] font-medium text-foreground hover:bg-surface-hover disabled:opacity-40 transition-colors cursor-pointer"
+              >
+                📤 ส่งออก (.json)
+              </button>
+              <label className="flex-1 rounded border border-surface-hover bg-surface px-2 py-1 text-center text-[11px] font-medium text-foreground hover:bg-surface-hover transition-colors cursor-pointer">
+                📥 นำเข้า (.json)
+                <input
+                  type="file"
+                  aria-label="นำเข้าคลังคำศัพท์ (.json)"
+                  accept="application/json,.json"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    try {
+                      const raw = await file.text();
+                      const parsed = JSON.parse(raw);
+                      if (!Array.isArray(parsed)) throw new Error("Invalid format");
+                      const validEntries: GlossaryEntry[] = parsed
+                        .map((item) => ({
+                          source: typeof item?.source === "string" ? item.source.trim() : typeof item?.src === "string" ? item.src.trim() : "",
+                          target: typeof item?.target === "string" ? item.target.trim() : typeof item?.dst === "string" ? item.dst.trim() : "",
+                        }))
+                        .filter((item) => item.source.length > 0 && item.target.length > 0);
+                      onGlossaryChange?.(validEntries);
+                    } catch {
+                      const toast = (await import("react-hot-toast")).default;
+                      toast.error("รูปแบบไฟล์คลังคำศัพท์ไม่ถูกต้อง");
+                    } finally {
+                      e.target.value = "";
+                    }
+                  }}
+                />
+              </label>
+            </div>
+          </div>
+
+          {onSfxModeChange && (
+            <div className="rounded-xl border border-border/70 bg-background/45 p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs font-medium text-muted">โหมดเสียงเอฟเฟกต์ (SFX Policy)</span>
+                <span className="text-[10px] text-primary font-semibold">
+                  {sfxMode === "translate" ? "แปลเป็นไทย (*ตู้ม*)" : sfxMode === "preserve" ? "คงต้นฉบับ" : "ข้าม SFX"}
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                {([
+                  { id: "ignore", label: "ข้าม SFX" },
+                  { id: "preserve", label: "คงต้นฉบับ" },
+                  { id: "translate", label: "แปล (*ตู้ม*)" },
+                ] as const).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    aria-label={`โหมด SFX: ${opt.label}`}
+                    onClick={() => onSfxModeChange(opt.id)}
+                    className={`rounded-lg border px-2 py-1.5 text-[11px] font-medium transition-colors cursor-pointer ${
+                      sfxMode === opt.id
+                        ? "border-primary bg-primary/15 text-primary"
+                        : "border-surface-hover bg-surface text-muted hover:text-foreground"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="rounded-xl border border-border/70 bg-background/45 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-medium text-muted">ฟอนต์แยกตามประเภทข้อความ (Category Fonts)</span>
+              <span className="text-[10px] text-muted">เลือกแยกจากบทพูดหลัก</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <label htmlFor="settings-cat-font-narration" className="mb-1 block text-[11px] text-muted">
+                  ช่องบรรยาย (Narration)
+                </label>
+                <select
+                  id="settings-cat-font-narration"
+                  aria-label="ฟอนต์ช่องบรรยาย (Narration)"
+                  value={textStyle.categoryFonts?.narration || ""}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    onTextStyleChange((prev) => ({
+                      ...prev,
+                      categoryFonts: { ...(prev.categoryFonts || {}), narration: val || undefined },
+                    }));
+                  }}
+                  className="w-full rounded border border-surface-hover bg-surface px-2 py-1 text-[11px] text-foreground"
+                >
+                  <option value="">ใช้ฟอนต์หลัก ({textStyle.fontFamily.split(",")[0]})</option>
+                  {BUILTIN_MANGA_FONTS.map((f) => (
+                    <option key={`nar-${f.id}`} value={f.cssValue}>{f.familyName}</option>
+                  ))}
+                  {customFonts.map((cf) => (
+                    <option key={`nar-custom-${cf.id}`} value={cf.cssValue}>⭐ {cf.familyName}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="settings-cat-font-sfx" className="mb-1 block text-[11px] text-muted">
+                  เสียงเอฟเฟกต์ (SFX / Shout)
+                </label>
+                <select
+                  id="settings-cat-font-sfx"
+                  aria-label="ฟอนต์เสียงเอฟเฟกต์ (SFX)"
+                  value={textStyle.categoryFonts?.sfx || ""}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    onTextStyleChange((prev) => ({
+                      ...prev,
+                      categoryFonts: { ...(prev.categoryFonts || {}), sfx: val || undefined },
+                    }));
+                  }}
+                  className="w-full rounded border border-surface-hover bg-surface px-2 py-1 text-[11px] text-foreground"
+                >
+                  <option value="">ใช้ฟอนต์หลัก ({textStyle.fontFamily.split(",")[0]})</option>
+                  {BUILTIN_MANGA_FONTS.map((f) => (
+                    <option key={`sfx-${f.id}`} value={f.cssValue}>{f.familyName}</option>
+                  ))}
+                  {customFonts.map((cf) => (
+                    <option key={`sfx-custom-${cf.id}`} value={cf.cssValue}>⭐ {cf.familyName}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </div>
 
           <div className="rounded-xl border border-border/70 bg-background/45 p-3">

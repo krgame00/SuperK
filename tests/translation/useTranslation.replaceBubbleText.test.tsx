@@ -2,6 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import { useTranslation } from "@/hooks/useTranslation";
+import { undoManager } from "@/lib/undoManager";
 import { saveProjectSession } from "@/lib/projectStore";
 
 vi.mock("@/lib/translationOverlay", () => ({
@@ -137,6 +138,19 @@ test("replaceBubbleText rewrites cached bubbles and re-renders without deleting 
   expect(result.current.translatedImageCacheRef.current.get("blob:b")).toContain("rerender");
   // Active page bubbles were re-applied with the replaced text
   expect(result.current.activeBubbles[0]?.t).toBe("CAT");
+
+  // Pressing Undo restores original text across all pages, Redo re-applies replacement
+  act(() => {
+    expect(undoManager.undo()).toContain("ค้นหาและแทนที่ข้อความ");
+  });
+  expect(result.current.bubbleCacheRef.current.get("blob:a")?.[0]?.t).toBe("cat");
+  expect(result.current.bubbleCacheRef.current.get("blob:b")?.[0]?.t).toBe("dog runs");
+
+  act(() => {
+    expect(undoManager.redo()).toContain("ค้นหาและแทนที่ข้อความ");
+  });
+  expect(result.current.bubbleCacheRef.current.get("blob:a")?.[0]?.t).toBe("CAT");
+  expect(result.current.bubbleCacheRef.current.get("blob:b")?.[0]?.t).toBe("DOG RUNS");
 });
 
 test("enhanced auto-retry bubbles are used instead of discarded", async () => {

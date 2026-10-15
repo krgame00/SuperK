@@ -9,6 +9,10 @@ import {
   Sparkles,
   Wrench,
   ClipboardCheck,
+  Search,
+  Keyboard,
+  FolderDown,
+  FolderUp,
 } from "lucide-react";
 
 import { WorkspaceMenu, type WorkspaceMenuItem } from "@/components/workspace/WorkspaceMenu";
@@ -29,6 +33,10 @@ export interface WorkspaceAdvancedToolsProps {
   onScanTranslations: () => void;
   onRetranslateContaminated: () => void;
   onOpenExportReport: () => void;
+  onOpenFindReplace?: () => void;
+  onOpenShortcuts?: () => void;
+  onExportProjectFile?: () => void;
+  onImportProjectFile?: () => void;
   triggerRef?: RefObject<HTMLButtonElement | null>;
 }
 
@@ -48,6 +56,10 @@ export function WorkspaceAdvancedTools({
   onScanTranslations,
   onRetranslateContaminated,
   onOpenExportReport,
+  onOpenFindReplace,
+  onOpenShortcuts,
+  onExportProjectFile,
+  onImportProjectFile,
   triggerRef,
 }: WorkspaceAdvancedToolsProps): ReactElement {
   const items: WorkspaceMenuItem[] = [
@@ -120,6 +132,50 @@ export function WorkspaceAdvancedTools({
       disabled: !canEditMask || busy,
       onSelect: onEditMask,
     },
+    ...(onOpenFindReplace
+      ? [
+          {
+            id: "find-replace",
+            label: "ค้นหาและแทนที่ (Ctrl+F)",
+            icon: <Search className="h-4 w-4 text-primary" />,
+            disabled: busy,
+            onSelect: onOpenFindReplace,
+          },
+        ]
+      : []),
+    ...(onOpenShortcuts
+      ? [
+          {
+            id: "shortcuts-help",
+            label: "คู่มือคีย์ลัด (?)",
+            icon: <Keyboard className="h-4 w-4 text-primary" />,
+            disabled: false,
+            onSelect: onOpenShortcuts,
+          },
+        ]
+      : []),
+    ...(onExportProjectFile
+      ? [
+          {
+            id: "export-project-file",
+            label: "บันทึกไฟล์โปรเจกต์ (.superk)",
+            icon: <FolderDown className="h-4 w-4 text-primary" />,
+            disabled: busy || !canClean,
+            onSelect: onExportProjectFile,
+          },
+        ]
+      : []),
+    ...(onImportProjectFile
+      ? [
+          {
+            id: "import-project-file",
+            label: "เปิดไฟล์โปรเจกต์ (.superk)",
+            icon: <FolderUp className="h-4 w-4 text-primary" />,
+            disabled: busy,
+            onSelect: onImportProjectFile,
+          },
+        ]
+      : []),
     ...(batchFailureCount > 0
       ? [
           {

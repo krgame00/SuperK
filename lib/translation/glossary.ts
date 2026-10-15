@@ -64,3 +64,69 @@ export function buildGlossaryDirectives(
     `\n`
   );
 }
+
+export function extractGlossaryCandidatesFromBubbles(
+  bubbles: Array<{
+    original_text?: string;
+    t?: string;
+    translated?: string;
+    deleted?: boolean;
+  }>,
+  existingGlossary?: FlexibleGlossaryEntry[] | null,
+): GlossaryEntry[] {
+  if (!Array.isArray(bubbles) || bubbles.length === 0) return [];
+
+  const existingSources = new Set<string>();
+  for (const item of existingGlossary ?? []) {
+    if (!item || typeof item !== "object") continue;
+    const raw = (item as Record<string, unknown>).source ?? (item as Record<string, unknown>).original;
+    if (typeof raw === "string" && raw.trim()) {
+      existingSources.add(raw.trim().toLowerCase());
+    }
+  }
+
+  const pairCounts = new Map<string, { source: string; target: string; count: number; isHonorificOrName: boolean }>();
+  const honorificOrNamePattern = /(?:さん|くん|ちゃん|様|先生|先輩|殿|님|씨|-san|-kun|-chan|-sama|-sensei|\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})?\b)/;
+
+  for (const b of bubbles) {
+    if (!b || b.deleted) continue;
+    const rawSrc = typeof b.original_text === "string" ? b.original_text.trim() : "";
+    const rawTgt = typeof b.t === "string" && b.t.trim() ? b.t.trim() : typeof b.translated === "string" ? b.translated.trim() : "";
+    if (!rawSrc || !rawTgt) continue;
+
+    // Clean surrounding punctuation for candidate matching
+    const cleanSrc = rawSrc.replace(/^[\s"'“”‘’([\]!?.…~-]+|[\s"'“”‘’)\]!?.…~-]+$/g, "").trim();
+    const cleanTgt = rawTgt.replace(/^[\s"'“”‘’([\]!?.…~-]+|[\s"'“”‘’)\]!?.…~-]+$/g, "").trim();
+    if (cleanSrc.length < 2 || cleanSrc.length > 28) continue;
+    if (cleanTgt.length < 2 || cleanTgt.length > 35) continue;
+    if (existingSources.has(cleanSrc.toLowerCase())) continue;
+
+    const key = cleanSrc.toLowerCase();
+    const isHonorificOrName = honorificOrNamePattern.test(cleanSrc);
+    const existing = pairCounts.get(key);
+    if (existing) {
+      existing.count += 1;
+      if (isHonorificOrName) existing.isHonorificOrName = true;
+    } else {
+      pairCounts.set(key, {
+        source: cleanSrc,
+        target: cleanTgt,
+        count: 1,
+        isHonorificOrName,
+      });
+    }
+  }
+
+  const results: GlossaryEntry[] = [];
+  for (const item of pairCounts.values()) {
+    if (item.count >= 2 || (item.isHonorificOrName && item.source.length <= 22)) {
+      results.push({
+        source: item.source,
+        target: item.target,
+        note: item.count >= 2 ? `พบบ่อย (${item.count} ครั้ง)` : "ชื่อเฉพาะ/คำเรียก",
+      });
+    }
+  }
+
+  return results.slice(0, 30);
+}

@@ -197,8 +197,11 @@ export class WorkspaceResourceManager {
     const [pageId, category] = item.key.split(":") as [string, ResourceItem["category"]];
 
     if (category === "source") {
-      // Revoke the object URL to immediately reclaim browser memory
-      pageBlobStore.revokeObjectUrl(pageId);
+      // Never revoke the active page's ObjectURL while it is displayed on screen
+      const activePageId = this.pageIds[this.currentPage];
+      if (pageId !== activePageId) {
+        pageBlobStore.revokeObjectUrl(pageId);
+      }
     }
 
     if (this.onEvictCallback) {

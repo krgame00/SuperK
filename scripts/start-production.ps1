@@ -68,6 +68,7 @@ function Start-SuperKProduction {
         $sourceDirs = @(
             (Join-Path $rootPath 'src'),
             (Join-Path $rootPath 'components'),
+            (Join-Path $rootPath 'hooks'),
             (Join-Path $rootPath 'lib'),
             (Join-Path $rootPath 'public')
         )

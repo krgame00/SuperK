@@ -17,9 +17,25 @@ interface StoredPublication extends PublishBackPayload {
   updatedAt: number;
 }
 
+const MAX_PUBLISHED_ENTRIES = 50;
+const PUBLISHED_TTL_MS = 30 * 60 * 1000;
+
 let globalSequenceId = 0;
 let serverEpoch = "epoch_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
 const publishedMap = new Map<string, StoredPublication>();
+
+function evictStalePublications(now = Date.now()) {
+  for (const [key, entry] of publishedMap.entries()) {
+    if (now - entry.updatedAt > PUBLISHED_TTL_MS) {
+      publishedMap.delete(key);
+    }
+  }
+  while (publishedMap.size >= MAX_PUBLISHED_ENTRIES) {
+    const oldestKey = publishedMap.keys().next().value;
+    if (oldestKey === undefined) break;
+    publishedMap.delete(oldestKey);
+  }
+}
 
 export function _resetPublishedForTest() {
   publishedMap.clear();
@@ -100,6 +116,8 @@ export async function POST(request: NextRequest) {
       seq,
       updatedAt,
     };
+    evictStalePublications(updatedAt);
+    publishedMap.delete(body.pageUrl);
     publishedMap.set(body.pageUrl, publication);
 
     return NextResponse.json(

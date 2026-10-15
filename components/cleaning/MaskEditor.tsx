@@ -59,6 +59,7 @@ const cleaners: { value: CleanerOverride; label: string }[] = [
   { value: "opencv", label: "OpenCV" },
   { value: "aot", label: "AOT" },
   { value: "anime-lama", label: "AnimeLaMa" },
+  { value: "lama-large", label: "LaMa Large" },
 ];
 
 function maskHasPixels(mask: ImageData, rect: PixelRect): boolean {

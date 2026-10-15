@@ -222,7 +222,16 @@ async function translateImageWithGemini(base64Data, settings, mimeType) {
     throw new Error("กรุณาใส่ Gemini API Key ในเมนู Extension ก่อนใช้งานครับ!");
   }
 
+  const glossaryList = Array.isArray(settings.glossary)
+    ? settings.glossary
+        .map(g => ({ src: g?.source || g?.src || '', dst: g?.target || g?.dst || '' }))
+        .filter(g => g.src && g.dst)
+    : [];
+  const glossaryBlock = glossaryList.length > 0
+    ? `\nGLOSSARY (Use these exact translations for names/terms):\n${glossaryList.map(g => `- "${g.src}" -> "${g.dst}"`).join('\n')}\n`
+    : '';
   const prompt = `You are an expert manga and webtoon translator. Detect all speech bubbles, text boxes, captions, and floating text in this image. Translate to ${settings.targetLang || 'Thai'}.
+CRITICAL SCRIPT RULE: Every translated string "t" MUST be written strictly in ${settings.targetLang || 'Thai'} script only (never leave source Japanese/Korean/Chinese/Latin characters mixed into the translation).${glossaryBlock}
 CRITICAL RULES FOR BOUNDING BOXES:
 1. For multiline paragraphs, captions, or full text overlays, merge all lines into ONE SINGLE bounding box covering the entire text block [ymin, xmin, ymax, xmax]. Do NOT split multiline paragraphs into separate single-line boxes!
 2. Ensure the bounding box bounds the entire text block from the topmost line of text to the bottommost line of text within the bubble (do NOT box only the middle line).

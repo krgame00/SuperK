@@ -18,7 +18,8 @@ export type CleanerOverride =
   | "flat"
   | "opencv"
   | "aot"
-  | "anime-lama";
+  | "anime-lama"
+  | "lama-large";
 
 export type PageRole = "comic" | "credits" | "ui" | "unknown";
 
@@ -39,7 +40,8 @@ export type ProtectionReason =
   | "ui-page"
   | "margin-mark"
   | "logo"
-  | "low-confidence";
+  | "low-confidence"
+  | "sfx-policy";
 
 export interface CleaningProgress {
   stage: CleaningJobStage;

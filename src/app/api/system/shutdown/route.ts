@@ -7,10 +7,14 @@ function isLocalLoopback(req: NextRequest): boolean {
   const host = req.headers.get("host") || "";
   const origin = req.headers.get("origin") || "";
 
+  const hostWithoutPort = host.startsWith("[")
+    ? host.slice(0, host.indexOf("]") + 1).toLowerCase()
+    : host.split(":")[0].toLowerCase();
   const isLoopbackHost =
-    host.startsWith("127.0.0.1") ||
-    host.startsWith("localhost") ||
-    host.startsWith("[::1]");
+    hostWithoutPort === "127.0.0.1" ||
+    hostWithoutPort === "localhost" ||
+    hostWithoutPort === "[::1]" ||
+    hostWithoutPort === "::1";
 
   if (!isLoopbackHost) return false;
 

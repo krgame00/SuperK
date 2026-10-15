@@ -802,26 +802,45 @@ function hashCode(str) {
   return Math.abs(hash);
 }
 
+function restoreSavedTranslationForImg(img) {
+  if (typeof chrome === 'undefined' || !chrome?.storage?.local?.get) return;
+  const src = img.src || img.currentSrc;
+  if (!src || src.startsWith('data:') || activeOverlays.has(src)) return;
+  const key = `superk_trans_${src}`;
+  chrome.storage.local.get(key).then(res => {
+    const saved = res?.[key];
+    if (saved && saved.bubbles && !activeOverlays.has(src)) {
+      handleTranslationSuccess(
+        saved.imageUrl,
+        saved.bubbles,
+        saved.cleanMode,
+        saved.cleanImageBase64,
+        saved.textStyle,
+        saved.pageStyle, saved
+      );
+    }
+  }).catch(() => {});
+}
+
+const lazyRestoreObserver = typeof IntersectionObserver !== 'undefined'
+  ? new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting && entry.target && entry.target.tagName === 'IMG') {
+          restoreSavedTranslationForImg(entry.target);
+        }
+      });
+    }, { rootMargin: '400px 0px' })
+  : null;
+
 function restoreSavedTranslations() {
   if (typeof chrome === 'undefined' || !chrome?.storage?.local?.get) return;
   const images = Array.from(document.querySelectorAll('img'));
   images.forEach(img => {
-    const src = img.src || img.currentSrc;
-    if (!src) return;
-    const key = `superk_trans_${src}`;
-    chrome.storage.local.get(key).then(res => {
-      const saved = res?.[key];
-      if (saved && saved.bubbles && !activeOverlays.has(src)) {
-        handleTranslationSuccess(
-          saved.imageUrl,
-          saved.bubbles,
-          saved.cleanMode,
-          saved.cleanImageBase64,
-          saved.textStyle,
-          saved.pageStyle, saved
-        );
-      }
-    }).catch(() => {});
+    if (lazyRestoreObserver) {
+      lazyRestoreObserver.observe(img);
+    } else {
+      restoreSavedTranslationForImg(img);
+    }
   });
 }
 

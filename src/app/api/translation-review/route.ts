@@ -5,6 +5,7 @@ import { executeGeminiTranslation, geminiRoutingHttpStatus } from "@/lib/server/
 import { guardQualityReview, buildQualityReviewPrompt, MAX_REVIEW_ITEMS, MAX_REVIEW_TEXT_LENGTH, type QualityReviewItem } from "@/lib/translation/qualityReview";
 import type { GlossaryEntry } from "@/lib/translation/glossary";
 import { requireLocalRequest } from "@/lib/server/localRequest";
+import { getSyncedExtensionSettings } from "@/src/app/api/extension/settings/handler";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 const REVIEW_BUDGET_MS = 45_000;
@@ -103,7 +104,20 @@ export async function POST(req: Request): Promise<Response> {
       body = JSON.parse(raw);
     } catch { return NextResponse.json({ error: "Invalid review payload", code: "INVALID_REQUEST" }, { status: 400 }); }
     if (!validRequest(body)) return NextResponse.json({ error: "Invalid review payload", code: "INVALID_REQUEST" }, { status: 400 });
-    const prompt = buildQualityReviewPrompt(body.items, body.targetLang || "Thai", normalizeGlossary(body.glossary), body.mode);
+    const syncedSettings = getSyncedExtensionSettings();
+    const effectiveApiKey =
+      body.apiKey && body.apiKey.trim().length > 0
+        ? body.apiKey
+        : syncedSettings.geminiApiKey && syncedSettings.geminiApiKey.trim().length > 0
+          ? syncedSettings.geminiApiKey
+          : body.apiKey;
+    const effectiveGlossary =
+      body.glossary && body.glossary.length > 0
+        ? body.glossary
+        : syncedSettings.glossary.length > 0
+          ? syncedSettings.glossary
+          : body.glossary;
+    const prompt = buildQualityReviewPrompt(body.items, body.targetLang || "Thai", normalizeGlossary(effectiveGlossary), body.mode);
     const reviews = await withGeminiDeadline(async signal => {
       const baseUrl = process.env.SUPERK_TRANSLATE_BASE_URL;
       const apiKey = process.env.SUPERK_TRANSLATE_API_KEY;
@@ -119,8 +133,9 @@ export async function POST(req: Request): Promise<Response> {
         return parseProviderReviews(choice?.message?.content, body.items);
       }
       const result = await executeGeminiTranslation<GeminiData>({
-        workflow: "text", userApiKeyRaw: body.apiKey, serverApiKeyRaw: process.env.GEMINI_API_KEY,
-        modelPreference: body.modelPreference || "auto", allowPreview: body.allowPreview === true,
+        workflow: "text", userApiKeyRaw: effectiveApiKey, serverApiKeyRaw: process.env.GEMINI_API_KEY,
+        modelPreference: body.modelPreference || syncedSettings.modelPreference || "auto",
+        allowPreview: body.allowPreview ?? syncedSettings.allowPreviewModels === true,
         signal, attemptTimeoutMs: 20_000, totalBudgetMs: REVIEW_BUDGET_MS,
         payload: { contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json", temperature: 0.1 } },
         validateSuccess: data => {

@@ -3,6 +3,7 @@ import {
   GeminiRequestError,
   requestGemini,
 } from "@/lib/server/geminiRequest";
+import { FIXED_IMAGE_MODELS } from "@/lib/translation/imageModelChoices";
 import { requireLocalRequest } from "@/lib/server/localRequest";
 
 interface ValidationRequestBody {
@@ -33,7 +34,7 @@ export async function POST(req: Request) {
   try {
     await requestGemini({
       apiKeys: [apiKey],
-      models: ["gemini-3.8-flash"],
+      models: [...new Set(["gemini-3.8-flash", ...FIXED_IMAGE_MODELS])],
       payload: {
         contents: [{ parts: [{ text: "Reply only with OK." }] }],
         generationConfig: { maxOutputTokens: 1, temperature: 0 },

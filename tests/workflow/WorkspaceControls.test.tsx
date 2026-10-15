@@ -137,4 +137,39 @@ describe("WorkspaceControls", () => {
     fireEvent.click(organizeAllItem);
     expect(onOrganizeAllPages).toHaveBeenCalledOnce();
   });
+
+  test("advanced tools exposes find & replace and keyboard shortcuts when handlers are provided", () => {
+    const onOpenFindReplace = vi.fn();
+    const onOpenShortcuts = vi.fn();
+    render(
+      <WorkspaceAdvancedTools
+        canClean
+        canEditMask
+        busy={false}
+        batchFailureCount={0}
+        onClean={vi.fn()}
+        onEditMask={vi.fn()}
+        onTranslateBook={vi.fn()}
+        onRetryFailedPages={vi.fn()}
+        onOpenFindReplace={onOpenFindReplace}
+        onOpenShortcuts={onOpenShortcuts}
+        contaminatedPageCount={0}
+        onScanTranslations={vi.fn()}
+        onRetranslateContaminated={vi.fn()}
+        onOpenExportReport={vi.fn()}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: "เครื่องมือ" });
+    fireEvent.click(trigger);
+    const findReplaceItem = screen.getByRole("menuitem", { name: "ค้นหาและแทนที่ (Ctrl+F)" });
+    expect(findReplaceItem).toBeVisible();
+    fireEvent.click(findReplaceItem);
+    expect(onOpenFindReplace).toHaveBeenCalledOnce();
+
+    fireEvent.click(trigger);
+    const shortcutsItem = screen.getByRole("menuitem", { name: "คู่มือคีย์ลัด (?)" });
+    expect(shortcutsItem).toBeVisible();
+    fireEvent.click(shortcutsItem);
+    expect(onOpenShortcuts).toHaveBeenCalledOnce();
+  });
 });
