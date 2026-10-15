@@ -60,6 +60,20 @@ const graphemesOf = (value: string): string[] => {
 const THAI_ORPHAN_FINALS = /^[งญนยณรวมลฬ]/;
 const THAI_CONSONANTS = /^[\u0E01-\u0E2E]/;
 const THAI_ATTACHING_MARKS = /^[\u0E30-\u0E39\u0E47-\u0E4E]/;
+const THAI_STOLEN_CODA_PARTICLE_RE = /^([งกนมดบยว])(ด้วยเนี่ย|เนี่ย|มั้ง|มั้ย|งี้|งั้น|รึเปล่า|รึยัง|รึไง|รึ|น่ะ|ล่ะ|อ่ะ|อะ|วะ|เว้ย|โว้ย|ฟะ|เฟ้ย|แฮะ|แหละ|จัง|จ้ะ|จ๋า|ฮะ)[\p{P}\s]*$/u;
+
+export function hasBrokenThaiLineBreak(lines?: string[] | null): boolean {
+  if (!Array.isArray(lines) || lines.length <= 1) return false;
+  for (let i = 1; i < lines.length; i++) {
+    const line = (lines[i] || "").trim();
+    if (!line) continue;
+    if (THAI_STOLEN_CODA_PARTICLE_RE.test(line)) return true;
+    if (/^รอ/u.test(line) && /เห$/u.test((lines[i - 1] || "").trim())) {
+      return true;
+    }
+  }
+  return false;
+}
 
 export const segmentTextIntoWords = (value: string, locale = "th"): string[] => {
   if (typeof Intl !== "undefined" && "Segmenter" in Intl) {

@@ -1,3 +1,4 @@
+import { hasBrokenThaiLineBreak } from "./textBoxWidthLayout";
 import {
   type TranslatedBubble,
   type OverlayAdjustment,
@@ -58,6 +59,7 @@ export function isCorruptedAutoAdjustment(
   const adj = adjOverride ?? b.layoutAdjustment;
   if (!adj || adj.userModified || !adj.isAutoOptimized) return false;
   if ((adj.autoOptimizeVersion ?? 0) < AUTO_OPTIMIZE_VERSION) return true;
+  if (hasBrokenThaiLineBreak(adj.layoutSnapshot?.lines) || hasBrokenThaiLineBreak(b.layoutSnapshot?.lines)) return true;
 
   const sx = adj.iw > 0 ? iw / adj.iw : 1;
   const sy = adj.ih > 0 ? ih / adj.ih : 1;

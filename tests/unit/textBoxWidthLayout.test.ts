@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  hasBrokenThaiLineBreak,
   layoutTextAtFixedFont,
   minimumWidthForWholeWords,
   segmentTextIntoWords,
@@ -216,5 +217,12 @@ describe("layoutTextAtFixedFont", () => {
       "ด้วย",
       "เหรอ",
     ]);
+  });
+
+  it("detects broken Thai line breaks where a coda was stolen by a particle", () => {
+    expect(hasBrokenThaiLineBreak(["แล้วทำไมถึง", "มีกล้อ", "งด้วยเนี่ย?!"])).toBe(true);
+    expect(hasBrokenThaiLineBreak(["แล้วทำไมถึง", "มีกล้อง", "ด้วยเนี่ย?!"])).toBe(false);
+    expect(hasBrokenThaiLineBreak(["จริงเห", "รอเนี่ย?!"])).toBe(true);
+    expect(hasBrokenThaiLineBreak(["จริง", "เหรอเนี่ย?!"])).toBe(false);
   });
 });

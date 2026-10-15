@@ -41,6 +41,7 @@ import {
 } from "./colorMatching/nearbyStyleFallback";
 import type { BwContrastMode, TextStyleProfile } from "./colorMatching/types";
 import {
+  hasBrokenThaiLineBreak,
   layoutTextAtFixedFont,
   minimumWidthForWholeWords,
   segmentTextIntoWords,
@@ -242,6 +243,7 @@ const isUsableLayoutSnapshot = (
   && Array.isArray(snapshot.lines)
   && snapshot.lines.length > 0
   && snapshot.lines.length <= LAYOUT_SNAPSHOT_MAX_LINES
+  && !hasBrokenThaiLineBreak(snapshot.lines)
   && [
     snapshot.fontSizePx,
     snapshot.lineHeightPx,
