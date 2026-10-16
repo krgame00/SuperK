@@ -16,6 +16,15 @@ import {
   ZoomOut,
 } from "lucide-react";
 
+import {
+  analyzeRegionMaskLocally,
+  applyGeminiMaskReviewToSuggestion,
+  buildRegionComparisonStripBase64,
+  extractImageRegionCrop,
+  type AiMaskAuditResult,
+  type AiMaskViewMode,
+  type GeminiMaskReviewPayload,
+} from "@/lib/cleaning/aiMaskInspector";
 import { applyBrush, type BrushMode, type MaskPoint } from "@/lib/cleaning/maskEdits";
 import { findRegionForCandidate } from "@/lib/cleaning/remnantReview";
 import type {
@@ -289,6 +298,48 @@ export function MaskEditor({
   const [isCanvasFocused, setIsCanvasFocused] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const confirmedRegionRef = useRef<Set<string>>(new Set());
+  const [aiAudit, setAiAudit] = useState<AiMaskAuditResult | null>(null);
+  const [aiViewMode, setAiViewMode] = useState<AiMaskViewMode>("diff");
+  const [isRequestingGeminiMask, setIsRequestingGeminiMask] = useState(false);
+  const cachedSourceImgRef = useRef<HTMLImageElement | null>(null);
+  const cachedCleanImgRef = useRef<HTMLImageElement | null>(null);
+
+  useEffect(() => {
+    cachedSourceImgRef.current = null;
+  }, [sourceUrl]);
+
+  useEffect(() => {
+    cachedCleanImgRef.current = null;
+  }, [cleanUrl]);
+
+  const resolveLoadedImage = async (
+    url: string | undefined,
+    cacheRef: React.MutableRefObject<HTMLImageElement | null>,
+    isCurrentDisplay: boolean,
+  ): Promise<HTMLImageElement | null> => {
+    if (!url) return null;
+    if (cacheRef.current && cacheRef.current.naturalWidth > 0) {
+      return cacheRef.current;
+    }
+    if (
+      isCurrentDisplay &&
+      sourceImageRef.current &&
+      sourceImageRef.current.naturalWidth > 0
+    ) {
+      cacheRef.current = sourceImageRef.current;
+      return sourceImageRef.current;
+    }
+    if (typeof Image === "undefined") return sourceImageRef.current;
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        cacheRef.current = img;
+        resolve(img);
+      };
+      img.onerror = () => resolve(isCurrentDisplay ? sourceImageRef.current : null);
+      img.src = url;
+    });
+  };
 
   // Zoom and Pan state
   const [zoom, setZoom] = useState(1);
@@ -330,6 +381,12 @@ export function MaskEditor({
     ctx.putImageData(imageData, 0, 0);
   };
 
+  const paintCanvasOverlayOnly = (overlayData: ImageData) => {
+    const ctx = canvasRef.current?.getContext("2d");
+    if (!ctx) return;
+    ctx.putImageData(overlayData, 0, 0);
+  };
+
   useEffect(() => {
     closeRef.current?.focus();
     const regionSnapshots = regionSnapshotsRef.current;
@@ -356,6 +413,8 @@ export function MaskEditor({
   }, []);
 
   useEffect(() => {
+    setAiAudit(null);
+    setAiViewMode("diff");
     const key = `${sourceUrl}:${regionId}`;
     if (loadedRegionRef.current === key && imageDataRef.current) return;
     if (loadedRegionRef.current && imageDataRef.current) {
@@ -505,6 +564,12 @@ export function MaskEditor({
       return;
     }
     if (!imageDataRef.current) return;
+    if (aiAudit) {
+      const activeMask = aiViewMode === "ai" ? cloneImageData(aiAudit.suggestedMask) : cloneImageData(aiAudit.baseMask);
+      renderMask(activeMask);
+      if (aiViewMode === "ai") snapshotOpsBase();
+      setAiAudit(null);
+    }
     drawingRef.current = true;
     canvasBoundsRef.current = event.currentTarget.getBoundingClientRect();
     strokeStartIndexRef.current = strokeOpsRef.current.length;
@@ -991,9 +1056,179 @@ export function MaskEditor({
     }
   };
 
+  const handleSelectAiViewMode = (nextMode: AiMaskViewMode, targetAudit = aiAudit) => {
+    setAiViewMode(nextMode);
+    if (!targetAudit) return;
+    if (nextMode === "diff") {
+      paintCanvasOverlayOnly(targetAudit.diffMask);
+    } else if (nextMode === "ai") {
+      paintCanvasOverlayOnly(targetAudit.suggestedMask);
+    } else {
+      paintCanvasOverlayOnly(targetAudit.baseMask);
+    }
+  };
+
+  const handleCloseAiAudit = () => {
+    if (aiAudit) {
+      renderMask(cloneImageData(aiAudit.baseMask));
+    }
+    setAiAudit(null);
+    setAiViewMode("diff");
+    setStatusMessage("ปิดโหมดเปรียบเทียบ AI Mask แล้ว");
+  };
+
+  const handleRunAiMaskAudit = async () => {
+    const current = aiAudit ? aiAudit.baseMask : imageDataRef.current;
+    if (submittingRef.current || !current || !selectedRegion) return;
+    const [origImg, cleanImg] = await Promise.all([
+      resolveLoadedImage(sourceUrl, cachedSourceImgRef, comparison === "original" || !cleanUrl),
+      resolveLoadedImage(cleanUrl, cachedCleanImgRef, comparison === "cleaned"),
+    ]);
+    const originalCrop = extractImageRegionCrop(origImg, selectedRegion.rect);
+    const cleanedCrop = extractImageRegionCrop(cleanImg, selectedRegion.rect);
+    const audit = analyzeRegionMaskLocally({
+      regionId: selectedRegion.id,
+      rect: selectedRegion.rect,
+      baseMask: current,
+      originalCrop,
+      cleanedCrop,
+    });
+    setAiAudit(audit);
+    setAiViewMode("diff");
+    paintCanvasOverlayOnly(audit.diffMask);
+    setStatusMessage(audit.summary);
+  };
+
+  const handleAskGeminiMaskReview = async () => {
+    if (submittingRef.current || isRequestingGeminiMask || !selectedRegion) return;
+    const baseMask = aiAudit ? aiAudit.baseMask : imageDataRef.current;
+    if (!baseMask) return;
+    const [origImg, cleanImg] = await Promise.all([
+      resolveLoadedImage(sourceUrl, cachedSourceImgRef, comparison === "original" || !cleanUrl),
+      resolveLoadedImage(cleanUrl, cachedCleanImgRef, comparison === "cleaned"),
+    ]);
+    const originalCrop = extractImageRegionCrop(origImg, selectedRegion.rect);
+    const cleanedCrop = extractImageRegionCrop(cleanImg, selectedRegion.rect);
+    const baseAudit =
+      aiAudit ??
+      analyzeRegionMaskLocally({
+        regionId: selectedRegion.id,
+        rect: selectedRegion.rect,
+        baseMask,
+        originalCrop,
+        cleanedCrop,
+      });
+    if (!aiAudit) {
+      setAiAudit(baseAudit);
+      setAiViewMode("diff");
+      paintCanvasOverlayOnly(baseAudit.diffMask);
+    }
+    const strip = buildRegionComparisonStripBase64({
+      rect: selectedRegion.rect,
+      originalCrop,
+      cleanedCrop,
+      maskData: baseMask,
+    });
+    if (!strip) {
+      setStatusMessage("ใช้ผลวิเคราะห์ Local AI แล้ว (ไม่สามารถสร้างภาพส่ง Gemini ในโหมดจำลอง)");
+      return;
+    }
+    setIsRequestingGeminiMask(true);
+    setStatusMessage("กำลังส่งภาพจุดนี้ให้ Gemini Vision ช่วยตรวจเทียบ Mask…");
+    try {
+      const apiKey =
+        typeof localStorage !== "undefined"
+          ? localStorage.getItem("gemini_api_key") ||
+            localStorage.getItem("manga_gemini_api_key") ||
+            ""
+          : "";
+      const response = await fetch("/api/mask-review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageBase64: strip.base64,
+          mimeType: strip.mimeType,
+          regionId: selectedRegion.id,
+          localStats: baseAudit.stats,
+          apiKey,
+        }),
+      });
+      const payload = (await response.json()) as Partial<GeminiMaskReviewPayload> & {
+        error?: string;
+      };
+      if (!response.ok || !payload || typeof payload.summary !== "string") {
+        setStatusMessage(
+          payload?.error ||
+            "ไม่สามารถเรียก Gemini Vision ได้ในขณะนี้ ระบบแสดงผลเทียบจาก Local AI ให้แทน",
+        );
+        return;
+      }
+      const refined = applyGeminiMaskReviewToSuggestion(
+        baseAudit,
+        {
+          verdict: payload.verdict ?? baseAudit.verdict,
+          summary: payload.summary,
+          addBoxes: Array.isArray(payload.addBoxes) ? payload.addBoxes : [],
+          protectBoxes: Array.isArray(payload.protectBoxes) ? payload.protectBoxes : [],
+        },
+        originalCrop,
+      );
+      setAiAudit(refined);
+      setAiViewMode("diff");
+      paintCanvasOverlayOnly(refined.diffMask);
+      setStatusMessage(`Gemini: ${refined.summary}`);
+    } catch {
+      setStatusMessage("ใช้ผลเทียบจาก Local AI แทน (การเชื่อมต่อ Gemini ขัดข้อง)");
+    } finally {
+      setIsRequestingGeminiMask(false);
+    }
+  };
+
+  const commitAiSuggestedMaskToCanvas = (): ImageData | null => {
+    if (!aiAudit) return imageDataRef.current ?? null;
+    const before = cloneImageData(aiAudit.baseMask);
+    const after = cloneImageData(aiAudit.suggestedMask);
+    renderMask(after);
+    const holder: { before: ImageData | null; after: ImageData | null } = {
+      before,
+      after,
+    };
+    activeUndoDisposersRef.current.push(() => {
+      holder.before = null;
+      holder.after = null;
+    });
+    pushMaskUndo({
+      label: "ใช้ Mask ที่ AI แนะนำ",
+      undo: () => {
+        if (!holder.before) return;
+        renderMask(cloneImageData(holder.before));
+        snapshotOpsBase();
+      },
+      redo: () => {
+        if (!holder.after) return;
+        renderMask(cloneImageData(holder.after));
+        snapshotOpsBase();
+      },
+    });
+    snapshotOpsBase();
+    setAiAudit(null);
+    setAiViewMode("diff");
+    return after;
+  };
+
+  const handleApplyAiSuggestedMask = () => {
+    if (!aiAudit || submittingRef.current) return;
+    commitAiSuggestedMaskToCanvas();
+    setStatusMessage("นำ Mask ที่ AI แนะนำมาใช้แล้ว (กด 'ใช้กับจุดนี้' เพื่อคลีน หรือ Ctrl+Z เพื่อเลิกทำ)");
+  };
+
   // One-Click Clean: seamlessly confirms text if necessary and cleans the region immediately
-  const handleOneClickClean = async () => {
-    const imageData = imageDataRef.current;
+  const handleOneClickClean = async (overrideMask?: ImageData) => {
+    if (aiAudit && !overrideMask) {
+      renderMask(cloneImageData(aiAudit.baseMask));
+      setAiAudit(null);
+    }
+    const imageData = overrideMask ?? imageDataRef.current;
     if (submittingRef.current || !imageData || !regionId || !selectedRegion) return;
     if (!maskHasPixels(imageData, selectedRegion.rect)) {
       if (hasExcludedPixels(imageData, selectedRegion.rect)) {
@@ -1214,9 +1449,126 @@ export function MaskEditor({
           </div>
         </header>
 
-        {cleanUrl && <div className="flex items-center gap-2 border-b border-border px-4 py-2" aria-label="เปรียบเทียบภาพ">
-          {(["original", "cleaned"] as const).map(view => <button key={view} type="button" aria-pressed={comparison === view} onClick={() => setComparison(view)} className={comparison === view ? "rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-content" : "rounded-md px-3 py-1.5 text-xs text-muted hover:bg-surface-hover hover:text-foreground"}>{view === "original" ? "ภาพเดิม" : "ภาพที่คลีนแล้ว"}</button>)}
-        </div>}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2" aria-label="เปรียบเทียบภาพ">
+          <div className="flex flex-wrap items-center gap-2">
+            {cleanUrl && (["original", "cleaned"] as const).map(view => (
+              <button
+                key={view}
+                type="button"
+                aria-pressed={comparison === view}
+                onClick={() => setComparison(view)}
+                className={comparison === view ? "rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-content" : "rounded-md px-3 py-1.5 text-xs text-muted hover:bg-surface-hover hover:text-foreground"}
+              >
+                {view === "original" ? "ภาพเดิม" : "ภาพที่คลีนแล้ว"}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={isSubmitting || !selectedRegion || !canvasSize.width}
+              onClick={aiAudit ? handleCloseAiAudit : handleRunAiMaskAudit}
+              className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                aiAudit
+                  ? "border-emerald-400/60 bg-emerald-500/20 text-emerald-200 hover:bg-emerald-500/30"
+                  : "border-cyan-400/50 bg-cyan-500/15 text-cyan-200 hover:bg-cyan-500/25"
+              } disabled:opacity-40`}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              <span>{aiAudit ? "กำลังเทียบ AI Mask" : "AI ตรวจ/เทียบ Mask"}</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={isSubmitting || isRequestingGeminiMask || !selectedRegion || !canvasSize.width}
+              onClick={handleAskGeminiMaskReview}
+              className="flex items-center gap-1.5 rounded-md border border-purple-400/50 bg-purple-500/15 px-3 py-1.5 text-xs font-semibold text-purple-200 transition-colors hover:bg-purple-500/25 disabled:opacity-40"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              <span>{isRequestingGeminiMask ? "Gemini กำลังดู…" : "ให้ Gemini วิเคราะห์จุดนี้"}</span>
+            </button>
+          </div>
+        </div>
+
+        {aiAudit && (
+          <div
+            role="region"
+            aria-label="ผลเปรียบเทียบ AI Mask"
+            className="flex flex-col gap-2 border-b border-emerald-500/30 bg-emerald-950/25 px-4 py-2.5 text-xs"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded bg-emerald-500/20 px-2 py-0.5 font-semibold text-emerald-300">
+                  {aiAudit.source === "hybrid-gemini" ? "Hybrid (Local + Gemini Vision)" : "Local Smart AI"}
+                </span>
+                <span className="rounded bg-emerald-500/15 px-2 py-0.5 text-emerald-200">
+                  สีเขียว = ควรลบเพิ่ม +{aiAudit.stats.addedCount.toLocaleString()} px
+                </span>
+                <span className="rounded bg-sky-500/15 px-2 py-0.5 text-sky-200">
+                  สีฟ้า = ควรเว้น/กู้คืน -{aiAudit.stats.removedCount.toLocaleString()} px
+                </span>
+                <span className="text-muted">
+                  (ตรงกัน {aiAudit.stats.matchPercent}%)
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                <div className="flex items-center gap-1 rounded-md border border-border/80 bg-background/80 p-0.5">
+                  {([
+                    { id: "diff", label: "เทียบจุดต่าง (Diff)" },
+                    { id: "current", label: "Mask เดิม" },
+                    { id: "ai", label: "Mask ของ AI" },
+                  ] as const).map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      aria-pressed={aiViewMode === tab.id}
+                      onClick={() => handleSelectAiViewMode(tab.id)}
+                      className={`rounded px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                        aiViewMode === tab.id
+                          ? "bg-emerald-500 text-neutral-950 font-semibold"
+                          : "text-muted hover:text-foreground"
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={handleApplyAiSuggestedMask}
+                  className="rounded-md bg-emerald-500/25 border border-emerald-400/50 px-2.5 py-1 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/35"
+                >
+                  นำ Mask ของ AI มาใช้
+                </button>
+                <button
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => {
+                    const committed = commitAiSuggestedMaskToCanvas();
+                    if (committed) void handleOneClickClean(committed);
+                  }}
+                  className="rounded-md bg-emerald-500 px-2.5 py-1 text-[11px] font-bold text-neutral-950 hover:brightness-110"
+                >
+                  ใช้ AI + คลีนจุดนี้เลย
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCloseAiAudit}
+                  className="rounded-md px-2 py-1 text-[11px] text-muted hover:bg-surface hover:text-foreground"
+                >
+                  ปิดผลเทียบ
+                </button>
+              </div>
+            </div>
+            <p className="text-[11px] text-emerald-100/90">
+              {aiAudit.summary}
+            </p>
+          </div>
+        )}
         {/* Canvas & Image Workspace */}
         <div
           ref={workspaceRef}

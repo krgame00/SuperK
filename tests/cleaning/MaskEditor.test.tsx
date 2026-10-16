@@ -1047,4 +1047,27 @@ describe("MaskEditor remnant navigation", () => {
 
     fireEvent.keyDown(canvas, { key: "y", ctrlKey: true });
   });
+
+  test("AI Mask Inspector compares diff, switches views, and applies AI suggested mask with Undo support", async () => {
+    renderMaskEditor({ cleanUrl: "blob:cleaned" });
+    const canvas = await screen.findByRole("application", { name: "พื้นที่แก้ Mask" });
+    await waitFor(() => expect(canvas).toHaveAttribute("width", "100"));
+
+    const aiBtn = screen.getByRole("button", { name: "AI ตรวจ/เทียบ Mask" });
+    fireEvent.click(aiBtn);
+
+    const diffRegion = await screen.findByRole("region", { name: "ผลเปรียบเทียบ AI Mask" });
+    expect(diffRegion).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Mask เดิม" }));
+    fireEvent.click(screen.getByRole("button", { name: "Mask ของ AI" }));
+    fireEvent.click(screen.getByRole("button", { name: "นำ Mask ของ AI มาใช้" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("region", { name: "ผลเปรียบเทียบ AI Mask" })).not.toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent("นำ Mask ที่ AI แนะนำมาใช้แล้ว");
+    });
+
+    expect(undoManager.canUndo()).toBe(true);
+  });
 });

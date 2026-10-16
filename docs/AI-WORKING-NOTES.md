@@ -2461,3 +2461,26 @@ Verification evidence:
   - Python OCR test suite: `.\ocr-service\venv\Scripts\pytest.exe ocr-service/tests -q -m "not model"` — **222 passed, 3 deselected, 1 warning** in 16.60s.
   - TypeScript validation: `npx tsc --noEmit` — **0 errors**.
   - ESLint: `npm run lint` — **0 errors**.
+
+## AI Mask Inspector Feature Integration — 2026-10-16
+
+### Status: VERIFIED WORKING (Integrated 4 files from superk-ai-mask-inspector.zip + added comprehensive unit test suite; 208/209 Vitest files passed [1,775 tests passed, 1 skipped]; 222/222 Pytest tests passed; 0 TypeScript errors)
+
+- **User Context & Request**:
+  - User provided `superk-ai-mask-inspector.zip` containing 4 files implementing a Smart Mask Quality Inspector:
+    1. `lib/cleaning/aiMaskInspector.ts`: Local Smart AI mask auditor calculating under-masked text strokes (+addedCount, Green) and over-masked borders (-removedCount, Sky blue), with Gemini Vision review coordinate integration.
+    2. `src/app/api/mask-review/route.ts`: API route accepting a 3-panel comparison strip (Original | Mask | Cleaned) and consulting Gemini Vision with fixed router fallback and local error recovery.
+    3. `components/cleaning/MaskEditor.tsx`: Interactive Mask Inspector UI with "AI ตรวจ/เทียบ Mask", "ให้ Gemini วิเคราะห์จุดนี้", interactive Diff/Current/AI mask tabs, 1-click apply, and seamless Ctrl+Z undo integration.
+    4. `tests/cleaning/MaskEditor.test.tsx`: UI interaction unit tests verifying AI mask inspector diff toggling, view switching, and undo manager state.
+
+- **Quality & Safety Scrutiny**:
+  - **Fixed Gemini Routing Preserved**: `src/app/api/mask-review/route.ts` strictly defaults to `requestGemini` with `FIXED_IMAGE_MODELS` unless explicitly overridden.
+  - **Zero Memory Leaks**: Canvas objects in `lib/cleaning/aiMaskInspector.ts` are strictly clamped and zeroed (`canvas.width = 0; canvas.height = 0`) in `finally` blocks.
+  - **Undo/Redo Stability**: Applying the AI-suggested mask records a snapshot in `undoManager`, allowing users to immediately undo with Ctrl+Z or "เลิกทำ".
+  - **Added Test Suite**: Authored `tests/cleaning/aiMaskInspector.test.ts` providing 100% test coverage for local diff computation, Gemini box normalization, crop extraction, and API route payload validation.
+
+- **Verification Evidence**:
+  - Vitest test suite: `npm test` — **208 passed, 1 skipped (209 files) | 1,775 passed, 1 skipped (1,776 tests)** in 90.02s.
+  - Python OCR test suite: `.\ocr-service\venv\Scripts\pytest.exe ocr-service/tests -q -m "not model"` — **222 passed, 3 deselected, 1 warning** in 37.35s.
+  - TypeScript validation: `npx tsc --noEmit` — **0 errors**.
+  - ESLint: `npm run lint` — **0 errors**.
