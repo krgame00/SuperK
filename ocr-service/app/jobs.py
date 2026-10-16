@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import logging
 import os
 import re
@@ -26,6 +27,7 @@ from app.schemas import (
     JobStage,
     JobStatus,
     ManualRegionAction,
+    RegionRecord,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -294,8 +296,6 @@ class JobStore:
         regions_json: str,
         cleaning_mode: CleaningMode = CleaningMode.ALL_TEXT,
     ) -> JobState:
-        import json
-        from app.schemas import RegionRecord
         resolved_id = (
             job_id
             if isinstance(job_id, str) and re.fullmatch(r"[0-9a-f]{32}", job_id)
@@ -799,7 +799,13 @@ class JobStore:
             len(output.regions),
             len(output.regions),
         )
-        asset_dir = self._write_assets(job.id, output, job.project_id, parent_asset_dir=parent_asset_dir, parent_output=parent_output)
+        asset_dir = self._write_assets(
+            job.id,
+            output,
+            job.project_id,
+            parent_asset_dir=parent_asset_dir,
+            parent_output=parent_output,
+        )
         height, width = image_shape
         with job.lock:
             source_bytes = job.source_bytes
@@ -926,12 +932,17 @@ class JobStore:
         try:
             if project_id:
                 (temporary / "project_id.txt").write_text(project_id, encoding="utf-8")
+            p_src = parent_output.source_image if parent_output is not None else None
+            p_clean = parent_output.clean_image if parent_output is not None else None
+            p_mask = parent_output.mask if parent_output is not None else None
+            p_rev = parent_output.review_mask if parent_output is not None else None
+            p_prot = parent_output.protected_mask if parent_output is not None else None
             asset_pairs = [
-                ("source.png", output.source_image, parent_output.source_image if parent_output is not None else None),
-                ("clean.png", output.clean_image, parent_output.clean_image if parent_output is not None else None),
-                ("mask.png", output.mask, parent_output.mask if parent_output is not None else None),
-                ("review-mask.png", output.review_mask, parent_output.review_mask if parent_output is not None else None),
-                ("protected-mask.png", output.protected_mask, parent_output.protected_mask if parent_output is not None else None),
+                ("source.png", output.source_image, p_src),
+                ("clean.png", output.clean_image, p_clean),
+                ("mask.png", output.mask, p_mask),
+                ("review-mask.png", output.review_mask, p_rev),
+                ("protected-mask.png", output.protected_mask, p_prot),
             ]
             for filename, arr, parent_arr in asset_pairs:
                 if (
