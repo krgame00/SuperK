@@ -1113,7 +1113,14 @@ export function useTranslation({
       } finally {
         image.onload = null;
         image.onerror = null;
-
+        offscreenContainer.querySelectorAll(".tl-overlay,.tl-canvas").forEach((el) => {
+          const cleanup = (el as unknown as { _cleanupListeners?: () => void })._cleanupListeners;
+          if (typeof cleanup === "function") cleanup();
+        });
+        offscreenContainer.querySelectorAll("canvas").forEach((c) => {
+          c.width = 0;
+          c.height = 0;
+        });
         offscreenContainer.remove();
       }
 
@@ -1261,10 +1268,19 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             context.fillRect(protectedBox[1]*width/1000-sx, protectedBox[0]*height/1000-sy,
               (protectedBox[3]-protectedBox[1])*width/1000, (protectedBox[2]-protectedBox[0])*height/1000);
           }
+          const cropW = crop.width;
+          const cropH = crop.height;
+          let cropBase64 = "";
+          try {
+            cropBase64 = crop.toDataURL("image/png").split(",")[1];
+          } finally {
+            crop.width = 0;
+            crop.height = 0;
+          }
           if (activePageRef.current === pageUrl) setTranslationResult("กำลังตรวจและเติมคำแปลที่ตกหล่น…");
           const response = await fetch("/api/translate", {
             method:"POST", headers:{"Content-Type":"application/json"}, signal,
-            body:JSON.stringify({imageBase64:crop.toDataURL("image/png").split(",")[1],mimeType:"image/png",
+            body:JSON.stringify({imageBase64:cropBase64,mimeType:"image/png",
               targetLang,sourceLang,modelPreference,apiKey:userApiKey,allowPreview:allowPreviewModels,glossary}),
           });
           const data = await readTranslationResponse<{text:string}>(response);
@@ -1272,10 +1288,10 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           if (!Array.isArray(parsed?.bubbles)) throw new Error("Missing translation recovery response malformed.");
           const candidates = normalizeTargetTranslationPayload(parsed!, targetLang).bubbles ?? [];
           return candidates.filter(b=>b.box?.length===4 && b.box.every(Number.isFinite)).map(b=>({...b,box:[
-            Math.round((sy+b.box![0]*crop.height/1000)/height*1000),
-            Math.round((sx+b.box![1]*crop.width/1000)/width*1000),
-            Math.round((sy+b.box![2]*crop.height/1000)/height*1000),
-            Math.round((sx+b.box![3]*crop.width/1000)/width*1000),
+            Math.round((sy+b.box![0]*cropH/1000)/height*1000),
+            Math.round((sx+b.box![1]*cropW/1000)/width*1000),
+            Math.round((sy+b.box![2]*cropH/1000)/height*1000),
+            Math.round((sx+b.box![3]*cropW/1000)/width*1000),
           ]}));
         }, signal);
         return {...recovered,bubbles:recovered.bubbles.filter(b=>!manual.includes(b))};
@@ -1310,6 +1326,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             }
             ctx.drawImage(imgEl, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
             const sliceBase64 = canvas.toDataURL("image/jpeg", 0.8).split(",")[1];
+            canvas.width = 0;
+            canvas.height = 0;
             slices.push({ row, col, sx, sy, sWidth, sHeight, base64: sliceBase64 });
           }
         }
@@ -1583,6 +1601,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         ctx.filter = "contrast(1.35) brightness(1.05)";
         ctx.drawImage(imgEl, 0, 0);
         const enhancedBase64 = canvas.toDataURL("image/jpeg", 0.9).split(",")[1];
+        canvas.width = 0;
+        canvas.height = 0;
         if (!enhancedBase64) {
           throw new Error("Translation failed: enhanced image encoding failed.");
         }

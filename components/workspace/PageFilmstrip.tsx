@@ -56,6 +56,19 @@ export function PageFilmstrip({
 
   useEffect(() => {
     let cancelled = false;
+    const activeUrls = new Set(pages.map((p) => p.url));
+    let pruned = false;
+    const initialMap = new Map(thumbnailSrcsRef.current);
+    for (const url of initialMap.keys()) {
+      if (!activeUrls.has(url)) {
+        initialMap.delete(url);
+        pruned = true;
+      }
+    }
+    if (pruned) {
+      thumbnailSrcsRef.current = initialMap;
+      setThumbnailSrcs(initialMap);
+    }
     const generate = async () => {
       for (const page of pages) {
         if (cancelled) return;
@@ -236,6 +249,8 @@ export function PageFilmstrip({
                 <img
                   src={thumbnailSrcs.get(page.url) ?? page.url}
                   alt={`หน้า ${i + 1}: ${page.name}`}
+                  loading="lazy"
+                  decoding="async"
                   className="pointer-events-none h-14 w-auto object-cover sm:h-[72px]"
                 />
 

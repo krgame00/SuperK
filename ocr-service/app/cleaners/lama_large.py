@@ -194,7 +194,7 @@ class LamaLargeCleaner:
         mask: BinaryMask,
         region: MaskRegion,
     ) -> RgbImage:
-        context = max(192, round(max(region.rect.width, region.rect.height) * 0.75))
+        context = min(128, max(48, round(max(region.rect.width, region.rect.height) * 0.5)))
         x0, y0, x1, y1 = _context_bounds(
             region,
             image_rgb.shape[1],

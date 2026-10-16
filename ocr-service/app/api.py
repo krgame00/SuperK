@@ -143,6 +143,37 @@ def create_app(
             "cleaning_mode": cleaning_mode.value,
         }
 
+    @app.post("/v1/jobs/restore", status_code=200)
+    async def restore_job(
+        source: Annotated[UploadFile, File()],
+        clean: Annotated[UploadFile, File()],
+        mask: Annotated[UploadFile, File()],
+        review_mask: Annotated[UploadFile, File()],
+        protected_mask: Annotated[UploadFile, File()],
+        regions: Annotated[str, Form()],
+        job_id: Annotated[str | None, Form()] = None,
+        cleaning_mode: Annotated[CleaningMode, Form()] = CleaningMode.ALL_TEXT,
+    ) -> dict[str, object]:
+        max_bytes = runtime_settings.max_upload_mb * 1024 * 1024
+        max_px = runtime_settings.max_image_megapixels * 1_000_000
+        source_bytes = await _validated_upload(source, max_upload_bytes=max_bytes, max_pixels=max_px)
+        clean_bytes = await _validated_upload(clean, max_upload_bytes=max_bytes, max_pixels=max_px)
+        mask_bytes = await _validated_upload(mask, max_upload_bytes=max_bytes, max_pixels=max_px)
+        review_bytes = await _validated_upload(review_mask, max_upload_bytes=max_bytes, max_pixels=max_px)
+        protected_bytes = await _validated_upload(protected_mask, max_upload_bytes=max_bytes, max_pixels=max_px)
+        restored = await asyncio.to_thread(
+            store.restore_client_job,
+            job_id=job_id,
+            source_bytes=source_bytes,
+            clean_bytes=clean_bytes,
+            mask_bytes=mask_bytes,
+            review_mask_bytes=review_bytes,
+            protected_mask_bytes=protected_bytes,
+            regions_json=regions,
+            cleaning_mode=cleaning_mode,
+        )
+        return restored.snapshot()
+
     @app.delete("/v1/projects/{project_id}")
     def delete_project(project_id: str) -> dict[str, object]:
         """Cascading deletion of all cleaner jobs and assets associated with a project."""

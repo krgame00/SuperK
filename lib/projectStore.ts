@@ -142,8 +142,9 @@ export const saveAsset = async (
   blob: Blob,
   mimeType = "image/png",
 ): Promise<void> => {
+  let db: IDBDatabase | undefined;
   try {
-    const db = await openDB();
+    db = await openDB();
     const tx = db.transaction(ASSET_STORE_NAME, "readwrite");
     const done = transactionDone(tx);
     const store = tx.objectStore(ASSET_STORE_NAME);
@@ -157,6 +158,8 @@ export const saveAsset = async (
     await done;
   } catch (err) {
     console.warn("Failed to save asset to IndexedDB", err);
+  } finally {
+    db?.close?.();
   }
 };
 
@@ -214,15 +217,18 @@ export const saveProjectSession = async (
   },
   options?: { dirtyPageUrls?: Set<string> },
 ): Promise<void> => {
+  let db: IDBDatabase | undefined;
   try {
-    const db = await openDB();
+    db = await openDB();
     const tx = db.transaction([STORE_NAME, ASSET_STORE_NAME], "readwrite");
     const txDone = transactionDone(tx);
     const sessionStore = tx.objectStore(STORE_NAME);
     const assetStore = tx.objectStore(ASSET_STORE_NAME);
-    const previousSession = await requestResult<SessionData | undefined>(
-      sessionStore.get("latest_session"),
-    );
+    const [previousSession, allExistingKeys] = await Promise.all([
+      requestResult<SessionData | undefined>(sessionStore.get("latest_session")),
+      requestResult<IDBValidKey[]>(assetStore.getAllKeys()),
+    ]);
+    const existingAssetKeys = new Set(allExistingKeys.map(String));
 
     const dirty = options?.dirtyPageUrls;
     const translatedAssetIds: [string, string][] = [];
@@ -238,10 +244,7 @@ export const saveProjectSession = async (
       if (page.url.startsWith("data:") ||
           (page.url.startsWith("blob:") && pageBlobStore.has(id))) {
         const sourceAssetId = `source_${id}`;
-        const existingKey = await requestResult<IDBValidKey | undefined>(
-          assetStore.getKey(sourceAssetId),
-        );
-        if (existingKey === undefined) {
+        if (!existingAssetKeys.has(sourceAssetId)) {
           if (page.url.startsWith("data:")) {
             let sourceBytes: Uint8Array;
             try {
@@ -323,7 +326,7 @@ export const saveProjectSession = async (
       const imageValue = data.translatedImageCache.get(pageUrl);
       let hasValidImage = typeof imageValue === "string" && imageValue.startsWith("data:");
       let imageBytes: Uint8Array | undefined;
-      if (hasValidImage) {
+      if (hasValidImage && isDirty) {
         try {
           imageBytes = dataUrlToBytes(imageValue as string);
         } catch {
@@ -340,18 +343,16 @@ export const saveProjectSession = async (
         continue;
       }
 
-      if (hasValidImage && imageBytes) {
+      if (hasValidImage && isDirty && imageBytes) {
         translatedAssetIds.push([pageId ?? pageUrl, assetId]);
         referencedAssetIds.add(assetId);
-        if (isDirty) {
-          const mimeType = (imageValue as string).match(/^data:([^;]+)/)?.[1] || "image/png";
-          assetStore.put({
-            id: assetId,
-            mimeType,
-            bytes: imageBytes,
-            createdAt: Date.now(),
-          } satisfies StoredSourceAsset);
-        }
+        const mimeType = (imageValue as string).match(/^data:([^;]+)/)?.[1] || "image/png";
+        assetStore.put({
+          id: assetId,
+          mimeType,
+          bytes: imageBytes,
+          createdAt: Date.now(),
+        } satisfies StoredSourceAsset);
       } else if (!dirty || !isDirty) {
         // Page was not dirtied, but image was evicted from in-memory cache (LRU eviction).
         // Keep the existing link to the valid persisted asset.
@@ -405,9 +406,7 @@ export const saveProjectSession = async (
 
     // Garbage-collect translated assets that no longer belong to any page
     // (invalidated, replaced or removed pages).
-    const keys = await requestResult<IDBValidKey[]>(assetStore.getAllKeys());
-    for (const key of keys) {
-      const assetId = String(key);
+    for (const assetId of existingAssetKeys) {
       if (!assetId.startsWith("translated_") && !assetId.startsWith("source_")) continue;
       if (referencedAssetIds.has(assetId)) continue;
       assetStore.delete(assetId);
@@ -417,12 +416,15 @@ export const saveProjectSession = async (
   } catch (err) {
     console.warn("Failed to save project session to IndexedDB", err);
     throw err;
+  } finally {
+    db?.close?.();
   }
 };
 
 export const purgeOrphanAssets = async (): Promise<number> => {
+  let db: IDBDatabase | undefined;
   try {
-    const db = await openDB();
+    db = await openDB();
     const readTx = db.transaction([STORE_NAME, ASSET_STORE_NAME], "readonly");
     const readDone = transactionDone(readTx);
     const data = await requestResult<SessionData | undefined>(
@@ -452,6 +454,8 @@ export const purgeOrphanAssets = async (): Promise<number> => {
   } catch (err) {
     console.warn("Failed to purge orphan assets from IndexedDB", err);
     return 0;
+  } finally {
+    db?.close?.();
   }
 };
 
@@ -477,8 +481,9 @@ export interface LoadedProjectSession {
 }
 
 export const loadProjectSession = async (): Promise<LoadedProjectSession | null> => {
+  let db: IDBDatabase | undefined;
   try {
-    const db = await openDB();
+    db = await openDB();
     const tx = db.transaction([STORE_NAME, ASSET_STORE_NAME], "readonly");
     const sessionStore = tx.objectStore(STORE_NAME);
     const assetStore = tx.objectStore(ASSET_STORE_NAME);
@@ -610,12 +615,15 @@ export const loadProjectSession = async (): Promise<LoadedProjectSession | null>
   } catch (err) {
     console.warn("Failed to load project session from IndexedDB", err);
     return null;
+  } finally {
+    db?.close?.();
   }
 };
 
 export const clearProjectSession = async (): Promise<void> => {
+  let db: IDBDatabase | undefined;
   try {
-    const db = await openDB();
+    db = await openDB();
     const tx = db.transaction(
       [STORE_NAME, CLEANING_STORE_NAME, ASSET_STORE_NAME],
       "readwrite",
@@ -628,14 +636,17 @@ export const clearProjectSession = async (): Promise<void> => {
     await done;
   } catch (err) {
     console.warn("Failed to clear project session from IndexedDB", err);
+  } finally {
+    db?.close?.();
   }
 };
 
 export const saveCleaningResultMetadata = async (
   result: StoredCleaningResult,
 ): Promise<void> => {
+  let db: IDBDatabase | undefined;
   try {
-    const db = await openDB();
+    db = await openDB();
     let shouldWrite = true;
     try {
       const readTx = db.transaction(CLEANING_STORE_NAME, "readonly");
@@ -666,14 +677,17 @@ export const saveCleaningResultMetadata = async (
     await writeDone;
   } catch (err) {
     console.warn("Failed to save cleaning result metadata", err);
+  } finally {
+    db?.close?.();
   }
 };
 
 export const loadCleaningResultsMetadata = async (): Promise<
   Map<string, StoredCleaningResult>
 > => {
+  let db: IDBDatabase | undefined;
   try {
-    const db = await openDB();
+    db = await openDB();
     const tx = db.transaction(CLEANING_STORE_NAME, "readonly");
     const request = tx
       .objectStore(CLEANING_STORE_NAME)
@@ -683,6 +697,8 @@ export const loadCleaningResultsMetadata = async (): Promise<
   } catch (err) {
     console.warn("Failed to load cleaning result metadata", err);
     return new Map();
+  } finally {
+    db?.close?.();
   }
 };
 
@@ -708,26 +724,61 @@ export const saveCleaningAssets = async (
     protectedMaskAssetId?: string;
   } = {};
 
+  let db: IDBDatabase | undefined;
   try {
     const assetKey = pageId || encodeURIComponent(pageUrl);
+    const entriesToWrite: StoredAsset[] = [];
+    const now = Date.now();
     if (assets.cleanBlob && assets.cleanBlob.size > 0) {
       result.cleanAssetId = `clean_${assetKey}`;
-      await saveAsset(result.cleanAssetId, assets.cleanBlob, assets.cleanBlob.type || "image/png");
+      entriesToWrite.push({
+        id: result.cleanAssetId,
+        mimeType: assets.cleanBlob.type || "image/png",
+        blob: assets.cleanBlob,
+        createdAt: now,
+      });
     }
     if (assets.maskBlob && assets.maskBlob.size > 0) {
       result.maskAssetId = `mask_${assetKey}`;
-      await saveAsset(result.maskAssetId, assets.maskBlob, assets.maskBlob.type || "image/png");
+      entriesToWrite.push({
+        id: result.maskAssetId,
+        mimeType: assets.maskBlob.type || "image/png",
+        blob: assets.maskBlob,
+        createdAt: now,
+      });
     }
     if (assets.reviewMaskBlob && assets.reviewMaskBlob.size > 0) {
       result.reviewMaskAssetId = `review_mask_${assetKey}`;
-      await saveAsset(result.reviewMaskAssetId, assets.reviewMaskBlob, assets.reviewMaskBlob.type || "image/png");
+      entriesToWrite.push({
+        id: result.reviewMaskAssetId,
+        mimeType: assets.reviewMaskBlob.type || "image/png",
+        blob: assets.reviewMaskBlob,
+        createdAt: now,
+      });
     }
     if (assets.protectedMaskBlob && assets.protectedMaskBlob.size > 0) {
       result.protectedMaskAssetId = `protected_mask_${assetKey}`;
-      await saveAsset(result.protectedMaskAssetId, assets.protectedMaskBlob, assets.protectedMaskBlob.type || "image/png");
+      entriesToWrite.push({
+        id: result.protectedMaskAssetId,
+        mimeType: assets.protectedMaskBlob.type || "image/png",
+        blob: assets.protectedMaskBlob,
+        createdAt: now,
+      });
+    }
+    if (entriesToWrite.length > 0) {
+      db = await openDB();
+      const tx = db.transaction(ASSET_STORE_NAME, "readwrite");
+      const done = transactionDone(tx);
+      const store = tx.objectStore(ASSET_STORE_NAME);
+      for (const item of entriesToWrite) {
+        store.put(item);
+      }
+      await done;
     }
   } catch (err) {
     console.warn("Failed to save cleaning assets to IndexedDB", err);
+  } finally {
+    db?.close?.();
   }
 
   return result;
@@ -771,6 +822,7 @@ export const appendPageToProjectSession = async (
   payload: AppendPagePayload,
 ): Promise<{ pageIndex: number; totalPages: number }> => {
   const db = await openDB();
+  try {
   const tx = db.transaction([STORE_NAME, ASSET_STORE_NAME], "readwrite");
   const done = transactionDone(tx);
   const sessionStore = tx.objectStore(STORE_NAME);
@@ -871,6 +923,9 @@ export const appendPageToProjectSession = async (
     pageIndex,
     totalPages: pages.length,
   };
+  } finally {
+    db?.close?.();
+  }
 };
 
 export const transactionDone = (

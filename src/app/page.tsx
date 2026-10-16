@@ -530,31 +530,56 @@ export default function WorkspacePage() {
     }, []),
   });
 
+  const pageSourceFingerprintByUrl = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const page of pages) {
+      if (page.sourceFingerprint) map.set(page.url, page.sourceFingerprint);
+    }
+    return map;
+  }, [pages]);
+
   const getExpectedRemnantEvidence = useCallback((pageUrl: string): PageRemnantTextEvidence => ({
     sourceContext:
       getPageSourceRevision?.(pageUrl) ||
       cleaningResultsByPage?.get?.(pageUrl)?.sourceFingerprint ||
-      pages.find((p) => p.url === pageUrl)?.sourceFingerprint ||
+      pageSourceFingerprintByUrl.get(pageUrl) ||
       "",
     textEvidence: (bubbleCacheRef.current.get(pageUrl) ?? []).flatMap((bubble, index) =>
       !bubble.deleted && bubble.original_text?.trim() && bubble.box?.length === 4 && bubble.box.every(Number.isFinite)
         ? [{ id: String(index), box: [...bubble.box] }] : []),
-  }), [bubbleCacheRef, cleaningResultsByPage, getPageSourceRevision, pages]);
-  const remnantEvidenceKey = pages
-    .map((page, idx) => {
-      const ev = getExpectedRemnantEvidence(page.url);
-      return `${page.id ?? idx}:${ev.sourceContext}:${ev.textEvidence.map((t) => `${t.id}@${t.box.join(",")}`).join(";")}`;
-    })
-    .join("|");
+  }), [bubbleCacheRef, cleaningResultsByPage, getPageSourceRevision, pageSourceFingerprintByUrl]);
+
+  const remnantEvidenceKey = useMemo(
+    () =>
+      pages
+        .map((page, idx) => {
+          const ev = getExpectedRemnantEvidence(page.url);
+          return `${page.id ?? idx}:${ev.sourceContext}:${ev.textEvidence.map((t) => `${t.id}@${t.box.join(",")}`).join(";")}`;
+        })
+        .join("|"),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pages, translationCacheRevision, cleaningCacheRevision, getExpectedRemnantEvidence],
+  );
+
+  const lastSyncedEvidenceByPageRef = useRef<Map<string, string>>(new Map());
   useEffect(() => {
+    const activeUrls = new Set(pages.map((p) => p.url));
+    for (const url of lastSyncedEvidenceByPageRef.current.keys()) {
+      if (!activeUrls.has(url)) lastSyncedEvidenceByPageRef.current.delete(url);
+    }
     for (const page of pages) {
-      setPageRemnantTextEvidence?.(page.url, getExpectedRemnantEvidence(page.url));
+      const ev = getExpectedRemnantEvidence(page.url);
+      const pageKey = `${ev.sourceContext}:${ev.textEvidence.map((t) => `${t.id}@${t.box.join(",")}`).join(";")}`;
+      if (lastSyncedEvidenceByPageRef.current.get(page.url) === pageKey) continue;
+      lastSyncedEvidenceByPageRef.current.set(page.url, pageKey);
+      setPageRemnantTextEvidence?.(page.url, ev);
     }
   }, [pages, remnantEvidenceKey, translationCacheRevision, getExpectedRemnantEvidence, setPageRemnantTextEvidence]);
 
   useEffect(() => {
     if (!translatedImages) return;
     for (let i = 0; i < pages.length; i++) {
+      if (Math.abs(i - currentPage) > 2) continue;
       const page = pages[i];
       const pageId = page.id || `page_${i}`;
       const renderedUrl = translatedImages?.get?.(page.url);
@@ -564,7 +589,7 @@ export default function WorkspacePage() {
         workspaceResourceManager.registerRenderedImage(pageId, signature, renderedUrl, approxBytes);
       }
     }
-  }, [pages, translatedImages, getPageSignature]);
+  }, [pages, currentPage, translatedImages, getPageSignature]);
 
   const [pairingToken, setPairingToken] = useState<string>("");
 

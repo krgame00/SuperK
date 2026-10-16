@@ -447,6 +447,7 @@ class CleaningPipeline:
             else ("legacy-full-page" if np.any(eligible) else "none")
         )
         if full_lama is not None and np.any(eligible):
+            _progress(progress_callback, JobStage.CLEANING, 0, total)
             stage_started = perf_counter()
             if not adaptive_roi_enabled and hasattr(full_lama, "clean_full_image"):
                 scoped_clean = full_lama.clean_full_image(image_rgb, eligible)
@@ -879,6 +880,12 @@ class CleaningPipeline:
                     "text_confirmed": record.text_confirmed if partial_restore else False,
                     "mask_approved": False,
                     "approval_revision": None,
+                    "protection_reasons": (
+                        record.protection_reasons
+                        if partial_restore
+                        else [reason for reason in record.protection_reasons if reason != "low-confidence"]
+                    ),
+                    "confidence": record.confidence if partial_restore else max(record.confidence, 0.95),
                 },
             )
             return PipelineOutput(
@@ -948,7 +955,11 @@ class CleaningPipeline:
 
         started = perf_counter()
         repaired = selected.clean(working_image, binary_mask, region)
-        feather = _feather_radius_for_route(record.route)
+        feather = (
+            0
+            if output.cleaning_mode is CleaningMode.ALL_TEXT
+            else _feather_radius_for_route(record.route)
+        )
         candidate, support = compose(
             working_image,
             repaired,
@@ -962,13 +973,18 @@ class CleaningPipeline:
                 support,
                 output.protected_mask,
             )
+        probe_for_retry = (
+            _ZeroResidualProbe()
+            if action is ManualRegionAction.FORCE_CLEAN
+            else self.residual_probe
+        )
         report = verify_region(
             working_image,
             candidate,
             binary_mask,
             support,
             region,
-            self.residual_probe,
+            probe_for_retry,
         )
         updated_records = list(output.regions)
         accepted = (
@@ -1000,6 +1016,12 @@ class CleaningPipeline:
                     if action is ManualRegionAction.AUTOMATIC
                     else TextRole.DIALOGUE
                 ),
+                "protection_reasons": (
+                    [reason for reason in record.protection_reasons if reason != "low-confidence"]
+                    if accepted
+                    else record.protection_reasons
+                ),
+                "confidence": max(record.confidence, 0.95) if accepted else record.confidence,
             },
         )
         timings = dict(output.timings_ms)

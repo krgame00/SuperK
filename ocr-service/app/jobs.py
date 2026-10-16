@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
+import os
 import re
 import shutil
 import threading
@@ -54,10 +55,13 @@ class PipelineFactory(Protocol):
     def __call__(self) -> Pipeline: ...
 
 
-def _trim_process_memory() -> None:
+def _trim_process_memory(aggressive: bool = True) -> None:
     try:
         import gc
 
+        if not aggressive:
+            gc.collect(0)
+            return
         gc.collect()
         try:
             import torch
@@ -161,6 +165,7 @@ class JobStore:
         self._jobs: dict[str, JobState] = {}
         self._jobs_lock = threading.RLock()
         self._pipeline_instance: Pipeline | None = None
+        self._last_completed_output: tuple[str, PipelineOutput] | None = None
         self._active_workers = 0
         self._idle_timer: threading.Timer | None = None
         self._last_sweep_at = 0.0
@@ -276,6 +281,85 @@ class JobStore:
             return job
         except Exception:
             return None
+
+    def restore_client_job(
+        self,
+        *,
+        job_id: str | None,
+        source_bytes: bytes,
+        clean_bytes: bytes,
+        mask_bytes: bytes,
+        review_mask_bytes: bytes,
+        protected_mask_bytes: bytes,
+        regions_json: str,
+        cleaning_mode: CleaningMode = CleaningMode.ALL_TEXT,
+    ) -> JobState:
+        import json
+        from app.schemas import RegionRecord
+        resolved_id = (
+            job_id
+            if isinstance(job_id, str) and re.fullmatch(r"[0-9a-f]{32}", job_id)
+            else uuid.uuid4().hex
+        )
+        source_rgb = _decode_rgb(source_bytes)
+        height, width = source_rgb.shape[:2]
+        raw_regions = json.loads(regions_json)
+        regions = [RegionRecord.model_validate(item) for item in raw_regions]
+
+        target = self.cache_dir / resolved_id
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.parent / f".{resolved_id}.{uuid.uuid4().hex}.tmp"
+        temporary.mkdir()
+        try:
+            (temporary / "source.png").write_bytes(source_bytes)
+            (temporary / "clean.png").write_bytes(clean_bytes)
+            (temporary / "mask.png").write_bytes(mask_bytes)
+            (temporary / "review-mask.png").write_bytes(review_mask_bytes)
+            (temporary / "protected-mask.png").write_bytes(protected_mask_bytes)
+            source_hash = hashlib.sha256(source_bytes).hexdigest()
+            result = CleaningResult(
+                job_id=resolved_id,
+                source_hash=source_hash,
+                width=width,
+                height=height,
+                clean_asset=f"/v1/jobs/{resolved_id}/assets/clean.png",
+                mask_asset=f"/v1/jobs/{resolved_id}/assets/mask.png",
+                review_mask_asset=f"/v1/jobs/{resolved_id}/assets/review-mask.png",
+                protected_mask_asset=f"/v1/jobs/{resolved_id}/assets/protected-mask.png",
+                regions=regions,
+                timings_ms={"restored": 1},
+                awaiting_review=any(
+                    r.status.value == "needs_review" and r.automatic_action.value == "clean"
+                    for r in regions
+                ),
+                cleaning_mode=CleaningMode(cleaning_mode),
+            )
+            (temporary / "result.json").write_text(result.model_dump_json(), encoding="utf-8")
+            if target.exists():
+                shutil.rmtree(target, ignore_errors=True)
+            try:
+                temporary.replace(target)
+            except OSError:
+                if target.exists():
+                    shutil.rmtree(target, ignore_errors=True)
+                shutil.move(str(temporary), str(target))
+        except Exception:
+            shutil.rmtree(temporary, ignore_errors=True)
+            raise
+
+        job = JobState(
+            id=resolved_id,
+            filename="restored.png",
+            source_bytes=b"",
+            status=JobStatus.SUCCEEDED,
+            stage=JobStage.COMPLETE,
+            result=result,
+            asset_dir=target,
+            cleaning_mode=CleaningMode(cleaning_mode),
+        )
+        with self._jobs_lock:
+            self._jobs[resolved_id] = job
+        return job
 
     def shutdown(self) -> None:
         with self._jobs_lock:
@@ -420,7 +504,7 @@ class JobStore:
         with self._jobs_lock:
             return self._pipeline_instance is not None
 
-    def unload_models(self, force: bool = False) -> bool:
+    def unload_models(self, force: bool = False, *, trim_working_set: bool = True) -> bool:
         """Unload heavy pipeline models if no jobs are actively running (or if force=True)."""
         with self._jobs_lock:
             if self._idle_timer is not None:
@@ -429,8 +513,12 @@ class JobStore:
             if (self._active_job_ids() or self._active_workers > 0) and not force:
                 LOGGER.info("Cannot unload models: active jobs are running")
                 return False
+            self._last_completed_output = None
             if self._pipeline_instance is None:
-                self.trim_memory()
+                if trim_working_set:
+                    self.trim_memory()
+                else:
+                    _trim_process_memory(aggressive=False)
                 return True
             LOGGER.info("Unloading heavy models from memory...")
             pipeline = self._pipeline_instance
@@ -462,7 +550,10 @@ class JobStore:
                         pass
 
             del pipeline
-            self.trim_memory()
+            if trim_working_set:
+                self.trim_memory()
+            else:
+                _trim_process_memory(aggressive=False)
             return True
 
     def _schedule_idle_unload_if_idle(self) -> None:
@@ -491,7 +582,7 @@ class JobStore:
                 "Idle timeout reached (%s s); releasing heavy models",
                 self.model_idle_timeout_seconds,
             )
-            self.unload_models()
+            self.unload_models(trim_working_set=False)
 
     def trim_memory(self) -> None:
         """Purge unreferenced objects and trim the OS working set."""
@@ -578,7 +669,7 @@ class JobStore:
         finally:
             if watchdog is not None:
                 watchdog.cancel()
-            _trim_process_memory()
+            _trim_process_memory(aggressive=False)
             if worker_active:
                 self._worker_finished()
             self._schedule_idle_unload_if_idle()
@@ -600,37 +691,84 @@ class JobStore:
         worker_active = True
         watchdog = self._start_watchdog(job)
         try:
-            with parent.lock:
-                if parent.asset_dir is None or not parent.asset_dir.exists():
-                    raise RuntimeError("parent assets are unavailable")
-                parent_output = PipelineOutput(
-                    source_image=_decode_rgb((parent.asset_dir / "source.png").read_bytes()),
-                    clean_image=_decode_rgb((parent.asset_dir / "clean.png").read_bytes()),
-                    mask=_decode_mask((parent.asset_dir / "mask.png").read_bytes()),
-                    review_mask=_decode_mask((parent.asset_dir / "review-mask.png").read_bytes()),
-                    protected_mask=_decode_mask((parent.asset_dir / "protected-mask.png").read_bytes()),
-                    regions=parent.result.regions if parent.result else [],
-                    timings_ms=parent.result.timings_ms if parent.result else {},
-                    cleaning_mode=parent.cleaning_mode,
-                )
             mask = _decode_mask(mask_bytes)
-            if mask.shape != parent_output.mask.shape:
-                raise ValueError("retry mask dimensions do not match the image")
             pipeline = self._pipeline()
             retry = getattr(pipeline, "retry_region", None)
             if retry is None:
                 raise RuntimeError("pipeline does not support region retry")
+            with parent.lock:
+                if parent.asset_dir is None or not parent.asset_dir.exists():
+                    raise RuntimeError("parent assets are unavailable")
+                parent_asset_dir = parent.asset_dir
+                if (
+                    action is ManualRegionAction.CONFIRM_TEXT
+                    and type(pipeline).__name__ == "CleaningPipeline"
+                    and parent.result is not None
+                    and parent.result.width > 0
+                    and parent.result.height > 0
+                ):
+                    expected_shape = (parent.result.height, parent.result.width)
+                    if mask.shape != expected_shape:
+                        raise ValueError("retry mask dimensions do not match the image")
+                    placeholder_rgb = np.empty((1, 1, 3), dtype=np.uint8)
+                    placeholder_mask = np.empty(expected_shape, dtype=np.uint8)
+                    parent_output = PipelineOutput(
+                        source_image=placeholder_rgb,
+                        clean_image=placeholder_rgb,
+                        mask=placeholder_mask,
+                        review_mask=placeholder_mask,
+                        protected_mask=placeholder_mask,
+                        regions=parent.result.regions,
+                        timings_ms=parent.result.timings_ms,
+                        cleaning_mode=parent.cleaning_mode,
+                    )
+                else:
+                    cached_pair = self._last_completed_output
+                    if (
+                        cached_pair is not None
+                        and cached_pair[0] == parent.id
+                        and (parent.asset_dir / "result.json").is_file()
+                    ):
+                        cached_out = cached_pair[1]
+                        parent_output = PipelineOutput(
+                            source_image=cached_out.source_image,
+                            clean_image=cached_out.clean_image,
+                            mask=cached_out.mask,
+                            review_mask=cached_out.review_mask,
+                            protected_mask=cached_out.protected_mask,
+                            regions=parent.result.regions if parent.result else cached_out.regions,
+                            timings_ms=parent.result.timings_ms if parent.result else cached_out.timings_ms,
+                            cleaning_mode=parent.cleaning_mode,
+                        )
+                    else:
+                        parent_output = PipelineOutput(
+                            source_image=_decode_rgb((parent.asset_dir / "source.png").read_bytes()),
+                            clean_image=_decode_rgb((parent.asset_dir / "clean.png").read_bytes()),
+                            mask=_decode_mask((parent.asset_dir / "mask.png").read_bytes()),
+                            review_mask=_decode_mask((parent.asset_dir / "review-mask.png").read_bytes()),
+                            protected_mask=_decode_mask((parent.asset_dir / "protected-mask.png").read_bytes()),
+                            regions=parent.result.regions if parent.result else [],
+                            timings_ms=parent.result.timings_ms if parent.result else {},
+                            cleaning_mode=parent.cleaning_mode,
+                        )
+            if mask.shape != parent_output.mask.shape:
+                raise ValueError("retry mask dimensions do not match the image")
             output = retry(parent_output, region_id, mask, cleaner, action)
             self._worker_finished()
             worker_active = False
-            self._complete(job, output, mask.shape)
+            self._complete(
+                job,
+                output,
+                mask.shape,
+                parent_asset_dir=parent_asset_dir,
+                parent_output=parent_output,
+            )
         except Exception as exc:
             LOGGER.exception("retry job %s failed", job.id)
             self._fail(job, exc)
         finally:
             if watchdog is not None:
                 watchdog.cancel()
-            _trim_process_memory()
             if worker_active:
                 self._worker_finished()
             self._schedule_idle_unload_if_idle()
@@ -640,6 +778,9 @@ class JobStore:
         job: JobState,
         output: PipelineOutput,
         image_shape: tuple[int, int],
+        *,
+        parent_asset_dir: Path | None = None,
+        parent_output: PipelineOutput | None = None,
     ) -> None:
         with job.lock:
             if job.status is not JobStatus.RUNNING:
@@ -658,7 +799,7 @@ class JobStore:
             len(output.regions),
             len(output.regions),
         )
-        asset_dir = self._write_assets(job.id, output, job.project_id)
+        asset_dir = self._write_assets(job.id, output, job.project_id, parent_asset_dir=parent_asset_dir, parent_output=parent_output)
         height, width = image_shape
         with job.lock:
             source_bytes = job.source_bytes
@@ -714,6 +855,29 @@ class JobStore:
             job.stage = JobStage.COMPLETE
             job.elapsed_ms = job._current_elapsed_ms()
             job.started_at = None
+        with self._jobs_lock:
+            if output.source_image.shape[:2] == (height, width):
+                self._last_completed_output = (job.id, output)
+            elif (
+                job.parent_id is not None
+                and self._last_completed_output is not None
+                and self._last_completed_output[0] == job.parent_id
+            ):
+                prev_out = self._last_completed_output[1]
+                self._last_completed_output = (
+                    job.id,
+                    PipelineOutput(
+                        source_image=prev_out.source_image,
+                        clean_image=prev_out.clean_image,
+                        mask=prev_out.mask,
+                        review_mask=prev_out.review_mask,
+                        protected_mask=prev_out.protected_mask,
+                        regions=output.regions,
+                        timings_ms=output.timings_ms,
+                        awaiting_review=output.awaiting_review,
+                        cleaning_mode=output.cleaning_mode,
+                    ),
+                )
 
 
 
@@ -751,6 +915,9 @@ class JobStore:
         job_id: str,
         output: PipelineOutput,
         project_id: str | None = None,
+        *,
+        parent_asset_dir: Path | None = None,
+        parent_output: PipelineOutput | None = None,
     ) -> Path:
         target = self.cache_dir / job_id
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -759,15 +926,28 @@ class JobStore:
         try:
             if project_id:
                 (temporary / "project_id.txt").write_text(project_id, encoding="utf-8")
-            Image.fromarray(output.source_image).save(temporary / "source.png")
-            Image.fromarray(output.clean_image).save(temporary / "clean.png")
-            Image.fromarray(output.mask).save(temporary / "mask.png")
-            Image.fromarray(output.review_mask).save(
-                temporary / "review-mask.png",
-            )
-            Image.fromarray(output.protected_mask).save(
-                temporary / "protected-mask.png",
-            )
+            asset_pairs = [
+                ("source.png", output.source_image, parent_output.source_image if parent_output is not None else None),
+                ("clean.png", output.clean_image, parent_output.clean_image if parent_output is not None else None),
+                ("mask.png", output.mask, parent_output.mask if parent_output is not None else None),
+                ("review-mask.png", output.review_mask, parent_output.review_mask if parent_output is not None else None),
+                ("protected-mask.png", output.protected_mask, parent_output.protected_mask if parent_output is not None else None),
+            ]
+            for filename, arr, parent_arr in asset_pairs:
+                if (
+                    parent_asset_dir is not None
+                    and parent_arr is not None
+                    and arr is parent_arr
+                    and (parent_asset_dir / filename).is_file()
+                ):
+                    src_asset = parent_asset_dir / filename
+                    dst_asset = temporary / filename
+                    try:
+                        os.link(src_asset, dst_asset)
+                    except OSError:
+                        shutil.copy2(src_asset, dst_asset)
+                else:
+                    Image.fromarray(arr).save(temporary / filename, compress_level=1)
             if target.exists():
                 shutil.rmtree(target, ignore_errors=True)
             try:

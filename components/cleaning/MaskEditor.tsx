@@ -122,19 +122,40 @@ async function encodeAuthorizedMask(mask: ImageData, rect: PixelRect, restoreOnl
   const context = canvas.getContext("2d");
   if (!context) throw new Error("สร้าง Mask ไม่สำเร็จ");
   const grayscale = context.createImageData(mask.width, mask.height);
-  for (let index = 0; index < mask.data.length; index += 4) {
-    const x = (index / 4) % mask.width;
-    const y = Math.floor(index / 4 / mask.width);
-    const inside = x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
-    const selected = excludedOnly ? isExcludedPixel(mask, index) : restoreOnly ? mask.data[index + 2] === 255 : mask.data[index + 2] !== 255;
-    const value = inside && selected && (excludedOnly || mask.data[index + 3] > 0) ? 255 : 0;
-    grayscale.data[index] = value;
-    grayscale.data[index + 1] = value;
-    grayscale.data[index + 2] = value;
-    grayscale.data[index + 3] = 255;
+  const gData = grayscale.data;
+  const mData = mask.data;
+  const width = mask.width;
+  const height = mask.height;
+  for (let i = 3, len = gData.length; i < len; i += 4) {
+    gData[i] = 255;
+  }
+  const minY = Math.max(0, rect.y);
+  const maxY = Math.min(height, rect.y + rect.height);
+  const minX = Math.max(0, rect.x);
+  const maxX = Math.min(width, rect.x + rect.width);
+  for (let y = minY; y < maxY; y++) {
+    const rowOffset = y * width;
+    for (let x = minX; x < maxX; x++) {
+      const index = (rowOffset + x) * 4;
+      const selected = excludedOnly
+        ? isExcludedPixel(mask, index)
+        : restoreOnly
+          ? mData[index + 2] === 255
+          : mData[index + 2] !== 255;
+      if (selected && (excludedOnly || mData[index + 3] > 0)) {
+        gData[index] = 255;
+        gData[index + 1] = 255;
+        gData[index + 2] = 255;
+      }
+    }
   }
   context.putImageData(grayscale, 0, 0);
-  return canvasToBlob(canvas);
+  try {
+    return await canvasToBlob(canvas);
+  } finally {
+    canvas.width = 0;
+    canvas.height = 0;
+  }
 }
 
 function isRecoveredResult(value: unknown): value is { recoveredRegionId: string; regions: CleaningRegion[] } {
@@ -155,6 +176,8 @@ function loadMaskImage(url: string): Promise<ImageData> {
       if (!context) return reject(new Error("อ่าน Mask ที่เสนอใหม่ไม่สำเร็จ"));
       context.drawImage(image, 0, 0);
       const data = context.getImageData(0, 0, canvas.width, canvas.height);
+      canvas.width = 0;
+      canvas.height = 0;
       for (let i = 0; i < data.data.length; i += 4) {
         const alpha = data.data[i] > 16 ? 150 : 0;
         data.data[i] = 255;
@@ -189,17 +212,31 @@ export function MaskEditor({
   const sourceImageRef = useRef<HTMLImageElement>(null);
   const [comparison, setComparison] = useState<"original" | "cleaned">(cleanUrl ? "cleaned" : "original");
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const brushCursorRef = useRef<HTMLDivElement>(null);
+  const brushPointRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const canvasBoundsRef = useRef<DOMRect | null>(null);
   const imageDataRef = useRef<ImageData | undefined>(undefined);
   const drawingRef = useRef(false);
   const loadedRegionRef = useRef("");
   // Unsaved strokes per region: switching balloons must not wipe what the
   // user painted, and coming back must restore their work in progress.
   const regionSnapshotsRef = useRef<Map<string, ImageData>>(new Map());
+  const setBoundedRegionSnapshot = (key: string, data: ImageData) => {
+    const map = regionSnapshotsRef.current;
+    if (map.has(key)) map.delete(key);
+    map.set(key, data);
+    while (map.size > 6) {
+      const oldest = map.keys().next().value;
+      if (oldest !== undefined) map.delete(oldest);
+      else break;
+    }
+  };
   // Bounded undo memory: one base snapshot per edit window plus compact
   // stroke operations — never two full-page ImageData clones per stroke.
   const strokeOpsRef = useRef<Array<{ points: MaskPoint[]; radius: number; mode: BrushMode }>>([]);
   const strokeStartIndexRef = useRef(0);
   const opsBaseRef = useRef<ImageData | null>(null);
+  const activeUndoDisposersRef = useRef<Array<() => void>>([]);
   const submittingRef = useRef(false);
   const maskGenerationsRef = useRef<Map<string, number>>(new Map());
 
@@ -267,20 +304,78 @@ export function MaskEditor({
     });
   }, [onClose, returnFocusRef]);
 
-  const renderMask = (imageData: ImageData) => {
+  const renderMask = (
+    imageData: ImageData,
+    dirtyRect?: { x: number; y: number; width: number; height: number } | null,
+  ) => {
     imageDataRef.current = imageData;
-    canvasRef.current?.getContext("2d")?.putImageData(imageData, 0, 0);
+    const ctx = canvasRef.current?.getContext("2d");
+    if (!ctx) return;
+    if (dirtyRect && dirtyRect.width > 0 && dirtyRect.height > 0) {
+      try {
+        ctx.putImageData(
+          imageData,
+          0,
+          0,
+          dirtyRect.x,
+          dirtyRect.y,
+          dirtyRect.width,
+          dirtyRect.height,
+        );
+        return;
+      } catch {
+        // Fallback to full putImageData if test mock only accepts 3 args
+      }
+    }
+    ctx.putImageData(imageData, 0, 0);
   };
 
   useEffect(() => {
     closeRef.current?.focus();
+    const regionSnapshots = regionSnapshotsRef.current;
+    const maskGenerations = maskGenerationsRef.current;
+    const undoDisposers = activeUndoDisposersRef.current;
+    const canvasEl = canvasRef.current;
+    return () => {
+      for (const [k, gen] of maskGenerations.entries()) {
+        maskGenerations.set(k, gen + 1);
+      }
+      for (const dispose of undoDisposers) {
+        dispose();
+      }
+      undoDisposers.length = 0;
+      regionSnapshots.clear();
+      opsBaseRef.current = null;
+      imageDataRef.current = undefined;
+      strokeOpsRef.current = [];
+      if (canvasEl) {
+        canvasEl.width = 0;
+        canvasEl.height = 0;
+      }
+    };
   }, []);
 
   useEffect(() => {
     const key = `${sourceUrl}:${regionId}`;
     if (loadedRegionRef.current === key && imageDataRef.current) return;
     if (loadedRegionRef.current && imageDataRef.current) {
-      regionSnapshotsRef.current.set(loadedRegionRef.current, imageDataRef.current);
+      setBoundedRegionSnapshot(loadedRegionRef.current, imageDataRef.current);
+    }
+    const existingSnapshot = regionSnapshotsRef.current.get(key);
+    if (
+      existingSnapshot &&
+      canvasRef.current &&
+      canvasRef.current.width === existingSnapshot.width &&
+      canvasRef.current.height === existingSnapshot.height
+    ) {
+      setBrushPoint({
+        x: Math.round(existingSnapshot.width / 2),
+        y: Math.round(existingSnapshot.height / 2),
+      });
+      renderMask(existingSnapshot);
+      snapshotOpsBase();
+      loadedRegionRef.current = key;
+      return;
     }
     let active = true;
     let readingProposal = false;
@@ -288,32 +383,48 @@ export function MaskEditor({
     maskImage.onload = () => {
       if (!active || !canvasRef.current) return;
       const canvas = canvasRef.current;
-      canvas.width = maskImage.naturalWidth;
-      canvas.height = maskImage.naturalHeight;
-      setCanvasSize({
-        width: maskImage.naturalWidth,
-        height: maskImage.naturalHeight,
-      });
+      if (canvas.width !== maskImage.naturalWidth) {
+        canvas.width = maskImage.naturalWidth;
+      }
+      if (canvas.height !== maskImage.naturalHeight) {
+        canvas.height = maskImage.naturalHeight;
+      }
+      setCanvasSize((prev) =>
+        prev.width === maskImage.naturalWidth && prev.height === maskImage.naturalHeight
+          ? prev
+          : { width: maskImage.naturalWidth, height: maskImage.naturalHeight },
+      );
       setBrushPoint({
         x: Math.round(maskImage.naturalWidth / 2),
         y: Math.round(maskImage.naturalHeight / 2),
       });
       const context = canvas.getContext("2d", { willReadFrequently: true });
       if (!context) return;
+      context.clearRect?.(0, 0, canvas.width, canvas.height);
       context.drawImage(maskImage, 0, 0);
       const source = context.getImageData(0, 0, canvas.width, canvas.height);
-      for (let index = 0; index < source.data.length; index += 4) {
-        const x = (index / 4) % canvas.width;
-        const y = Math.floor(index / 4 / canvas.width);
-        const r = regions.find(region => region.id === regionId)?.rect;
-        const activePixel = source.data[index] > 16 && r && x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
-        source.data[index] = 255;
-        source.data[index + 1] = 55;
-        source.data[index + 2] = 80;
-        source.data[index + 3] = activePixel ? 150 : 0;
+      const r = regions.find(region => region.id === regionId)?.rect;
+      const sData = source.data;
+      const cWidth = canvas.width;
+      const cHeight = canvas.height;
+      const rx0 = r ? r.x : 0;
+      const ry0 = r ? r.y : 0;
+      const rx1 = r ? r.x + r.width : 0;
+      const ry1 = r ? r.y + r.height : 0;
+      for (let y = 0; y < cHeight; y++) {
+        const inY = r !== undefined && y >= ry0 && y < ry1;
+        const rowOffset = y * cWidth;
+        for (let x = 0; x < cWidth; x++) {
+          const index = (rowOffset + x) * 4;
+          const activePixel = inY && x >= rx0 && x < rx1 && sData[index] > 16;
+          sData[index] = 255;
+          sData[index + 1] = 55;
+          sData[index + 2] = 80;
+          sData[index + 3] = activePixel ? 150 : 0;
+        }
       }
       const snapshot = regionSnapshotsRef.current.get(key);
-      const rect = regions.find(region => region.id === regionId)?.rect;
+      const rect = r;
       // Review status also applies to regions that were already cleaned.
       // Show their actual removal mask; use a proposal only for an empty region.
       if (!snapshot && !readingProposal && rect && !maskHasPixels(source, rect) &&
@@ -343,16 +454,32 @@ export function MaskEditor({
 
   const lastStrokePointRef = useRef<MaskPoint | null>(null);
 
+  const updateBrushCursorDom = (point: { x: number; y: number }, width: number, height: number) => {
+    brushPointRef.current = point;
+    const cursorEl = brushCursorRef.current;
+    if (cursorEl && width > 0 && height > 0) {
+      cursorEl.style.left = `${(point.x / width) * 100}%`;
+      cursorEl.style.top = `${(point.y / height) * 100}%`;
+    }
+  };
+
   const drawAt = (event: React.PointerEvent<HTMLCanvasElement>, appendToCurrentStroke = false) => {
     const canvas = canvasRef.current;
     const current = imageDataRef.current;
     if (submittingRef.current || !canvas || !current) return;
-    const bounds = canvas.getBoundingClientRect();
+    const bounds =
+      appendToCurrentStroke && canvasBoundsRef.current
+        ? canvasBoundsRef.current
+        : canvas.getBoundingClientRect();
+    canvasBoundsRef.current = bounds;
     const point = {
-      x: (event.clientX - bounds.left) * (canvas.width / bounds.width),
-      y: (event.clientY - bounds.top) * (canvas.height / bounds.height),
+      x: (event.clientX - bounds.left) * (canvas.width / Math.max(1, bounds.width)),
+      y: (event.clientY - bounds.top) * (canvas.height / Math.max(1, bounds.height)),
     };
-    setBrushPoint(point);
+    updateBrushCursorDom(point, canvas.width, canvas.height);
+    if (!appendToCurrentStroke) {
+      setBrushPoint(point);
+    }
     const points =
       appendToCurrentStroke && lastStrokePointRef.current
         ? interpolateBrushPoints(lastStrokePointRef.current, point, radius)
@@ -365,7 +492,8 @@ export function MaskEditor({
     } else {
       strokeOpsRef.current.push({ points: [...points], radius, mode });
     }
-    renderMask(applyEditorBrush(current, points, radius, mode));
+    const dirtyRect = applyEditorBrushInPlace(current, points, radius, mode);
+    renderMask(current, dirtyRect);
   };
 
   const startStroke = (event: React.PointerEvent<HTMLCanvasElement>) => {
@@ -378,6 +506,7 @@ export function MaskEditor({
     }
     if (!imageDataRef.current) return;
     drawingRef.current = true;
+    canvasBoundsRef.current = event.currentTarget.getBoundingClientRect();
     strokeStartIndexRef.current = strokeOpsRef.current.length;
     lastStrokePointRef.current = null;
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -402,22 +531,34 @@ export function MaskEditor({
       setIsPanning(false);
       return;
     }
+    canvasBoundsRef.current = null;
     lastStrokePointRef.current = null;
     if (!drawingRef.current || !imageDataRef.current) {
       return;
     }
     drawingRef.current = false;
+    setBrushPoint(brushPointRef.current);
     const startIndex = strokeStartIndexRef.current;
     const endIndex = strokeOpsRef.current.length;
     if (endIndex === startIndex || !opsBaseRef.current) {
       return;
     }
-    const base = opsBaseRef.current;
-    const ops = [...strokeOpsRef.current];
+    const holder: { base: ImageData | null; ops: Array<{ points: MaskPoint[]; radius: number; mode: BrushMode }> } = {
+      base: opsBaseRef.current,
+      ops: [...strokeOpsRef.current],
+    };
+    activeUndoDisposersRef.current.push(() => {
+      holder.base = null;
+      holder.ops = [];
+    });
     pushMaskUndo({
       label: "แก้ Mask",
-      undo: () => renderReplayedOps(base, ops, startIndex),
-      redo: () => renderReplayedOps(base, ops, endIndex),
+      undo: () => {
+        if (holder.base) renderReplayedOps(holder.base, holder.ops, startIndex);
+      },
+      redo: () => {
+        if (holder.base) renderReplayedOps(holder.base, holder.ops, endIndex);
+      },
     });
   };
 
@@ -440,14 +581,21 @@ export function MaskEditor({
       }
     }
     renderMask(updated);
+    const holder: { before: ImageData | null; after: ImageData | null } = { before, after: updated };
+    activeUndoDisposersRef.current.push(() => {
+      holder.before = null;
+      holder.after = null;
+    });
     pushMaskUndo({
       label: "เติม Mask เต็มกรอบ",
       undo: () => {
-        renderMask(cloneImageData(before));
+        if (!holder.before) return;
+        renderMask(cloneImageData(holder.before));
         snapshotOpsBase();
       },
       redo: () => {
-        renderMask(cloneImageData(updated));
+        if (!holder.after) return;
+        renderMask(cloneImageData(holder.after));
         snapshotOpsBase();
       },
     });
@@ -479,14 +627,21 @@ export function MaskEditor({
       }
     }
     renderMask(updated);
+    const holder: { before: ImageData | null; after: ImageData | null } = { before, after: updated };
+    activeUndoDisposersRef.current.push(() => {
+      holder.before = null;
+      holder.after = null;
+    });
     pushMaskUndo({
       label: "ล้าง Mask ในกรอบ",
       undo: () => {
-        renderMask(cloneImageData(before));
+        if (!holder.before) return;
+        renderMask(cloneImageData(holder.before));
         snapshotOpsBase();
       },
       redo: () => {
-        renderMask(cloneImageData(updated));
+        if (!holder.after) return;
+        renderMask(cloneImageData(holder.after));
         snapshotOpsBase();
       },
     });
@@ -502,16 +657,32 @@ export function MaskEditor({
     }
   };
 
+  const selectedRegionId = selectedRegion?.id;
+  const selectedRectX = selectedRegion?.rect.x;
+  const selectedRectY = selectedRegion?.rect.y;
+  const selectedRectW = selectedRegion?.rect.width;
+  const selectedRectH = selectedRegion?.rect.height;
+
   const fitSelectedRegion = useCallback(() => {
     const workspace = workspaceRef.current;
     const image = sourceImageRef.current;
-    if (!workspace || !image || !selectedRegion || !canvasSize.width) return;
+    if (
+      !workspace ||
+      !image ||
+      selectedRegionId === undefined ||
+      selectedRectX === undefined ||
+      selectedRectY === undefined ||
+      selectedRectW === undefined ||
+      selectedRectH === undefined ||
+      !canvasSize.width
+    ) {
+      return;
+    }
     const imageWidth = image.clientWidth, imageHeight = image.clientHeight;
     if (!imageWidth || !imageHeight || !workspace.clientWidth || !workspace.clientHeight) return;
-    const rect = selectedRegion.rect;
-    setZoom(Math.max(0.5, Math.min(4, workspace.clientWidth / (imageWidth * rect.width / canvasSize.width + 96), workspace.clientHeight / (imageHeight * rect.height / canvasSize.height + 96))));
-    setPan({ x: imageWidth * (0.5 - (rect.x + rect.width / 2) / canvasSize.width), y: imageHeight * (0.5 - (rect.y + rect.height / 2) / canvasSize.height) });
-  }, [selectedRegion, canvasSize.width, canvasSize.height]);
+    setZoom(Math.max(0.5, Math.min(4, workspace.clientWidth / (imageWidth * selectedRectW / canvasSize.width + 96), workspace.clientHeight / (imageHeight * selectedRectH / canvasSize.height + 96))));
+    setPan({ x: imageWidth * (0.5 - (selectedRectX + selectedRectW / 2) / canvasSize.width), y: imageHeight * (0.5 - (selectedRectY + selectedRectH / 2) / canvasSize.height) });
+  }, [selectedRegionId, selectedRectX, selectedRectY, selectedRectW, selectedRectH, canvasSize.width, canvasSize.height]);
   useEffect(() => { fitSelectedRegion(); }, [fitSelectedRegion]);
 
   // Remnant navigation: bring the finding's authorized removal region into
@@ -731,7 +902,7 @@ export function MaskEditor({
           }
         }
         imageDataRef.current = cleanedDraft;
-        regionSnapshotsRef.current.set(restoredKey, cleanedDraft);
+        setBoundedRegionSnapshot(restoredKey, cleanedDraft);
         loadedRegionRef.current = restoredKey;
         if (hadVisibleBlue) {
           renderMask(cleanedDraft);
@@ -803,7 +974,7 @@ export function MaskEditor({
       // A cleared snapshot keeps old applied/proposal masks from resurrecting
       // the discarded draft while updated backend assets propagate.
       const cleared = new ImageData(new Uint8ClampedArray(current.width * current.height * 4), current.width, current.height);
-      regionSnapshotsRef.current.set(restoredKey, cleared);
+      setBoundedRegionSnapshot(restoredKey, cleared);
       loadedRegionRef.current = restoredKey;
       renderMask(cleared);
       snapshotOpsBase();
@@ -1058,6 +1229,7 @@ export function MaskEditor({
             style={{
               transform: `scale(${zoom}) translate(${pan.x}px, ${pan.y}px)`,
               transformOrigin: "center center",
+              ...(isPanning ? { transitionDuration: "0ms" } : {}),
             }}
           >
             <div className="relative mx-auto w-fit max-w-full shadow-2xl">
@@ -1153,8 +1325,9 @@ export function MaskEditor({
               {/* Brush Cursor Indicator */}
               {isCanvasFocused && canvasSize.width > 0 && !isPanning && (
                 <div
+                  ref={brushCursorRef}
                   aria-hidden="true"
-                  className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-primary ring-1 ring-white/75 transition-[left,top,width,height] duration-75 motion-reduce:transition-none"
+                  className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-primary ring-1 ring-white/75 transition-[width,height] duration-75 motion-reduce:transition-none"
                   style={{
                     left: `${(brushPoint.x / canvasSize.width) * 100}%`,
                     top: `${(brushPoint.y / canvasSize.height) * 100}%`,
@@ -1387,24 +1560,82 @@ function interpolateBrushPoints(from: MaskPoint, to: MaskPoint, radius: number):
   return points;
 }
 
-function applyEditorBrush(mask: ImageData, points: MaskPoint[], radius: number, mode: BrushMode): ImageData {
-  if (mode === "paint") return applyBrush(mask, points, radius, mode);
-  const updated = applyBrush(mask, points, radius, mode === "restore" ? "paint" : "erase");
+function applyEditorBrushInPlace(
+  mask: ImageData,
+  points: MaskPoint[],
+  radius: number,
+  mode: BrushMode,
+): { x: number; y: number; width: number; height: number } | null {
+  const activeRadius = Math.max(1, Math.round(radius));
+  const rSq = activeRadius * activeRadius;
+  const width = mask.width;
+  const height = mask.height;
+  const data = mask.data;
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+
   for (const point of points) {
-    for (let y = Math.max(0, Math.round(point.y) - radius); y < Math.min(mask.height, Math.round(point.y) + radius + 1); y++) {
-      for (let x = Math.max(0, Math.round(point.x) - radius); x < Math.min(mask.width, Math.round(point.x) + radius + 1); x++) {
-        if ((x - Math.round(point.x)) ** 2 + (y - Math.round(point.y)) ** 2 > radius ** 2) continue;
-        const offset = (y * mask.width + x) * 4;
-        if (mode === "restore") {
-          updated.data[offset] = 45; updated.data[offset + 1] = 145; updated.data[offset + 2] = 255; updated.data[offset + 3] = 150;
-        } else if ((mask.data[offset + 3] > 0 && mask.data[offset + 2] !== 255) || isExcludedPixel(mask, offset)) {
-          // Keep removed glyph support in transparent pixels so undo and region
-          // drafts carry the exact source selection to restore on erase-all.
-          updated.data[offset] = 255; updated.data[offset + 1] = 0; updated.data[offset + 2] = 1;
+    const centerX = Math.round(point.x);
+    const centerY = Math.round(point.y);
+    const startX = Math.max(0, centerX - activeRadius);
+    const endX = Math.min(width - 1, centerX + activeRadius);
+    const startY = Math.max(0, centerY - activeRadius);
+    const endY = Math.min(height - 1, centerY + activeRadius);
+
+    if (startX <= endX && startY <= endY) {
+      if (startX < minX) minX = startX;
+      if (endX > maxX) maxX = endX;
+      if (startY < minY) minY = startY;
+      if (endY > maxY) maxY = endY;
+    }
+
+    for (let y = startY; y <= endY; y += 1) {
+      const dy = y - centerY;
+      const dySq = dy * dy;
+      const rowOffset = y * width;
+      for (let x = startX; x <= endX; x += 1) {
+        const dx = x - centerX;
+        if (dx * dx + dySq > rSq) continue;
+        const offset = (rowOffset + x) * 4;
+        if (mode === "paint") {
+          data[offset] = 255;
+          data[offset + 1] = 70;
+          data[offset + 2] = 90;
+          data[offset + 3] = 255;
+        } else if (mode === "restore") {
+          data[offset] = 45;
+          data[offset + 1] = 145;
+          data[offset + 2] = 255;
+          data[offset + 3] = 150;
+        } else {
+          const wasActiveOrExcluded =
+            (data[offset + 3] > 0 && data[offset + 2] !== 255) || isExcludedPixel(mask, offset);
+          if (wasActiveOrExcluded) {
+            data[offset] = 255;
+            data[offset + 1] = 0;
+            data[offset + 2] = 1;
+            data[offset + 3] = 0;
+          } else {
+            data[offset] = 255;
+            data[offset + 1] = 70;
+            data[offset + 2] = 90;
+            data[offset + 3] = 0;
+          }
         }
       }
     }
   }
+
+  if (maxX < minX || maxY < minY) return null;
+  return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
+}
+
+function applyEditorBrush(mask: ImageData, points: MaskPoint[], radius: number, mode: BrushMode): ImageData {
+  if (mode === "paint") return applyBrush(mask, points, radius, mode);
+  const updated = cloneImageData(mask);
+  applyEditorBrushInPlace(updated, points, radius, mode);
   return updated;
 }
 function hasRestorePixels(mask: ImageData, rect: PixelRect): boolean {

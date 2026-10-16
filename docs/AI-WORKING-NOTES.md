@@ -2407,3 +2407,57 @@ Verification evidence:
 - Extension persistence drops duplicate image payload fields, caps `superk_trans_*` entries at 20, normalizes luminance scales for monochrome contrast, and wakes published-update sync when a tab becomes visible or focused. The eviction helper excludes the entry currently being stored before selecting oldest entries.
 - Local API POST routes now reject non-local origins; translate-text prioritizes the supplied/synced user key and canonical image-model order, and extension settings CORS allows the pairing-token header.
 - Verification: OCR suite **222 passed, 3 skipped** (one warning). Vitest broad run **205 files passed, 1 skipped; 1,727 tests passed, 1 skipped**; `tests/scripts/productionLauncher.test.ts` was excluded because `cscript.exe` is unavailable in this environment. `npx tsc --noEmit` passed. Focused extension/API tests and the OCR suite also passed.
+
+## SuperK Main Mask & Smoothness Update Integration — 2026-10-16
+
+### Status: VERIFIED WORKING (Integrated 11 files from superk-main-mask-and-smoothness-update.zip; 207/208 Vitest files passed [1,767 tests passed, 1 skipped]; 222/222 Pytest tests passed; 0 TypeScript errors)
+
+- **User Context & Request**:
+  - User provided `superk-main-mask-and-smoothness-update.zip` containing 11 modified core files for Mask Editing smoothness, cleaner inpainting acceleration, and memory leak elimination.
+  - Required thorough code review (`scrutinize`, `using-superpowers`, `debug-mantra`) to ensure zero regressions on the production Gemini routing path (`requestGemini`), 4K token whitelist, 1-click export approvals, and CI test stability.
+
+- **Changes Integrated**:
+  1. `components/cleaning/MaskEditor.tsx`:
+     - Bounded mask encoding (`minX/minY` to `maxX/maxY`) instead of full-image array conversions.
+     - Direct canvas dirty-rect updates via `putImageData` and in-place brush application.
+     - Direct DOM cursor transform updates via `brushCursorRef` avoiding continuous React re-render cycles during mouse moves.
+     - Region-bounded snapshot undo stack (capped at 6) preventing memory explosion on heavy brush sessions.
+  2. `components/workspace/PageFilmstrip.tsx`:
+     - Thumbnail pruning on page deletion via `releaseThumbnails()`.
+     - `loading="lazy"` and `decoding="async"` attributes on filmstrip thumbnails.
+  3. `hooks/useCleaning.ts`:
+     - Fast adaptive polling intervals `[60, 100, 160, 250, 400]` ms.
+     - Asset reuse on `skipHeavyPostProcess` flag.
+     - Instant canvas dimension zeroing (`c.width = 0; c.height = 0`) in cleanup paths.
+  4. `hooks/useTranslation.ts`:
+     - Canvas dimension zeroing and listener cleanup in offscreen containers.
+     - Bounded crop encoding cleanup in translation recovery.
+  5. `lib/projectStore.ts`:
+     - Single-transaction batched IndexedDB writes in `saveCleaningAssets`.
+     - Guaranteed `db?.close?.()` in `finally` blocks across all store operations to prevent connection leaks.
+  6. `ocr-service/app/api.py` & `ocr-service/app/jobs.py`:
+     - `/v1/jobs/restore` endpoint for resilient cleaner recovery.
+     - Fast hard-link asset writing (`os.link`) falling back to `shutil.copy2`.
+     - Fast `compress_level=1` PNG encoding for asset caches.
+  7. `ocr-service/app/cleaners/anime_lama.py` & `ocr-service/app/cleaners/lama_large.py`:
+     - Context margin reduced from full bounding box to 50% (`min(128, max(48, 0.5 * bbox))`).
+  8. `ocr-service/app/pipeline.py`:
+     - Zero-residual probe on `FORCE_CLEAN`, clearing `low-confidence` and setting confidence to 0.95.
+  9. `src/app/page.tsx`:
+     - Memoized `pageSourceFingerprintByUrl` and `remnantEvidenceKey`.
+     - `lastSyncedEvidenceByPageRef` deduplication preventing duplicate sync cycles.
+     - Sliding window (±2) on session persistence to stabilize long session RAM.
+
+- **Defects Intercepted & Fixed**:
+  1. **Missing `import os` in `ocr-service/app/jobs.py`**:
+     - *Bug*: Zip introduced `os.link(src_asset, dst_asset)` in `_write_assets` without importing `os`, triggering `NameError: name 'os' is not defined` during region retry.
+     - *Fix*: Added `import os` at top of `ocr-service/app/jobs.py`.
+  2. **`image.src = ""` in `hooks/useTranslation.ts` finally block**:
+     - *Bug*: Cleared the `src` attribute of the offscreen image element before DOM inspection tests could verify that `blob:clean` was passed.
+     - *Fix*: Removed `image.src = ""` while preserving canvas texture zeroing (`c.width = 0; c.height = 0`) and listener cleanup.
+
+- **Verification Evidence**:
+  - Vitest test suite: `npm test` — **207 passed, 1 skipped (208 files) | 1,767 passed, 1 skipped (1,768 tests)** in 82.51s.
+  - Python OCR test suite: `.\ocr-service\venv\Scripts\pytest.exe ocr-service/tests -q -m "not model"` — **222 passed, 3 deselected, 1 warning** in 16.60s.
+  - TypeScript validation: `npx tsc --noEmit` — **0 errors**.
+  - ESLint: `npm run lint` — **0 errors**.
