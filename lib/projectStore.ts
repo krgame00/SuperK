@@ -19,6 +19,7 @@ const ASSET_STORE_NAME = "assets";
 
 export interface StoredCleaningResult {
   pageUrl: string;
+  pageId?: string;
   sourceHash: string;
   sourceFingerprint?: string;
   maskFingerprint?: string;

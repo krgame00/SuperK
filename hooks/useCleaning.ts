@@ -440,6 +440,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
         humanInspectionsRef.current.has(`${pageUrl}:${inspection.revisionKey}`)
         ? [{ revisionKey: inspection.revisionKey, sourceFingerprint: result.sourceFingerprint, maskFingerprint: result.maskFingerprint }] : [];
       await saveCleaningResultMetadata({
+        pageId,
         pageUrl, sourceHash: result.sourceHash, sourceFingerprint: result.sourceFingerprint,
         maskFingerprint: result.maskFingerprint, pipelineVersion: result.pipelineVersion,
         revision, jobId: result.jobId, regions: result.regions, updatedAt: Date.now(),
@@ -1428,11 +1429,17 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
         console.warn("Failed to load cleaning results metadata; skipping clean restore", error);
         return;
       }
-      for (const [pageUrl, metadata] of saved) {
+      for (const [savedUrl, metadata] of saved) {
+        if (!active) break;
+        const targetUrl = pagesRef.current.includes(savedUrl)
+          ? savedUrl
+          : (metadata.pageId && pageIdsRef.current
+            ? pagesRef.current[pageIdsRef.current.indexOf(metadata.pageId)]
+            : undefined);
         if (
-          !active ||
-          !pagesRef.current.includes(pageUrl) ||
-          resultsRef.current.has(pageUrl)
+          !targetUrl ||
+          !pagesRef.current.includes(targetUrl) ||
+          resultsRef.current.has(targetUrl)
         ) {
           continue;
         }
@@ -1445,7 +1452,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
           }
           let sourceResponse: Response;
           try {
-            sourceResponse = await fetch(pageUrl, { cache: "no-store" });
+            sourceResponse = await fetch(targetUrl, { cache: "no-store" });
           } catch {
             continue;
           }
@@ -1514,34 +1521,34 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
 
             if (
               !active ||
-              !pagesRef.current.includes(pageUrl) ||
-              resultsRef.current.has(pageUrl)
+              !pagesRef.current.includes(targetUrl) ||
+              resultsRef.current.has(targetUrl)
             ) {
               revokeResult(restored);
               if (!active) return;
               continue;
             }
-            replaceResult(pageUrl, restored);
+            replaceResult(targetUrl, restored);
             // Restoring is local-only: the persisted revision-bound artwork
             // confirmations are re-seeded and the stored background is
             // inspected without any provider call and without altering pixels.
             if (metadata.artworkConfirmations?.length) {
-              confirmationsRef.current.replacePage(pageUrl, metadata.artworkConfirmations);
+              confirmationsRef.current.replacePage(targetUrl, metadata.artworkConfirmations);
             }
             for (const item of metadata.humanImageConfirmations ?? []) {
               if (item.sourceFingerprint === metadata.sourceFingerprint && item.maskFingerprint === metadata.maskFingerprint &&
                   /^[a-f0-9]{64}$/.test(item.sourceFingerprint) && item.revisionKey) {
-                humanInspectionsRef.current.set(`${pageUrl}:${item.revisionKey}`, true);
+                humanInspectionsRef.current.set(`${targetUrl}:${item.revisionKey}`, true);
               }
             }
-            await inspectPageRemnants(pageUrl, restored, sourceBlob);
+            await inspectPageRemnants(targetUrl, restored, sourceBlob);
             continue;
           }
 
           // Opening saved work reads local evidence only. Missing assets remain unavailable.
-          if (pageUrl === pageUrlRef.current) setError({ message: "Saved cleaning assets are unavailable.", recovery: "reclean" });
+          if (targetUrl === pageUrlRef.current) setError({ message: "Saved cleaning assets are unavailable.", recovery: "reclean" });
         } catch {
-          if (active && pageUrl === pageUrlRef.current) {
+          if (active && targetUrl === pageUrlRef.current) {
             setError({
               message: "Saved cleaning result is no longer available.",
               recovery: "reclean",

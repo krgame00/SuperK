@@ -367,8 +367,26 @@ export default function WorkspacePage() {
         if (cleanResult.maskUrl) {
           workspaceResourceManager.registerResource(pageId, "mask", cleanResult.maskUrl, 256 * 1024);
         }
-        invalidatePageTranslation(page.url);
-        setWorkspaceLayer("clean");
+        const cachedBubbles = bubbleCacheRef.current.get(page.url);
+        const hasExistingTranslation = Boolean(
+          (cachedBubbles && cachedBubbles.some((b) => !b.deleted)) ||
+            (activeBubbles.length > 0 && activeBubbles.some((b) => !b.deleted)),
+        );
+        if (hasExistingTranslation) {
+          if ((!cachedBubbles || cachedBubbles.length === 0) && activeBubbles.length > 0) {
+            bubbleCacheRef.current.set(page.url, activeBubbles);
+          }
+          void refreshPageTranslation(page.url, cleanResult.cleanUrl);
+          setReviewedPageUrls((current) => {
+            const next = new Set(current);
+            next.delete(page.url);
+            return next;
+          });
+          setWorkspaceLayer("translated");
+        } else {
+          invalidatePageTranslation(page.url);
+          setWorkspaceLayer("clean");
+        }
       }
     } finally {
       uiOperationLockRef.current = false;
@@ -1650,6 +1668,21 @@ export default function WorkspacePage() {
     const result = await retryRegion(regionId, mask, cleaner, action);
     const page = pages[currentPage];
     if (page && result && action !== "confirm-text") {
+      const pageId = page.id || `page_${currentPage}`;
+      if (result.cleanUrl) {
+        workspaceResourceManager.registerResource(pageId, "clean", result.cleanUrl, 1024 * 1024);
+      }
+      if (result.maskUrl) {
+        workspaceResourceManager.registerResource(pageId, "mask", result.maskUrl, 256 * 1024);
+      }
+      const cachedBubbles = bubbleCacheRef.current.get(page.url);
+      const hasExistingTranslation = Boolean(
+        (cachedBubbles && cachedBubbles.some((b) => !b.deleted)) ||
+          (activeBubbles.length > 0 && activeBubbles.some((b) => !b.deleted)),
+      );
+      if ((!cachedBubbles || cachedBubbles.length === 0) && activeBubbles.length > 0) {
+        bubbleCacheRef.current.set(page.url, activeBubbles);
+      }
       // The cleaned pixels changed, but the translations still apply —
       // re-render them over the fresh cleaning instead of dropping them
       // (which would force an expensive full re-translate).
@@ -1659,7 +1692,7 @@ export default function WorkspacePage() {
         next.delete(page.url);
         return next;
       });
-      setWorkspaceLayer("clean");
+      setWorkspaceLayer(hasExistingTranslation ? "translated" : "clean");
     }
     return result;
   };
@@ -1671,6 +1704,24 @@ export default function WorkspacePage() {
     if (!response.ok) return undefined;
     const refreshed = await cleanCurrentPage(await response.blob(), true);
     if (!refreshed) return undefined;
+    const pageId = page.id || `page_${currentPage}`;
+    if (refreshed.cleanUrl) {
+      workspaceResourceManager.registerResource(pageId, "clean", refreshed.cleanUrl, 1024 * 1024);
+    }
+    if (refreshed.maskUrl) {
+      workspaceResourceManager.registerResource(pageId, "mask", refreshed.maskUrl, 256 * 1024);
+    }
+    const cachedBubbles = bubbleCacheRef.current.get(page.url);
+    const hasExistingTranslation = Boolean(
+      (cachedBubbles && cachedBubbles.some((b) => !b.deleted)) ||
+        (activeBubbles.length > 0 && activeBubbles.some((b) => !b.deleted)),
+    );
+    if (hasExistingTranslation) {
+      if ((!cachedBubbles || cachedBubbles.length === 0) && activeBubbles.length > 0) {
+        bubbleCacheRef.current.set(page.url, activeBubbles);
+      }
+      void refreshPageTranslation(page.url, refreshed.cleanUrl);
+    }
     const recoveredId = findRecoveredRegionId(region, refreshed.regions, region.id);
     const recovered = refreshed.regions.find((item) => item.id === recoveredId);
     return recovered ? { region: recovered, maskUrl: refreshed.reviewMaskUrl } : undefined;

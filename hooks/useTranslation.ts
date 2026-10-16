@@ -2471,18 +2471,27 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
   // re-translate would cost the user real tokens for unchanged text).
   const refreshPageTranslation = useCallback(
     async (pageUrl: string, backgroundUrl?: string) => {
-      const bubbles = bubbleCacheRef.current.get(pageUrl);
-      if (!bubbles || bubbles.length === 0) {
+      let bubbles = bubbleCacheRef.current.get(pageUrl);
+      if (
+        (!bubbles || bubbles.length === 0) &&
+        activePageRef.current === pageUrl &&
+        activeBubbles.length > 0
+      ) {
+        bubbles = activeBubbles;
+        bubbleCacheRef.current.set(pageUrl, bubbles);
+      }
+      if (!bubbles || bubbles.length === 0 || !bubbles.some((b) => !b.deleted)) {
         // Nothing to preserve — untranslated pages keep the drop behavior.
         invalidatePageTranslation(pageUrl);
         return;
       }
+      const pageIndex = pagesRef.current.indexOf(pageUrl);
       try {
         await renderAndCacheTranslation(
           bubbles,
           backgroundUrl ?? pageUrl,
           pageUrl,
-          pagesRef.current.indexOf(pageUrl),
+          pageIndex,
         );
       } catch {
         // Drop the stale render; exports re-render it from the bubbles
@@ -2490,9 +2499,34 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         translatedImageCacheRef.current.delete(pageUrl);
         setTranslatedImages(new Map(translatedImageCacheRef.current));
         setCacheRevision((revision) => revision + 1);
+        suppressedOverlayPagesRef.current.delete(pageUrl);
+        if (activePageRef.current === pageUrl) {
+          setActiveBubbles(bubbles);
+          const renderTarget =
+            getPageTargetLanguage(pageUrl) || targetLangRef.current || "th";
+          void applyTranslationOverlay(
+            bubbles,
+            viewMode,
+            pageIndex >= 0 ? pageIndex : currentPageRef.current,
+            setTranslationResult,
+            undefined,
+            textStyleRef,
+            undefined,
+            pageUrl,
+            () => markPageDirty(pageUrl),
+            renderTarget,
+          );
+        }
       }
     },
-    [invalidatePageTranslation, renderAndCacheTranslation],
+    [
+      activeBubbles,
+      getPageTargetLanguage,
+      invalidatePageTranslation,
+      markPageDirty,
+      renderAndCacheTranslation,
+      viewMode,
+    ],
   );
 
   // Whole-book inspection: per-page bubble stats for every translated page.

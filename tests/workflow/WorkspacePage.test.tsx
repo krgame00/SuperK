@@ -441,7 +441,25 @@ describe("workspace clean-then-translate integration", () => {
     );
   });
 
-  test("manual cleaning invalidates stale translation and selects clean", async () => {
+  test("manual cleaning preserves existing translation and re-renders over the new clean", async () => {
+    await renderRestoredWorkspace();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Clean current page" }),
+    );
+    await waitFor(() => expect(cleanCurrentPage).toHaveBeenCalledTimes(1));
+    expect(refreshPageTranslation).toHaveBeenCalledWith(ORIGINAL_URL, CLEAN_URL);
+    expect(invalidatePageTranslation).not.toHaveBeenCalled();
+    expect(toolbar().getAttribute("data-layer")).toBe("translated");
+  });
+
+  test("manual cleaning on an untranslated page invalidates stale state and selects clean", async () => {
+    vi.mocked(useTranslation).mockReturnValue({
+      ...translationMockState,
+      activeBubbles: [],
+      bubbleCacheRef: { current: new Map() },
+      translatedImages: new Map(),
+      translatedImageCacheRef: { current: new Map() },
+    } as never);
     await renderRestoredWorkspace();
     fireEvent.click(
       screen.getByRole("button", { name: "Clean current page" }),
@@ -712,10 +730,11 @@ describe("workspace clean-then-translate integration", () => {
       ),
     );
     // The cleaned pixels changed but the translations still apply: they are
-    // re-rendered over the fresh cleaning instead of being wiped.
+    // re-rendered over the fresh cleaning instead of being wiped, and the
+    // translated layer remains visible so the translated text does not vanish.
     expect(refreshPageTranslation).toHaveBeenCalledWith(ORIGINAL_URL, CLEAN_URL);
     expect(invalidatePageTranslation).not.toHaveBeenCalled();
-    expect(toolbar().getAttribute("data-layer")).toBe("clean");
+    expect(toolbar().getAttribute("data-layer")).toBe("translated");
   });
 
   test("layer choices control single image source and translation visibility", async () => {
