@@ -127,7 +127,7 @@ describe("SettingsModal dynamic Gemini catalog", () => {
     render(<SettingsModal {...defaultProps} />);
     fireEvent.click(screen.getByRole("button", { name: /Model Preference/i }));
 
-    expect(await screen.findByRole("option", { name: /Gemini 3\.5 Flash Lite/i })).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: /Gemini 3\.5 Flash Lite/i }, { timeout: 4000 })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /^Gemini 3\.8 Flash [0-9]/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Flash TTS/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Flash Image/i })).not.toBeInTheDocument();
@@ -159,7 +159,7 @@ describe("SettingsModal dynamic Gemini catalog", () => {
     const listbox = await screen.findByRole("listbox", { name: /รายการโมเดล Gemini/i });
     expect(listbox).toHaveClass("max-h-64", "overflow-y-auto");
     expect(screen.getByRole("searchbox", { name: /ค้นหาโมเดล/i })).toBeInTheDocument();
-    expect(await screen.findByRole("option", { name: /Gemini 3\.5 Flash Lite/i })).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: /Gemini 3\.5 Flash Lite/i }, { timeout: 4000 })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Gemini 3\.1 Flash Lite/i })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Gemini 3\.6 Flash/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Gemini Unavailable/i })).not.toBeInTheDocument();

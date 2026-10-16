@@ -473,7 +473,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
 
   const confirmAllPageRemnants = useCallback(
     (pageUrl: string, expectedEvidence?: PageRemnantTextEvidence): boolean => {
-      let result = resultsRef.current.get(pageUrl);
+      const result = resultsRef.current.get(pageUrl);
       if (result) {
         const hasUncertainRegion = result.regions.some(
           (r) =>
