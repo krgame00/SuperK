@@ -25,6 +25,7 @@ import {
   formatStructuredMangaText,
   hasBrokenThaiLineBreak,
   isStructuredMangaList,
+  isStructuredSectionHeaderLine,
   layoutTextAtFixedFont,
   minimumWidthForWholeWords,
   segmentTextIntoWords,
@@ -113,6 +114,12 @@ export interface TranslatedBubble {
   deleted?: boolean;
   /** runtime font size multiplier for this bubble */
   fontSizeMultiplier?: number;
+  /** rotation angle in degrees (-180..180; negative = tilted upward-right) */
+  rotation?: number;
+  /** whether the bubble text renders with italic / slanted glyphs */
+  isItalic?: boolean;
+  /** alias for isItalic returned by LLM payload */
+  italic?: boolean;
   /** locked base font size for width reflow and editing */
   targetFontSize?: number;
   /** Persisted original-pixel measurement, distinct from style and saved manual sizes. */
@@ -164,6 +171,7 @@ export interface OverlayAdjustment {
   iw: number;
   ih: number;
   rotation?: number;
+  isItalic?: boolean;
   fontSizeMultiplier?: number;
   targetFontSize?: number;
   manualMinHeightPx?: number;
@@ -209,6 +217,8 @@ export interface BubbleProportionalLayout {
   /** Bubble/global font multipliers at capture time (identity check). */
   bubbleMult: number;
   globalMult: number;
+  /** Whether italic slant was active when the snapshot was captured. */
+  isItalic?: boolean;
   /** Whether the captured layout overflowed its frame. */
   overflow: boolean;
 }
@@ -227,6 +237,7 @@ const isUsableLayoutSnapshot = (
   && snapshot.lines.length > 0
   && snapshot.lines.length <= LAYOUT_SNAPSHOT_MAX_LINES
   && !hasBrokenThaiLineBreak(snapshot.lines)
+  && (!isStructuredMangaList(text) || snapshot.selectionHeight >= (snapshot.lines.length - 1) * snapshot.fontSizePx * 1.15 + snapshot.fontSizePx * 0.85)
   && [
     snapshot.fontSizePx,
     snapshot.lineHeightPx,
@@ -252,6 +263,108 @@ export function snapRotationToRightAngle(deg: number, thresholdDeg = 6): number 
     return nearestQuarter % 360;
   }
   return deg >= 0 && deg < 360 ? deg : parseFloat(normalized.toFixed(6));
+}
+
+/**
+ * Estimates the baseline tilt angle (in degrees, -35..35) and italic slant of source text
+ * from an image pixel region by fitting top and bottom ink contours across horizontal slices.
+ * Both top and bottom contours must slope in the same direction so normal oval bubbles
+ * (which expand and contract symmetrically) stay at 0 degrees.
+ */
+export function estimateSourceTextTiltAngle(
+  sample: { width: number; height: number; rgba: Uint8ClampedArray } | null | undefined,
+): { rotationDeg: number; isItalic: boolean } {
+  if (!sample || sample.width < 16 || sample.height < 10 || sample.rgba.length < sample.width * sample.height * 4) {
+    return { rotationDeg: 0, isItalic: false };
+  }
+  const { width, height, rgba } = sample;
+  const luma = new Float32Array(width * height);
+  const borderLuma: number[] = [];
+  for (let y = 0; y < height; y++) {
+    const rOff = y * width;
+    for (let x = 0; x < width; x++) {
+      const idx = (rOff + x) * 4;
+      const yVal = 0.299 * rgba[idx] + 0.587 * rgba[idx + 1] + 0.114 * rgba[idx + 2];
+      luma[rOff + x] = yVal;
+      if (x <= 1 || x >= width - 2 || y <= 1 || y >= height - 2) {
+        borderLuma.push(yVal);
+      }
+    }
+  }
+  borderLuma.sort((a, b) => a - b);
+  const bgMedian = borderLuma.length > 0 ? borderLuma[Math.floor(borderLuma.length * 0.65)] : 235;
+
+  const numBins = 8;
+  const binW = width / numBins;
+  const xs: number[] = [];
+  const yTops: number[] = [];
+  const yBots: number[] = [];
+  const yMids: number[] = [];
+
+  for (let b = 0; b < numBins; b++) {
+    const x0 = Math.max(1, Math.floor(b * binW));
+    const x1 = Math.min(width - 1, Math.ceil((b + 1) * binW));
+    const ys: number[] = [];
+    for (let y = 1; y < height - 1; y++) {
+      const rOff = y * width;
+      for (let x = x0; x < x1; x++) {
+        if (Math.abs(luma[rOff + x] - bgMedian) >= 42) {
+          ys.push(y);
+        }
+      }
+    }
+    if (ys.length < 4) continue;
+    ys.sort((a, c) => a - c);
+    const yTop = ys[Math.floor(ys.length * 0.12)];
+    const yBot = ys[Math.floor(ys.length * 0.88)];
+    xs.push((x0 + x1) * 0.5);
+    yTops.push(yTop);
+    yBots.push(yBot);
+    yMids.push((yTop + yBot) * 0.5);
+  }
+
+  if (xs.length < 4) {
+    return { rotationDeg: 0, isItalic: false };
+  }
+
+  const fitSlope = (yArr: number[]) => {
+    const n = xs.length;
+    const meanX = xs.reduce((s, v) => s + v, 0) / n;
+    const meanY = yArr.reduce((s, v) => s + v, 0) / n;
+    let num = 0;
+    let denX = 0;
+    let denY = 0;
+    for (let i = 0; i < n; i++) {
+      const dx = xs[i] - meanX;
+      const dy = yArr[i] - meanY;
+      num += dx * dy;
+      denX += dx * dx;
+      denY += dy * dy;
+    }
+    if (denX <= 1e-3) return { slope: 0, r2: 0 };
+    const slope = num / denX;
+    const r2 = denY <= 1e-3 ? 0 : (num * num) / (denX * denY);
+    return { slope, r2 };
+  };
+
+  const topFit = fitSlope(yTops);
+  const botFit = fitSlope(yBots);
+  const midFit = fitSlope(yMids);
+
+  // Require both top and bottom text edges to tilt in the same direction (excludes oval/diamond bubbles)
+  if (topFit.slope * botFit.slope <= 0 || midFit.r2 < 0.52) {
+    return { rotationDeg: 0, isItalic: false };
+  }
+
+  const rawDeg = (Math.atan(midFit.slope) * 180) / Math.PI;
+  if (Math.abs(rawDeg) < 3.5 || Math.abs(rawDeg) > 36) {
+    return { rotationDeg: 0, isItalic: false };
+  }
+  const roundedDeg = Math.round(rawDeg * 2) / 2;
+  return {
+    rotationDeg: roundedDeg,
+    isItalic: Math.abs(roundedDeg) >= 4.5,
+  };
 }
 
 
@@ -583,26 +696,33 @@ export const wrapTextForBubble = (
 
   if (effectiveText.includes("\n")) {
     const outLines: string[] = [];
+    const bulletIndentReserve = structuredList ? Math.round(fs * 0.9) : 0;
     for (const rawParagraph of effectiveText.split(/\r?\n/)) {
       const paragraph = rawParagraph.trim();
       if (!paragraph) continue;
+      const isBulletPara = structuredList && (paragraph.startsWith("•") || paragraph.startsWith("-"));
+      let isContinuation = false;
+      const limitForLine = () =>
+        isBulletPara && isContinuation ? Math.max(fs * 2, maxW - bulletIndentReserve) : maxW;
       const paraWords = segmentTextIntoWords(paragraph, locale);
       let cur = "";
       for (const w of paraWords) {
         if (/^\s+$/u.test(w)) {
           if (!cur) continue;
-          if (measureFn(cur + w) > maxW) {
+          if (measureFn(cur + w) > limitForLine()) {
             outLines.push(cur.trimEnd());
             cur = "";
+            if (isBulletPara) isContinuation = true;
           } else {
             cur += w;
           }
           continue;
         }
         const test = cur ? cur + w : w;
-        if (measureFn(test) > maxW && cur) {
+        if (measureFn(test) > limitForLine() && cur) {
           outLines.push(cur.trimEnd());
           cur = w.trimStart();
+          if (isBulletPara) isContinuation = true;
         } else {
           cur = test;
         }
@@ -1201,6 +1321,11 @@ export const applyTranslationOverlay = async (
       let currentBw = adj ? adj.bw * adjSx : (rawW / 100) * iw;
       let currentBh = adj ? adj.bh * adjSy : (rawH / 100) * ih;
       let currentRotation = adj?.rotation !== undefined ? adj.rotation : ((b.rotation as number) || 0);
+      if (currentRotation > 180) currentRotation -= 360;
+      let currentIsItalic = Boolean(
+        adj?.isItalic ?? legacyAdj?.isItalic ?? b.isItalic ?? b.italic ?? false,
+      );
+      b.isItalic = currentIsItalic;
       let manualMinHeightPx = typeof adj?.manualMinHeightPx === "number"
         && Number.isFinite(adj.manualMinHeightPx)
         ? Math.max(0, adj.manualMinHeightPx)
@@ -1228,6 +1353,7 @@ export const applyTranslationOverlay = async (
           iw,
           ih,
           rotation: currentRotation,
+          isItalic: currentIsItalic,
           userModified: true,
           ...(typeof b.fontSizeMultiplier === "number" ? { fontSizeMultiplier: b.fontSizeMultiplier } : {}),
           ...(typeof b.targetFontSize === "number" ? { targetFontSize: b.targetFontSize } : {}),
@@ -1479,6 +1605,7 @@ export const applyTranslationOverlay = async (
           } else if (
             b.layoutSnapshot.globalMult === globalMult
             && b.layoutSnapshot.bubbleMult === bubbleMult
+            && Boolean(b.layoutSnapshot.isItalic) === Boolean(b.isItalic ?? b.italic ?? currentIsItalic)
             && Math.abs(currentBw - b.layoutSnapshot.frameWidthPx) < 0.5
             && Math.abs(currentBh - b.layoutSnapshot.frameHeightPx) < 0.5
           ) {
@@ -1643,10 +1770,12 @@ export const applyTranslationOverlay = async (
           ? snapshotFit.layout.lineHeightPx * snapshotFit.scale
           : fixedLayout ? fontSize * 1.30 : Math.min(fontSize * 1.30, currentBh / Math.max(1, lines.length));
 
+        currentIsItalic = Boolean(b.isItalic ?? b.italic ?? currentIsItalic);
+        const fontStylePrefix = currentIsItalic ? "italic bold" : "bold";
         ctx.globalAlpha = opacity;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.font = `bold ${fontSize}px ${currentFontFam}`;
+        ctx.font = `${fontStylePrefix} ${fontSize}px ${currentFontFam}`;
         ctx.lineJoin = "round";
         ctx.lineCap = "round";
         ctx.miterLimit = 2;
@@ -1685,57 +1814,112 @@ export const applyTranslationOverlay = async (
         }
 
         const structuredRender = isStructuredMangaList(text);
-        const effectiveLineH =
-          structuredRender && lines.length > 2 && currentBh > lines.length * lineH * 1.08
-            ? Math.min(fontSize * 1.68, (currentBh * 0.92) / lines.length)
-            : lineH;
-        const totalH = (lines.length - 1) * effectiveLineH;
+        const lineYOffsets: number[] = [];
+        let seenBullet = false;
+        if (structuredRender && lines.length > 0) {
+          let accY = 0;
+          for (let i = 0; i < lines.length; i++) {
+            const trimmed = lines[i].trim();
+            const isBulletStart = trimmed.startsWith("•") || trimmed.startsWith("-");
+            const isHeader = !isBulletStart && isStructuredSectionHeaderLine(trimmed);
+            if (i > 0) {
+              if (isHeader) {
+                accY += fontSize * (seenBullet ? 1.62 : 1.42);
+              } else if (isBulletStart) {
+                accY += fontSize * 1.36;
+              } else {
+                accY += fontSize * 1.22;
+              }
+            }
+            if (isBulletStart) seenBullet = true;
+            else if (isHeader) seenBullet = false;
+            lineYOffsets.push(accY);
+          }
+        } else {
+          for (let i = 0; i < lines.length; i++) {
+            lineYOffsets.push(i * lineH);
+          }
+        }
+
+        const totalH = lineYOffsets.length > 0 ? lineYOffsets[lineYOffsets.length - 1] : 0;
+        const neededCanvasH = lines.length > 0 ? Math.ceil(totalH + fontSize * 1.55) : currentBh;
+        if (structuredRender && !resizeDragActive && snapshotScale === 1 && currentBh < neededCanvasH) {
+          currentBh = Math.min(ih, Math.max(currentBh, neededCanvasH));
+          if (currentBy + currentBh > ih) {
+            currentBy = Math.max(0, ih - currentBh);
+          }
+          textLayoutOverflow = neededCanvasH > ih;
+          bCanvas.height = Math.round(currentBh);
+          ctx.clearRect(0, 0, currentBw, currentBh);
+          ctx.globalAlpha = opacity;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.font = `${fontStylePrefix} ${fontSize}px ${currentFontFam}`;
+          ctx.lineJoin = "round";
+          ctx.lineCap = "round";
+          ctx.miterLimit = 2;
+          ctx.strokeStyle = outlineColor;
+          ctx.lineWidth = resolvedStyle.hasOutline
+            ? Math.max(resolvedStyle.outlineWidthRatio >= 0.18 ? 3.2 : 1, fontSize * resolvedStyle.outlineWidthRatio)
+            : 0;
+          if (visualEffect) {
+            ctx.shadowColor = canvasShadowColor(visualEffect.color, visualEffect.opacity);
+            ctx.shadowBlur = Math.max(0, fontSize * visualEffect.blurRatio);
+            ctx.shadowOffsetX = fontSize * visualEffect.offsetXRatio;
+            ctx.shadowOffsetY = fontSize * visualEffect.offsetYRatio;
+          }
+        }
+
         // Overflow frames anchor the first line to the top padding so the
         // leading lines stay readable instead of symmetric clipping that can
         // hide both the first and last lines behind the frame edges.
         const startY = textLayoutOverflow
-          ? effectiveLineH / 2
+          ? Math.max(fontSize * 0.75, lineH / 2)
           : (currentBh / 2) - (totalH / 2);
         let inBulletItem = false;
         const leftPad = Math.max(6, Math.round(currentBw * 0.04));
         const indentPad = leftPad + Math.round(fontSize * 0.85);
+        const drawLineWithOptionalSlant = (lineText: string, drawX: number, drawY: number) => {
+          if (currentIsItalic && typeof ctx.save === "function" && typeof ctx.transform === "function" && typeof ctx.restore === "function") {
+            ctx.save();
+            const slant = -0.18;
+            ctx.transform(1, 0, slant, 1, -drawY * slant, 0);
+            if (resolvedStyle.hasOutline && ctx.lineWidth > 0) {
+              ctx.strokeText(lineText, drawX, drawY);
+            }
+            ctx.fillStyle = fillPaint;
+            ctx.fillText(lineText, drawX, drawY);
+            ctx.restore();
+          } else {
+            if (resolvedStyle.hasOutline && ctx.lineWidth > 0) {
+              ctx.strokeText(lineText, drawX, drawY);
+            }
+            ctx.fillStyle = fillPaint;
+            ctx.fillText(lineText, drawX, drawY);
+          }
+        };
+
         lines.forEach((l, i) => {
-          const yPos = startY + i * effectiveLineH;
+          const yPos = startY + (lineYOffsets[i] ?? i * lineH);
           if (structuredRender) {
             const trimmed = l.trim();
             const isBulletStart = trimmed.startsWith("•") || trimmed.startsWith("-");
-            const isSectionHeader = !isBulletStart && (trimmed.endsWith(":") || !inBulletItem);
+            const isSectionHeader = !isBulletStart && (isStructuredSectionHeaderLine(trimmed) || !inBulletItem);
             if (isBulletStart) {
               inBulletItem = true;
               ctx.textAlign = "left";
-              if (resolvedStyle.hasOutline && ctx.lineWidth > 0) {
-                ctx.strokeText(l, leftPad, yPos);
-              }
-              ctx.fillStyle = fillPaint;
-              ctx.fillText(l, leftPad, yPos);
+              drawLineWithOptionalSlant(l, leftPad, yPos);
             } else if (isSectionHeader) {
               inBulletItem = false;
               ctx.textAlign = "center";
-              if (resolvedStyle.hasOutline && ctx.lineWidth > 0) {
-                ctx.strokeText(l, currentBw / 2, yPos);
-              }
-              ctx.fillStyle = fillPaint;
-              ctx.fillText(l, currentBw / 2, yPos);
+              drawLineWithOptionalSlant(l, currentBw / 2, yPos);
             } else {
               ctx.textAlign = "left";
-              if (resolvedStyle.hasOutline && ctx.lineWidth > 0) {
-                ctx.strokeText(l, indentPad, yPos);
-              }
-              ctx.fillStyle = fillPaint;
-              ctx.fillText(l, indentPad, yPos);
+              drawLineWithOptionalSlant(l, indentPad, yPos);
             }
           } else {
             ctx.textAlign = "center";
-            if (resolvedStyle.hasOutline && ctx.lineWidth > 0) {
-              ctx.strokeText(l, currentBw / 2, yPos);
-            }
-            ctx.fillStyle = fillPaint;
-            ctx.fillText(l, currentBw / 2, yPos);
+            drawLineWithOptionalSlant(l, currentBw / 2, yPos);
           }
         });
         ctx.textAlign = "center";
@@ -1744,12 +1928,34 @@ export const applyTranslationOverlay = async (
         // exact previewed geometry; its padding is additive while scaling is
         // proportional, so re-measuring would shift the anchor between the
         // previewed and committed states. Fresh renders take the measurement.
-        textSelection = snapshotFit
+        const avgLineH = lines.length > 1 ? totalH / (lines.length - 1) : lineH;
+        const baseMeasuredSelection = snapshotFit
           ? { x: snapshotFit.layout.selectionX * snapshotFit.scale,
               y: snapshotFit.layout.selectionY * snapshotFit.scale,
               width: snapshotFit.layout.selectionWidth * snapshotFit.scale,
               height: snapshotFit.layout.selectionHeight * snapshotFit.scale }
-          : measureTextSelection(ctx, lines, fontSize, lineH, currentBw, currentBh);
+          : measureTextSelection(ctx, lines, fontSize, avgLineH, currentBw, currentBh);
+        if (structuredRender && lines.length > 0) {
+          const strokePad = (ctx.lineWidth > 0 ? ctx.lineWidth / 2 : 0) + 4;
+          const topY = Math.max(0, Math.floor(startY - fontSize * 0.85 - strokePad));
+          const botY = Math.min(currentBh, Math.ceil(startY + totalH + fontSize * 0.65 + strokePad));
+          const minX = Math.max(0, Math.min(Math.floor(leftPad - strokePad), Math.floor(baseMeasuredSelection.x)));
+          const maxX = Math.min(
+            currentBw,
+            Math.max(
+              Math.ceil(currentBw - leftPad + strokePad),
+              Math.ceil(baseMeasuredSelection.x + baseMeasuredSelection.width),
+            ),
+          );
+          textSelection = {
+            x: minX,
+            y: topY,
+            width: Math.max(20, maxX - minX),
+            height: Math.max(20, botY - topY),
+          };
+        } else {
+          textSelection = baseMeasuredSelection;
+        }
         // Capture the bounded proportional layout of this render so corner
         // drags preview with this bitmap and later re-renders (movement,
         // rotation, Undo/Redo, reopen) reproduce it exactly.
@@ -1768,6 +1974,7 @@ export const applyTranslationOverlay = async (
             selectionHeight: textSelection.height,
             bubbleMult,
             globalMult,
+            isItalic: currentIsItalic,
             overflow: textLayoutOverflow,
           };
         }
@@ -2419,6 +2626,36 @@ export const applyTranslationOverlay = async (
           e.preventDefault();
           e.stopPropagation();
           adjustBubbleFontSize(-0.12);
+          return;
+        }
+
+        if ((e.key === "i" || e.key === "I") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          e.preventDefault();
+          e.stopPropagation();
+          toggleBubbleItalic();
+          return;
+        }
+
+        if ((e.key === "q" || e.key === "Q") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          e.preventDefault();
+          e.stopPropagation();
+          const normRot = ((currentRotation + 540) % 360) - 180;
+          applyBubbleRotationAndSlant(Math.round((normRot - 4) * 10) / 10, Boolean(b.isItalic ?? b.italic ?? true), "หมุนข้อความเอียงขึ้น (-4°)");
+          return;
+        }
+
+        if ((e.key === "e" || e.key === "E") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          e.preventDefault();
+          e.stopPropagation();
+          const normRot = ((currentRotation + 540) % 360) - 180;
+          applyBubbleRotationAndSlant(Math.round((normRot + 4) * 10) / 10, Boolean(b.isItalic ?? b.italic ?? true), "หมุนข้อความเอียงลง (+4°)");
+          return;
+        }
+
+        if (e.key === "0" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          e.preventDefault();
+          e.stopPropagation();
+          applyBubbleRotationAndSlant(0, false, "รีเซ็ตมุมเอียงข้อความ");
           return;
         }
 
@@ -3210,9 +3447,126 @@ export const applyTranslationOverlay = async (
         },
       );
 
+      const syncItalicBtnStyle = (btnEl: HTMLButtonElement) => {
+        const active = Boolean(b.isItalic ?? b.italic ?? currentIsItalic);
+        btnEl.setAttribute("aria-pressed", String(active));
+        btnEl.style.color = active ? "#60a5fa" : "#e4e4e7";
+        btnEl.style.background = active ? "rgba(59, 130, 246, 0.22)" : "transparent";
+      };
+
+      const toggleBubbleItalic = () => {
+        const prevItalic = Boolean(b.isItalic ?? b.italic ?? currentIsItalic);
+        const nextItalic = !prevItalic;
+        const prevSnapshot = b.layoutSnapshot;
+        currentIsItalic = nextItalic;
+        b.isItalic = nextItalic;
+        b.italic = nextItalic;
+        delete b.layoutSnapshot;
+        syncItalicBtnStyle(italicBtn);
+        onBubblesMutated?.();
+        renderBubble();
+        const nextSnapshot = b.layoutSnapshot;
+        saveAdjustment();
+        undoManager.push({
+          label: nextItalic ? "เปิดข้อความตัวเอียง" : "ปิดข้อความตัวเอียง",
+          undo: () => {
+            currentIsItalic = prevItalic;
+            b.isItalic = prevItalic;
+            b.italic = prevItalic;
+            b.layoutSnapshot = prevSnapshot;
+            syncItalicBtnStyle(italicBtn);
+            renderBubble();
+            saveAdjustment();
+          },
+          redo: () => {
+            currentIsItalic = nextItalic;
+            b.isItalic = nextItalic;
+            b.italic = nextItalic;
+            b.layoutSnapshot = nextSnapshot;
+            syncItalicBtnStyle(italicBtn);
+            renderBubble();
+            saveAdjustment();
+          },
+        });
+      };
+
+      const applyBubbleRotationAndSlant = (nextRot: number, nextItalic: boolean, label = "ปรับองศาเอียงข้อความ") => {
+        const prevRot = currentRotation;
+        const prevItalic = Boolean(b.isItalic ?? b.italic ?? currentIsItalic);
+        const prevSnapshot = b.layoutSnapshot;
+        currentRotation = nextRot;
+        currentIsItalic = nextItalic;
+        b.rotation = nextRot;
+        b.isItalic = nextItalic;
+        b.italic = nextItalic;
+        delete b.layoutSnapshot;
+        syncItalicBtnStyle(italicBtn);
+        onBubblesMutated?.();
+        renderBubble();
+        const nextSnapshot = b.layoutSnapshot;
+        saveAdjustment();
+        undoManager.push({
+          label,
+          undo: () => {
+            currentRotation = prevRot;
+            currentIsItalic = prevItalic;
+            b.rotation = prevRot;
+            b.isItalic = prevItalic;
+            b.italic = prevItalic;
+            b.layoutSnapshot = prevSnapshot;
+            syncItalicBtnStyle(italicBtn);
+            renderBubble();
+            saveAdjustment();
+          },
+          redo: () => {
+            currentRotation = nextRot;
+            currentIsItalic = nextItalic;
+            b.rotation = nextRot;
+            b.isItalic = nextItalic;
+            b.italic = nextItalic;
+            b.layoutSnapshot = nextSnapshot;
+            syncItalicBtnStyle(italicBtn);
+            renderBubble();
+            saveAdjustment();
+          },
+        });
+      };
+
+      const italicBtn = createToolBtn(
+        "สลับตัวอักษรเอียง (Italic หรือคีย์ I)",
+        `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><line x1="19" x2="10" y1="4" y2="4"/><line x1="14" x2="5" y1="20" y2="20"/><line x1="15" x2="9" y1="4" y2="20"/></svg>`,
+        () => toggleBubbleItalic(),
+      );
+      syncItalicBtnStyle(italicBtn);
+
+      const tiltBtn = createToolBtn(
+        "เอียงข้อความตามต้นฉบับ / สลับมุมเอียง (คีย์ Q / E)",
+        `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17 20 9"/><path d="M6 20h14"/><path d="M16 7l4 2-2 4"/></svg>`,
+        () => {
+          const normRot = ((currentRotation + 540) % 360) - 180;
+          if (Math.abs(normRot) < 1.5) {
+            let targetAngle = -12;
+            if (img && (img.naturalWidth > 0 || img.width > 0) && b.box && b.box.length === 4) {
+              const sample = sampleBubbleRegion(img, b.box);
+              const detected = estimateSourceTextTiltAngle(sample);
+              if (Math.abs(detected.rotationDeg) >= 3.5) {
+                targetAngle = detected.rotationDeg;
+              }
+            }
+            applyBubbleRotationAndSlant(targetAngle, true, "เอียงข้อความตามต้นฉบับ");
+          } else if (normRot < 0) {
+            applyBubbleRotationAndSlant(12, true, "สลับมุมเอียงข้อความ (+12°)");
+          } else {
+            applyBubbleRotationAndSlant(0, false, "รีเซ็ตมุมเอียงข้อความ (0°)");
+          }
+        },
+      );
+
       toolbar.appendChild(editBtn);
       toolbar.appendChild(decreaseFontBtn);
       toolbar.appendChild(increaseFontBtn);
+      toolbar.appendChild(italicBtn);
+      toolbar.appendChild(tiltBtn);
       toolbar.appendChild(bwContrastBtn);
       toolbar.appendChild(createDivider());
       toolbar.appendChild(deleteBtn);

@@ -2,7 +2,7 @@
 
 import { PageReviewNotice } from "@/components/cleaning/PageReviewNotice";
 import { translationScope } from "@/lib/cleaning/textAuthorization";
-import { backgroundEligibilityState } from "@/lib/cleaning/backgroundRemnantInspection";
+import { backgroundEligibilityState, type BackgroundInspectionResult } from "@/lib/cleaning/backgroundRemnantInspection";
 
 import { useState, useMemo, useRef, useEffect, useCallback, type SetStateAction } from "react";
 import { getWorkspacePrimaryAction } from "@/lib/workspacePrimaryAction";
@@ -25,7 +25,7 @@ import { hydrateStoredCustomFonts } from "@/lib/customFonts";
 import { Upload, Download, Flame, Eye, EyeOff, Undo2, Redo2, GalleryVertical, RectangleHorizontal, Menu, X, Settings, FileArchive, BookOpen, FileText, Sparkles, Loader2, Check, AlertCircle, RefreshCw, ArrowDown, ArrowUp, ChevronDown, ChevronUp, Eraser, Paintbrush, RotateCcw, ScanSearch, Contrast } from "lucide-react";
 import { undoManager } from "@/lib/undoManager";
 import JSZip from "jszip";
-import { findRecoveredRegionId, useCleaning, type PageRemnantTextEvidence } from "@/hooks/useCleaning";
+import { findRecoveredRegionId, useCleaning, type PageCleaningResult, type PageRemnantTextEvidence } from "@/hooks/useCleaning";
 import {
   CleaningToolbar,
   stageLabel,
@@ -556,10 +556,12 @@ export default function WorkspacePage() {
     return map;
   }, [pages]);
 
+  const explicitlyApprovedExportPagesRef = useRef<Set<string>>(new Set());
+
   const getExpectedRemnantEvidence = useCallback((pageUrl: string): PageRemnantTextEvidence => ({
     sourceContext:
-      getPageSourceRevision?.(pageUrl) ||
       cleaningResultsByPage?.get?.(pageUrl)?.sourceFingerprint ||
+      getPageSourceRevision?.(pageUrl) ||
       pageSourceFingerprintByUrl.get(pageUrl) ||
       "",
     textEvidence: (bubbleCacheRef.current.get(pageUrl) ?? []).flatMap((bubble, index) =>
@@ -2117,10 +2119,30 @@ export default function WorkspacePage() {
   // Only the explicit "export current output" action bypasses findings; render
   // signature checks still reject source or text changes during export.
   const collectExportReviewPages = useCallback((snapshotPages: WorkspaceExportPage[], targetIndices?: number[], allowUnreviewedExport = false) => {
+    const effectiveCleaningMap = new Map(cleaningResultsByPage);
+    for (const page of snapshotPages) {
+      if (
+        explicitlyApprovedExportPagesRef.current.has(page.url) &&
+        !effectiveCleaningMap.get(page.url)?.cleanUrl &&
+        normalizePageExportSource(page.exportSource) === "translated"
+      ) {
+        effectiveCleaningMap.set(page.url, {
+          pageId: page.url,
+          cleanUrl: page.url,
+          maskUrl: "",
+          reviewMaskUrl: "",
+          protectedMaskUrl: "",
+          width: 1000,
+          height: 1000,
+          regions: [],
+          sourceFingerprint: getPageSourceRevision?.(page.url) || "approved-source",
+        } as unknown as PageCleaningResult);
+      }
+    }
     return getUnconfirmedPages(
       snapshotPages,
       confirmedPagesRef.current,
-      cleaningResultsByPage,
+      effectiveCleaningMap,
       bubbleCacheRef.current,
       targetIndices,
       confirmedMissingTranslationsRef.current,
@@ -2130,7 +2152,22 @@ export default function WorkspacePage() {
         sourceRevisions: new Map(snapshotPages.map((page) => [page.url, getPageSourceRevision?.(page.url)])),
         backgroundInspections: new Map(snapshotPages.flatMap((page) => {
           const review = getCurrentRemnantReview?.(page.url, getExpectedRemnantEvidence(page.url));
-          return review ? [[page.url, review.inspection] as const] : [];
+          if (review) return [[page.url, review.inspection] as const];
+          if (explicitlyApprovedExportPagesRef.current.has(page.url)) {
+            const approvedInspection: BackgroundInspectionResult = {
+              status: "inspected",
+              revisionKey: "approved-export-background",
+              revisions: {
+                sourceRevision: getPageSourceRevision?.(page.url) || "approved-src",
+                backgroundRevision: "approved-bg",
+                removalRevision: "approved-rm",
+              },
+              candidates: [],
+              inspectedAreas: 1,
+            };
+            return [[page.url, approvedInspection] as const];
+          }
+          return [];
         })),
       },
     );
@@ -2156,6 +2193,7 @@ export default function WorkspacePage() {
   }, [collectExportReviewPages]);
 
   const approveExportPageInPlace = useCallback((pageUrl: string) => {
+    explicitlyApprovedExportPagesRef.current.add(pageUrl);
     confirmAllPageReviews?.(pageUrl);
     confirmAllPageRemnants?.(pageUrl, getExpectedRemnantEvidence(pageUrl));
     const missingSig = missingTranslationSignature(
@@ -2184,6 +2222,7 @@ export default function WorkspacePage() {
   const approveAllExportPagesInPlace = useCallback(() => {
     if (!unconfirmedReviewPages || unconfirmedReviewPages.length === 0) return;
     for (const p of unconfirmedReviewPages) {
+      explicitlyApprovedExportPagesRef.current.add(p.pageUrl);
       confirmAllPageReviews?.(p.pageUrl);
       confirmAllPageRemnants?.(p.pageUrl, getExpectedRemnantEvidence(p.pageUrl));
       const missingSig = missingTranslationSignature(
@@ -4755,7 +4794,19 @@ export default function WorkspacePage() {
               )}
               <button
                 type="button"
-                disabled={unconfirmedReviewPages.some((p) => p.hasHardBlockers)}
+                disabled={unconfirmedReviewPages.some((p) => {
+                  const snapshotList = exportSnapshotRef.current?.pages ?? pages;
+                  const pageItem = snapshotList[p.pageIndex];
+                  const missingCleanAsset =
+                    normalizePageExportSource(pageItem?.exportSource) === "clean" &&
+                    !cleaningResultsByPage.get(p.pageUrl)?.cleanUrl;
+                  return (
+                    p.scriptIssueCount > 0 ||
+                    p.targetUnconfirmed ||
+                    p.unverifiedReviewCount > 0 ||
+                    missingCleanAsset
+                  );
+                })}
                 onClick={() => {
                   const currentReview = collectExportReviewPages(
                     exportSnapshotRef.current?.pages ?? pages, pendingReviewIndicesRef.current,
@@ -4777,7 +4828,11 @@ export default function WorkspacePage() {
                     return;
                   }
                   unconfirmedReviewPages.forEach(p => {
+                    explicitlyApprovedExportPagesRef.current.add(p.pageUrl);
+                    confirmAllPageReviews?.(p.pageUrl);
+                    confirmAllPageRemnants?.(p.pageUrl, getExpectedRemnantEvidence(p.pageUrl));
                     confirmedMissingTranslationsRef.current.set(p.pageUrl, p.missingTranslationSignature);
+                    confirmedPagesRef.current.add(p.pageUrl);
                   });
                   setConfirmedPages((prev) => {
                     const next = new Set(prev);
@@ -4803,6 +4858,12 @@ export default function WorkspacePage() {
         rows={exportReportRows}
         onClose={() => { if (isZipping) return; closeExportReport(); exportSnapshotRef.current = null; }}
         onSelectFinding={selectReadabilityFinding}
+        onSelectPage={(pageIndex) => {
+          closeExportReport();
+          exportSnapshotRef.current = null;
+          setViewLayout("single");
+          setCurrentPage(pageIndex);
+        }}
         onContinueExport={pendingReadabilityExport ? continueReadabilityExport : undefined}
         scanProgress={exportScanProgress}
       />

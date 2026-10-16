@@ -1567,6 +1567,61 @@ export function MaskEditor({
             <p className="text-[11px] text-emerald-100/90">
               {aiAudit.summary}
             </p>
+            {cleanUrl && selectedRegion && canvasSize.width > 0 && canvasSize.height > 0 && (() => {
+              const r = selectedRegion.rect;
+              const maxW = 160;
+              const maxH = 92;
+              const scale = Math.min(
+                1.25,
+                maxW / Math.max(1, r.width),
+                maxH / Math.max(1, r.height),
+              );
+              const previewW = Math.max(32, Math.round(r.width * scale));
+              const previewH = Math.max(28, Math.round(r.height * scale));
+              const bgW = Math.round(canvasSize.width * scale);
+              const bgH = Math.round(canvasSize.height * scale);
+              const bgX = -Math.round(r.x * scale);
+              const bgY = -Math.round(r.y * scale);
+              return (
+                <div
+                  data-testid="ai-mask-inline-comparison"
+                  className="flex flex-wrap items-center gap-3 pt-1"
+                >
+                  {([
+                    ["ภาพเดิม (จุดที่เลือก)", sourceUrl, "original"],
+                    ["ภาพคลีนปัจจุบัน", cleanUrl, "cleaned"],
+                  ] as const).map(([label, url, modeKey]) => (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => setComparison(modeKey)}
+                      className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-colors cursor-pointer ${
+                        comparison === modeKey
+                          ? "border-emerald-400/70 bg-emerald-500/15"
+                          : "border-border/60 bg-background/70 hover:border-emerald-400/40"
+                      }`}
+                    >
+                      <div
+                        aria-hidden="true"
+                        className="rounded border border-border/70 bg-neutral-900 shrink-0"
+                        style={{
+                          width: `${previewW}px`,
+                          height: `${previewH}px`,
+                          backgroundImage: `url("${url}")`,
+                          backgroundRepeat: "no-repeat",
+                          backgroundSize: `${bgW}px ${bgH}px`,
+                          backgroundPosition: `${bgX}px ${bgY}px`,
+                        }}
+                      />
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-[11px] font-semibold text-emerald-100">{label}</span>
+                        <span className="text-[10px] text-muted">คลิกเพื่อสลับภาพหลัก</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         )}
         {/* Canvas & Image Workspace */}

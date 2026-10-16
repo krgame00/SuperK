@@ -259,6 +259,8 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     URL.revokeObjectURL(result.protectedMaskUrl);
   }, []);
 
+  const explicitlyApprovedRemnantPagesRef = useRef<Set<string>>(new Set());
+
   const replaceResult = useCallback(
     (pageUrl: string, next: PageCleaningResult) => {
       const old = resultsRef.current.get(pageUrl);
@@ -268,6 +270,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
         if (old.reviewMaskUrl !== next.reviewMaskUrl) URL.revokeObjectURL(old.reviewMaskUrl);
         if (old.protectedMaskUrl !== next.protectedMaskUrl) URL.revokeObjectURL(old.protectedMaskUrl);
       }
+      explicitlyApprovedRemnantPagesRef.current.delete(pageUrl);
       const updated = new Map(resultsRef.current);
       updated.set(pageUrl, next);
       resultsRef.current = updated;
@@ -303,6 +306,10 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
   );
 
   const getCurrentRemnantReview = useCallback((pageUrl: string, expectedEvidence?: PageRemnantTextEvidence): PageRemnantReview | undefined => {
+    if (explicitlyApprovedRemnantPagesRef.current.has(pageUrl)) {
+      const approvedReview = remnantReviewsRef.current.get(pageUrl);
+      if (approvedReview) return approvedReview;
+    }
     const result = resultsRef.current.get(pageUrl);
     const binding = reviewBindingsRef.current.get(pageUrl);
     const evidence = textEvidenceRef.current.get(pageUrl);
@@ -410,6 +417,9 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     if (textEvidenceIdentity(previous?.textEvidence, previous?.sourceContext) === textEvidenceIdentity(evidence?.textEvidence, evidence?.sourceContext)) return;
     if (evidence) textEvidenceRef.current.set(pageUrl, { sourceContext: evidence.sourceContext, textEvidence: evidence.textEvidence.map(e => ({ id: e.id, box: [...e.box] })) });
     else textEvidenceRef.current.delete(pageUrl);
+    if (explicitlyApprovedRemnantPagesRef.current.has(pageUrl) && remnantReviewsRef.current.has(pageUrl)) {
+      return;
+    }
     inspectionTokensRef.current.set(pageUrl, (inspectionTokensRef.current.get(pageUrl) ?? 0) + 1);
     reviewBindingsRef.current.delete(pageUrl);
     const reviews = new Map(remnantReviewsRef.current);
@@ -489,6 +499,9 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
 
   const confirmAllPageRemnants = useCallback(
     (pageUrl: string, expectedEvidence?: PageRemnantTextEvidence): boolean => {
+      // Cancel any in-flight async remnant inspection so it cannot overwrite explicit user approval
+      inspectionTokensRef.current.set(pageUrl, (inspectionTokensRef.current.get(pageUrl) ?? 0) + 1);
+      explicitlyApprovedRemnantPagesRef.current.add(pageUrl);
       const result = resultsRef.current.get(pageUrl);
       if (result) {
         const hasUncertainRegion = result.regions.some(

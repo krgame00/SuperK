@@ -481,7 +481,7 @@ describe("translation overlay live editor and keyboard controls", () => {
     expect(wrapper.contains(editor)).toBe(false);
   });
 
-  test("keeps the floating toolbar minimal with only the 5 essential buttons on a single bar", async () => {
+  test("keeps the floating toolbar minimal with essential buttons on a single bar including italic and tilt controls", async () => {
     const { toolbar } = await renderOverlay();
     const directButtons = Array.from(toolbar.children).filter(
       (node): node is HTMLButtonElement => node instanceof HTMLButtonElement,
@@ -490,6 +490,8 @@ describe("translation overlay live editor and keyboard controls", () => {
       "แก้ไขข้อความ",
       "ลดขนาดข้อความ (A- หรือคีย์ -)",
       "เพิ่มขนาดข้อความ (A+ หรือคีย์ +)",
+      "สลับตัวอักษรเอียง (Italic หรือคีย์ I)",
+      "เอียงข้อความตามต้นฉบับ / สลับมุมเอียง (คีย์ Q / E)",
       "สลับโหมดสี ขาว-ดำ / ดำ-ขาว",
       "ลบกล่องข้อความ",
     ]);
@@ -2558,5 +2560,35 @@ test("preserves technical loan terms like 4K without script warning badge or str
   expect(bubble.translated).toBe(text);
 });
 
+test("supports toggling italic slant and tilting text via toolbar buttons and keyboard shortcuts", async () => {
+  const { wrapper, bubble, toolbar } = await renderOverlay("ปีศาจกระทิงกำลังโกรธแล้วนะ!", {
+    original_text: "THE BULL... DEMON IS ANGRY!",
+  });
 
+  const italicBtn = toolbar.querySelector<HTMLButtonElement>(
+    'button[aria-label="สลับตัวอักษรเอียง (Italic หรือคีย์ I)"]',
+  )!;
+  const tiltBtn = toolbar.querySelector<HTMLButtonElement>(
+    'button[aria-label="เอียงข้อความตามต้นฉบับ / สลับมุมเอียง (คีย์ Q / E)"]',
+  )!;
+  expect(italicBtn).toBeTruthy();
+  expect(tiltBtn).toBeTruthy();
 
+  // 1. Toggle Italic on via toolbar button
+  italicBtn.click();
+  expect(bubble.isItalic).toBe(true);
+  expect(bubble.layoutAdjustment?.isItalic).toBe(true);
+  expect(italicBtn.getAttribute("aria-pressed")).toBe("true");
+
+  // 2. Click Tilt button to angle text upward-right (-12 deg) and keep italic active
+  tiltBtn.click();
+  expect(bubble.rotation).toBe(-12);
+  expect(bubble.layoutAdjustment?.rotation).toBe(-12);
+  expect(wrapper.style.transform).toContain("rotate(-12.0deg)");
+  expect(bubble.isItalic).toBe(true);
+
+  // 3. Keyboard shortcut '0' resets rotation back to 0 deg
+  wrapper.dispatchEvent(new KeyboardEvent("keydown", { key: "0", bubbles: true }));
+  expect(bubble.rotation).toBe(0);
+  expect(wrapper.style.transform).toBe("");
+});

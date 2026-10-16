@@ -103,3 +103,7 @@ patch-probe.md
 # Heavy SDD diagnostic traces (>100MB)
 *-diagnostic-trace.json
 .superpowers/**/P01-*-trace*.json
+
+# Saved local user projects
+/saved_projects/
+

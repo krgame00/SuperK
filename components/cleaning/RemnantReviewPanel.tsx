@@ -288,6 +288,49 @@ export function RemnantReviewPanel({
                     </div>
                   </div>
 
+                  {sourceUrl && cleanUrl && dimensions?.width && dimensions?.height && (() => {
+                    const maxW = 148;
+                    const maxH = 112;
+                    const scale = Math.min(
+                      1.5,
+                      maxW / Math.max(1, candidate.rect.width),
+                      maxH / Math.max(1, candidate.rect.height),
+                    );
+                    const previewW = Math.max(28, Math.round(candidate.rect.width * scale));
+                    const previewH = Math.max(28, Math.round(candidate.rect.height * scale));
+                    const bgW = Math.round(dimensions.width * scale);
+                    const bgH = Math.round(dimensions.height * scale);
+                    const bgX = -Math.round(candidate.rect.x * scale);
+                    const bgY = -Math.round(candidate.rect.y * scale);
+                    return (
+                      <div
+                        data-testid={`remnant-inline-preview-${candidate.id}`}
+                        className="grid grid-cols-2 gap-2 rounded-lg border border-border/60 bg-surface/60 p-2"
+                      >
+                        {([
+                          ["ต้นฉบับ (ก่อนคลีน)", sourceUrl],
+                          ["หลังคลีน", cleanUrl],
+                        ] as const).map(([label, url]) => (
+                          <div key={label} className="flex flex-col items-center gap-1 min-w-0">
+                            <span className="text-[10px] font-medium text-muted truncate">{label}</span>
+                            <div
+                              aria-hidden="true"
+                              className="rounded border border-border/70 bg-background/80 shadow-inner"
+                              style={{
+                                width: `${previewW}px`,
+                                height: `${previewH}px`,
+                                backgroundImage: `url("${url}")`,
+                                backgroundRepeat: "no-repeat",
+                                backgroundSize: `${bgW}px ${bgH}px`,
+                                backgroundPosition: `${bgX}px ${bgY}px`,
+                              }}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+
                   <div className="flex flex-col gap-1.5 pt-1 border-t border-border/50">
                     <button
                       type="button"

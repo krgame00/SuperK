@@ -1,4 +1,4 @@
-import type { TranslatedBubble } from './translationOverlay';
+import { estimateSourceTextTiltAngle, type TranslatedBubble } from './translationOverlay';
 import { detectClosedSourceTextSpace, SOURCE_SPACE_POLICY } from './sourceTextSpace';
 import { normalizeBubbleBox, sampleBubbleRegionFromImageData } from './colorMatching/canvasSampler';
 import { analyzeSourceLetterSize, calibrateOutputBodyMetric, resolveSourceFontSize, sourcePixelRevision, sourceRegionKey,
@@ -49,7 +49,17 @@ export async function prepareNewSourceSizing(bubbles:TranslatedBubble[], image:H
       let evidence:SourceSizeEvidence={policyVersion:SOURCE_SIZE_POLICY,sourceRevision:revision,regionKey,rect,
         pixelRevision:'unavailable',quality:'unreliable',confidence:0,reason:'original-pixels-unavailable',glyphCount:0,lineCount:0};
       if(rgba && regionKey!=='missing' && !bubble.isInvalidBox) {
-        evidence=analyzeSourceLetterSize(sampleBubbleRegionFromImageData(rgba,width,height,rect),{
+        const regionSample=sampleBubbleRegionFromImageData(rgba,width,height,rect);
+        if(bubble.rotation===undefined && !bubble.layoutAdjustment?.userModified) {
+          const tilt=estimateSourceTextTiltAngle(regionSample);
+          if(Math.abs(tilt.rotationDeg)>=4) {
+            bubble.rotation=tilt.rotationDeg;
+            if(bubble.isItalic===undefined && bubble.italic===undefined) {
+              bubble.isItalic=tilt.isItalic;
+            }
+          }
+        }
+        evidence=analyzeSourceLetterSize(regionSample,{
           sourceRevision:revision,regionKey,rect,originalText:bubble.original_text,
           writingMode:typeof bubble.writingMode==='string'?bubble.writingMode:undefined,
           rotation:typeof bubble.sourceRotation==='number'?bubble.sourceRotation:0,

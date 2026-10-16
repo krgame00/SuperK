@@ -112,8 +112,9 @@ export function buildTranslationPrompt({
     `${thaiTargetDirective}` +
     `- Read order is usually Right-to-Left, Top-to-Bottom.\n` +
     `- Classify each detected text region as styleCategory: dialogue, narration, or sfx. This is metadata only and must not change translation wording.\n` +
+    `- If a text region is visibly tilted/angled (e.g., slanted shouting text, SFX, or tilted signs like "THE BULL... DEMON IS ANGRY!"), include "rotation" (tilt angle in degrees from -45 to 45; negative = tilted upward to the right, positive = tilted downward to the right, 0 = horizontal) and "italic": true when the letters are slanted/italicized.\n` +
     `Output ONLY valid JSON, no markdown, no explanation.\n` +
-    `Format: {"bubbles":[{"original_text": "text found in image", "t":"translated text in Thai","box":[ymin, xmin, ymax, xmax],"styleCategory":"dialogue"}]}\n` +
+    `Format: {"bubbles":[{"original_text": "text found in image", "t":"translated text in Thai","box":[ymin, xmin, ymax, xmax],"styleCategory":"dialogue","rotation":0,"italic":false}]}\n` +
     `box: bounding box coordinates in 0-1000 scale (ymin, xmin = top-left, ymax, xmax = bottom-right). For multiline text in speech bubbles, the box MUST enclose ALL lines within that bubble from top to bottom.\n` +
     `ALL translations in 't' MUST be in ${targetLanguageLabel}.\n` +
     `If no text found: {"bubbles":[]}`

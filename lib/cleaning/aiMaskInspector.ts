@@ -232,136 +232,239 @@ export function analyzeRegionMaskLocally(params: {
 
     const luma = new Float32Array(rw * rh);
     const cleanLuma = cData ? new Float32Array(rw * rh) : null;
-    const bgSamples: number[] = [];
-    const inkSamples: number[] = [];
+    for (let i = 0; i < rw * rh; i++) {
+      const p = i * 4;
+      luma[i] = 0.299 * oData[p] + 0.587 * oData[p + 1] + 0.114 * oData[p + 2];
+      if (cleanLuma && cData) {
+        cleanLuma[i] =
+          0.299 * cData[p] + 0.587 * cData[p + 1] + 0.114 * cData[p + 2];
+      }
+    }
 
-    const marginX = Math.min(4, Math.floor(rw * 0.1));
-    const marginY = Math.min(4, Math.floor(rh * 0.1));
+    // Compute distance band around existing text mask:
+    // nearMask[i] = 3 (inside curGrid), 2 (dist 1), 1 (dist 2)
+    // textBand[i] = 1 if within 8px of existing text mask (never scan character art far from text!)
+    const nearMask = new Uint8Array(rw * rh);
+    const textBand = new Uint8Array(rw * rh);
+    let currentMaskCount = 0;
 
     for (let ly = 0; ly < rh; ly++) {
       for (let lx = 0; lx < rw; lx++) {
         const i = ly * rw + lx;
-        const p = i * 4;
-        const yVal =
-          0.299 * oData[p] + 0.587 * oData[p + 1] + 0.114 * oData[p + 2];
-        luma[i] = yVal;
-        if (cleanLuma && cData) {
-          cleanLuma[i] =
-            0.299 * cData[p] + 0.587 * cData[p + 1] + 0.114 * cData[p + 2];
+        if (curGrid[i] === 1) {
+          nearMask[i] = 3;
+          textBand[i] = 1;
+          currentMaskCount += 1;
         }
-        const insideMargin =
-          lx >= marginX &&
-          lx < rw - marginX &&
-          ly >= marginY &&
-          ly < rh - marginY;
-        if (insideMargin) {
-          if (curGrid[i] === 1) {
-            if (inkSamples.length < 1200) inkSamples.push(yVal);
-          } else if (bgSamples.length < 1500) {
-            bgSamples.push(yVal);
+      }
+    }
+
+    // Populate nearMask (dist 1..2) and textBand (dist 1..6) around masked text pixels only
+    for (let ly = 1; ly < rh - 1; ly++) {
+      for (let lx = 1; lx < rw - 1; lx++) {
+        const i = ly * rw + lx;
+        if (curGrid[i] !== 1) continue;
+        // Only propagate from boundary pixels of curGrid for speed
+        if (
+          curGrid[i - 1] === 1 &&
+          curGrid[i + 1] === 1 &&
+          curGrid[i - rw] === 1 &&
+          curGrid[i + rw] === 1
+        ) {
+          continue;
+        }
+        const y0 = Math.max(1, ly - 6);
+        const y1 = Math.min(rh - 2, ly + 6);
+        const x0 = Math.max(1, lx - 6);
+        const x1 = Math.min(rw - 2, lx + 6);
+        for (let ny = y0; ny <= y1; ny++) {
+          const dy = Math.abs(ny - ly);
+          const rowOff = ny * rw;
+          for (let nx = x0; nx <= x1; nx++) {
+            const ni = rowOff + nx;
+            if (curGrid[ni] === 1) continue;
+            const dx = Math.abs(nx - lx);
+            const cheb = Math.max(dx, dy);
+            if (cheb <= 1) {
+              if (nearMask[ni] < 2) nearMask[ni] = 2;
+              textBand[ni] = 1;
+            } else if (cheb === 2) {
+              if (nearMask[ni] < 1) nearMask[ni] = 1;
+              textBand[ni] = 1;
+            } else if (dx * dx + dy * dy <= 36) {
+              textBand[ni] = 1;
+            }
           }
         }
+      }
+    }
+
+    // Sample ink luma ONLY from existing text mask and background luma ONLY from the 2..6px ring
+    // immediately surrounding the text mask (so character bodies/clothes never skew bgMedian!).
+    const bgSamples: number[] = [];
+    const inkSamples: number[] = [];
+    const step = Math.max(1, Math.floor((rw * rh) / 16000));
+    for (let i = 0; i < rw * rh; i += step) {
+      if (curGrid[i] === 1) {
+        if (inkSamples.length < 1500) inkSamples.push(luma[i]);
+      } else if (textBand[i] === 1 && nearMask[i] === 0) {
+        if (bgSamples.length < 1500) bgSamples.push(luma[i]);
+      }
+    }
+    if (bgSamples.length === 0) {
+      for (let i = 0; i < rw * rh; i += Math.max(1, step * 2)) {
+        if (curGrid[i] === 0 && bgSamples.length < 800) bgSamples.push(luma[i]);
       }
     }
 
     const bgMedian = computeMedian(bgSamples);
-    const inkMedian = inkSamples.length > 0 ? computeMedian(inkSamples) : bgMedian > 128 ? 35 : 220;
+    const inkMedian =
+      inkSamples.length > 0 ? computeMedian(inkSamples) : bgMedian > 128 ? 35 : 220;
     const contrastSpan = Math.max(28, Math.abs(bgMedian - inkMedian));
-    const strokeThreshold = Math.max(24, contrastSpan * 0.42);
-    const haloThreshold = Math.max(18, contrastSpan * 0.28);
+    const strokeThreshold = Math.max(26, contrastSpan * 0.48);
+    const haloThreshold = Math.max(20, contrastSpan * 0.34);
 
-    // Find bounding box of existing mask inside the region (or fall back to inner 76% box)
-    let minMaskX = rw;
-    let minMaskY = rh;
-    let maxMaskX = -1;
-    let maxMaskY = -1;
-    for (let ly = 0; ly < rh; ly++) {
-      for (let lx = 0; lx < rw; lx++) {
-        if (curGrid[ly * rw + lx] === 1) {
-          if (lx < minMaskX) minMaskX = lx;
-          if (lx > maxMaskX) maxMaskX = lx;
-          if (ly < minMaskY) minMaskY = ly;
-          if (ly > maxMaskY) maxMaskY = ly;
-        }
-      }
-    }
-
-    const hasExistingMask = maxMaskX >= minMaskX && maxMaskY >= minMaskY;
-    const envX0 = hasExistingMask
-      ? Math.max(2, minMaskX - 8)
-      : Math.max(2, Math.floor(rw * 0.12));
-    const envY0 = hasExistingMask
-      ? Math.max(2, minMaskY - 8)
-      : Math.max(2, Math.floor(rh * 0.12));
-    const envX1 = hasExistingMask
-      ? Math.min(rw - 2, maxMaskX + 9)
-      : Math.min(rw - 2, Math.ceil(rw * 0.88));
-    const envY1 = hasExistingMask
-      ? Math.min(rh - 2, maxMaskY + 9)
-      : Math.min(rh - 2, Math.ceil(rh * 0.88));
-
-    // Distance-1 and Distance-2 dilation of current mask for halo/stroke growth
-    const nearMask = new Uint8Array(rw * rh);
-    for (let ly = 1; ly < rh - 1; ly++) {
-      for (let lx = 1; lx < rw - 1; lx++) {
-        const i = ly * rw + lx;
-        if (curGrid[i] === 1) {
-          nearMask[i] = 2;
-          continue;
-        }
-        let touches1 = false;
-        let touches2 = false;
-        for (let dy = -2; dy <= 2; dy++) {
-          const ny = ly + dy;
-          if (ny < 0 || ny >= rh) continue;
-          for (let dx = -2; dx <= 2; dx++) {
-            const nx = lx + dx;
-            if (nx < 0 || nx >= rw) continue;
-            if (curGrid[ny * rw + nx] === 1) {
-              if (Math.abs(dx) <= 1 && Math.abs(dy) <= 1) touches1 = true;
-              touches2 = true;
-            }
+    // Helper: estimate local background luma in a 7x7 window from unmasked ring pixels
+    const localBgAt = (cx: number, cy: number): number => {
+      let sum = 0;
+      let count = 0;
+      const y0 = Math.max(0, cy - 4);
+      const y1 = Math.min(rh - 1, cy + 4);
+      const x0 = Math.max(0, cx - 4);
+      const x1 = Math.min(rw - 1, cx + 4);
+      for (let ny = y0; ny <= y1; ny += 2) {
+        const rOff = ny * rw;
+        for (let nx = x0; nx <= x1; nx += 2) {
+          const ni = rOff + nx;
+          if (curGrid[ni] === 0 && nearMask[ni] === 0) {
+            sum += luma[ni];
+            count += 1;
           }
         }
-        if (touches1) nearMask[i] = 2;
-        else if (touches2) nearMask[i] = 1;
+      }
+      return count >= 2 ? sum / count : bgMedian;
+    };
+
+    // 1. Detect Under-Masked text stroke / glyph pixels strictly within textBand:
+    // Collect candidate pixels first, then filter via Connected Component Analysis (CCA)
+    // so only genuine text-sized glyph strokes/halos are added and character art is NEVER touched.
+    const candidateAdd = new Uint8Array(rw * rh);
+    for (let ly = 2; ly < rh - 2; ly++) {
+      const rOff = ly * rw;
+      for (let lx = 2; lx < rw - 2; lx++) {
+        const i = rOff + lx;
+        if (curGrid[i] === 1 || textBand[i] === 0) continue;
+        const locBg = localBgAt(lx, ly);
+        const origDiff = Math.abs(luma[i] - locBg);
+        const cleanDiff = cleanLuma ? Math.abs(cleanLuma[i] - locBg) : origDiff;
+
+        // Must still be visible/uncleaned in the cleaned image if cleanLuma is present
+        if (cleanLuma && cleanDiff < haloThreshold * 0.8) continue;
+
+        if (nearMask[i] === 2 && origDiff >= haloThreshold && cleanDiff >= haloThreshold * 0.85) {
+          candidateAdd[i] = 1;
+        } else if (nearMask[i] === 1 && origDiff >= strokeThreshold && cleanDiff >= strokeThreshold * 0.85) {
+          candidateAdd[i] = 1;
+        } else if (origDiff >= strokeThreshold * 1.25 && cleanDiff >= strokeThreshold * 1.05) {
+          // Detached glyph stroke candidate inside textBand (within 6px of text mask)
+          candidateAdd[i] = 1;
+        }
       }
     }
 
-    // 1. Detect Under-Masked pixels (glyph halos & uncleaned text strokes inside envelope)
-    for (let ly = envY0; ly < envY1; ly++) {
-      for (let lx = envX0; lx < envX1; lx++) {
-        const i = ly * rw + lx;
-        if (curGrid[i] === 1) continue;
-        const origDiff = Math.abs(luma[i] - bgMedian);
-        const cleanDiff = cleanLuma ? Math.abs(cleanLuma[i] - bgMedian) : origDiff;
+    // Connected Component Filtering on candidateAdd:
+    // Reject any component that is too large (character line-art/shading), too elongated (borders/hair),
+    // or lacks direct proximity to text glyphs.
+    const visited = new Uint8Array(rw * rh);
+    const maxTotalAdded = Math.max(120, Math.min(3600, Math.round(currentMaskCount * 0.22)));
+    let totalAddedSoFar = 0;
+    const queue = new Int32Array(rw * rh);
 
-        if (nearMask[i] === 2 && (origDiff >= haloThreshold || cleanDiff >= haloThreshold)) {
-          nextGrid[i] = 1;
-        } else if (nearMask[i] === 1 && origDiff >= strokeThreshold) {
-          nextGrid[i] = 1;
-        } else if (origDiff >= strokeThreshold * 1.18 && cleanDiff >= strokeThreshold * 0.85) {
-          // Check 3x3 neighborhood for connected stroke pixels so we don't pick up single-pixel noise
-          let strongNeighbors = 0;
+    for (let ly = 2; ly < rh - 2; ly++) {
+      for (let lx = 2; lx < rw - 2; lx++) {
+        const startIdx = ly * rw + lx;
+        if (candidateAdd[startIdx] === 0 || visited[startIdx] === 1) continue;
+
+        let head = 0;
+        let tail = 0;
+        queue[tail++] = startIdx;
+        visited[startIdx] = 1;
+
+        let minX = lx;
+        let maxX = lx;
+        let minY = ly;
+        let maxY = ly;
+        let touchesExistingMask = false;
+        let touchesBorder = false;
+
+        while (head < tail) {
+          const curr = queue[head++];
+          const cy = Math.floor(curr / rw);
+          const cx = curr - cy * rw;
+          if (cx < minX) minX = cx;
+          if (cx > maxX) maxX = cx;
+          if (cy < minY) minY = cy;
+          if (cy > maxY) maxY = cy;
+          if (nearMask[curr] >= 2) touchesExistingMask = true;
+          if (cx <= 2 || cx >= rw - 3 || cy <= 2 || cy >= rh - 3) touchesBorder = true;
+
           for (let dy = -1; dy <= 1; dy++) {
+            const ny = cy + dy;
+            if (ny < 1 || ny >= rh - 1) continue;
             for (let dx = -1; dx <= 1; dx++) {
               if (dx === 0 && dy === 0) continue;
-              const nIdx = (ly + dy) * rw + (lx + dx);
-              if (Math.abs(luma[nIdx] - bgMedian) >= strokeThreshold) {
-                strongNeighbors += 1;
+              const nx = cx + dx;
+              if (nx < 1 || nx >= rw - 1) continue;
+              const nIdx = ny * rw + nx;
+              if (candidateAdd[nIdx] === 1 && visited[nIdx] === 0) {
+                visited[nIdx] = 1;
+                queue[tail++] = nIdx;
               }
             }
           }
-          if (strongNeighbors >= 2) {
-            nextGrid[i] = 1;
+        }
+
+        const compArea = tail;
+        const compW = maxX - minX + 1;
+        const compH = maxY - minY + 1;
+        const aspect = compW / Math.max(1, compH);
+        const fillRatio = compArea / Math.max(1, compW * compH);
+
+        // Text-glyph criteria:
+        // - Small compact stroke/halo (2..260 px, box <= 36x36)
+        // - Not touching region border
+        // - Not a long character contour or solid shading block
+        const isGlyphHalo =
+          touchesExistingMask &&
+          !touchesBorder &&
+          compArea >= 2 &&
+          compArea <= 260 &&
+          compW <= 36 &&
+          compH <= 36;
+        const isDetachedPunctuationOrStroke =
+          !touchesBorder &&
+          compArea >= 4 &&
+          compArea <= 140 &&
+          compW <= 24 &&
+          compH <= 24 &&
+          aspect >= 0.2 &&
+          aspect <= 4.5 &&
+          fillRatio >= 0.14 &&
+          fillRatio <= 0.78;
+
+        if (
+          (isGlyphHalo || isDetachedPunctuationOrStroke) &&
+          totalAddedSoFar + compArea <= maxTotalAdded
+        ) {
+          for (let k = 0; k < tail; k++) {
+            nextGrid[queue[k]] = 1;
           }
+          totalAddedSoFar += compArea;
         }
       }
     }
 
-    // 2. Detect Over-Masked pixels:
-    // (a) Perimeter bleed (within 2px of region boundary where mask touches region edge)
-    // (b) Masked background pixels on outer fringe of mask that are already pure background color
+    // 2. Detect Over-Masked pixels (protect character art & background where mask bled out):
     const borderMargin = 2;
     for (let ly = 0; ly < rh; ly++) {
       for (let lx = 0; lx < rw; lx++) {
@@ -376,8 +479,8 @@ export function analyzeRegionMaskLocally(params: {
           nextGrid[i] = 0;
           continue;
         }
-        // Check if this pixel is on the outer edge of the current mask and has almost zero contrast with background
-        const origDiff = Math.abs(luma[i] - bgMedian);
+        const locBg = localBgAt(lx, ly);
+        const origDiff = Math.abs(luma[i] - locBg);
         if (origDiff < haloThreshold * 0.45) {
           let unmaskedNeighbors = 0;
           for (let dy = -1; dy <= 1; dy++) {
@@ -387,7 +490,7 @@ export function analyzeRegionMaskLocally(params: {
               }
             }
           }
-          if (unmaskedNeighbors >= 5) {
+          if (unmaskedNeighbors >= 4) {
             nextGrid[i] = 0;
           }
         }
@@ -485,15 +588,41 @@ export function applyGeminiMaskReviewToSuggestion(
 
   for (const box of review.addBoxes) {
     const [ymin, xmin, ymax, xmax] = box;
+    const boxAreaRatio = ((ymax - ymin) * (xmax - xmin)) / 1_000_000;
+    // If originalCrop is present and the region is large, ignore overly broad boxes (> 30% of region)
+    // that accidentally enclose whole character bodies instead of specific missed text glyphs.
+    if (luma && rw * rh > 20_000 && boxAreaRatio > 0.30) {
+      continue;
+    }
     const lx0 = Math.max(1, Math.floor((xmin / 1000) * rw));
     const ly0 = Math.max(1, Math.floor((ymin / 1000) * rh));
     const lx1 = Math.min(rw - 1, Math.ceil((xmax / 1000) * rw));
     const ly1 = Math.min(rh - 1, Math.ceil((ymax / 1000) * rh));
+    if (!luma) {
+      for (let ly = ly0; ly < ly1; ly++) {
+        const rowOff = (rect.y + ly) * width;
+        for (let lx = lx0; lx < lx1; lx++) {
+          const idx = (rowOff + rect.x + lx) * 4;
+          sData[idx] = 255;
+          sData[idx + 1] = 55;
+          sData[idx + 2] = 80;
+          sData[idx + 3] = 150;
+        }
+      }
+      continue;
+    }
+    // Compute local background median inside this specific addBox so only high-contrast text strokes are masked
+    const boxSamples: number[] = [];
+    for (let ly = ly0; ly < ly1; ly++) {
+      for (let lx = lx0; lx < lx1; lx++) {
+        boxSamples.push(luma[ly * rw + lx]);
+      }
+    }
+    const localBoxBg = computeMedian(boxSamples);
     for (let ly = ly0; ly < ly1; ly++) {
       const rowOff = (rect.y + ly) * width;
       for (let lx = lx0; lx < lx1; lx++) {
-        const shouldAdd =
-          !luma || Math.abs(luma[ly * rw + lx] - bgMedian) >= 16;
+        const shouldAdd = Math.abs(luma[ly * rw + lx] - localBoxBg) >= 28;
         if (shouldAdd) {
           const idx = (rowOff + rect.x + lx) * 4;
           sData[idx] = 255;

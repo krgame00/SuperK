@@ -57,8 +57,10 @@ const graphemesOf = (value: string): string[] => {
   return Array.from(value);
 };
 
-const THAI_PRE_PROTECT_RE = /(ด้วยเนี่ย|รึเปล่า|หรือเปล่า|เหรอ|รึยัง|รึไง)/gu;
+const THAI_PRE_PROTECT_RE = /(ด้วยเนี่ย|รึเปล่า|หรือเปล่า|เหรอ|รึยัง|รึไง|แม่วัวนม|วัวนม|เรือนร่าง|อวบอั๋น|อวบอั้น|จอมเวท|พรสวรรค์|ลักษณะนิสัย|ตระกูลขุนนาง|จักรวรรดิ|ระดับสูงสุด|ระดับเอส|ระดับเอ|พิกัดมิติ|เคลื่อนย้าย|ความเข้ากันได้)/gu;
 const THAI_STOLEN_CODA_PARTICLE_RE = /^([งกนมดบยว])(ด้วยเนี่ย|เนี่ย|มั้ง|มั้ย|งี้|งั้น|รึเปล่า|รึยัง|รึไง|รึ|น่ะ|ล่ะ|อ่ะ|อะ|วะ|เว้ย|โว้ย|ฟะ|เฟ้ย|แฮะ|แหละ|จัง|จ้ะ|จ๋า|ฮะ)[\p{P}\s]*$/u;
+
+const STRUCTURED_HEADER_PREFIX_RE = "(?:สกิล|เวทมนตร์|พลัง|ความสามารถ|ข้อมูล|ประวัติ|ลักษณะ|พรสวรรค์|ฉายา|อาชีพ|เผ่าพันธุ์|สังกัด|ตำแหน่ง|อาวุธ|ธาตุ|ระดับ|จุดเด่น|จุดอ่อน|งานอดิเรก|สิ่งที่ชอบ|สิ่งที่เกลียด|สถานะ|ค่าสถานะ|Skill|Skills|Talent|Talents|Trait|Traits|Personality|Status|Title|Class|Magic|Ability|Abilities)";
 
 export function isStructuredMangaList(text?: string | null): boolean {
   if (!text || typeof text !== "string") return false;
@@ -66,21 +68,53 @@ export function isStructuredMangaList(text?: string | null): boolean {
   return (bulletMatches?.length ?? 0) >= 2;
 }
 
+export function isStructuredSectionHeaderLine(line?: string | null): boolean {
+  if (!line || typeof line !== "string") return false;
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith("•") || trimmed.startsWith("-")) return false;
+  return trimmed.endsWith(":") && trimmed.length <= 36;
+}
+
 export function formatStructuredMangaText(text: string): string {
   if (!isStructuredMangaList(text)) return text;
   let formatted = text.replace(/\r\n/g, "\n");
-  // Place inline section headers immediately preceding a bullet marker onto their own line
+
+  // 1. Multi-word section headers starting with a known header keyword (e.g. "สกิลที่ครอบครอง:", "เวทมนตร์ที่ใช้ได้:")
+  const multiWordHeaderRe = new RegExp(
+    `\\s+(${STRUCTURED_HEADER_PREFIX_RE}[^\\s\\n:•-]*(?:\\s+[^\\s\\n:•-]{1,20})?:)\\s*(?=[•-]\\s+\\S|$|\\n)`,
+    "gu",
+  );
+  formatted = formatted.replace(multiWordHeaderRe, "\n$1\n");
+
+  // 2. Single-token section headers immediately preceding a bullet marker or newline (e.g. "พรสวรรค์:", "ลักษณะนิสัย:")
+  // Never match across spaces so preceding sentence clauses (like "แต่เธอก็ไม่ได้ใส่ใจ") stay on the bullet line!
   formatted = formatted.replace(
-    /\s+([^\s\n:•-][^\n:•-]{1,28}:)\s*(?=[•-]\s+\S)/gu,
+    /\s+([^\s\n:•-]{2,26}:)\s*(?=[•-]\s+\S|\n|$)/gu,
     "\n$1\n",
   );
-  // Turn inline bullet markers (" - item" or " • item") into explicit newline bullets
+
+  // 3. Turn inline bullet markers (" - item" or " • item") into explicit newline bullets
   formatted = formatted.replace(/(?:^|\s+)[•-]\s+(?=\S)/gu, (match) =>
     match === "• " || match === "- " ? "• " : "\n• ",
   );
+
+  // 4. If a line still has a trailing section header at the very end after a sentence (e.g. "...แต่เธอก็ไม่ได้ใส่ใจ พรสวรรค์:")
   formatted = formatted
     .split("\n")
-    .map((line) => line.trim())
+    .flatMap((rawLine) => {
+      const line = rawLine.trim();
+      if (!line) return [];
+      const trailingHeaderMatch = line.match(
+        new RegExp(
+          `^(.+?\\S)\\s+((?:${STRUCTURED_HEADER_PREFIX_RE}[^\\s:•-]*(?:\\s+[^\\s:•-]{1,18})?|[^\\s:•-]{2,24}):)$`,
+          "u",
+        ),
+      );
+      if (trailingHeaderMatch) {
+        return [trailingHeaderMatch[1].trim(), trailingHeaderMatch[2].trim()];
+      }
+      return [line];
+    })
     .filter(Boolean)
     .join("\n");
   return formatted;
@@ -89,10 +123,14 @@ export function formatStructuredMangaText(text: string): string {
 export function hasBrokenThaiLineBreak(lines?: string[] | null): boolean {
   if (!Array.isArray(lines) || lines.length <= 1) return false;
   const joined = lines.join(" ");
-  if (isStructuredMangaList(joined)) {
+  if (isStructuredMangaList(joined) || /(?:^|\s)[•-]\s+\S/u.test(joined)) {
     for (const rawLine of lines) {
       const line = (rawLine || "").trim();
       if (/\S\s+[•-]\s+\S/u.test(line)) return true;
+      // Also detect a sentence glued onto a trailing section header like "แต่เธอก็ไม่ได้ใส่ใจ พรสวรรค์:"
+      if (/\S\s+[^\s:•-]{2,24}:$/u.test(line) && !new RegExp(`^${STRUCTURED_HEADER_PREFIX_RE}`, "u").test(line)) {
+        return true;
+      }
     }
   }
   for (let i = 1; i < lines.length; i++) {
@@ -243,22 +281,49 @@ function wrapForCandidate(
     current += remaining;
   };
 
+  const isStructured = isStructuredMangaList(text);
+  const bulletContinuationReservePx = isStructured ? Math.round(fontSizePx * 0.9) : 0;
+
   for (const part of text.split(/(\n)/)) {
     if (part === "\n") {
       pushLine();
       continue;
     }
 
+    const trimmedPart = part.trimStart();
+    const isBulletParagraph = isStructured && (trimmedPart.startsWith("•") || trimmedPart.startsWith("-"));
+    let isContinuationLine = false;
+
+    const effectiveLimitAt = (lineIdx: number): number => {
+      const base = candidateWidthAt(lineIdx);
+      return isBulletParagraph && isContinuationLine
+        ? Math.max(fontSizePx * 2, base - bulletContinuationReservePx)
+        : base;
+    };
+
     for (const token of segmentTextIntoWords(part, locale)) {
       if (/^\s+$/.test(token)) {
         if (!current) continue;
-        if (measureText(current + token) > candidateWidthAt(lines.length)) {
+        if (measureText(current + token) > effectiveLimitAt(lines.length)) {
           pushLine();
+          if (isBulletParagraph) isContinuationLine = true;
         } else {
           current += token;
         }
       } else {
-        appendToken(token);
+        let remaining = current ? token : token.trimStart();
+        if (!remaining) continue;
+        if (current && measureText(current + remaining) > effectiveLimitAt(lines.length)) {
+          pushLine();
+          if (isBulletParagraph) isContinuationLine = true;
+          remaining = token.trimStart();
+        }
+        if (!remaining) continue;
+        const limit = current
+          ? effectiveLimitAt(lines.length)
+          : Math.max(effectiveLimitAt(lines.length), singleWordLimit);
+        if (measureText(remaining) > limit * 1.05) wordOverflow = true;
+        current += remaining;
       }
     }
   }
@@ -397,9 +462,17 @@ export function layoutTextAtFixedFont(input: FixedFontWidthInput): FixedFontWidt
     }
   }
 
+  const extraSectionGapPx = structuredList
+    ? chosenLines.reduce((sum, line, idx) => {
+        if (idx > 0 && isStructuredSectionHeaderLine(line)) {
+          return sum + finiteFontSize * 0.35;
+        }
+        return sum;
+      }, 0)
+    : 0;
   const requiredHeightPx = chosenLines.length === 0
     ? 0
-    : Math.ceil((chosenLines.length * finiteFontSize * 1.30) / 0.88);
+    : Math.ceil(((chosenLines.length * finiteFontSize * (structuredList ? 1.38 : 1.30)) + extraSectionGapPx) / 0.88);
   const requestedHeight = Math.max(requiredHeightPx, manualMinHeight, 25);
   const heightPx = Math.min(finiteAvailableHeight, requestedHeight);
 
