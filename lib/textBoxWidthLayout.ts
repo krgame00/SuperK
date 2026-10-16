@@ -60,8 +60,41 @@ const graphemesOf = (value: string): string[] => {
 const THAI_PRE_PROTECT_RE = /(ด้วยเนี่ย|รึเปล่า|หรือเปล่า|เหรอ|รึยัง|รึไง)/gu;
 const THAI_STOLEN_CODA_PARTICLE_RE = /^([งกนมดบยว])(ด้วยเนี่ย|เนี่ย|มั้ง|มั้ย|งี้|งั้น|รึเปล่า|รึยัง|รึไง|รึ|น่ะ|ล่ะ|อ่ะ|อะ|วะ|เว้ย|โว้ย|ฟะ|เฟ้ย|แฮะ|แหละ|จัง|จ้ะ|จ๋า|ฮะ)[\p{P}\s]*$/u;
 
+export function isStructuredMangaList(text?: string | null): boolean {
+  if (!text || typeof text !== "string") return false;
+  const bulletMatches = text.match(/(?:^|\n|\s)[•-]\s+\S/gu);
+  return (bulletMatches?.length ?? 0) >= 2;
+}
+
+export function formatStructuredMangaText(text: string): string {
+  if (!isStructuredMangaList(text)) return text;
+  let formatted = text.replace(/\r\n/g, "\n");
+  // Place inline section headers immediately preceding a bullet marker onto their own line
+  formatted = formatted.replace(
+    /\s+([^\s\n:•-][^\n:•-]{1,28}:)\s*(?=[•-]\s+\S)/gu,
+    "\n$1\n",
+  );
+  // Turn inline bullet markers (" - item" or " • item") into explicit newline bullets
+  formatted = formatted.replace(/(?:^|\s+)[•-]\s+(?=\S)/gu, (match) =>
+    match === "• " || match === "- " ? "• " : "\n• ",
+  );
+  formatted = formatted
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n");
+  return formatted;
+}
+
 export function hasBrokenThaiLineBreak(lines?: string[] | null): boolean {
   if (!Array.isArray(lines) || lines.length <= 1) return false;
+  const joined = lines.join(" ");
+  if (isStructuredMangaList(joined)) {
+    for (const rawLine of lines) {
+      const line = (rawLine || "").trim();
+      if (/\S\s+[•-]\s+\S/u.test(line)) return true;
+    }
+  }
   for (let i = 1; i < lines.length; i++) {
     const line = (lines[i] || "").trim();
     if (!line) continue;
@@ -302,9 +335,12 @@ export function layoutTextAtFixedFont(input: FixedFontWidthInput): FixedFontWidt
     };
   }
   const locale = input.locale || "th";
+  const structuredList = isStructuredMangaList(input.text);
+  const effectiveText = structuredList ? formatStructuredMangaText(input.text) : input.text;
+  const effectiveIsOval = input.isOval && !structuredList;
   const safeWidthPx = Math.max(1, finiteWidth * 0.88);
-  const graphemeCount = graphemesOf(input.text).length;
-  const maxCandidates = input.isOval
+  const graphemeCount = graphemesOf(effectiveText).length;
+  const maxCandidates = effectiveIsOval
     ? Math.min(MAX_OVAL_LINE_CANDIDATES, Math.max(1, graphemeCount + 1))
     : 1;
 
@@ -317,18 +353,18 @@ export function layoutTextAtFixedFont(input: FixedFontWidthInput): FixedFontWidt
 
   for (let candidateLineCount = 1; candidateLineCount <= maxCandidates; candidateLineCount += 1) {
     const attempt = wrapForCandidate(
-      input.text,
+      effectiveText,
       candidateLineCount,
       safeWidthPx,
       finiteFontSize,
-      input.isOval,
+      effectiveIsOval,
       locale,
       input.measureText,
     );
     chosenLines = attempt.lines;
     wordOverflow = attempt.wordOverflow;
 
-    if (fallbackLines === null && (!input.isOval || chosenLines.length <= candidateLineCount)) {
+    if (fallbackLines === null && (!effectiveIsOval || chosenLines.length <= candidateLineCount)) {
       fallbackLines = chosenLines;
       fallbackWordOverflow = wordOverflow;
       crossoverCandidate = candidateLineCount;
@@ -338,12 +374,12 @@ export function layoutTextAtFixedFont(input: FixedFontWidthInput): FixedFontWidt
       chosenLines,
       finiteWidth,
       finiteFontSize,
-      input.isOval,
+      effectiveIsOval,
       locale,
       input.measureText,
     );
 
-    if ((!input.isOval || chosenLines.length <= candidateLineCount) && actualChordsFit && !wordOverflow) {
+    if ((!effectiveIsOval || chosenLines.length <= candidateLineCount) && actualChordsFit && !wordOverflow) {
       settled = true;
       break;
     }

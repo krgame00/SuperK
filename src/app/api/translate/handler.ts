@@ -105,7 +105,8 @@ export function buildTranslationPrompt({
     `- Preserve the complete source meaning in 't'. Do not omit or add meaning, invent pronouns, names, relationships, actions, or events. Preserve uncertainty and implied subjects rather than guessing. Natural phrasing must never alter meaning.\n` +
     `- Use highly natural, conversational flow appropriate for comic books. Avoid rigid word-for-word translation.\n` +
     `- Arrange sentences beautifully according to native Thai idioms and phrasing (เรียบเรียงประโยคให้สละสลวยเหมือนคนไทยพูดกันในชีวิตจริง ไม่แปลตรงตัว).\n` +
-    `- Do NOT use line breaks (\\n) in the translated text. Keep the text of each bubble on a single continuous line (ห้ามเว้นบรรทัดมั่ว ให้ต่อเป็นบรรทัดเดียวกัน).\n` +
+    `- Do NOT merge visually separate text blocks, floating paragraphs, or distinct character profile/status sections into a single bubble. Output each distinct speech bubble, floating paragraph, or profile section (e.g., Title/Bio, Talent, Characteristics, Acquired Skills) as its own separate entry in "bubbles" with its exact bounding box [ymin, xmin, ymax, xmax] at its original position.\n` +
+    `- For normal speech bubbles, do NOT use line breaks (\\n) in the translated text. Keep the text of each speech bubble on a single continuous line (ห้ามเว้นบรรทัดมั่ว ให้ต่อเป็นบรรทัดเดียวกัน). However, if a text block is a bulleted list (• or -) or a section heading followed by bullet items, preserve "\\n• " before each bullet item so the list layout matches the original image.\n` +
     `- For Thai: Adapt pronouns (แก, ฉัน, นาย, ข้า, เอ็ง) and endings (ครับ, ค่ะ, วะ, เว้ย, สิ, นะ) based on character relationships and mood.\n` +
     `${policyRules}\n` +
     `${thaiTargetDirective}` +

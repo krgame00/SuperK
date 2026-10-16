@@ -707,7 +707,7 @@ export default function WorkspacePage() {
     );
   }, [hasCurrentTranslation]);
 
-  const handleAutoOrganizeCurrentPage = useCallback(async (mode: "readable" | "xlarge" = "readable", overrideManual = true) => {
+  const handleAutoOrganizeCurrentPage = useCallback(async (mode: "readable" | "xlarge" | "original" = "readable", overrideManual = true) => {
     if (!currentPageUrl) return;
     const currentBubbles = bubbleCacheRef.current.get(currentPageUrl) ?? activeBubbles;
     if (!currentBubbles || currentBubbles.length === 0) return;
@@ -724,18 +724,24 @@ export default function WorkspacePage() {
 
     const targetLangCode = getPageTargetLanguage?.(currentPageUrl) ?? targetLang ?? "th";
     const isXLarge = mode === "xlarge";
+    const isOriginalMode = mode === "original";
     const result = autoOrganizePageBubbles(currentBubbles, iw, ih, {
       fontFamily: textStyleRef.current?.fontFamily,
       fontSizeMultiplier: textStyleRef.current?.fontSizeMultiplier || 1.0,
       locale: targetLangCode === "en" ? "en" : "th",
       forceRealign: true,
       overrideUserModified: overrideManual,
-      ...(isXLarge
+      ...(isOriginalMode
         ? {
-            minFontSize: Math.max(22, Math.round(iw * 0.0195)),
-            maxEnlargeRatio: 1.75,
+            constrainToOriginalBox: true,
+            preserveOriginalPosition: true,
           }
-        : {}),
+        : isXLarge
+          ? {
+              minFontSize: Math.max(22, Math.round(iw * 0.0195)),
+              maxEnlargeRatio: 1.75,
+            }
+          : {}),
     });
 
     const afterBubbles = result.optimizedBubbles.map((b) => ({
@@ -794,7 +800,7 @@ export default function WorkspacePage() {
     import("react-hot-toast").then((m) =>
       m.default.success(
         result.adjustedCount > 0
-          ? `✅ จัดระเบียบบับเบิล (${isXLarge ? "ตัวใหญ่พิเศษ XL" : "สมดุลอ่านง่าย"}) ${result.adjustedCount} จุดเรียบร้อยแล้ว!`
+          ? `✅ จัดระเบียบบับเบิล (${isOriginalMode ? "ตามตำแหน่งต้นฉบับ" : isXLarge ? "ตัวใหญ่พิเศษ XL" : "สมดุลอ่านง่าย"}) ${result.adjustedCount} จุดเรียบร้อยแล้ว!`
           : `✅ บับเบิลทุกจุดจัดระเบียบเรียบร้อยแล้ว`,
       ),
     );
@@ -815,7 +821,7 @@ export default function WorkspacePage() {
     currentCleaningResult,
   ]);
 
-  const handleAutoOrganizeAllPages = useCallback(async (mode: "readable" | "xlarge" = "readable") => {
+  const handleAutoOrganizeAllPages = useCallback(async (mode: "readable" | "xlarge" | "original" = "readable") => {
     if (pages.length === 0) return;
     const translatedPages = pages.filter((p) => {
       const b = bubbleCacheRef.current.get(p.url);
@@ -874,6 +880,7 @@ export default function WorkspacePage() {
       const toastModule = await import("react-hot-toast");
       const toast = toastModule.default;
       const isXLarge = mode === "xlarge";
+      const isOriginalMode = mode === "original";
       const toastId = typeof toast?.loading === "function"
         ? toast.loading(`กำลังจัดระเบียบทุกหน้า (0/${translatedPages.length})...`)
         : undefined;
@@ -896,13 +903,18 @@ export default function WorkspacePage() {
           fontSizeMultiplier: textStyleRef.current?.fontSizeMultiplier || 1.0,
           locale: targetLangCode === "en" ? "en" : "th",
           forceRealign: true,
-          overrideUserModified: false,
-          ...(isXLarge
+          overrideUserModified: isOriginalMode,
+          ...(isOriginalMode
             ? {
-                minFontSize: Math.max(22, Math.round(iw * 0.0195)),
-                maxEnlargeRatio: 1.75,
+                constrainToOriginalBox: true,
+                preserveOriginalPosition: true,
               }
-            : {}),
+            : isXLarge
+              ? {
+                  minFontSize: Math.max(22, Math.round(iw * 0.0195)),
+                  maxEnlargeRatio: 1.75,
+                }
+              : {}),
         });
 
         if (result.adjustedCount > 0) {
@@ -3809,6 +3821,17 @@ export default function WorkspacePage() {
                                       type="button"
                                       onClick={() => {
                                         setIsOrganizeMenuOpen(false);
+                                        void handleAutoOrganizeCurrentPage("original");
+                                      }}
+                                      className="w-full text-left px-3 py-1.5 hover:bg-surface-hover flex items-center gap-2 text-foreground transition-colors cursor-pointer"
+                                    >
+                                      <Sparkles className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                                      <span>จัดตำแหน่งตามต้นฉบับ (หน้านี้)</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setIsOrganizeMenuOpen(false);
                                         void handleAutoOrganizeCurrentPage("readable");
                                       }}
                                       className="w-full text-left px-3 py-1.5 hover:bg-surface-hover flex items-center gap-2 text-foreground transition-colors cursor-pointer"
@@ -3828,6 +3851,17 @@ export default function WorkspacePage() {
                                       <span>ขยายตัวใหญ่พิเศษ (หน้านี้)</span>
                                     </button>
                                     <div className="my-1 border-t border-border/60" />
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setIsOrganizeMenuOpen(false);
+                                        void handleAutoOrganizeAllPages("original");
+                                      }}
+                                      className="w-full text-left px-3 py-1.5 hover:bg-surface-hover flex items-center gap-2 text-foreground transition-colors cursor-pointer"
+                                    >
+                                      <Sparkles className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                                      <span>จัดตำแหน่งตามต้นฉบับ (ทุกหน้า)</span>
+                                    </button>
                                     <button
                                       type="button"
                                       onClick={() => {

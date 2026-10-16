@@ -90,6 +90,9 @@ describe("strict script eligibility", () => {
     "เชื่อมต่อ Wi-Fi แล้ว",
     "ตัวละคร Lv.99 เล่นโหมด RPG",
     "ตอนที่ Ep. 1",
+    "นับจากนี้ไป ได้โปรดให้ฉันได้ทำตามสัญชาตญาณสายเลือด และรับใช้เจ้านายของฉัน ท่านลอร์ดปีศาจวัว ในฐานะแม่โคสาวโง่เง่าแรงค์ S อย่างเชื่อฟังด้วยเถอะค่ะ!",
+    "นักผจญภัยระดับ S และคลาส A+",
+    "เวทมนตร์ S-Rank และ S-Class",
   ])("permits standard international loan tokens in Thai: %s", (text) => {
     const result = inspectTargetText(text, "th");
     expect(result.status).toBe("eligible");

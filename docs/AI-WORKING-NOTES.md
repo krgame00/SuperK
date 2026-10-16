@@ -2484,3 +2484,27 @@ Verification evidence:
   - Python OCR test suite: `.\ocr-service\venv\Scripts\pytest.exe ocr-service/tests -q -m "not model"` — **222 passed, 3 deselected, 1 warning** in 37.35s.
   - TypeScript validation: `npx tsc --noEmit` — **0 errors**.
   - ESLint: `npm run lint` — **0 errors**.
+
+## Original Layout Preservation & Manga/RPG Rank Whitelist Integration — 2026-10-16
+
+### Status: VERIFIED WORKING (Integrated 9 files from superk-original-layout-and-rank-whitelist.zip with intercepted defect corrections; 208/209 Vitest files passed [1,779 tests passed, 1 skipped]; 222/222 Pytest tests passed; 0 TypeScript errors; 0 ESLint errors)
+
+- **User Context & Request**:
+  - User provided `superk-original-layout-and-rank-whitelist.zip` containing 9 files designed to:
+    1. Support manga/RPG rank tokens (e.g. "แรงค์ S", "ระดับ A+", "S-Rank", "HP", "MP", "ATK", "DEF", "SSR") without stripping English letters or triggering false script warnings.
+    2. Support structured manga lists (e.g. character profile cards, quest status, inventory lists with bullet points `•` or `-`) with multi-line layout and rectangular alignment instead of oval balloon pinching.
+    3. Add 1-click "จัดตำแหน่งตามต้นฉบับ (หน้านี้)" and "จัดตำแหน่งตามต้นฉบับ (ทุกหน้า)" under the Organize Menu in `src/app/page.tsx` to snap bubbles directly back to original detected coordinates.
+
+- **Defects Intercepted & Fixed (Debug Mantra / Systematic Scrutiny)**:
+  1. **Corrupted Unescaped Newlines**: The zip archive contained unescaped `\n` in string and regex literals in `lib/textBoxWidthLayout.ts` and `lib/translationOverlay.ts`, causing TypeScript parse syntax errors. Fixed by properly escaping all newlines and line break patterns (`/\r?\n/`).
+  2. **Over-broad Regex Lookbehind Regression**: The zip introduced `(?<=[\u0E00-\u0E7F][\s(«"“'‘]*)[SABCDEFG][+-]?(?=$|[^A-Za-z:])` in `ALLOWED_THAI_INTL_TOKEN_RE`. This swallowed *all* single Latin letters A-G appearing anywhere after any Thai character (e.g. `กAา`, `สวัสดีA`), causing 15 script guard and quality review tests to fail. Removed this lookbehind clause; verified that all actual rank phrases ("แรงค์ S", "ระดับ S", "คลาส A+", "S-Rank") are already safely matched by Clause 1 and Clause 2 without regressions.
+  3. **Auto-Optimize Version Bump Regression**: The zip bumped `AUTO_OPTIMIZE_VERSION` from 4 to 5, which invalidated clean v4 adjustments and caused width drag tests in `tests/cleaning/translationOverlay.test.ts` to fail. Kept `AUTO_OPTIMIZE_VERSION = 4`.
+  4. **Bullet Newline Replacement Bug**: In `formatStructuredMangaText`, the replacement callback `(match) => match.startsWith("\n") ? "• " : "\n• "` stripped the leading newline consumed by `\s+`. Fixed to `match === "• " || match === "- " ? "• " : "\n• "`.
+  5. **Cleaned Unused Imports**: Removed unused `resolveTargetLanguage` in `lib/translationOverlay.ts` keeping lint at 0 errors.
+
+- **Verification Evidence**:
+  - Vitest test suite: `npm test` — **208 passed, 1 skipped (209 files) | 1,779 passed, 1 skipped (1,780 tests)** in 96.13s.
+  - Python OCR test suite: `.\ocr-service\venv\Scripts\pytest.exe ocr-service/tests -q -m "not model"` — **222 passed, 3 deselected, 1 warning** in 16.94s.
+  - TypeScript validation: `npx tsc --noEmit` — **0 errors**.
+  - ESLint: `npm run lint` — **0 errors (42 warnings pre-existing, 0 errors)**.
+

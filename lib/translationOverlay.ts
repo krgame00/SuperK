@@ -4,7 +4,7 @@ import { calibrateOutputBodyMetric, resolveSourceFontSize, sourceRegionKey, manu
 import { measureTextSelection, rotateLocalPoint, type SelectionRect } from "./textSelectionBounds";
 import { guardQualityReview, unavailableReview, invalidateQualityReview, isReviewCurrent } from "./translation/qualityReview";
 import type { TranslationReview } from "./translation/qualityReview";
-import { inspectTargetText, formatOffendingCharacters, resolveTargetLanguage, LANGUAGE_POLICY_VERSION, repairExcludedScriptText } from "./languagePolicy";
+import { inspectTargetText, formatOffendingCharacters, LANGUAGE_POLICY_VERSION, repairExcludedScriptText } from "./languagePolicy";
 
 export { repairExcludedScriptText };
 import {
@@ -22,7 +22,9 @@ import {
 } from "./colorMatching/nearbyStyleFallback";
 import type { BwContrastMode, TextStyleProfile } from "./colorMatching/types";
 import {
+  formatStructuredMangaText,
   hasBrokenThaiLineBreak,
+  isStructuredMangaList,
   layoutTextAtFixedFont,
   minimumWidthForWholeWords,
   segmentTextIntoWords,
@@ -566,7 +568,9 @@ export const wrapTextForBubble = (
 ): string[] => {
   if (!text || !text.trim()) return [];
 
-  const wds = segmentTextIntoWords(text, locale);
+  const structuredList = isStructuredMangaList(text);
+  const effectiveText = structuredList ? formatStructuredMangaText(text) : text;
+  const effectiveIsOval = isOval && !structuredList;
 
   let measureFn: (str: string) => number;
   const tempCtx = getSharedMeasureCtx();
@@ -577,11 +581,43 @@ export const wrapTextForBubble = (
     measureFn = (str: string) => str.length * (fs * 0.6);
   }
 
+  if (effectiveText.includes("\n")) {
+    const outLines: string[] = [];
+    for (const rawParagraph of effectiveText.split(/\r?\n/)) {
+      const paragraph = rawParagraph.trim();
+      if (!paragraph) continue;
+      const paraWords = segmentTextIntoWords(paragraph, locale);
+      let cur = "";
+      for (const w of paraWords) {
+        if (/^\s+$/u.test(w)) {
+          if (!cur) continue;
+          if (measureFn(cur + w) > maxW) {
+            outLines.push(cur.trimEnd());
+            cur = "";
+          } else {
+            cur += w;
+          }
+          continue;
+        }
+        const test = cur ? cur + w : w;
+        if (measureFn(test) > maxW && cur) {
+          outLines.push(cur.trimEnd());
+          cur = w.trimStart();
+        } else {
+          cur = test;
+        }
+      }
+      if (cur) outLines.push(cur.trimEnd());
+    }
+    return outLines.length > 0 ? outLines : [text];
+  }
+
+  const wds = segmentTextIntoWords(effectiveText, locale);
   const lineH = fs * 1.35;
   const estimatedLineCount = Math.max(1, Math.round(maxH / lineH));
 
   const getLineMaxW = (lineIndex: number, totalLines: number): number => {
-    if (!isOval || totalLines <= 1) return maxW;
+    if (!effectiveIsOval || totalLines <= 1) return maxW;
     const yCenter = (lineIndex + 0.5) / totalLines;
     const v = (yCenter - 0.5) * 2;
     const chordRatio = Math.sqrt(Math.max(0.2, 1 - v * v));
@@ -718,20 +754,21 @@ export function fitTextForBubble(
   minFontSize = 14,
   locale = "th",
 ): BubbleTextFit {
+  const effectiveIsOval = isOval && !isStructuredMangaList(text);
   const safeW = width * 0.88;
   const safeH = height * 0.88;
   const maxFs = Math.max(minFontSize, Math.round(Math.min(height * 0.55, width * 0.55, 96) * fontSizeMultiplier));
   
   let bestFit: BubbleTextFit = {
     fontSize: minFontSize,
-    lines: wrapTextForBubble(text, safeW, safeH, minFontSize, fontFamily, isOval, locale),
+    lines: wrapTextForBubble(text, safeW, safeH, minFontSize, fontFamily, effectiveIsOval, locale),
     lineHeight: minFontSize * 1.30,
     fits: false,
   };
 
   for (let fs = maxFs; fs >= minFontSize; fs--) {
     const lineH = fs * 1.30;
-    const lines = wrapTextForBubble(text, safeW, safeH, fs, fontFamily, isOval, locale);
+    const lines = wrapTextForBubble(text, safeW, safeH, fs, fontFamily, effectiveIsOval, locale);
     const totalH = lines.length * lineH;
     
     let maxWidthOk = true;
@@ -739,7 +776,7 @@ export function fitTextForBubble(
     if (tempCtx) {
       tempCtx.font = `bold ${fs}px ${fontFamily}`;
       for (let i = 0; i < lines.length; i++) {
-        const allowed = isOval && lines.length > 1 ? safeW * Math.sqrt(Math.max(0.2, 1 - Math.pow(((i + 0.5) / lines.length - 0.5) * 2, 2))) : safeW;
+        const allowed = effectiveIsOval && lines.length > 1 ? safeW * Math.sqrt(Math.max(0.2, 1 - Math.pow(((i + 0.5) / lines.length - 0.5) * 2, 2))) : safeW;
         if (tempCtx.measureText(lines[i]).width > allowed * 1.05) {
           maxWidthOk = false;
           break;
@@ -1647,21 +1684,61 @@ export const applyTranslationOverlay = async (
           ctx.shadowOffsetY = 0;
         }
 
-        const totalH = (lines.length - 1) * lineH;
+        const structuredRender = isStructuredMangaList(text);
+        const effectiveLineH =
+          structuredRender && lines.length > 2 && currentBh > lines.length * lineH * 1.08
+            ? Math.min(fontSize * 1.68, (currentBh * 0.92) / lines.length)
+            : lineH;
+        const totalH = (lines.length - 1) * effectiveLineH;
         // Overflow frames anchor the first line to the top padding so the
         // leading lines stay readable instead of symmetric clipping that can
         // hide both the first and last lines behind the frame edges.
         const startY = textLayoutOverflow
-          ? lineH / 2
+          ? effectiveLineH / 2
           : (currentBh / 2) - (totalH / 2);
+        let inBulletItem = false;
+        const leftPad = Math.max(6, Math.round(currentBw * 0.04));
+        const indentPad = leftPad + Math.round(fontSize * 0.85);
         lines.forEach((l, i) => {
-          const yPos = startY + i * lineH;
-          if (resolvedStyle.hasOutline && ctx.lineWidth > 0) {
-            ctx.strokeText(l, currentBw / 2, yPos);
+          const yPos = startY + i * effectiveLineH;
+          if (structuredRender) {
+            const trimmed = l.trim();
+            const isBulletStart = trimmed.startsWith("•") || trimmed.startsWith("-");
+            const isSectionHeader = !isBulletStart && (trimmed.endsWith(":") || !inBulletItem);
+            if (isBulletStart) {
+              inBulletItem = true;
+              ctx.textAlign = "left";
+              if (resolvedStyle.hasOutline && ctx.lineWidth > 0) {
+                ctx.strokeText(l, leftPad, yPos);
+              }
+              ctx.fillStyle = fillPaint;
+              ctx.fillText(l, leftPad, yPos);
+            } else if (isSectionHeader) {
+              inBulletItem = false;
+              ctx.textAlign = "center";
+              if (resolvedStyle.hasOutline && ctx.lineWidth > 0) {
+                ctx.strokeText(l, currentBw / 2, yPos);
+              }
+              ctx.fillStyle = fillPaint;
+              ctx.fillText(l, currentBw / 2, yPos);
+            } else {
+              ctx.textAlign = "left";
+              if (resolvedStyle.hasOutline && ctx.lineWidth > 0) {
+                ctx.strokeText(l, indentPad, yPos);
+              }
+              ctx.fillStyle = fillPaint;
+              ctx.fillText(l, indentPad, yPos);
+            }
+          } else {
+            ctx.textAlign = "center";
+            if (resolvedStyle.hasOutline && ctx.lineWidth > 0) {
+              ctx.strokeText(l, currentBw / 2, yPos);
+            }
+            ctx.fillStyle = fillPaint;
+            ctx.fillText(l, currentBw / 2, yPos);
           }
-          ctx.fillStyle = fillPaint;
-          ctx.fillText(l, currentBw / 2, yPos);
         });
+        ctx.textAlign = "center";
         // Snapshot renders keep the captured selection (scaled for a corner
         // release) so the crisp redraw, reopening, and Undo/Redo all show the
         // exact previewed geometry; its padding is additive while scaling is

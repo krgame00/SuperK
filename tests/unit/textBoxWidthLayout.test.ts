@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatStructuredMangaText,
   hasBrokenThaiLineBreak,
+  isStructuredMangaList,
   layoutTextAtFixedFont,
   minimumWidthForWholeWords,
   segmentTextIntoWords,
@@ -226,5 +228,20 @@ describe("layoutTextAtFixedFont", () => {
     expect(hasBrokenThaiLineBreak(["แล้วทำไมถึง", "มีกล้อง", "ด้วยเนี่ย?!"])).toBe(false);
     expect(hasBrokenThaiLineBreak(["จริงเห", "รอเนี่ย?!"])).toBe(true);
     expect(hasBrokenThaiLineBreak(["จริง", "เหรอเนี่ย?!"])).toBe(false);
+  });
+
+  it("formats inline character profile headers and bullet lists onto separate lines and disables oval pinching", () => {
+    const rawProfile =
+      "แม่มดธาตุแถวหน้า ริน - กิลด์นักผจญภัยแห่งจักรวรรดิ นักผจญภัยระดับเอส - ลูกสาวของตระกูลผู้ดีเก่าแก่ที่สุดในจักรวรรดิ พรสวรรค์: - บุตรสาวแห่งสวรรค์ - อัตราการฟื้นฟูมานาสูงมาก";
+    expect(isStructuredMangaList(rawProfile)).toBe(true);
+    const formatted = formatStructuredMangaText(rawProfile);
+    expect(formatted.split("\n")).toEqual([
+      "แม่มดธาตุแถวหน้า ริน",
+      "• กิลด์นักผจญภัยแห่งจักรวรรดิ นักผจญภัยระดับเอส",
+      "• ลูกสาวของตระกูลผู้ดีเก่าแก่ที่สุดในจักรวรรดิ",
+      "พรสวรรค์:",
+      "• บุตรสาวแห่งสวรรค์",
+      "• อัตราการฟื้นฟูมานาสูงมาก",
+    ]);
   });
 });

@@ -1,4 +1,8 @@
-import { hasBrokenThaiLineBreak } from "./textBoxWidthLayout";
+import {
+  formatStructuredMangaText,
+  hasBrokenThaiLineBreak,
+  isStructuredMangaList,
+} from "./textBoxWidthLayout";
 import {
   type TranslatedBubble,
   type OverlayAdjustment,
@@ -33,6 +37,7 @@ export interface AutoOrganizeOptions {
   maxAllowedWidth?: number;
   maxAllowedHeight?: number;
   constrainToOriginalBox?: boolean;
+  preserveOriginalPosition?: boolean;
   overrideUserModified?: boolean;
 }
 
@@ -337,12 +342,15 @@ export function fitBubbleTextWithinBounds(
   const globalMult = options?.fontSizeMultiplier || 1.0;
   const bubbleMult = typeof bubble.fontSizeMultiplier === "number" ? bubble.fontSizeMultiplier : 1.0;
   const multiplier = globalMult * bubbleMult;
-  const constrainToOriginal = options?.constrainToOriginalBox === true;
+  const isStructured = isStructuredMangaList(text);
+  const effectiveText = isStructured ? formatStructuredMangaText(text) : text;
+  const preserveOrigPos = options?.preserveOriginalPosition === true;
+  const constrainToOriginal = options?.constrainToOriginalBox === true || preserveOrigPos;
   const hasCloseNeighbors =
     options?.maxAllowedWidth !== undefined || options?.maxAllowedHeight !== undefined;
 
   const minFs = options?.minFontSize ?? (
-    constrainToOriginal
+    constrainToOriginal || isStructured
       ? Math.max(13, Math.round(iw * 0.0115))
       : hasCloseNeighbors
         ? Math.max(16, Math.round(iw * 0.014))
@@ -350,27 +358,39 @@ export function fitBubbleTextWithinBounds(
   );
   const preferredReadableFs = options?.minFontSize ?? (
     constrainToOriginal
-      ? minFs
-      : hasCloseNeighbors
-        ? Math.max(19, Math.round(iw * 0.0165))
-        : Math.max(23, Math.round(iw * 0.0195))
+      ? Math.max(16, Math.round(iw * 0.0145))
+      : isStructured
+        ? Math.max(17, Math.round(iw * 0.015))
+        : hasCloseNeighbors
+          ? Math.max(19, Math.round(iw * 0.0165))
+          : Math.max(23, Math.round(iw * 0.0195))
   );
-  const isOval = !bubble.isInvalidBox;
+  const isOval = !bubble.isInvalidBox && !isStructured && bubble.styleCategory !== "narration";
 
   const origAspectRatio = geom.width / Math.max(1, geom.height);
   const isTallVerticalBalloon =
     !bubble.isInvalidBox &&
+    !isStructured &&
     origAspectRatio < 0.72 &&
     geom.width >= iw * 0.095 &&
     geom.height >= ih * 0.12;
 
-  const defaultMaxW = isTallVerticalBalloon
-    ? Math.round(geom.width * (options?.maxEnlargeRatio ? Math.min(1.65, options.maxEnlargeRatio) : 1.42))
-    : Math.round(iw * (constrainToOriginal ? 0.36 : 0.45));
-  const maxAllowedW = options?.maxAllowedWidth !== undefined
-    ? Math.min(options.maxAllowedWidth, defaultMaxW)
-    : defaultMaxW;
-  const maxAllowedH = options?.maxAllowedHeight ?? Math.round(ih * (constrainToOriginal ? 0.38 : 0.45));
+  const defaultMaxW = Math.max(
+    geom.width,
+    isTallVerticalBalloon
+      ? Math.round(geom.width * (options?.maxEnlargeRatio ? Math.min(1.65, options.maxEnlargeRatio) : 1.42))
+      : Math.round(iw * (constrainToOriginal ? 0.42 : 0.48)),
+  );
+  const maxAllowedW = Math.max(
+    geom.width,
+    options?.maxAllowedWidth !== undefined
+      ? Math.min(options.maxAllowedWidth, defaultMaxW)
+      : defaultMaxW,
+  );
+  const maxAllowedH = Math.max(
+    geom.height,
+    options?.maxAllowedHeight ?? Math.round(ih * (isStructured ? 0.92 : constrainToOriginal ? 0.85 : 0.48)),
+  );
 
   // 1. Aspect ratio adaptation ONLY for genuinely narrow Japanese 1-column strips
   // (`geom.width < iw * 0.095` or `origAspectRatio < 0.42`), NOT wide enough vertical ovals!
@@ -622,7 +642,12 @@ export function fitBubbleTextWithinBounds(
     );
   }
 
-  if (!fixedRenderLayout.overflow) {
+  if (preserveOrigPos || isStructured) {
+    finalHeight = Math.min(
+      ih,
+      Math.max(geom.height, fixedRenderLayout.requiredHeightPx),
+    );
+  } else if (!fixedRenderLayout.overflow) {
     // Cap preserved height relative to requiredHeightPx so tall OCR boxes (e.g. 639px box for a 4-line bubble)
     // do not produce 450-710px empty frames.
     const maxComfortH = Math.max(
@@ -657,8 +682,20 @@ export function fitBubbleTextWithinBounds(
 
   const cx = geom.x + geom.width / 2;
   const cy = geom.y + geom.height / 2;
-  const bx = Math.max(0, Math.min(iw - finalWidth, Math.round(cx - finalWidth / 2)));
-  const by = Math.max(0, Math.min(ih - finalHeight, Math.round(cy - finalHeight / 2)));
+  const bx = Math.max(
+    0,
+    Math.min(
+      iw - finalWidth,
+      preserveOrigPos || isStructured ? Math.round(geom.x) : Math.round(cx - finalWidth / 2),
+    ),
+  );
+  const by = Math.max(
+    0,
+    Math.min(
+      ih - finalHeight,
+      preserveOrigPos || isStructured ? Math.round(geom.y) : Math.round(cy - finalHeight / 2),
+    ),
+  );
 
   const preservedStyle =
     bubble.layoutAdjustment?.styleProfile ??
@@ -684,6 +721,8 @@ export function fitBubbleTextWithinBounds(
 
   const nextBubble: TranslatedBubble = {
     ...bubble,
+    ...(isStructured && bubble.t ? { t: effectiveText } : {}),
+    ...(isStructured && bubble.translated ? { translated: effectiveText } : {}),
     targetFontSize,
     layoutAdjustment: updatedAdj,
   };
@@ -713,7 +752,8 @@ function refitFontInResolvedBox(
   const bubbleMult = typeof bubble.fontSizeMultiplier === "number" ? bubble.fontSizeMultiplier : 1.0;
   const multiplier = globalMult * bubbleMult;
   const minFs = options?.minFontSize ?? Math.max(15, Math.round(iw * 0.0135));
-  const isOval = !bubble.isInvalidBox;
+  const isStructured = isStructuredMangaList(text);
+  const isOval = !bubble.isInvalidBox && !isStructured && bubble.styleCategory !== "narration";
 
   let targetFontSize = bubble.targetFontSize;
   if (typeof targetFontSize !== "number" || targetFontSize <= 0) {
@@ -759,7 +799,7 @@ function refitFontInResolvedBox(
 
   let resolvedBh = adj.bh;
   let resolvedBy = adj.by;
-  if (!fixedRenderLayout.overflow && typeof adj.manualMinHeightPx !== "number") {
+  if (!isStructured && !options?.preserveOriginalPosition && !fixedRenderLayout.overflow && typeof adj.manualMinHeightPx !== "number") {
     const maxComfortH = Math.max(
       fixedRenderLayout.requiredHeightPx,
       Math.round(fixedRenderLayout.requiredHeightPx * 1.35) + 16,
