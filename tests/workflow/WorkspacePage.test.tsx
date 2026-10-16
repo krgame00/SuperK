@@ -1091,7 +1091,11 @@ test("strip export keeps source selection locked until its image file is saved",
   const loaded: string[] = [];
   vi.stubGlobal("Image", class {
     naturalWidth = 10; naturalHeight = 10; onload: (() => void) | null = null;
-    set src(value: string) { loaded.push(value); queueMicrotask(() => this.onload?.()); }
+    set src(value: string) {
+      if (!value) return;
+      loaded.push(value);
+      queueMicrotask(() => this.onload?.());
+    }
   });
   const context = { drawImage: vi.fn() };
   const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(context as unknown as CanvasRenderingContext2D);

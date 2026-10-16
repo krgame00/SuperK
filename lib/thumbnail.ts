@@ -33,6 +33,8 @@ export const generateThumbnail = (
         } finally {
           canvas.width = 0;
           canvas.height = 0;
+          img.onload = null;
+          img.onerror = null;
           img.src = "";
         }
       } catch {
