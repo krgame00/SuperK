@@ -307,8 +307,10 @@ export default function WorkspacePage() {
     getCurrentRemnantReview,
     confirmArtworkCandidate,
     confirmHumanImageInspection,
+    confirmAllPageRemnants,
     recheckPageRemnants,
     setPageRemnantTextEvidence,
+    cacheRevision: cleaningCacheRevision,
   } = useCleaning({ pages: pageUrls, pageIds, currentPage });
 
   useEffect(() => {
@@ -477,6 +479,7 @@ export default function WorkspacePage() {
     confirmLegacyTarget,
     inspectReviewIssues,
     confirmPointReview,
+    confirmAllPageReviews,
     applyAllSuggestedReviews,
     repairWholeBook,
     cancelWholeBookRepair,
@@ -528,11 +531,15 @@ export default function WorkspacePage() {
   });
 
   const getExpectedRemnantEvidence = useCallback((pageUrl: string): PageRemnantTextEvidence => ({
-    sourceContext: getPageSourceRevision?.(pageUrl) ?? "",
+    sourceContext:
+      getPageSourceRevision?.(pageUrl) ||
+      cleaningResultsByPage?.get?.(pageUrl)?.sourceFingerprint ||
+      pages.find((p) => p.url === pageUrl)?.sourceFingerprint ||
+      "",
     textEvidence: (bubbleCacheRef.current.get(pageUrl) ?? []).flatMap((bubble, index) =>
       !bubble.deleted && bubble.original_text?.trim() && bubble.box?.length === 4 && bubble.box.every(Number.isFinite)
         ? [{ id: String(index), box: [...bubble.box] }] : []),
-  }), [bubbleCacheRef, getPageSourceRevision]);
+  }), [bubbleCacheRef, cleaningResultsByPage, getPageSourceRevision, pages]);
   const remnantEvidenceKey = pages
     .map((page, idx) => {
       const ev = getExpectedRemnantEvidence(page.url);
@@ -2060,13 +2067,72 @@ export default function WorkspacePage() {
     setUnconfirmedReviewPages(collectExportReviewPages(snapshot.pages, remainingIndices));
   }, [collectExportReviewPages]);
 
+  const approveExportPageInPlace = useCallback((pageUrl: string) => {
+    confirmAllPageReviews?.(pageUrl);
+    confirmAllPageRemnants?.(pageUrl, getExpectedRemnantEvidence(pageUrl));
+    const missingSig = missingTranslationSignature(
+      cleaningResultsByPage?.get?.(pageUrl),
+      bubbleCacheRef.current.get(pageUrl),
+    );
+    confirmedMissingTranslationsRef.current.set(pageUrl, missingSig);
+    confirmedPagesRef.current.add(pageUrl);
+    setConfirmedPages((prev) => {
+      const next = new Set(prev);
+      next.add(pageUrl);
+      return next;
+    });
+    const snapshotPages = exportSnapshotRef.current?.pages ?? pages;
+    setUnconfirmedReviewPages(collectExportReviewPages(snapshotPages, pendingReviewIndicesRef.current));
+  }, [
+    bubbleCacheRef,
+    cleaningResultsByPage,
+    collectExportReviewPages,
+    confirmAllPageRemnants,
+    confirmAllPageReviews,
+    getExpectedRemnantEvidence,
+    pages,
+  ]);
+
+  const approveAllExportPagesInPlace = useCallback(() => {
+    if (!unconfirmedReviewPages || unconfirmedReviewPages.length === 0) return;
+    for (const p of unconfirmedReviewPages) {
+      confirmAllPageReviews?.(p.pageUrl);
+      confirmAllPageRemnants?.(p.pageUrl, getExpectedRemnantEvidence(p.pageUrl));
+      const missingSig = missingTranslationSignature(
+        cleaningResultsByPage?.get?.(p.pageUrl),
+        bubbleCacheRef.current.get(p.pageUrl),
+      );
+      confirmedMissingTranslationsRef.current.set(p.pageUrl, missingSig);
+      confirmedPagesRef.current.add(p.pageUrl);
+    }
+    setConfirmedPages((prev) => {
+      const next = new Set(prev);
+      for (const p of unconfirmedReviewPages) {
+        next.add(p.pageUrl);
+      }
+      return next;
+    });
+    const snapshotPages = exportSnapshotRef.current?.pages ?? pages;
+    setUnconfirmedReviewPages(collectExportReviewPages(snapshotPages, pendingReviewIndicesRef.current));
+  }, [
+    bubbleCacheRef,
+    cleaningResultsByPage,
+    collectExportReviewPages,
+    confirmAllPageRemnants,
+    confirmAllPageReviews,
+    getExpectedRemnantEvidence,
+    pages,
+    unconfirmedReviewPages,
+  ]);
+
+
   // Review evidence changed while the dialog is open (per-point confirmation,
   // target confirmation, text repair): refresh the listed rows so a repaired
   // page can be released without reopening the export.
   useEffect(() => {
     if (!unconfirmedReviewPages || !exportSnapshotRef.current) return;
     setUnconfirmedReviewPages(collectExportReviewPages(exportSnapshotRef.current.pages, pendingReviewIndicesRef.current));
-  }, [translationCacheRevision, collectExportReviewPages]);
+  }, [translationCacheRevision, cleaningCacheRevision, collectExportReviewPages]);
 
   const exportInputSignature = (pageUrl: string) => JSON.stringify([
     pageTargetCacheRef.current.get(pageUrl),
@@ -4142,6 +4208,11 @@ export default function WorkspacePage() {
           setIsMaskEditorOpen(true);
         }}
         onConfirmArtwork={(candidate) => { if (currentPageUrl) confirmArtworkCandidate(currentPageUrl, candidate.id); }}
+        onConfirmAllArtwork={() => {
+          if (currentPageUrl) {
+            confirmAllPageRemnants?.(currentPageUrl, getExpectedRemnantEvidence(currentPageUrl));
+          }
+        }}
         onConfirmHumanInspection={(revisionKey, sourceUrl, cleanUrl) => { if (currentPageUrl) confirmHumanImageInspection(currentPageUrl, revisionKey, sourceUrl, cleanUrl); }}
         onReimportSource={() => document.querySelector<HTMLInputElement>('input[aria-label="เลือกไฟล์มังงะเพื่อเพิ่ม"]')?.click()}
         onRecheck={() => { if (currentPageUrl) void recheckPageRemnants(currentPageUrl); }}
@@ -4480,6 +4551,13 @@ export default function WorkspacePage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => approveExportPageInPlace(p.pageUrl)}
+                      className="px-2 py-1 rounded border border-emerald-500/50 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 text-[11px] font-semibold transition-colors cursor-pointer"
+                    >
+                      อนุมัติหน้านี้
+                    </button>
                     {p.hasHardBlockers && (
                       <button
                         type="button"
@@ -4549,6 +4627,15 @@ export default function WorkspacePage() {
                   className="px-3 py-2 rounded-xl border border-amber-500/60 bg-amber-500/10 hover:bg-amber-500/20 text-amber-200 text-xs font-semibold transition-colors cursor-pointer"
                 >
                   ส่งออกภาพและคำแปลปัจจุบัน แม้มีจุดค้าง
+                </button>
+              )}
+              {unconfirmedReviewPages.some((p) => p.hasHardBlockers) && (
+                <button
+                  type="button"
+                  onClick={() => approveAllExportPagesInPlace()}
+                  className="px-3.5 py-2 rounded-xl border border-emerald-500/60 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  อนุมัติจุดค้างทุกหน้า
                 </button>
               )}
               {unconfirmedReviewPages.some((p) => p.hasHardBlockers) && (

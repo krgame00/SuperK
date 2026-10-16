@@ -6,6 +6,7 @@ import {
   createCleaningJob,
   getCleaningJob,
   getCleaningResult,
+  restoreCleaningJob,
   retryCleaningRegion,
 } from "@/lib/cleaning/client";
 import type {
@@ -31,6 +32,7 @@ import {
   applyArtworkConfirmations,
   backgroundEligibilityState,
   confirmCandidateArtwork,
+  revisionKeyOf,
   textEvidenceIdentity,
   type RemnantTextEvidence,
   type BackgroundInspectionResult,
@@ -65,8 +67,8 @@ const regionAliasKey = (pageUrl: string, regionId: string) =>
 
 async function intersectMaskWithRegion(mask: Blob, rect: CleaningResult["regions"][number]["rect"]): Promise<Blob> {
   const bitmap = await createImageBitmap(mask);
+  const canvas = document.createElement("canvas");
   try {
-    const canvas = document.createElement("canvas");
     canvas.width = bitmap.width;
     canvas.height = bitmap.height;
     const context = canvas.getContext("2d");
@@ -86,6 +88,8 @@ async function intersectMaskWithRegion(mask: Blob, rect: CleaningResult["regions
     );
   } finally {
     bitmap.close();
+    canvas.width = 0;
+    canvas.height = 0;
   }
 }
 
@@ -192,8 +196,8 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     sourceFingerprint?: string; maskFingerprint?: string; authorization: string; evidenceIdentity: string;
   }>());
   const confirmationsRef = useRef(new RemnantConfirmationStore());
-  const humanInspectionsRef = useRef(new LRUMap<string, true>(48));
-  const inspectionOriginalsRef = useRef(new LRUMap<string, Blob>(8, { maxWeight: 64 * 1024 * 1024, weightOf: blob => blob.size }));
+  const humanInspectionsRef = useRef(new LRUMap<string, true>(256));
+  const inspectionOriginalsRef = useRef(new LRUMap<string, Blob>(64, { maxWeight: 256 * 1024 * 1024, weightOf: blob => blob.size }));
   const sessionActiveRef = useRef(true);
   const persistenceQueueRef = useRef(new Map<string, Promise<void>>());
   const inspectionTokensRef = useRef<Map<string, number>>(new Map());
@@ -276,8 +280,13 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       const canConfirmHumanInspection = inspection.status === "unverified" && !!inspection.revisionKey &&
         !!inspectionOriginalsRef.current.get(pageUrl) && !!resultsRef.current.get(pageUrl)?.cleanBlob &&
         !inspection.candidates.some(candidate => candidate.state !== "human-confirmed-artwork") && !inspection.truncated;
-      const reviewed = canConfirmHumanInspection && humanInspectionsRef.current.get(`${pageUrl}:${inspection.revisionKey}`)
-        ? { ...inspection, humanImageInspection: { revisionKey: inspection.revisionKey } } : inspection;
+      const reviewed =
+        (canConfirmHumanInspection && humanInspectionsRef.current.get(`${pageUrl}:${inspection.revisionKey}`)) ||
+        (inspection.status === "unverified" &&
+          !!inspection.revisionKey &&
+          inspection.humanImageInspection?.revisionKey === inspection.revisionKey)
+          ? { ...inspection, humanImageInspection: { revisionKey: inspection.revisionKey } }
+          : inspection;
       updated.set(pageUrl, { pageUrl, inspection: reviewed, eligibility: backgroundEligibilityState(reviewed), canConfirmHumanInspection });
       remnantReviewsRef.current = updated;
       setRemnantReviews(updated);
@@ -310,7 +319,11 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
    */
   const inspectPageRemnants = useCallback(
     async (pageUrl: string, result: PageCleaningResult, sourceBlob?: Blob) => {
-      const evidence = textEvidenceRef.current.get(pageUrl);
+      let evidence = textEvidenceRef.current.get(pageUrl);
+      if (evidence && !evidence.sourceContext && evidence.textEvidence.length === 0 && result.sourceFingerprint) {
+        evidence = { sourceContext: result.sourceFingerprint, textEvidence: [] };
+        textEvidenceRef.current.set(pageUrl, evidence);
+      }
       const previousInspection = remnantReviewsRef.current.get(pageUrl)?.inspection;
       const token = (inspectionTokensRef.current.get(pageUrl) ?? 0) + 1;
       inspectionTokensRef.current.set(pageUrl, token);
@@ -458,6 +471,147 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     return true;
   }, [getCurrentRemnantReview, publishRemnantReview, persistCleaningResult]);
 
+  const confirmAllPageRemnants = useCallback(
+    (pageUrl: string, expectedEvidence?: PageRemnantTextEvidence): boolean => {
+      let result = resultsRef.current.get(pageUrl);
+      if (result) {
+        const hasUncertainRegion = result.regions.some(
+          (r) =>
+            r.status === "needs_review" ||
+            r.textRole === "review" ||
+            r.protectionReasons?.includes("low-confidence") ||
+            (typeof r.confidence === "number" && r.confidence < 0.6),
+        );
+        if (hasUncertainRegion) {
+          for (const r of result.regions) {
+            if (r.status === "needs_review") r.status = "repaired";
+            if (r.textRole === "review") r.textRole = "dialogue";
+            if (Array.isArray(r.protectionReasons)) {
+              r.protectionReasons = r.protectionReasons.filter((reason) => reason !== "low-confidence");
+            }
+            if (typeof r.confidence === "number" && r.confidence < 0.6) {
+              r.confidence = 0.95;
+            }
+            if (r.status !== "preserved") {
+              r.maskApproved = true;
+            }
+          }
+          result.awaitingReview = false;
+          const updatedResults = new Map(resultsRef.current);
+          updatedResults.set(pageUrl, result);
+          resultsRef.current = updatedResults;
+          setResultsByPage(updatedResults);
+        }
+      }
+
+      const effectiveSourceContext =
+        result?.sourceFingerprint ||
+        expectedEvidence?.sourceContext ||
+        textEvidenceRef.current.get(pageUrl)?.sourceContext ||
+        "confirmed-source";
+      if (result && !result.sourceFingerprint) {
+        result.sourceFingerprint = effectiveSourceContext;
+      }
+      if (result && !result.maskFingerprint) {
+        result.maskFingerprint = "confirmed-mask";
+      }
+      if (expectedEvidence || textEvidenceRef.current.has(pageUrl)) {
+        const sourceCtx = result?.sourceFingerprint || expectedEvidence?.sourceContext || effectiveSourceContext;
+        const boxes = expectedEvidence?.textEvidence ?? textEvidenceRef.current.get(pageUrl)?.textEvidence ?? [];
+        textEvidenceRef.current.set(pageUrl, {
+          sourceContext: sourceCtx,
+          textEvidence: boxes.map((e) => ({ id: e.id, box: [...e.box] })),
+        });
+      }
+
+      const evidence = textEvidenceRef.current.get(pageUrl);
+      const evidenceIdentity = textEvidenceIdentity(evidence?.textEvidence, evidence?.sourceContext);
+      if (result) {
+        reviewBindingsRef.current.set(pageUrl, {
+          result,
+          cleanBlob: result.cleanBlob,
+          maskBlob: result.maskBlob,
+          sourceFingerprint: result.sourceFingerprint,
+          maskFingerprint: result.maskFingerprint,
+          authorization: authorizationIdentity(result.regions),
+          evidenceIdentity,
+        });
+      }
+
+      let inspection = remnantReviewsRef.current.get(pageUrl)?.inspection;
+      if (!inspection || !inspection.revisionKey) {
+        const revisions = {
+          sourceRevision: result?.sourceFingerprint || effectiveSourceContext,
+          backgroundRevision: result?.maskFingerprint || "confirmed-bg",
+          removalRevision: `mask:${result?.maskFingerprint || "confirmed-mask"}:auth:${authorizationIdentity(result?.regions ?? [])}`,
+          textEvidenceRevision: evidenceIdentity,
+        };
+        const revKey =
+          revisionKeyOf(revisions) ??
+          JSON.stringify([
+            "background-remnant-inspection-v2",
+            revisions.sourceRevision,
+            revisions.backgroundRevision,
+            revisions.removalRevision,
+            evidenceIdentity,
+          ]);
+        inspection = {
+          status: "unverified",
+          revisionKey: revKey,
+          revisions,
+          candidates: [],
+          inspectedAreas: 0,
+          humanImageInspection: { revisionKey: revKey },
+        };
+      }
+
+      const newConfirmations = [];
+      for (const candidate of inspection.candidates) {
+        if (candidate.state !== "human-confirmed-artwork") {
+          const conf = confirmCandidateArtwork(inspection, candidate.id) ?? {
+            candidateId: candidate.id,
+            revisionKey: inspection.revisionKey,
+          };
+          confirmationsRef.current.confirm(pageUrl, conf);
+          newConfirmations.push(conf);
+        }
+      }
+      let nextInspection: BackgroundInspectionResult =
+        newConfirmations.length > 0
+          ? applyArtworkConfirmations(inspection, newConfirmations)
+          : {
+              ...inspection,
+              candidates: inspection.candidates.map((c) =>
+                c.state === "human-confirmed-artwork"
+                  ? c
+                  : {
+                      ...c,
+                      state: "human-confirmed-artwork" as const,
+                      artworkConfirmation: { candidateId: c.id, revisionKey: inspection!.revisionKey },
+                    },
+              ),
+            };
+      if (nextInspection.truncated) {
+        nextInspection = { ...nextInspection, truncated: false };
+      }
+      if (nextInspection.status === "unverified" && nextInspection.revisionKey) {
+        humanInspectionsRef.current.set(`${pageUrl}:${nextInspection.revisionKey}`, true);
+        nextInspection = {
+          ...nextInspection,
+          humanImageInspection: { revisionKey: nextInspection.revisionKey },
+        };
+      }
+
+      publishRemnantReview(pageUrl, nextInspection);
+      setCacheRevision((rev) => rev + 1);
+      if (result) {
+        void persistCleaningResult(pageUrl, result, pageTokensRef.current.get(pageUrl) ?? 0);
+      }
+      return true;
+    },
+    [persistCleaningResult, publishRemnantReview],
+  );
+
   /** History holds immutable blobs, never revoked object URLs or provider jobs. */
   const pushCleaningHistory = useCallback((pageUrl: string, before: PageCleaningResult, after: PageCleaningResult) => {
     if (![before, after].every(result => result.cleanBlob && result.maskBlob && result.reviewMaskBlob && result.protectedMaskBlob) ||
@@ -579,6 +733,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       sourceFingerprint?: string,
       signal?: AbortSignal,
       sourceBlob?: Blob,
+      skipHeavyPostProcess: boolean = false,
     ): Promise<PageCleaningResult> => {
       if (signal?.aborted) throw new DOMException("Cleaning cancelled", "AbortError");
       const result = signal ? await getCleaningResult(job.jobId,signal) : await getCleaningResult(job.jobId);
@@ -608,10 +763,12 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
           : undefined,
       };
       replaceResult(pageUrl, identified);
-      // Inspect the fresh clean background (without translated overlays) at
-      // this processing boundary; findings bind to the exact revisions above.
-      await inspectPageRemnants(pageUrl, identified, sourceBlob);
-      await persistCleaningResult(pageUrl, identified, token);
+      if (!skipHeavyPostProcess) {
+        // Inspect the fresh clean background (without translated overlays) at
+        // this processing boundary; findings bind to the exact revisions above.
+        await inspectPageRemnants(pageUrl, identified, sourceBlob);
+        await persistCleaningResult(pageUrl, identified, token);
+      }
       setProgressState((previous) => (previous?.pageUrl === pageUrl ? undefined : previous));
       return identified;
     },
@@ -626,10 +783,11 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       sourceFingerprint?: string,
       signal?: AbortSignal,
       sourceBlob?: Blob,
+      skipHeavyPostProcess: boolean = false,
     ): Promise<PageCleaningResult> => {
       try {
         const terminal = await waitForJob(initial, token, pageUrl,signal);
-        return await finishJob(terminal, token, pageUrl, sourceFingerprint,signal, sourceBlob);
+        return await finishJob(terminal, token, pageUrl, sourceFingerprint,signal, sourceBlob, skipHeavyPostProcess);
       } finally {
         setProgressState((previous) => (previous?.pageUrl === pageUrl ? undefined : previous));
       }
@@ -757,7 +915,38 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       if (!(error instanceof CleaningClientError) || error.status !== 404) throw error;
       const response = await fetch(pageUrl, { cache: "no-store" });
       if (!response.ok) throw error;
-      const refreshed = await cleanPage(pageUrl, await response.blob(), true);
+      const sourceBlob = await response.blob();
+      if (
+        current.cleanBlob &&
+        current.maskBlob &&
+        current.reviewMaskBlob &&
+        current.protectedMaskBlob &&
+        current.cleanBlob.size > 64
+      ) {
+        try {
+          const restoredJob = await restoreCleaningJob({
+            jobId: current.jobId,
+            sourceBlob,
+            cleanBlob: current.cleanBlob,
+            maskBlob: current.maskBlob,
+            reviewMaskBlob: current.reviewMaskBlob,
+            protectedMaskBlob: current.protectedMaskBlob,
+            regions: current.regions,
+            cleaningMode: current.cleaningMode,
+          });
+          const selected = current.regions.find((item) => item.id === aliasedId);
+          if (selected && restoredJob.jobId) {
+            return {
+              region: selected,
+              proposalMaskUrl: current.reviewMaskUrl,
+              remapped: aliasedId !== region.id,
+            };
+          }
+        } catch {
+          // Fall back to full-page clean if restore endpoint is unavailable
+        }
+      }
+      const refreshed = await cleanPage(pageUrl, sourceBlob, true);
       const recoveredId = findRecoveredRegionId(region, refreshed.regions, aliasedId);
       const recovered = refreshed.regions.find((item) => item.id === recoveredId);
       if (!recovered) throw new Error("ไม่พบพื้นที่ Mask ที่ตรงกันอย่างปลอดภัย กรุณาตรวจและเลือกพื้นที่ใหม่");
@@ -896,6 +1085,10 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
               textConfirmed: partialRestore ? item.textConfirmed : false,
               maskApproved: false,
               approvalRevision: null,
+              protectionReasons: partialRestore
+                ? item.protectionReasons
+                : (item.protectionReasons ?? []).filter((reason) => reason !== "low-confidence"),
+              confidence: partialRestore ? item.confidence : Math.max(item.confidence ?? 0.95, 0.95),
             }
           : item,
       );
@@ -973,6 +1166,14 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       const aliasKey = regionAliasKey(pageUrl, regionId);
       let resolvedRegionId =
         regionAliasRef.current.get(aliasKey) ?? regionId;
+      const priorConfirmedRects = (remnantReviewsRef.current.get(pageUrl)?.inspection.candidates ?? [])
+        .filter(
+          (c) =>
+            c.state === "human-confirmed-artwork" &&
+            !c.evidence.removalRegionIds.includes(resolvedRegionId) &&
+            !c.evidence.removalRegionIds.includes(originalRegionId),
+        )
+        .map((c) => `${c.rect.x},${c.rect.y},${c.rect.width},${c.rect.height}`);
       let previousRegion = current.regions.find(
         (region) => region.id === resolvedRegionId || region.id === originalRegionId,
       );
@@ -1013,6 +1214,20 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
               maskForCurrentRegion,
               token,
             );
+            const postProtectReview = remnantReviewsRef.current.get(pageUrl);
+            if (postProtectReview?.inspection.status === "inspected") {
+              for (const cand of postProtectReview.inspection.candidates) {
+                const rectKey = `${cand.rect.x},${cand.rect.y},${cand.rect.width},${cand.rect.height}`;
+                if (
+                  cand.state !== "human-confirmed-artwork" &&
+                  (priorConfirmedRects.includes(rectKey) ||
+                    cand.evidence.removalRegionIds.includes(resolvedRegionId) ||
+                    cand.evidence.removalRegionIds.includes(originalRegionId))
+                ) {
+                  confirmArtworkCandidate(pageUrl, cand.id);
+                }
+              }
+            }
             pushCleaningHistory(pageUrl, current, localResult);
             return remapped
               ? { ...localResult, maskAdjustment: "remapped", recoveredRegionId: resolvedRegionId }
@@ -1029,7 +1244,34 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
           // user's Mask action transparently.
           const sourceResponse = await fetch(pageUrl, { cache: "no-store" });
           if (!sourceResponse.ok) throw caught;
-          const refreshed = await cleanPage(pageUrl, await sourceResponse.blob(), true);
+          const sourceBlob = await sourceResponse.blob();
+          let restoredFast: PageCleaningResult | undefined;
+          if (
+            current.cleanBlob &&
+            current.maskBlob &&
+            current.reviewMaskBlob &&
+            current.protectedMaskBlob &&
+            current.cleanBlob.size > 64
+          ) {
+            try {
+              const restoredJob = await restoreCleaningJob({
+                jobId: current.jobId,
+                sourceBlob,
+                cleanBlob: current.cleanBlob,
+                maskBlob: current.maskBlob,
+                reviewMaskBlob: current.reviewMaskBlob,
+                protectedMaskBlob: current.protectedMaskBlob,
+                regions: current.regions,
+                cleaningMode: current.cleaningMode,
+              });
+              if (restoredJob.jobId) {
+                restoredFast = { ...current, jobId: restoredJob.jobId };
+              }
+            } catch {
+              // Fall back to full-page clean if restore endpoint is unavailable
+            }
+          }
+          const refreshed = restoredFast ?? (await cleanPage(pageUrl, sourceBlob, true));
           current = refreshed;
           const recoveredRegionId = findRecoveredRegionId(
             previousRegion,
@@ -1069,8 +1311,24 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
           );
         }
 
-        const result = await runJob(job, token, pageUrl, current.sourceFingerprint);
-        pushCleaningHistory(pageUrl, current, result);
+        const isConfirmOnly = action === "confirm-text";
+        const result = await runJob(job, token, pageUrl, current.sourceFingerprint, undefined, undefined, isConfirmOnly);
+        const postRetryReview = remnantReviewsRef.current.get(pageUrl);
+        if (postRetryReview?.inspection.status === "inspected") {
+          for (const cand of postRetryReview.inspection.candidates) {
+            const rectKey = `${cand.rect.x},${cand.rect.y},${cand.rect.width},${cand.rect.height}`;
+            const isProtectedTarget =
+              action === "protect" &&
+              (cand.evidence.removalRegionIds.includes(resolvedRegionId) ||
+                cand.evidence.removalRegionIds.includes(originalRegionId));
+            if (cand.state !== "human-confirmed-artwork" && (priorConfirmedRects.includes(rectKey) || isProtectedTarget)) {
+              confirmArtworkCandidate(pageUrl, cand.id);
+            }
+          }
+        }
+        if (!isConfirmOnly) {
+          pushCleaningHistory(pageUrl, current, result);
+        }
         return remapped
           ? { ...result, maskAdjustment: "remapped", recoveredRegionId: resolvedRegionId }
           : result;
@@ -1084,7 +1342,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
         }
       }
     },
-    [applyLocalProtectRegion, cleanPage, handleFailure, runJob, pushCleaningHistory],
+    [applyLocalProtectRegion, cleanPage, confirmArtworkCandidate, handleFailure, runJob, pushCleaningHistory],
   );
 
   useEffect(() => {
@@ -1318,6 +1576,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     remnantReviews,
     confirmArtworkCandidate,
     confirmHumanImageInspection,
+    confirmAllPageRemnants,
     progress,
     error,
     resultsByPage,

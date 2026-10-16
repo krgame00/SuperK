@@ -249,3 +249,24 @@ export function normalizeTargetTranslationPayload<T extends { bubbles?: unknown[
     }),
   };
 }
+
+export function repairExcludedScriptText(rawText: string, targetLang?: string): string {
+  const resolution = resolveTargetLanguage(targetLang);
+  let candidate = rawText;
+  if (resolution.status === "resolved" && resolution.profile.id === "th") {
+    candidate = candidate
+      .replace(/ชู+\s*st(?=[.\s!?,…]|$)/giu, "ชู่ว")
+      .replace(/ชู่+\s*st(?=[.\s!?,…]|$)/giu, "ชู่ว")
+      .replace(/\bshh+\b/giu, "ชู่ว");
+  }
+  const inspection = inspectTargetText(candidate, targetLang);
+  if (inspection.status === "blocked" && inspection.reason === "excluded-script") {
+    const offendingSet = new Set(inspection.offendingCharacters);
+    candidate = Array.from(candidate)
+      .filter((ch) => !offendingSet.has(ch))
+      .join("")
+      .replace(/[ \t]{2,}/g, " ")
+      .trim();
+  }
+  return candidate;
+}

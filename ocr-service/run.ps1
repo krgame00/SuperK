@@ -12,5 +12,6 @@ if (Test-Path "F:\") {
     $env:TEMP = "$fCache\temp"
 }
 
+$env:SUPERK_ENABLE_ADAPTIVE_ROI_V2 = "1"
 $pythonExe = if (Test-Path ".\venv\Scripts\python.exe") { ".\venv\Scripts\python.exe" } else { ".\.venv\Scripts\python.exe" }
 & $pythonExe -m uvicorn app.api:app --host 127.0.0.1 --port 8765

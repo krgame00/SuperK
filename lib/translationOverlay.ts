@@ -4,28 +4,9 @@ import { calibrateOutputBodyMetric, resolveSourceFontSize, sourceRegionKey, manu
 import { measureTextSelection, rotateLocalPoint, type SelectionRect } from "./textSelectionBounds";
 import { guardQualityReview, unavailableReview, invalidateQualityReview, isReviewCurrent } from "./translation/qualityReview";
 import type { TranslationReview } from "./translation/qualityReview";
-import { inspectTargetText, formatOffendingCharacters, resolveTargetLanguage, LANGUAGE_POLICY_VERSION } from "./languagePolicy";
+import { inspectTargetText, formatOffendingCharacters, resolveTargetLanguage, LANGUAGE_POLICY_VERSION, repairExcludedScriptText } from "./languagePolicy";
 
-export function repairExcludedScriptText(rawText: string, targetLang?: string): string {
-  const resolution = resolveTargetLanguage(targetLang);
-  let candidate = rawText;
-  if (resolution.status === "resolved" && resolution.profile.id === "th") {
-    candidate = candidate
-      .replace(/ชู+\s*st(?=[.\s!?,…]|$)/giu, "ชู่ว")
-      .replace(/ชู่+\s*st(?=[.\s!?,…]|$)/giu, "ชู่ว")
-      .replace(/\bshh+\b/giu, "ชู่ว");
-  }
-  const inspection = inspectTargetText(candidate, targetLang);
-  if (inspection.status === "blocked" && inspection.reason === "excluded-script") {
-    const offendingSet = new Set(inspection.offendingCharacters);
-    candidate = Array.from(candidate)
-      .filter((ch) => !offendingSet.has(ch))
-      .join("")
-      .replace(/[ \t]{2,}/g, " ")
-      .trim();
-  }
-  return candidate;
-}
+export { repairExcludedScriptText };
 import {
   applyBwContrastModeToBubble,
   cloneTextStyleProfile,
@@ -314,10 +295,20 @@ const pruneOverlayCleanups = (): void => {
   }
 };
 
+let cachedOverlayAdjRaw: string | null = null;
+let cachedOverlayAdjMap: Record<string, Record<string, OverlayAdjustment>> | null = null;
+
 export const readOverlayAdjustments = (): Record<string, Record<string, OverlayAdjustment>> => {
   if (typeof window === "undefined" || !window.localStorage) return {};
   try {
-    return JSON.parse(localStorage.getItem(ADJ_KEY) || "{}");
+    const raw = localStorage.getItem(ADJ_KEY) || "{}";
+    if (raw === cachedOverlayAdjRaw && cachedOverlayAdjMap) {
+      return cachedOverlayAdjMap;
+    }
+    const parsed = JSON.parse(raw);
+    cachedOverlayAdjRaw = raw;
+    cachedOverlayAdjMap = parsed;
+    return parsed;
   } catch {
     return {};
   }
@@ -326,7 +317,10 @@ export const readOverlayAdjustments = (): Record<string, Record<string, OverlayA
 export const saveOverlayAdjustments = (adjustments: Record<string, Record<string, OverlayAdjustment>>): void => {
   if (typeof window === "undefined" || !window.localStorage) return;
   try {
-    localStorage.setItem(ADJ_KEY, JSON.stringify(adjustments));
+    const serialized = JSON.stringify(adjustments);
+    cachedOverlayAdjRaw = serialized;
+    cachedOverlayAdjMap = adjustments;
+    localStorage.setItem(ADJ_KEY, serialized);
   } catch {}
 };
 

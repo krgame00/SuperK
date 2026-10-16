@@ -151,6 +151,7 @@ exports.resolveTargetLanguage = resolveTargetLanguage;
 exports.formatOffendingCharacters = formatOffendingCharacters;
 exports.inspectTargetText = inspectTargetText;
 exports.normalizeTargetTranslationPayload = normalizeTargetTranslationPayload;
+exports.repairExcludedScriptText = repairExcludedScriptText;
 const thaiSpellcheck_1 = require("lib/thaiSpellcheck.ts");
 /** Exact target identities; variants never silently expand the permitted alphabet. */
 exports.LANGUAGE_POLICY_VERSION = "strict-script-v1";
@@ -423,6 +424,26 @@ function normalizeTargetTranslationPayload(payload, target) {
             return { ...row, t: text };
         }),
     };
+}
+function repairExcludedScriptText(rawText, targetLang) {
+    const resolution = resolveTargetLanguage(targetLang);
+    let candidate = rawText;
+    if (resolution.status === "resolved" && resolution.profile.id === "th") {
+        candidate = candidate
+            .replace(/ชู+\s*st(?=[.\s!?,…]|$)/giu, "ชู่ว")
+            .replace(/ชู่+\s*st(?=[.\s!?,…]|$)/giu, "ชู่ว")
+            .replace(/\bshh+\b/giu, "ชู่ว");
+    }
+    const inspection = inspectTargetText(candidate, targetLang);
+    if (inspection.status === "blocked" && inspection.reason === "excluded-script") {
+        const offendingSet = new Set(inspection.offendingCharacters);
+        candidate = Array.from(candidate)
+            .filter((ch) => !offendingSet.has(ch))
+            .join("")
+            .replace(/[ \t]{2,}/g, " ")
+            .trim();
+    }
+    return candidate;
 }
 
 },"lib/thaiSpellcheck.ts":(module,exports,require)=>{

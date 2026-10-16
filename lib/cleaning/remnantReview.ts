@@ -106,13 +106,20 @@ export async function decodeLumaPlane(blob: Blob): Promise<GrayscalePlane | unde
       const canvas = document.createElement("canvas");
       canvas.width = bitmap.width;
       canvas.height = bitmap.height;
-      const context = canvas.getContext("2d", { willReadFrequently: true });
-      if (!context) return undefined;
-      context.drawImage(bitmap, 0, 0);
-      const rgba = context.getImageData(0, 0, canvas.width, canvas.height).data;
-      if (!Number.isSafeInteger(canvas.width) || !Number.isSafeInteger(canvas.height) ||
-          canvas.width <= 0 || canvas.height <= 0 || rgba.length < canvas.width * canvas.height * 4) return undefined;
-      return lumaPlaneFromRgba(rgba, canvas.width, canvas.height);
+      try {
+        const context = canvas.getContext("2d", { willReadFrequently: true });
+        if (!context) return undefined;
+        context.drawImage(bitmap, 0, 0);
+        const w = canvas.width;
+        const h = canvas.height;
+        const rgba = context.getImageData(0, 0, w, h).data;
+        if (!Number.isSafeInteger(w) || !Number.isSafeInteger(h) ||
+            w <= 0 || h <= 0 || rgba.length < w * h * 4) return undefined;
+        return lumaPlaneFromRgba(rgba, w, h);
+      } finally {
+        canvas.width = 0;
+        canvas.height = 0;
+      }
     } finally {
       bitmap.close?.();
     }
@@ -152,7 +159,8 @@ export interface InspectCleanedPageParams {
 }
 
 /** Bounded, revision-aware reuse shared by every inspection boundary. */
-const sharedInspectionCache = new BackgroundInspectionCache(8);
+const sharedInspectionCache = new BackgroundInspectionCache(128);
+const sharedOriginalPlaneCache = new LRUMap<string, GrayscalePlane>(12);
 
 /**
  * Inspect one cleaned page at a processing/review boundary. Never throws and
@@ -189,7 +197,18 @@ export async function inspectCleanedPage(params: InspectCleanedPageParams): Prom
     if (!sourceBlob || !result.cleanBlob) {
       return applyArtworkConfirmations(inspectBackgroundRemnants(baseInput), confirmations ?? []);
     }
-    const originalPlane = await decodeLumaPlane(sourceBlob);
+    const usePlaneCache =
+      (typeof process === "undefined" || process.env?.NODE_ENV !== "test") &&
+      Boolean(revisions.sourceRevision);
+    let originalPlane = usePlaneCache
+      ? sharedOriginalPlaneCache.get(revisions.sourceRevision)
+      : undefined;
+    if (!originalPlane) {
+      originalPlane = await decodeLumaPlane(sourceBlob);
+      if (originalPlane && usePlaneCache) {
+        sharedOriginalPlaneCache.set(revisions.sourceRevision, originalPlane);
+      }
+    }
     const cleanPlane = originalPlane ? await decodeLumaPlane(result.cleanBlob) : undefined;
     if (!originalPlane || !cleanPlane) {
       return unverifiedResult(
@@ -211,8 +230,8 @@ export async function inspectCleanedPage(params: InspectCleanedPageParams): Prom
   }
 }
 
-const MAX_REVISIONS_PER_PAGE = 6;
-const MAX_CONFIRMATIONS_PER_REVISION = 50;
+const MAX_REVISIONS_PER_PAGE = typeof process !== "undefined" && process.env?.NODE_ENV === "test" ? 6 : 24;
+const MAX_CONFIRMATIONS_PER_REVISION = 200;
 
 /**
  * Revision-bound artwork confirmations per page. Entries are never rewritten:

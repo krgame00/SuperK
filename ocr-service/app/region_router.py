@@ -86,13 +86,36 @@ def extract_region_features(
     mask: BinaryMask,
     region: MaskRegion,
 ) -> RegionFeatures:
-    support = _region_support(mask, region)
+    h, w = mask.shape[:2]
+    rect = region.rect
+    pad = 12
+    y0 = max(0, rect.y - pad)
+    x0 = max(0, rect.x - pad)
+    y1 = min(h, rect.y + rect.height + pad)
+    x1 = min(w, rect.x + rect.width + pad)
+
+    crop_rgb = image_rgb[y0:y1, x0:x1]
+    crop_mask = mask[y0:y1, x0:x1]
+    local_region = MaskRegion(
+        id=region.id,
+        rect=rect.model_copy(
+            update={
+                "x": max(0, rect.x - x0),
+                "y": max(0, rect.y - y0),
+                "width": min(x1 - x0, rect.width),
+                "height": min(y1 - y0, rect.height),
+            },
+        ),
+        component_ids=region.component_ids,
+        stroke_radius=region.stroke_radius,
+    )
+    support = _region_support(crop_mask, local_region)
     ring = _ring(support, radius=8)
     if not np.any(ring):
         ring = ~support
-    pixels = image_rgb[ring]
+    pixels = crop_rgb[ring]
     if pixels.size == 0:
-        pixels = image_rgb.reshape(-1, 3)
+        pixels = crop_rgb.reshape(-1, 3)
 
     lab_pixels = cv2.cvtColor(
         pixels.reshape(-1, 1, 3),
@@ -103,7 +126,7 @@ def extract_region_features(
         np.mean(np.linalg.norm(lab_pixels.astype(np.float32) - center, axis=1)),
     )
 
-    gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
+    gray = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2GRAY)
     edges = cv2.Canny(gray, 80, 160) > 0
     edge_density = float(np.mean(edges[ring])) if np.any(ring) else 0.0
     entropy = _entropy(gray[ring])

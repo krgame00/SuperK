@@ -74,11 +74,21 @@ function maskHasPixels(mask: ImageData, rect: PixelRect): boolean {
 
 function maskOverflow(mask: ImageData, rect: PixelRect): number {
   let overflow = 0;
-  for (let y = 0; y < mask.height; y++) {
-    for (let x = 0; x < mask.width; x++) {
-      if (mask.data[(y * mask.width + x) * 4 + 3] === 0) continue;
-      overflow = Math.max(overflow, rect.x - x, rect.y - y,
-        x - (rect.x + rect.width - 1), y - (rect.y + rect.height - 1));
+  const data = mask.data;
+  const width = mask.width;
+  const height = mask.height;
+  const rx = rect.x;
+  const ry = rect.y;
+  const rxEnd = rx + rect.width - 1;
+  const ryEnd = ry + rect.height - 1;
+  for (let y = 0; y < height; y++) {
+    const rowOffset = y * width;
+    const yOver = Math.max(ry - y, y - ryEnd);
+    for (let x = 0; x < width; x++) {
+      if (data[(rowOffset + x) * 4 + 3] === 0) continue;
+      const xOver = Math.max(rx - x, x - rxEnd);
+      const maxOver = xOver > yOver ? xOver : yOver;
+      if (maxOver > overflow) overflow = maxOver;
     }
   }
   return overflow;
@@ -86,10 +96,19 @@ function maskOverflow(mask: ImageData, rect: PixelRect): number {
 
 function normalizeDisplayMask(mask: ImageData, rect: PixelRect): ImageData {
   const normalized = cloneImageData(mask);
-  for (let y = 0; y < mask.height; y++) {
-    for (let x = 0; x < mask.width; x++) {
-      if (x < rect.x || x >= rect.x + rect.width || y < rect.y || y >= rect.y + rect.height) {
-        normalized.data[(y * mask.width + x) * 4 + 3] = 0;
+  const data = normalized.data;
+  const width = mask.width;
+  const height = mask.height;
+  const rx = rect.x;
+  const ry = rect.y;
+  const rxEnd = rx + rect.width;
+  const ryEnd = ry + rect.height;
+  for (let y = 0; y < height; y++) {
+    const rowOffset = y * width;
+    const outY = y < ry || y >= ryEnd;
+    for (let x = 0; x < width; x++) {
+      if (outY || x < rx || x >= rxEnd) {
+        data[(rowOffset + x) * 4 + 3] = 0;
       }
     }
   }

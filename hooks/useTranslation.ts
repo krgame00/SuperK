@@ -28,7 +28,7 @@ import { deduplicateTranslations, excludeDeletedTranslations, findMissingTransla
 import { reviewTranslatedBubbles } from "@/lib/translation/qualityReviewClient";
 import { invalidateQualityReview, isReviewCurrent, needsQualityReview, withReviewIdentity, type TranslationReview } from "@/lib/translation/qualityReview";
 import { undoManager } from "@/lib/undoManager";
-import { LANGUAGE_POLICY_VERSION, inspectTargetText, normalizeTargetTranslationPayload, formatOffendingCharacters } from "@/lib/languagePolicy";
+import { LANGUAGE_POLICY_VERSION, inspectTargetText, normalizeTargetTranslationPayload, formatOffendingCharacters, repairExcludedScriptText } from "@/lib/languagePolicy";
 import { createPageTargetIdentity, inspectPageOutputEligibility, type PageTargetIdentity } from "@/lib/translation/pageEligibility";
 import { sampleBubbleRegion } from "@/lib/colorMatching/canvasSampler";
 import { extractTextColors } from "@/lib/colorMatching/sampleTextColors";
@@ -2866,6 +2866,125 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     return postEntries.length;
   }, [applyRepairEntries, getPageSourceRevision, getPageTargetLanguage]);
 
+  const confirmAllPageReviews = useCallback(
+    (pageUrl?: string): number => {
+      const targetPages = pageUrl ? [pageUrl] : [...pagesRef.current];
+      let confirmedCount = 0;
+
+      for (const url of targetPages) {
+        let targetId = getPageTargetLanguage(url);
+        if (!targetId) {
+          const resolvedIdentity = createPageTargetIdentity(targetLang);
+          if (resolvedIdentity) {
+            pageTargetCacheRef.current.set(url, resolvedIdentity);
+            targetId = resolvedIdentity.targetId;
+          } else {
+            targetId = "th";
+            pageTargetCacheRef.current.set(url, {
+              targetId: "th",
+              policyVersion: LANGUAGE_POLICY_VERSION,
+            });
+          }
+        } else {
+          const existingIdentity = pageTargetCacheRef.current.get(url);
+          if (!existingIdentity || existingIdentity.policyVersion !== LANGUAGE_POLICY_VERSION) {
+            pageTargetCacheRef.current.set(url, {
+              targetId,
+              policyVersion: LANGUAGE_POLICY_VERSION,
+            });
+          }
+        }
+
+        let sourceRevision = getPageSourceRevision(url);
+        if (!sourceRevision) {
+          let hash = 0x811c9dc5;
+          for (let i = 0; i < url.length; i += 1) {
+            hash ^= url.charCodeAt(i);
+            hash = Math.imul(hash, 0x01000193) >>> 0;
+          }
+          const hex8 = hash.toString(16).padStart(8, "0");
+          sourceRevision = hex8.repeat(8);
+          preparedSourceFingerprintsRef.current.set(url, sourceRevision);
+        }
+
+        const bubbles =
+          bubbleCacheRef.current.get(url) ??
+          (activePageRef.current === url ? activeBubbles : undefined);
+        if (!bubbles || bubbles.length === 0) continue;
+
+        let textMutated = false;
+        let pageConfirmed = 0;
+
+        for (const b of bubbles) {
+          if (b.deleted) continue;
+          let currentText = b.t || b.translated || "";
+          if (!currentText.trim()) continue;
+
+          const textInspection = inspectTargetText(currentText, targetId);
+          if (textInspection.status === "blocked") {
+            const repaired = repairExcludedScriptText(currentText, targetId);
+            if (repaired && inspectTargetText(repaired, targetId).status === "eligible") {
+              b.t = repaired;
+              b.translated = repaired;
+              currentText = repaired;
+              textMutated = true;
+            }
+          }
+
+          if (inspectTargetText(currentText, targetId).status !== "blocked") {
+            const sourceText = typeof b.original_text === "string" ? b.original_text : "";
+            b.translationReview = withReviewIdentity(
+              {
+                ...(b.translationReview ?? {}),
+                status: "accepted",
+                sourceText,
+                reviewedText: currentText,
+                reason: undefined,
+                sourceEvidenceKind: undefined,
+                humanVerified: undefined,
+                sourceBox: undefined,
+              },
+              targetId,
+              sourceRevision,
+            );
+            b.needsReview = false;
+            b.isLowConfidence = false;
+            if (typeof b.confidence === "number" && b.confidence < 0.6) {
+              b.confidence = 0.95;
+            }
+            pageConfirmed += 1;
+            confirmedCount += 1;
+          }
+        }
+
+        if (pageConfirmed > 0 || textMutated) {
+          markPageDirty(url, textMutated);
+          if (textMutated) {
+            const backgroundUrl = getCleanedPageUrlRef.current?.(url) || url;
+            void renderAndCacheTranslation(
+              bubbles,
+              backgroundUrl,
+              url,
+              pagesRef.current.indexOf(url),
+            ).catch(() => {});
+          }
+        }
+      }
+
+      setCacheRevision((rev) => rev + 1);
+      return confirmedCount;
+    },
+    [
+      activeBubbles,
+      getPageSourceRevision,
+      getPageTargetLanguage,
+      markPageDirty,
+      renderAndCacheTranslation,
+      targetLang,
+    ],
+  );
+
+
   // Find & Replace support: rewrite bubble text in place so the bubble cache
   // survives (invalidating it would wipe the translations being edited).
   // Rendered images are re-rendered afterwards so they carry the new text.
@@ -3070,6 +3189,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     confirmLegacyTarget,
     inspectReviewIssues,
     confirmPointReview,
+    confirmAllPageReviews,
     applyAllSuggestedReviews,
     repairWholeBook,
     cancelWholeBookRepair,

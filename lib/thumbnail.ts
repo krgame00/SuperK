@@ -26,9 +26,15 @@ export const generateThumbnail = (
           resolve(sourceUrl);
           return;
         }
-        ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
-        const thumb = canvas.toDataURL("image/jpeg", 0.7);
-        resolve(thumb);
+        try {
+          ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+          const thumb = canvas.toDataURL("image/jpeg", 0.7);
+          resolve(thumb);
+        } finally {
+          canvas.width = 0;
+          canvas.height = 0;
+          img.src = "";
+        }
       } catch {
         resolve(sourceUrl);
       }

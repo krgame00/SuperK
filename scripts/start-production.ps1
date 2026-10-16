@@ -112,6 +112,7 @@ function Start-SuperKProduction {
 
     $ocrProcess = $null
     $webProcess = $null
+    $env:SUPERK_ENABLE_ADAPTIVE_ROI_V2 = '1'
     if (-not $ocrOwner) {
         $ocrProcess = Start-Process -FilePath $uvicornExe -ArgumentList @('app.api:app', '--host', '127.0.0.1', '--port', '8765') -WorkingDirectory $cleanerDirectory -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $logDirectory 'ocr.log') -RedirectStandardError (Join-Path $logDirectory 'ocr-error.log')
     }

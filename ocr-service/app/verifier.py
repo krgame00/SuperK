@@ -65,25 +65,31 @@ def verify_region(
     ]
     res_mask = np.zeros_like(source_mask)
     if hasattr(residual_probe, "score_envelope"):
-        env = (
-            evidence_envelope
+        h, w = source_mask.shape[:2]
+        pad = 8
+        y0 = max(0, rect.y - pad)
+        x0 = max(0, rect.x - pad)
+        y1 = min(h, rect.y + rect.height + pad)
+        x1 = min(w, rect.x + rect.width + pad)
+        env_crop = (
+            evidence_envelope[y0:y1, x0:x1]
             if evidence_envelope is not None
-            else np.ones_like(source_mask) * 255
+            else np.full((y1 - y0, x1 - x0), 255, dtype=np.uint8)
         )
-        prot = (
-            protected_edges
+        prot_crop = (
+            protected_edges[y0:y1, x0:x1]
             if protected_edges is not None
-            else np.zeros_like(source_mask)
+            else np.zeros((y1 - y0, x1 - x0), dtype=np.uint8)
         )
         report = residual_probe.score_envelope(
-            cleaned,
-            source_mask,
-            env,
-            prot,
+            cleaned[y0:y1, x0:x1],
+            source_mask[y0:y1, x0:x1],
+            env_crop,
+            prot_crop,
         )
         residual = report.residual_score
-        if report.residual_mask is not None:
-            res_mask = report.residual_mask.copy()
+        if report.residual_mask is not None and report.residual_mask.shape == (y1 - y0, x1 - x0):
+            res_mask[y0:y1, x0:x1] = report.residual_mask.copy()
     else:
         residual = residual_probe.score(crop, crop_mask)
 

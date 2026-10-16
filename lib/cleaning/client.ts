@@ -105,6 +105,56 @@ export async function retryCleaningRegion(
   );
 }
 
+export async function restoreCleaningJob(params: {
+  jobId: string;
+  sourceBlob: Blob;
+  cleanBlob: Blob;
+  maskBlob: Blob;
+  reviewMaskBlob: Blob;
+  protectedMaskBlob: Blob;
+  regions: CleaningRegion[];
+  cleaningMode?: "safe" | "all-text";
+}): Promise<CleaningJob> {
+  const form = new FormData();
+  const ensurePng = (blob: Blob) =>
+    blob.type === "image/png" ? blob : new Blob([blob], { type: "image/png" });
+  form.append("job_id", params.jobId);
+  form.append("source", ensurePng(params.sourceBlob), "source.png");
+  form.append("clean", ensurePng(params.cleanBlob), "clean.png");
+  form.append("mask", ensurePng(params.maskBlob), "mask.png");
+  form.append("review_mask", ensurePng(params.reviewMaskBlob), "review-mask.png");
+  form.append("protected_mask", ensurePng(params.protectedMaskBlob), "protected-mask.png");
+  form.append(
+    "regions",
+    JSON.stringify(
+      params.regions.map((r) => ({
+        id: r.id,
+        rect: r.rect,
+        route: r.route,
+        confidence: r.confidence,
+        status: r.status,
+        residual_score: r.residualScore,
+        damage_score: r.damageScore,
+        page_role: r.pageRole,
+        text_role: r.textRole,
+        eligibility_confidence: r.eligibilityConfidence,
+        automatic_action: r.automaticAction,
+        protection_reasons: r.protectionReasons,
+        text_confirmed: r.textConfirmed === true,
+        mask_approved: r.maskApproved === true,
+        approval_revision: r.approvalRevision ?? null,
+      })),
+    ),
+  );
+  form.append("cleaning_mode", params.cleaningMode ?? "all-text");
+  return decodeJob(
+    await requestJson(`${PROXY_BASE}/v1/jobs/restore`, {
+      method: "POST",
+      body: form,
+    }),
+  );
+}
+
 async function requestJson(
   input: string,
   init: RequestInit = {},

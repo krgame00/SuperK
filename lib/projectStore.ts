@@ -161,8 +161,9 @@ export const saveAsset = async (
 };
 
 export const loadAsset = async (id: string): Promise<Blob | null> => {
+  let db: IDBDatabase | undefined;
   try {
-    const db = await openDB();
+    db = await openDB();
     const tx = db.transaction(ASSET_STORE_NAME, "readonly");
     const store = tx.objectStore(ASSET_STORE_NAME);
     const asset = await requestResult<StoredAsset | StoredSourceAsset | undefined>(store.get(id));
@@ -183,18 +184,23 @@ export const loadAsset = async (id: string): Promise<Blob | null> => {
   } catch (err) {
     console.warn("Failed to load asset from IndexedDB", err);
     return null;
+  } finally {
+    db?.close?.();
   }
 };
 
 export const deleteAsset = async (id: string): Promise<void> => {
+  let db: IDBDatabase | undefined;
   try {
-    const db = await openDB();
+    db = await openDB();
     const tx = db.transaction(ASSET_STORE_NAME, "readwrite");
     const done = transactionDone(tx);
     tx.objectStore(ASSET_STORE_NAME).delete(id);
     await done;
   } catch (err) {
     console.warn("Failed to delete asset from IndexedDB", err);
+  } finally {
+    db?.close?.();
   }
 };
 

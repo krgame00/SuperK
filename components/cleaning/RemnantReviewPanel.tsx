@@ -24,6 +24,8 @@ export interface RemnantReviewPanelProps {
   onOpenMask?: (candidate: RemnantCandidate, region: CleaningRegion | undefined) => void;
   /** Confirm this exact candidate (this revision) is artwork. */
   onConfirmArtwork?: (candidate: RemnantCandidate) => void;
+  /** Confirm all open candidates / background on the current page. */
+  onConfirmAllArtwork?: () => void;
   /** Re-run local inspection for unverified evidence. */
   onRecheck?: () => void;
 }
@@ -69,6 +71,7 @@ export function RemnantReviewPanel({
   onReimportSource,
   onOpenMask,
   onConfirmArtwork,
+  onConfirmAllArtwork,
   onRecheck,
 }: RemnantReviewPanelProps) {
   const [side, setSide] = useState<"right" | "left">("right");
@@ -104,6 +107,15 @@ export function RemnantReviewPanel({
             className="rounded bg-amber-700 px-3 py-1.5 font-semibold text-white hover:bg-amber-600 focus-visible:outline-2"
           >
             ตรวจสอบอีกครั้ง
+          </button>
+        )}
+        {!humanConfirmed && onConfirmAllArtwork && (
+          <button
+            type="button"
+            onClick={onConfirmAllArtwork}
+            className="rounded bg-emerald-600 px-3 py-1.5 font-semibold text-white hover:bg-emerald-500 focus-visible:outline-2 cursor-pointer"
+          >
+            อนุมัติพื้นหลังหน้านี้
           </button>
         )}
         {sourceUrl && cleanUrl && dimensions?.width && dimensions.height && (
@@ -211,6 +223,16 @@ export function RemnantReviewPanel({
               </div>
             </div>
             <div className="flex items-center gap-1 shrink-0">
+              {openCandidates.length > 0 && onConfirmAllArtwork && (
+                <button
+                  type="button"
+                  onClick={onConfirmAllArtwork}
+                  title="อนุมัติทุกจุดในหน้านี้ว่าเป็นลายภาพ/คลีนผ่านแล้ว"
+                  className="rounded-lg bg-emerald-600/90 hover:bg-emerald-500 px-2 py-1 text-[11px] font-semibold text-white shadow-sm transition-all cursor-pointer"
+                >
+                  อนุมัติลายภาพทั้งหน้า
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setSide((s) => (s === "right" ? "left" : "right"))}

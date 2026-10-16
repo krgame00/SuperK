@@ -226,7 +226,7 @@ def extract_eligibility_features(
     )
     if closed_backing is not None:
         enclosure, rectangle, uniformity = closed_backing
-    irregularity = _stroke_irregularity(region_mask)
+    irregularity = _stroke_irregularity(region_mask[y1:y2, x1:x2])
     margin_fraction = _margin_fraction(rect, width, height)
     return EligibilityFeatures(
         enclosure_score=enclosure,

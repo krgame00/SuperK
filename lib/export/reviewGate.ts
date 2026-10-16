@@ -57,13 +57,23 @@ export function isPageCleaningUncertain(
   cleaningResult?: PageCleaningResult | null,
 ): boolean {
   if (!cleaningResult || !Array.isArray(cleaningResult.regions)) return false;
-  return cleaningResult.regions.some(
-    (r) =>
+  return cleaningResult.regions.some((r) => {
+    if (r.status === "repaired" && r.maskApproved === true) return false;
+    if (
+      r.status === "preserved" &&
+      r.textRole === "protected" &&
+      r.automaticAction === "preserve" &&
+      !r.protectionReasons?.includes("low-confidence")
+    ) {
+      return false;
+    }
+    return (
       r.status === "needs_review" ||
       r.textRole === "review" ||
       r.protectionReasons?.includes("low-confidence") ||
-      (typeof r.confidence === "number" && r.confidence < 0.6),
-  );
+      (typeof r.confidence === "number" && r.confidence < 0.6)
+    );
+  });
 }
 
 /**

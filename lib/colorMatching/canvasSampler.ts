@@ -92,84 +92,94 @@ export function sampleBubbleRegion(
     const canvas = document.createElement("canvas");
     canvas.width = rect.width;
     canvas.height = rect.height;
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    if (!ctx) return null;
+    try {
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (!ctx) return null;
 
-    if (typeof ctx.drawImage === "function") {
-      ctx.drawImage(
-        image,
-        rect.x,
-        rect.y,
-        rect.width,
-        rect.height,
-        0,
-        0,
-        rect.width,
-        rect.height,
-      );
-    }
+      if (typeof ctx.drawImage === "function") {
+        ctx.drawImage(
+          image,
+          rect.x,
+          rect.y,
+          rect.width,
+          rect.height,
+          0,
+          0,
+          rect.width,
+          rect.height,
+        );
+      }
 
-    if (typeof ctx.getImageData !== "function") return null;
-    const imgData = ctx.getImageData(0, 0, rect.width, rect.height);
-    if (!imgData?.data) return null;
+      if (typeof ctx.getImageData !== "function") return null;
+      const imgData = ctx.getImageData(0, 0, rect.width, rect.height);
+      if (!imgData?.data) return null;
 
-    const sample: ColorSampleRegion = {
-      width: rect.width,
-      height: rect.height,
-      rgba: imgData.data,
-    };
+      const sample: ColorSampleRegion = {
+        width: rect.width,
+        height: rect.height,
+        rgba: imgData.data,
+      };
 
-    if (glyphMaskImage) {
-      const maskWidth =
-        "naturalWidth" in glyphMaskImage
-          ? glyphMaskImage.naturalWidth || glyphMaskImage.width
-          : glyphMaskImage.width;
-      const maskHeight =
-        "naturalHeight" in glyphMaskImage
-          ? glyphMaskImage.naturalHeight || glyphMaskImage.height
-          : glyphMaskImage.height;
+      if (glyphMaskImage) {
+        const maskWidth =
+          "naturalWidth" in glyphMaskImage
+            ? glyphMaskImage.naturalWidth || glyphMaskImage.width
+            : glyphMaskImage.width;
+        const maskHeight =
+          "naturalHeight" in glyphMaskImage
+            ? glyphMaskImage.naturalHeight || glyphMaskImage.height
+            : glyphMaskImage.height;
 
-      if (maskWidth && maskHeight) {
-        const maskRect = normalizeBubbleBox(box, maskWidth, maskHeight);
-        const maskCanvas = document.createElement("canvas");
-        maskCanvas.width = rect.width;
-        maskCanvas.height = rect.height;
-        const maskContext = maskCanvas.getContext("2d", {
-          willReadFrequently: true,
-        });
-        if (maskContext && typeof maskContext.drawImage === "function") {
-          maskContext.drawImage(
-            glyphMaskImage,
-            maskRect.x,
-            maskRect.y,
-            maskRect.width,
-            maskRect.height,
-            0,
-            0,
-            rect.width,
-            rect.height,
-          );
-          const maskData = maskContext.getImageData(
-            0,
-            0,
-            rect.width,
-            rect.height,
-          ).data;
-          const glyphMask = new Uint8ClampedArray(rect.width * rect.height);
-          for (let pixel = 0; pixel < glyphMask.length; pixel++) {
-            const offset = pixel * 4;
-            glyphMask[pixel] = Math.max(
-              maskData[offset],
-              maskData[offset + 1],
-              maskData[offset + 2],
-            );
+        if (maskWidth && maskHeight) {
+          const maskRect = normalizeBubbleBox(box, maskWidth, maskHeight);
+          const maskCanvas = document.createElement("canvas");
+          maskCanvas.width = rect.width;
+          maskCanvas.height = rect.height;
+          try {
+            const maskContext = maskCanvas.getContext("2d", {
+              willReadFrequently: true,
+            });
+            if (maskContext && typeof maskContext.drawImage === "function") {
+              maskContext.drawImage(
+                glyphMaskImage,
+                maskRect.x,
+                maskRect.y,
+                maskRect.width,
+                maskRect.height,
+                0,
+                0,
+                rect.width,
+                rect.height,
+              );
+              const maskData = maskContext.getImageData(
+                0,
+                0,
+                rect.width,
+                rect.height,
+              ).data;
+              const glyphMask = new Uint8ClampedArray(rect.width * rect.height);
+              for (let pixel = 0; pixel < glyphMask.length; pixel++) {
+                const offset = pixel * 4;
+                glyphMask[pixel] = Math.max(
+                  maskData[offset],
+                  maskData[offset + 1],
+                  maskData[offset + 2],
+                );
+              }
+              sample.glyphMask = glyphMask;
+            }
+          } finally {
+            maskCanvas.width = 0;
+            maskCanvas.height = 0;
           }
-          sample.glyphMask = glyphMask;
         }
       }
-    }
 
-    return sample;
+      return sample;
+    } finally {
+      canvas.width = 0;
+      canvas.height = 0;
+    }
   } catch {
     return null;
   }
@@ -199,32 +209,37 @@ export function sampleRectRegion(
     const canvas = document.createElement("canvas");
     canvas.width = clampedRect.width;
     canvas.height = clampedRect.height;
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    if (!ctx) return null;
+    try {
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (!ctx) return null;
 
-    if (typeof ctx.drawImage === "function") {
-      ctx.drawImage(
-        image,
-        clampedRect.x,
-        clampedRect.y,
-        clampedRect.width,
-        clampedRect.height,
-        0,
-        0,
-        clampedRect.width,
-        clampedRect.height,
-      );
+      if (typeof ctx.drawImage === "function") {
+        ctx.drawImage(
+          image,
+          clampedRect.x,
+          clampedRect.y,
+          clampedRect.width,
+          clampedRect.height,
+          0,
+          0,
+          clampedRect.width,
+          clampedRect.height,
+        );
+      }
+
+      if (typeof ctx.getImageData !== "function") return null;
+      const imgData = ctx.getImageData(0, 0, clampedRect.width, clampedRect.height);
+      if (!imgData?.data) return null;
+
+      return {
+        width: clampedRect.width,
+        height: clampedRect.height,
+        rgba: imgData.data,
+      };
+    } finally {
+      canvas.width = 0;
+      canvas.height = 0;
     }
-
-    if (typeof ctx.getImageData !== "function") return null;
-    const imgData = ctx.getImageData(0, 0, clampedRect.width, clampedRect.height);
-    if (!imgData?.data) return null;
-
-    return {
-      width: clampedRect.width,
-      height: clampedRect.height,
-      rgba: imgData.data,
-    };
   } catch {
     return null;
   }
