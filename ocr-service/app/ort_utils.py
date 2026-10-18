@@ -17,6 +17,51 @@ import onnxruntime as ort
 
 logger = logging.getLogger(__name__)
 
+_GPU_DEVICE_SUSPENDED = False
+
+_GPU_ERROR_SIGNATURES = (
+    "887a0005",
+    "887a0006",
+    "887a0007",
+    "887a0020",
+    "getdeviceremovedreason",
+    "device instance has been suspended",
+    "dxgi_error_device_",
+    "dmlexecutionprovider",
+    "cuda error",
+    "cudnn",
+)
+
+
+def is_gpu_device_error(exc: Exception | str | None) -> bool:
+    """Return True if an exception message indicates a DirectML/CUDA GPU device hang or removal."""
+    if exc is None:
+        return False
+    msg = str(exc).lower()
+    return any(sig in msg for sig in _GPU_ERROR_SIGNATURES)
+
+
+def is_gpu_suspended() -> bool:
+    """Return True if the GPU device was suspended/removed during this process lifetime."""
+    return _GPU_DEVICE_SUSPENDED
+
+
+def mark_gpu_device_suspended(exc: Exception | str | None = None) -> None:
+    """Mark the GPU provider as suspended so subsequent sessions and fallbacks use CPU."""
+    global _GPU_DEVICE_SUSPENDED
+    if not _GPU_DEVICE_SUSPENDED:
+        _GPU_DEVICE_SUSPENDED = True
+        logger.warning(
+            "GPU device suspension detected (%s). Switching remaining ONNX sessions to CPUExecutionProvider.",
+            exc,
+        )
+
+
+def reset_gpu_suspended() -> None:
+    """Reset the GPU suspension flag (used by tests or manual re-initialization)."""
+    global _GPU_DEVICE_SUSPENDED
+    _GPU_DEVICE_SUSPENDED = False
+
 
 def _ensure_cuda_path() -> None:
     """Add torch's bundled CUDA/cuDNN DLLs (torch/lib) to PATH.
@@ -55,24 +100,34 @@ def _gpu_providers() -> list[str]:
 
 def preferred_providers() -> list[str]:
     """Return the best available execution providers, GPU first."""
-    if os.environ.get("SUPERK_FORCE_CPU") == "1":
+    if os.environ.get("SUPERK_FORCE_CPU") == "1" or _GPU_DEVICE_SUSPENDED:
         return ["CPUExecutionProvider"]
     gpu = _gpu_providers()
     return gpu + ["CPUExecutionProvider"] if gpu else ["CPUExecutionProvider"]
 
 
 def is_gpu_available() -> bool:
-    if os.environ.get("SUPERK_FORCE_CPU") == "1":
+    if os.environ.get("SUPERK_FORCE_CPU") == "1" or _GPU_DEVICE_SUSPENDED:
         return False
     gpu = _gpu_providers()
     return len(gpu) > 0
 
 
-def create_session_options() -> ort.SessionOptions:
-    """Create high-performance tuned session options for ONNX Runtime."""
+def create_session_options(*, for_directml: bool | None = None) -> ort.SessionOptions:
+    """Create high-performance tuned session options for ONNX Runtime.
+
+    Note: Microsoft's DirectML execution provider requires ``enable_mem_pattern = False``
+    and ``enable_cpu_mem_arena = False`` when running models with dynamic input shapes
+    (such as LamaLarge and AOT crops). Leaving ``enable_mem_pattern = True`` on DirectML
+    causes per-shape GPU memory retention across pages until WDDM triggers
+    ``0x887A0005 (DXGI_ERROR_DEVICE_REMOVED)``.
+    """
     options = ort.SessionOptions()
     options.enable_cpu_mem_arena = False
-    options.enable_mem_pattern = True
+    if for_directml is None:
+        providers = preferred_providers()
+        for_directml = "DmlExecutionProvider" in providers and "CUDAExecutionProvider" not in providers
+    options.enable_mem_pattern = not for_directml
     options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
     options.intra_op_num_threads = min(4, os.cpu_count() or 1)
@@ -84,7 +139,7 @@ def create_cpu_inference_session(
     sess_options: ort.SessionOptions | None = None,
 ) -> ort.InferenceSession:
     """Create a fresh CPU-only session for execution-time GPU recovery."""
-    options = sess_options or create_session_options()
+    options = sess_options or create_session_options(for_directml=False)
     return ort.InferenceSession(
         str(model_path),
         sess_options=options,
@@ -97,9 +152,10 @@ def create_inference_session(
     sess_options: ort.SessionOptions | None = None,
 ) -> ort.InferenceSession:
     """Create an InferenceSession with automatic fallback to CPU if GPU initialization fails."""
-    options = sess_options or create_session_options()
-    path_str = str(model_path)
     providers = preferred_providers()
+    use_dml = "DmlExecutionProvider" in providers and "CUDAExecutionProvider" not in providers
+    options = sess_options or create_session_options(for_directml=use_dml)
+    path_str = str(model_path)
 
     try:
         return ort.InferenceSession(
@@ -115,5 +171,5 @@ def create_inference_session(
                 providers,
                 exc,
             )
-            return create_cpu_inference_session(path_str, sess_options=options)
+            return create_cpu_inference_session(path_str)
         raise

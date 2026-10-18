@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+import logging
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol, Self, cast
 
@@ -10,7 +11,14 @@ from numpy.typing import NDArray
 from app.detector import RgbImage
 from app.mask_refiner import BinaryMask, MaskRegion
 from app.model_store import ModelStore
-from app.ort_utils import create_inference_session
+from app.ort_utils import (
+    create_cpu_inference_session,
+    create_inference_session,
+    is_gpu_suspended,
+    mark_gpu_device_suspended,
+)
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -63,14 +71,37 @@ def restore_aot_output(
 
 class AotCleaner:
     def __init__(self, model_store: ModelStore) -> None:
-        session = create_inference_session(model_store.ensure("aot-onnx"))
+        model_path = model_store.ensure("aot-onnx")
+        session = create_inference_session(model_path)
         self.session = cast("_Session", session)
+        self._cpu_session_factory: Callable[[], _Session] | None = lambda: cast(
+            "_Session",
+            create_cpu_inference_session(model_path),
+        )
+        self._cpu_fallback_used = False
 
     @classmethod
-    def from_session(cls, session: _Session) -> Self:
+    def from_session(
+        cls,
+        session: _Session,
+        *,
+        cpu_session_factory: Callable[[], _Session] | None = None,
+    ) -> Self:
         cleaner = cls.__new__(cls)
         cleaner.session = session
+        cleaner._cpu_session_factory = cpu_session_factory
+        cleaner._cpu_fallback_used = False
         return cleaner
+
+    @property
+    def providers(self) -> list[str]:
+        get_providers = getattr(self.session, "get_providers", None)
+        if callable(get_providers):
+            try:
+                return list(get_providers())
+            except Exception:
+                return []
+        return []
 
     def clean(
         self,
@@ -94,13 +125,40 @@ class AotCleaner:
             crop_mask,
         )
         masked_image = image_tensor * (1 - mask_tensor)
-        output = self.session.run(
-            None,
-            {
-                "image": masked_image.astype(np.float32),
-                "mask": mask_tensor.astype(np.float32),
-            },
-        )[0]
+        input_feed = {
+            "image": masked_image.astype(np.float32),
+            "mask": mask_tensor.astype(np.float32),
+        }
+        if (
+            is_gpu_suspended()
+            and not self._cpu_fallback_used
+            and self._cpu_session_factory is not None
+            and any(p != "CPUExecutionProvider" for p in self.providers)
+        ):
+            self._cpu_fallback_used = True
+            self.session = self._cpu_session_factory()
+
+        try:
+            output = self.session.run(None, input_feed)[0]
+        except Exception as err:
+            providers = self.providers
+            can_fallback = (
+                self._cpu_session_factory is not None
+                and not self._cpu_fallback_used
+                and (not providers or any(p != "CPUExecutionProvider" for p in providers))
+            )
+            if not can_fallback:
+                raise
+            mark_gpu_device_suspended(err)
+            LOGGER.warning(
+                "AotCleaner execution failed on providers %s (%s). Retrying on CPUExecutionProvider.",
+                providers,
+                err,
+            )
+            self._cpu_fallback_used = True
+            self.session = self._cpu_session_factory()
+            output = self.session.run(None, input_feed)[0]
+
         repaired = restore_aot_output(
             np.asarray(output, dtype=np.float32),
             transform,

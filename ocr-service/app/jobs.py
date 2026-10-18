@@ -19,6 +19,7 @@ from typing import Protocol
 import numpy as np
 from PIL import Image
 
+from app.ort_utils import is_gpu_device_error, mark_gpu_device_suspended
 from app.pipeline import PipelineOutput, ProgressCallback
 from app.schemas import (
     CleaningMode,
@@ -644,16 +645,34 @@ class JobStore:
             # Legacy injected pipelines may still implement the safe-only
             # signature. All-text always requires explicit mode support.
             mode_options = {"cleaning_mode": job.cleaning_mode} if job.cleaning_mode is CleaningMode.ALL_TEXT else {}
-            output = self._pipeline().run(
-                image_rgb,
-                lambda stage, completed, total: self._update_progress(
-                    job,
-                    stage,
-                    completed,
-                    total,
-                ),
-                **mode_options,
+            progress_cb = lambda stage, completed, total: self._update_progress(
+                job,
+                stage,
+                completed,
+                total,
             )
+            try:
+                output = self._pipeline().run(
+                    image_rgb,
+                    progress_cb,
+                    **mode_options,
+                )
+            except Exception as run_exc:
+                if not is_gpu_device_error(run_exc):
+                    raise
+                mark_gpu_device_suspended(run_exc)
+                LOGGER.warning(
+                    "GPU device error in job %s (%s); rebuilding pipeline on CPU and retrying once.",
+                    job.id,
+                    run_exc,
+                )
+                with self._jobs_lock:
+                    self._pipeline_instance = None
+                output = self._pipeline().run(
+                    image_rgb,
+                    progress_cb,
+                    **mode_options,
+                )
             self._worker_finished()
             worker_active = False
             self._update_progress(
@@ -753,7 +772,24 @@ class JobStore:
                         )
             if mask.shape != parent_output.mask.shape:
                 raise ValueError("retry mask dimensions do not match the image")
-            output = retry(parent_output, region_id, mask, cleaner, action)
+            try:
+                output = retry(parent_output, region_id, mask, cleaner, action)
+            except Exception as retry_exc:
+                if not is_gpu_device_error(retry_exc):
+                    raise
+                mark_gpu_device_suspended(retry_exc)
+                LOGGER.warning(
+                    "GPU device error in retry job %s (%s); rebuilding pipeline on CPU and retrying once.",
+                    job.id,
+                    retry_exc,
+                )
+                with self._jobs_lock:
+                    self._pipeline_instance = None
+                cpu_pipeline = self._pipeline()
+                cpu_retry = getattr(cpu_pipeline, "retry_region", None)
+                if cpu_retry is None:
+                    raise
+                output = cpu_retry(parent_output, region_id, mask, cleaner, action)
             self._worker_finished()
             worker_active = False
             self._complete(

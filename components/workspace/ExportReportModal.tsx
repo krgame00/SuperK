@@ -2,7 +2,11 @@
 
 import { useEffect, useState, type ReactElement } from "react";
 import { AlertTriangle, CheckCircle2, ExternalLink, X } from "lucide-react";
-import { normalizePageExportSource, type PageExportSource } from "@/lib/export/pageSource";
+import {
+  normalizePageExportSource,
+  type ExportImageFormat,
+  type PageExportSource,
+} from "@/lib/export/pageSource";
 import type { ReadabilityFinding } from "@/lib/export/readabilityScan";
 
 export interface ExportReportRow {
@@ -25,6 +29,8 @@ export interface ExportReportModalProps {
   onSelectPage?: (pageIndex: number) => void;
   onContinueExport?: () => void;
   scanProgress?: { completed: number; total: number } | null;
+  exportImageFormat?: ExportImageFormat;
+  onExportImageFormatChange?: (format: ExportImageFormat) => void;
 }
 
 /**
@@ -41,6 +47,8 @@ export function ExportReportModal({
   onSelectPage,
   onContinueExport,
   scanProgress,
+  exportImageFormat = "jpg",
+  onExportImageFormatChange,
 }: ExportReportModalProps): ReactElement | null {
   const [filterMode, setFilterMode] = useState<"all" | "issues" | "untranslated">("all");
 
@@ -357,7 +365,23 @@ export function ExportReportModal({
                 ? "ทุกหน้าพร้อมส่งออก"
                 : ""}
           </span>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {onExportImageFormatChange && (
+              <label className="inline-flex items-center gap-1.5 text-xs text-muted">
+                <span>สกุลไฟล์:</span>
+                <select
+                  aria-label="สกุลไฟล์ภาพส่งออกในหน้ารายงาน"
+                  value={exportImageFormat}
+                  onChange={(e) => onExportImageFormatChange(e.target.value as ExportImageFormat)}
+                  className="rounded-lg border border-border bg-background px-2 py-1 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 cursor-pointer"
+                >
+                  <option value="jpg">.JPG เหมือนกันทุกหน้า</option>
+                  <option value="png">.PNG เหมือนกันทุกหน้า</option>
+                  <option value="webp">.WEBP เหมือนกันทุกหน้า</option>
+                  <option value="auto">ตามไฟล์จริงของแต่ละหน้า</option>
+                </select>
+              </label>
+            )}
             <button
               type="button"
               onClick={onClose}

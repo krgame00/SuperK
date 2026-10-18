@@ -1,5 +1,13 @@
 import { describe, expect, test, vi } from "vitest";
-import { normalizePageExportSource, resolvePageExportUrl, exportImageBlob, exportImageFilename } from "@/lib/export/pageSource";
+import {
+  convertExportBlobToFormat,
+  exportFormatToMime,
+  exportImageBlob,
+  exportImageFilename,
+  normalizeExportImageFormat,
+  normalizePageExportSource,
+  resolvePageExportUrl,
+} from "@/lib/export/pageSource";
 import { getUnconfirmedPages } from "@/lib/export/reviewGate";
 
 describe("per-page export sources", () => {
@@ -40,5 +48,19 @@ describe("per-page export sources", () => {
     new Map<string, never>([["clean", { cleanUrl: "clean" } as never]]), bubbles, undefined, undefined,
     { backgroundInspections: new Map([["clean", cleanReview]]) });
     expect(result).toEqual([]);
+  });
+  test("converts mixed page blobs to a single unified extension when requested", async () => {
+    expect(normalizeExportImageFormat(undefined)).toBe("jpg");
+    expect(exportFormatToMime("jpg")).toBe("image/jpeg");
+    expect(exportFormatToMime("png")).toBe("image/png");
+    expect(exportFormatToMime("webp")).toBe("image/webp");
+
+    const webpBlob = new Blob(["webp-bytes"], { type: "image/webp" });
+    const pngBlob = new Blob(["png-bytes"], { type: "image/png" });
+    const convertedFromWebp = await convertExportBlobToFormat(webpBlob, "jpg", true);
+    const convertedFromPng = await convertExportBlobToFormat(pngBlob, "jpg", true);
+
+    expect(exportImageFilename("01.webp", 0, convertedFromWebp.type)).toBe("SuperK_Page_001_01.jpg");
+    expect(exportImageFilename("02.png", 1, convertedFromPng.type)).toBe("SuperK_Page_002_02.jpg");
   });
 });

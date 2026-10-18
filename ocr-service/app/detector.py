@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol, Self, cast
 
@@ -10,7 +10,12 @@ import numpy as np
 from numpy.typing import NDArray
 
 from app.model_store import ModelStore
-from app.ort_utils import create_inference_session
+from app.ort_utils import (
+    create_cpu_inference_session,
+    create_inference_session,
+    is_gpu_suspended,
+    mark_gpu_device_suspended,
+)
 from app.schemas import EvidenceSource, PixelRect, TextEvidenceRegion
 
 LOGGER = logging.getLogger(__name__)
@@ -62,28 +67,93 @@ class _Session(Protocol):
 
 class TextDetector:
     def __init__(self, model_store: ModelStore, input_size: int = 1024) -> None:
-        session = create_inference_session(model_store.ensure("ctd-onnx"))
-        self._set_session(cast("_Session", session), input_size)
+        model_path = model_store.ensure("ctd-onnx")
+        session = create_inference_session(model_path)
+        self._set_session(
+            cast("_Session", session),
+            input_size,
+            cpu_session_factory=lambda: cast(
+                "_Session",
+                create_cpu_inference_session(model_path),
+            ),
+        )
 
     @classmethod
-    def from_session(cls, session: _Session, input_size: int = 1024) -> Self:
+    def from_session(
+        cls,
+        session: _Session,
+        input_size: int = 1024,
+        *,
+        cpu_session_factory: Callable[[], _Session] | None = None,
+    ) -> Self:
         detector = cls.__new__(cls)
-        detector._set_session(session, input_size)
+        detector._set_session(session, input_size, cpu_session_factory=cpu_session_factory)
         return detector
 
-    def _set_session(self, session: _Session, input_size: int) -> None:
+    def _set_session(
+        self,
+        session: _Session,
+        input_size: int,
+        *,
+        cpu_session_factory: Callable[[], _Session] | None = None,
+    ) -> None:
         self.session = session
         self.input_size = input_size
         self.input_name = session.get_inputs()[0].name
+        self._cpu_session_factory = cpu_session_factory
+        self._cpu_fallback_used = False
+
+    @property
+    def providers(self) -> list[str]:
+        get_providers = getattr(self.session, "get_providers", None)
+        if callable(get_providers):
+            try:
+                return list(get_providers())
+            except Exception:
+                return []
+        return []
 
     def detect(self, image_rgb: RgbImage) -> DetectionResult:
         if image_rgb.ndim != 3 or image_rgb.shape[2] != 3:
             raise ValueError(f"expected HxWx3 RGB image, got {image_rgb.shape}")
         tensor, transform = prepare_input(image_rgb, self.input_size)
-        raw_boxes, raw_mask = self.session.run(
-            None,
-            {self.input_name: tensor},
-        )
+        if (
+            is_gpu_suspended()
+            and not self._cpu_fallback_used
+            and self._cpu_session_factory is not None
+            and any(p != "CPUExecutionProvider" for p in self.providers)
+        ):
+            self._cpu_fallback_used = True
+            self.session = self._cpu_session_factory()
+            self.input_name = self.session.get_inputs()[0].name
+
+        try:
+            raw_boxes, raw_mask = self.session.run(
+                None,
+                {self.input_name: tensor},
+            )
+        except Exception as err:
+            providers = self.providers
+            can_fallback = (
+                self._cpu_session_factory is not None
+                and not self._cpu_fallback_used
+                and (not providers or any(p != "CPUExecutionProvider" for p in providers))
+            )
+            if not can_fallback:
+                raise
+            mark_gpu_device_suspended(err)
+            LOGGER.warning(
+                "TextDetector execution failed on providers %s (%s). Retrying on CPUExecutionProvider.",
+                providers,
+                err,
+            )
+            self._cpu_fallback_used = True
+            self.session = self._cpu_session_factory()
+            self.input_name = self.session.get_inputs()[0].name
+            raw_boxes, raw_mask = self.session.run(
+                None,
+                {self.input_name: tensor},
+            )
         model_mask = np.asarray(raw_mask, dtype=np.float32).squeeze()
         if model_mask.ndim != 2:
             raise ValueError(f"expected 2D CTD mask, got {model_mask.shape}")

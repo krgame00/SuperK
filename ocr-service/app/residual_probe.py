@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
+
+LOGGER = logging.getLogger(__name__)
 
 import cv2
 import numpy as np
@@ -66,8 +69,12 @@ class CompositeResidualProbe:
             else cv2.resize(source_mask, (w, h), interpolation=cv2.INTER_NEAREST)
         )
 
-        detection = self.detector.detect(cleaned_crop)
-        probability = detection.mask_probability
+        try:
+            detection = self.detector.detect(cleaned_crop)
+            probability = detection.mask_probability
+        except Exception as exc:
+            LOGGER.warning("Residual probe text detector failed on envelope crop: %s", exc)
+            return ProbeReport(0.0, np.zeros_like(source_mask))
 
         valid_zone = (env > 0) & (prot == 0)
         high_prob = (probability >= 0.35) & valid_zone

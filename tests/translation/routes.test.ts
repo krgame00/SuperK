@@ -199,6 +199,32 @@ test("image route Auto uses shared health-aware routing with a 60 second budget 
   });
 });
 
+test("image route prioritizes gemini-3.8-flash first when isRetry is true", async () => {
+  delete process.env.SUPERK_GEMINI_IMAGE_ROUTER;
+  process.env.GEMINI_API_KEY = "server-key";
+  requestGeminiMock.mockResolvedValue(imageSuccess());
+
+  const response = await translateImage(new Request("http://localhost/api/translate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      imageBase64: "valid-base64",
+      mimeType: "image/png",
+      targetLang: "Thai",
+      isRetry: true,
+    }),
+  }));
+
+  expect(response.status).toBe(200);
+  expect(requestGeminiMock).toHaveBeenCalledWith(
+    expect.objectContaining({
+      models: expect.arrayContaining(["gemini-3.8-flash"]),
+    }),
+  );
+  const models = (requestGeminiMock.mock.calls[0][0] as { models: string[] }).models;
+  expect(models[0]).toBe("gemini-3.8-flash");
+});
+
 test("streamed image route sends model-switch progress before the final result", async () => {
   process.env.SUPERK_GEMINI_IMAGE_ROUTER = "dynamic";
   process.env.GEMINI_API_KEY = "server-key";

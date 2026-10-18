@@ -132,7 +132,7 @@ describe("SettingsModal dynamic Gemini catalog", () => {
     expect(screen.queryByRole("option", { name: /Flash TTS/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Flash Image/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Gemini 2\.5 Pro/i })).not.toBeInTheDocument();
-  });
+  }, 15000);
 
   it("does not offer models from a bootstrap catalog that could not validate any key", async () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(Response.json({

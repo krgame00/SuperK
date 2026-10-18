@@ -378,9 +378,15 @@ async function handleTranslationRequest(
           code: "GEMINI_API_KEY_MISSING",
         }, { status: 500 });
       }
+      const retryModels = [
+        "gemini-3.8-flash",
+        ...FIXED_IMAGE_MODELS.filter((m) => m !== "gemini-3.8-flash"),
+      ];
       const models = modelPreference && modelPreference !== "auto"
         ? [modelPreference]
-        : [...FIXED_IMAGE_MODELS];
+        : isRetry
+          ? retryModels
+          : [...FIXED_IMAGE_MODELS];
       let initialKeyIndex = 0;
       if (useFixedRouter && rotationLength > 0) {
         initialKeyIndex = fixedImageKeyIndex % rotationLength;
@@ -401,7 +407,7 @@ async function handleTranslationRequest(
         signal,
         userApiKeyRaw: effectiveUserApiKey,
         serverApiKeyRaw: process.env.GEMINI_API_KEY,
-        modelPreference: modelPreference || "auto",
+        modelPreference: modelPreference || (isRetry ? "gemini-3.8-flash" : "auto"),
         allowPreview: allowPreview === true,
         payload,
         attemptTimeoutMs: 25_000,

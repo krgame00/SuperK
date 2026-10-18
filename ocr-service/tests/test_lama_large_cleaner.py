@@ -5,7 +5,15 @@ import pytest
 
 from app.cleaners.lama_large import LamaLargeCleaner
 from app.mask_refiner import MaskRegion
+from app.ort_utils import reset_gpu_suspended
 from app.schemas import PixelRect
+
+
+@pytest.fixture(autouse=True)
+def _reset_gpu_state():
+    reset_gpu_suspended()
+    yield
+    reset_gpu_suspended()
 
 
 def _region() -> MaskRegion:

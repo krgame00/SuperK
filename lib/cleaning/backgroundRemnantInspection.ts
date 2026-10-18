@@ -265,9 +265,15 @@ function analyzeArea(original: GrayscalePlane, clean: GrayscalePlane, area: Pixe
   const cInk = new Uint8Array(area.width * area.height);
   let originalInk = 0;
   let surviving = 0;
+  let innerOriginalInk = 0;
+  let innerSurviving = 0;
+  const hasBorderCoreSplit = area.width >= 48 && area.height >= 48;
+  const marginX = hasBorderCoreSplit ? Math.max(6, Math.round(area.width * 0.14)) : 0;
+  const marginY = hasBorderCoreSplit ? Math.max(6, Math.round(area.height * 0.14)) : 0;
   let lumaOriginalSum = 0;
   let lumaCleanSum = 0;
   for (let y = 0; y < area.height; y += 1) {
+    const inInnerY = hasBorderCoreSplit && y >= marginY && y < area.height - marginY;
     for (let x = 0; x < area.width; x += 1) {
       const o = area.y * original.width + area.x + y * original.width + x;
       const oi = y * area.width + x;
@@ -275,13 +281,32 @@ function analyzeArea(original: GrayscalePlane, clean: GrayscalePlane, area: Pixe
       const cLuma = clean.data[o];
       lumaOriginalSum += oLuma;
       lumaCleanSum += cLuma;
+      const inInner = inInnerY && x >= marginX && x < area.width - marginX;
       if (isInk(oLuma)) {
         oInk[oi] = 1;
         originalInk += 1;
+        if (inInner) innerOriginalInk += 1;
       }
       if (isInk(cLuma)) cInk[oi] = 1;
-      if (oInk[oi] && cInk[oi]) surviving += 1;
+      if (oInk[oi] && cInk[oi]) {
+        surviving += 1;
+        if (inInner) innerSurviving += 1;
+      }
     }
+  }
+
+  // When a large narration box or speech bubble has its interior text cleanly
+  // erased (< 12% surviving in the inner core) and only the outer box/bubble
+  // border ring remains, evaluate based on the inner text core rather than
+  // flagging the preserved bubble/box frame as uncleaned text.
+  if (
+    hasBorderCoreSplit &&
+    innerOriginalInk >= 16 &&
+    innerSurviving / innerOriginalInk < DEFAULTS.removedRatio &&
+    surviving > innerSurviving
+  ) {
+    originalInk = innerOriginalInk;
+    surviving = innerSurviving;
   }
 
   let minX = area.width;

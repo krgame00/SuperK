@@ -20,7 +20,12 @@ from app.cleaners.aot import _context_bounds, _round_up
 from app.detector import RgbImage
 from app.mask_refiner import BinaryMask, MaskRegion
 from app.model_store import ModelStore
-from app.ort_utils import create_cpu_inference_session, create_inference_session
+from app.ort_utils import (
+    create_cpu_inference_session,
+    create_inference_session,
+    is_gpu_suspended,
+    mark_gpu_device_suspended,
+)
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_ONNX_FILENAME = "anime-manga-big-lama.onnx"
@@ -152,6 +157,15 @@ class LamaLargeCleaner:
             "image": image_tensor,
             "mask": mask_tensor,
         }
+        if (
+            is_gpu_suspended()
+            and not self._cpu_fallback_used
+            and self._cpu_session_factory is not None
+            and any(provider != "CPUExecutionProvider" for provider in self.providers)
+        ):
+            self._cpu_fallback_used = True
+            self.session = self._cpu_session_factory()
+
         try:
             output = self.session.run(None, input_feed)[0]
         except Exception as err:
@@ -164,6 +178,7 @@ class LamaLargeCleaner:
             if not can_fallback:
                 raise
 
+            mark_gpu_device_suspended(err)
             LOGGER.warning(
                 "LamaLarge execution failed on providers %s (%s). Retrying once on CPU.",
                 providers,
@@ -245,10 +260,20 @@ class LamaLargeCleaner:
         if not np.any(mask):
             return image_rgb.copy()
 
+        effective_max_dim = max_dim
+        if (
+            max_dim == 1536
+            and "DmlExecutionProvider" in self.providers
+            and "CUDAExecutionProvider" not in self.providers
+        ):
+            # Cap full-page Fast Fourier Convolution size on DirectML to avoid
+            # exceeding Windows WDDM's 2-second TDR timeout (0x887A0005).
+            effective_max_dim = int(os.getenv("SUPERK_DML_MAX_DIM", "1152"))
+
         height, width = mask.shape
         scale = 1.0
-        if max(height, width) > max_dim:
-            scale = max_dim / max(height, width)
+        if max(height, width) > effective_max_dim:
+            scale = effective_max_dim / max(height, width)
             target_width = max(8, int(round(width * scale / 8) * 8))
             target_height = max(8, int(round(height * scale / 8) * 8))
             image_input = cv2.resize(

@@ -14,6 +14,7 @@ from app.cleaners.aot import (
 from app.detector import TextDetector
 from app.mask_refiner import MaskRegion, refine_mask
 from app.model_store import ModelStore
+from app.ort_utils import reset_gpu_suspended
 from app.schemas import PixelRect
 
 
@@ -55,6 +56,60 @@ def test_artwork_cleaner_preserves_unmasked_pixels() -> None:
     )
     assert np.array_equal(output[mask == 0], image[mask == 0])
     assert not np.array_equal(output[mask > 0], image[mask > 0])
+
+
+def test_aot_cleaner_retries_once_on_cpu_after_gpu_execution_failure() -> None:
+    class FailingGpuSession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get_providers(self) -> list[str]:
+            return ["DmlExecutionProvider", "CPUExecutionProvider"]
+
+        def run(self, _outputs: None, inputs: dict[str, np.ndarray]) -> list[np.ndarray]:
+            self.calls += 1
+            raise RuntimeError(
+                "[ONNXRuntimeError] : 1 : FAIL : ... 887A0005 The GPU device instance has been suspended."
+            )
+
+    class CpuSession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get_providers(self) -> list[str]:
+            return ["CPUExecutionProvider"]
+
+        def run(self, _outputs: None, inputs: dict[str, np.ndarray]) -> list[np.ndarray]:
+            self.calls += 1
+            return [np.ones_like(inputs["image"], dtype=np.float32)]
+
+    gpu = FailingGpuSession()
+    cpu = CpuSession()
+    fallback_calls = 0
+
+    def fallback() -> CpuSession:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        return cpu
+
+    reset_gpu_suspended()
+    try:
+        image = np.full((64, 64, 3), 80, np.uint8)
+        mask = np.zeros((64, 64), np.uint8)
+        mask[20:44, 28:36] = 255
+        output = AotCleaner.from_session(gpu, cpu_session_factory=fallback).clean(
+            image,
+            mask,
+            _region(64, 64),
+        )
+
+        assert gpu.calls == 1
+        assert cpu.calls == 1
+        assert fallback_calls == 1
+        assert np.array_equal(output[mask == 0], image[mask == 0])
+        assert not np.array_equal(output[mask > 0], image[mask > 0])
+    finally:
+        reset_gpu_suspended()
 
 
 def test_anime_lama_reports_missing_optional_dependency(monkeypatch) -> None:

@@ -14,6 +14,7 @@ from app.detector import (
     restore_mask,
 )
 from app.model_store import ModelStore
+from app.ort_utils import reset_gpu_suspended
 
 
 def test_restore_mask_removes_letterbox_padding() -> None:
@@ -110,6 +111,68 @@ def test_detector_returns_source_sized_probability_mask() -> None:
     assert result.mask_probability.shape == (16, 32)
     assert np.isclose(result.mask_probability.min(), 0.75)
     assert len(result.blocks) == 1
+
+
+def test_text_detector_retries_once_on_cpu_after_gpu_execution_failure() -> None:
+    class FailingGpuSession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get_inputs(self) -> list:
+            class InputMeta:
+                name = "image"
+            return [InputMeta()]
+
+        def get_providers(self) -> list[str]:
+            return ["DmlExecutionProvider", "CPUExecutionProvider"]
+
+        def run(self, _outputs: None, inputs: dict[str, np.ndarray]) -> list[np.ndarray]:
+            self.calls += 1
+            raise RuntimeError(
+                "[ONNXRuntimeError] : 1 : FAIL : ... 887A0005 The GPU device instance has been suspended."
+            )
+
+    class CpuSession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get_inputs(self) -> list:
+            class InputMeta:
+                name = "image"
+            return [InputMeta()]
+
+        def get_providers(self) -> list[str]:
+            return ["CPUExecutionProvider"]
+
+        def run(self, _outputs: None, inputs: dict[str, np.ndarray]) -> list[np.ndarray]:
+            self.calls += 1
+            boxes = np.array([[[16, 8, 8, 8, 0.9, 0.9]]], dtype=np.float32)
+            mask = np.zeros((1, 1, 32, 32), dtype=np.float32)
+            mask[:, :, :16, :] = 0.75
+            return [boxes, mask]
+
+    gpu = FailingGpuSession()
+    cpu = CpuSession()
+    fallback_calls = 0
+
+    def fallback() -> CpuSession:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        return cpu
+
+    reset_gpu_suspended()
+    try:
+        image = np.full((16, 32, 3), 255, dtype=np.uint8)
+        detector = TextDetector.from_session(gpu, input_size=32, cpu_session_factory=fallback)
+        result = detector.detect(image)
+
+        assert gpu.calls == 1
+        assert cpu.calls == 1
+        assert fallback_calls == 1
+        assert result.mask_probability.shape == (16, 32)
+        assert len(result.blocks) == 1
+    finally:
+        reset_gpu_suspended()
 
 
 @pytest.mark.model
