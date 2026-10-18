@@ -50,6 +50,9 @@ vi.mock("@/hooks/useTranslation", () => ({
     batchFailures: [],
     retryFailedPages: vi.fn(),
     invalidatePageTranslation: vi.fn(),
+    bubbleCacheRef: { current: new Map() },
+    translatedImageCacheRef: { current: new Map() },
+    pageTargetCacheRef: { current: new Map() },
   }),
 }));
 

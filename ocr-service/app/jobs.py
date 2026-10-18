@@ -645,12 +645,8 @@ class JobStore:
             # Legacy injected pipelines may still implement the safe-only
             # signature. All-text always requires explicit mode support.
             mode_options = {"cleaning_mode": job.cleaning_mode} if job.cleaning_mode is CleaningMode.ALL_TEXT else {}
-            progress_cb = lambda stage, completed, total: self._update_progress(
-                job,
-                stage,
-                completed,
-                total,
-            )
+            def progress_cb(stage, completed, total):
+                return self._update_progress(job, stage, completed, total)
             try:
                 output = self._pipeline().run(
                     image_rgb,

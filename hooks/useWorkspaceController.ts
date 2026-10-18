@@ -468,14 +468,14 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     onToggleOriginalTranslated: toggleOriginalTranslated,
     viewLayout,
     onToggleViewLayout: toggleViewLayout,
-    textSizePoints: bubbleCacheRef.current.get(currentPageUrl ?? "") ?? activeBubbles,
+    textSizePoints: bubbleCacheRef?.current?.get(currentPageUrl ?? "") ?? activeBubbles,
     operationBusy,
     onResizeSavedText: resizeSavedText,
     currentCleaningResult,
     batchFailureCount: batchFailures?.length ?? 0,
     contaminatedPageCount: contaminatedScan?.length ?? 0,
     canOrganizeAll: pages?.some(
-      (p) => (bubbleCacheRef.current.get(p.url)?.length ?? 0) > 0,
+      (p) => (bubbleCacheRef?.current?.get(p.url)?.length ?? 0) > 0,
     ) ?? false,
     onCleanCurrentPage: () => void handleCleanCurrentPage(),
     onEditMask: () => openMaskEditor(),
@@ -574,7 +574,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
         currentPageUrl,
         missingTranslationSignature(
           cleaningResultsByPage.get(currentPageUrl),
-          bubbleCacheRef.current.get(currentPageUrl),
+          bubbleCacheRef?.current?.get(currentPageUrl),
         ),
       );
       setConfirmedPages((prev) => new Set(prev).add(currentPageUrl));

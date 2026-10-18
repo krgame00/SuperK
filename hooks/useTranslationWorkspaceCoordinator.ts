@@ -374,7 +374,11 @@ export function useTranslationWorkspaceCoordinator({
 
   const handleConfirmPointReview = useCallback(
     (pageUrl: string, pointIndex: number, useSuggestion?: boolean) => {
-      confirmPointReview(pageUrl, pointIndex, useSuggestion);
+      if (useSuggestion !== undefined) {
+        confirmPointReview(pageUrl, pointIndex, useSuggestion);
+      } else {
+        confirmPointReview(pageUrl, pointIndex);
+      }
       const issues = inspectReviewIssues();
       setReviewIssues(issues.length > 0 ? issues : null);
     },
