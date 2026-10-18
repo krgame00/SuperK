@@ -74,11 +74,23 @@ describe("translation review API", () => {
   test.each([
     { reviews: [{ id: "0", status: "accepted" }] },
     { reviews: [{ id: "0", status: "suggested" }] },
+    { reviews: [{ id: "0", status: "suggested", suggestion: "" }] },
     { reviews: [{ id: "42", status: "ok" }] },
     { reviews: [reviews[0], reviews[0]] }, { reviews: "bad" },
   ])("rejects malformed provider results: %j", async (value) => {
     execute.mockResolvedValueOnce(result(geminiData(value)));
     expect((await POST(request())).status).toBe(502);
+  });
+
+  test.each([
+    { row: { id: "0", status: "ok", suggestion: "", reason: "" }, expected: { id: "0", status: "ok" } },
+    { row: { id: "0", status: "ok", suggestion: null, reason: null }, expected: { id: "0", status: "ok" } },
+    { row: { id: "0", status: "needs_review", suggestion: "", reason: "กำกวม" }, expected: { id: "0", status: "needs_review", reason: "กำกวม" } },
+  ])("accepts benign empty/null suggestion or reason for non-suggested rows: %j", async ({ row, expected }) => {
+    execute.mockResolvedValueOnce(result(geminiData({ reviews: [row] })));
+    const response = await POST(request());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ reviews: [expected] });
   });
 
   test("missing IDs remain missing rather than becoming ok", async () => {

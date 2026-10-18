@@ -2345,6 +2345,7 @@ export const applyTranslationOverlay = async (
           try {
             const currentText = b.t || b.translated || textarea.value || "";
             const apiKey = typeof localStorage !== "undefined" ? (localStorage.getItem("gemini_api_key") || "") : "";
+            const isBlocked = inspectTargetText(currentText, effectiveTarget).status === "blocked";
             const res = await fetch("/api/translation-review", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -2352,13 +2353,13 @@ export const applyTranslationOverlay = async (
                 items: [{ id: "0", sourceText: b.original_text, translatedText: currentText }],
                 targetLang: effectiveTarget || "Thai",
                 apiKey,
-                mode: "repair",
+                ...(isBlocked ? { mode: "repair" } : {}),
               }),
             });
             if (res.ok) {
               const data = await res.json();
               const row = Array.isArray(data?.reviews) ? data.reviews[0] : null;
-              if (row?.suggestion && typeof row.suggestion === "string") {
+              if (row?.suggestion && typeof row.suggestion === "string" && row.suggestion.trim()) {
                 const prevText = currentText;
                 b.translationReview = {
                   ...(b.translationReview ?? {
@@ -2369,10 +2370,30 @@ export const applyTranslationOverlay = async (
                   status: "accepted",
                   suggestion: row.suggestion.trim(),
                   reviewedText: row.suggestion.trim(),
-                  originalTranslation: prevText,
-                  reason: row.reason || "เกลาและแก้ตัวอักษรปนด้วย AI แล้ว",
+                  originalTranslation: b.translationReview?.originalTranslation ?? prevText,
+                  reason: row.reason || "เกลาคำแปลด้วย AI แล้ว",
                 };
                 updateReviewText(row.suggestion.trim());
+              } else if (row?.status === "ok") {
+                b.translationReview = {
+                  ...(b.translationReview ?? {
+                    policyVersion: LANGUAGE_POLICY_VERSION,
+                    sourceText: b.original_text ?? "",
+                  }),
+                  status: "ok",
+                  reviewedText: currentText,
+                  reason: row.reason || "คำแปลปัจจุบันถูกต้องและเหมาะสมแล้ว",
+                };
+              } else if (row?.status === "needs_review") {
+                b.translationReview = {
+                  ...(b.translationReview ?? {
+                    policyVersion: LANGUAGE_POLICY_VERSION,
+                    sourceText: b.original_text ?? "",
+                  }),
+                  status: "needs_review",
+                  reviewedText: currentText,
+                  reason: row.reason || "ควรตรวจสอบเทียบกับภาพต้นฉบับ",
+                };
               }
             }
           } catch {

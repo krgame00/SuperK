@@ -78,9 +78,28 @@ function parseProviderReviews(text: unknown, items: QualityReviewItem[]): Review
   const seen = new Set<string>();
   const reviews: ReviewRow[] = [];
   for (const row of data.reviews) {
-    if (!isRecord(row) || typeof row.id !== "string" || !inputIds.has(row.id) || seen.has(row.id) || !["ok", "suggested", "needs_review"].includes(String(row.status)) || (row.reason !== undefined && !boundedText(row.reason, true)) || (row.suggestion !== undefined && !boundedText(row.suggestion)) || (row.status === "suggested" && !boundedText(row.suggestion))) throw new ReviewResponseError(502, "INVALID_REVIEW_RESPONSE");
+    if (!isRecord(row) || typeof row.id !== "string" || !inputIds.has(row.id) || seen.has(row.id) || !["ok", "suggested", "needs_review"].includes(String(row.status))) {
+      throw new ReviewResponseError(502, "INVALID_REVIEW_RESPONSE");
+    }
+    const rawReason = row.reason === null ? undefined : row.reason;
+    const rawSuggestion = row.suggestion === null ? undefined : row.suggestion;
+    if (rawReason !== undefined && !boundedText(rawReason, true)) {
+      throw new ReviewResponseError(502, "INVALID_REVIEW_RESPONSE");
+    }
+    if (row.status === "suggested") {
+      if (!boundedText(rawSuggestion, false)) throw new ReviewResponseError(502, "INVALID_REVIEW_RESPONSE");
+    } else if (rawSuggestion !== undefined && !boundedText(rawSuggestion, true)) {
+      throw new ReviewResponseError(502, "INVALID_REVIEW_RESPONSE");
+    }
     seen.add(row.id);
-    reviews.push({ id: row.id, status: row.status as ReviewRow["status"], ...(typeof row.reason === "string" ? { reason: row.reason } : {}), ...(row.status === "suggested" ? { suggestion: row.suggestion as string } : {}) });
+    const trimmedReason = typeof rawReason === "string" && rawReason.trim() ? rawReason.trim() : undefined;
+    const trimmedSuggestion = row.status === "suggested" && typeof rawSuggestion === "string" && rawSuggestion.trim() ? rawSuggestion.trim() : undefined;
+    reviews.push({
+      id: row.id,
+      status: row.status as ReviewRow["status"],
+      ...(trimmedReason ? { reason: trimmedReason } : {}),
+      ...(trimmedSuggestion ? { suggestion: trimmedSuggestion } : {}),
+    });
   }
   // Missing IDs stay absent; the client records them as unavailable.
   return reviews;
