@@ -63,6 +63,7 @@ RETRY_CLEANER_ALIASES: dict[str, str] = {
     "aot": "aot",
     "anime-lama": "anime-lama",
     "lama-large": "lama-large",
+    "hybrid": "lama-large",
 }
 
 

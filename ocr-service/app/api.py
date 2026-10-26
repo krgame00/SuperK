@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from time import perf_counter
 from typing import Annotated
 
+import cv2
+import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
@@ -16,7 +20,7 @@ from app.cleaners.aot import AotCleaner
 from app.cleaners.flat import FlatCleaner, GradientCleaner
 from app.cleaners.lama_large import LamaLargeCleaner
 from app.detector import HybridTextDetector
-from app.jobs import JobStore, Pipeline, PipelineFactory
+from app.jobs import JobStore, Pipeline, PipelineFactory, _decode_mask, _decode_rgb
 from app.model_store import ModelStore
 from app.pipeline import RETRY_CLEANER_ALIASES, CleaningPipeline
 from app.residual_probe import CompositeResidualProbe
@@ -281,6 +285,205 @@ def create_app(
             "status": JobStatus.QUEUED.value,
             "stage": JobStage.QUEUED.value,
         }
+
+    @app.post(
+        "/v1/clean/crop",
+        status_code=200,
+    )
+    async def clean_crop(
+        image: Annotated[UploadFile, File()],
+        mask: Annotated[UploadFile, File()],
+        cleaner: Annotated[str, Form()] = "auto",
+        dilation: Annotated[int, Form()] = 0,
+        extend_hints: Annotated[bool, Form()] = False,
+        feather_blend: Annotated[bool, Form()] = False,
+    ) -> Response:
+        """Fast-path synchronous inpainting for cropped regions."""
+        if cleaner not in RETRY_CLEANERS:
+            raise HTTPException(status_code=422, detail="Unknown cleaner.")
+        max_bytes = runtime_settings.max_upload_mb * 1024 * 1024
+        max_px = runtime_settings.max_image_megapixels * 1_000_000
+        image_bytes = await _validated_upload(image, max_upload_bytes=max_bytes, max_pixels=max_px)
+        mask_bytes = await _validated_upload(
+            mask,
+            max_upload_bytes=max_bytes,
+            allowed_formats={"PNG"},
+            allowed_media_types={"image/png"},
+            max_pixels=max_px,
+        )
+
+        def _process() -> tuple[bytes, dict[str, str]]:
+            t0 = perf_counter()
+            image_rgb = _decode_rgb(image_bytes)
+            mask_l = _decode_mask(mask_bytes)
+            if image_rgb.shape[:2] != mask_l.shape[:2]:
+                raise HTTPException(status_code=400, detail="Image and mask dimensions do not match.")
+
+            binary_mask = (mask_l > 0).astype(np.uint8) * 255
+
+            if dilation > 0:
+                rad = min(max(1, int(dilation)), 32)
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (rad * 2 + 1, rad * 2 + 1))
+                binary_mask = cv2.dilate(binary_mask, kernel, iterations=1)
+
+            headers: dict[str, str] = {
+                "Cache-Control": "no-store",
+            }
+
+            if extend_hints and np.any(binary_mask):
+                from app.cleaners.stroke_hints import extend_mask_with_stroke_hints
+
+                binary_mask = extend_mask_with_stroke_hints(
+                    image_rgb, binary_mask, dilation_px=max(3, dilation or 5)
+                )
+                headers["X-Stroke-Hints-Applied"] = "true"
+
+            if not np.any(binary_mask):
+                headers["X-Inpaint-Tier"] = "solid"
+                headers["X-Inpaint-Latency-Ms"] = "0.0"
+                out_io = io.BytesIO()
+                Image.fromarray(image_rgb).save(out_io, format="PNG", compress_level=1)
+                return out_io.getvalue(), headers
+
+            pipeline = store._pipeline()
+            cleaners_map = getattr(pipeline, "cleaners", {})
+
+            chosen_cleaner = None
+            if cleaner in ("auto", "hybrid", "lama-large", "anime-lama"):
+                chosen_cleaner = cleaners_map.get("lama-large") or cleaners_map.get("anime-lama")
+            elif cleaner in cleaners_map:
+                chosen_cleaner = cleaners_map[cleaner]
+
+            if chosen_cleaner is None:
+                chosen_cleaner = (
+                    cleaners_map.get("lama-large")
+                    or cleaners_map.get("aot")
+                    or next(iter(cleaners_map.values()), None)
+                )
+
+            def _run_deep(img: np.ndarray, msk: np.ndarray) -> np.ndarray:
+                if chosen_cleaner is None:
+                    return cv2.inpaint(img, msk, 5, cv2.INPAINT_NS)
+                if hasattr(chosen_cleaner, "_run"):
+                    return chosen_cleaner._run(img, msk)
+                elif hasattr(chosen_cleaner, "clean_full_image"):
+                    return chosen_cleaner.clean_full_image(img, msk)
+                else:
+                    from app.mask_refiner import MaskRegion
+                    from app.schemas import PixelRect
+
+                    h, w = msk.shape
+                    dummy_region = MaskRegion(
+                        id="crop",
+                        rect=PixelRect(x=0, y=0, width=w, height=h),
+                        component_ids=(),
+                        stroke_radius=2,
+                    )
+                    return chosen_cleaner.clean(img, msk, dummy_region)
+
+            if cleaner in ("auto", "hybrid"):
+                from app.cleaners.hybrid_inpainter import HybridInpainter
+
+                hybrid = HybridInpainter()
+                inpaint_res = hybrid.inpaint(image_rgb, binary_mask, deep_cleaner_fn=_run_deep)
+                result = inpaint_res.image_rgb
+                headers["X-Inpaint-Tier"] = inpaint_res.tier.value
+                headers["X-Inpaint-Latency-Ms"] = f"{inpaint_res.elapsed_ms:.2f}"
+                if inpaint_res.has_dominant_bg_color and inpaint_res.dominant_color_rgb:
+                    r, g, b = inpaint_res.dominant_color_rgb
+                    headers["X-Dominant-Bg-Color"] = f"{r},{g},{b}"
+            else:
+                if chosen_cleaner is None:
+                    raise HTTPException(status_code=503, detail="No cleaner available.")
+                repaired = _run_deep(image_rgb, binary_mask)
+                result = image_rgb.copy()
+                support = binary_mask > 0
+                result[support] = repaired[support]
+                headers["X-Inpaint-Tier"] = "deep"
+                headers["X-Inpaint-Latency-Ms"] = f"{(perf_counter() - t0) * 1000.0:.2f}"
+
+            if feather_blend and np.any(binary_mask):
+                from app.cleaners.stroke_hints import apply_feather_blend
+
+                result = apply_feather_blend(result, image_rgb, binary_mask)
+                headers["X-Feather-Blend-Applied"] = "true"
+
+            out_io = io.BytesIO()
+            Image.fromarray(result).save(out_io, format="PNG", compress_level=1)
+            return out_io.getvalue(), headers
+
+        try:
+            output_png, headers = await asyncio.to_thread(_process)
+        except HTTPException:
+            raise
+        except Exception as err:
+            LOGGER.exception("clean_crop failed: %s", err)
+            raise HTTPException(status_code=500, detail=f"Inpainting failed: {err}")
+
+        return Response(
+            content=output_png,
+            media_type="image/png",
+            headers=headers,
+        )
+
+    @app.post(
+        "/v1/detect/bubbles",
+        status_code=200,
+    )
+    async def detect_bubbles(
+        image: Annotated[UploadFile, File()],
+        boxes: Annotated[str, Form()],
+        num_slices: Annotated[int, Form()] = 20,
+    ) -> dict[str, list[dict]]:
+        """Extracts bubble contours and scanline chord ratios around OCR bounding boxes."""
+        max_bytes = runtime_settings.max_upload_mb * 1024 * 1024
+        max_px = runtime_settings.max_image_megapixels * 1_000_000
+        image_bytes = await _validated_upload(image, max_upload_bytes=max_bytes, max_pixels=max_px)
+
+        try:
+            raw_boxes = json.loads(boxes)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON for boxes.")
+
+        parsed_boxes: list[tuple[int, int, int, int]] = []
+        for b in raw_boxes:
+            if isinstance(b, (list, tuple)) and len(b) == 4:
+                parsed_boxes.append((int(b[0]), int(b[1]), int(b[2]), int(b[3])))
+            elif isinstance(b, dict):
+                x = int(b.get("x", 0))
+                y = int(b.get("y", 0))
+                w = int(b.get("width") or b.get("w", 0))
+                h = int(b.get("height") or b.get("h", 0))
+                parsed_boxes.append((x, y, w, h))
+            else:
+                raise HTTPException(status_code=400, detail="Each box must be [x, y, w, h] or {x, y, width, height}.")
+
+        def _process() -> list[dict]:
+            image_rgb = _decode_rgb(image_bytes)
+            from app.bubble_contour import extract_bubble_profiles
+
+            profiles = extract_bubble_profiles(
+                image_rgb,
+                parsed_boxes,
+                num_slices=min(max(5, int(num_slices)), 64),
+            )
+            return [
+                {
+                    "text_box_id": p.text_box_id,
+                    "bbox": list(p.bbox),
+                    "polygon": [list(pt) for pt in p.polygon],
+                    "scanline_ratios": p.scanline_ratios,
+                }
+                for p in profiles
+            ]
+
+        try:
+            profiles_data = await asyncio.to_thread(_process)
+        except Exception as err:
+            LOGGER.exception("detect_bubbles failed: %s", err)
+            raise HTTPException(status_code=500, detail=f"Bubble detection failed: {err}")
+
+        return {"profiles": profiles_data}
 
     return app
 

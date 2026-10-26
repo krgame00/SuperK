@@ -1,4 +1,5 @@
 import { requireLocalRequest } from "@/lib/server/localRequest";
+import { writeServerLog } from "@/lib/logger/serverLogger";
 
 const DEFAULT_CLEANER_URL = "http://127.0.0.1:8765";
 export const MAX_PROXY_BODY_BYTES = 80 * 1024 * 1024;
@@ -97,6 +98,12 @@ async function forward(
       }
     }
   }
+
+  writeServerLog({
+    level: "warn",
+    category: "clean",
+    message: `Local cleaning service is unavailable (target: ${target.pathname})`,
+  });
 
   return Response.json(
     {

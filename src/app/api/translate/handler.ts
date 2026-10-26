@@ -22,6 +22,7 @@ import type { TranslationObservabilityMeta } from "@/lib/translation/requestErro
 import { FIXED_IMAGE_MODELS } from "@/lib/translation/imageModelChoices";
 import { getSyncedExtensionSettings } from "@/src/app/api/extension/settings/handler";
 import { requireLocalRequest } from "@/lib/server/localRequest";
+import { writeServerLog } from "@/lib/logger/serverLogger";
 
 export const MAX_TRANSLATION_BODY_BYTES = 30 * 1024 * 1024;
 export const MAX_TRANSLATION_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -442,6 +443,12 @@ async function handleTranslationRequest(
               .sort((left, right) => right.length - left.length)
               .reduce((message, key) => message.replaceAll(key, "[REDACTED]"), error.message)
           : error.message;
+        writeServerLog({
+          level: error.status >= 500 ? "error" : "warn",
+          category: "translate",
+          message: `Gemini API error [${error.status}]: ${safeMessage}`,
+          details: { code: error.code, model: error.model, retryable: error.retryable, retryAfterMs: error.retryAfterMs },
+        });
         return NextResponse.json(
           {
             error: safeMessage,
@@ -455,6 +462,12 @@ async function handleTranslationRequest(
         );
       }
       if (error instanceof GeminiRoutingError) {
+        writeServerLog({
+          level: "warn",
+          category: "translate",
+          message: `Gemini routing error: ${error.message} (code: ${error.code})`,
+          details: { code: error.code, model: error.model, retryAfterMs: error.retryAfterMs },
+        });
         return NextResponse.json(
           {
             error: error.message,
@@ -472,6 +485,12 @@ async function handleTranslationRequest(
 
     if (data.promptFeedback?.blockReason) {
       console.error("Prompt blocked by Gemini:", data.promptFeedback);
+      writeServerLog({
+        level: "warn",
+        category: "translate",
+        message: `Prompt blocked by Gemini Safety: ${data.promptFeedback.blockReason}`,
+        details: data.promptFeedback,
+      });
       return NextResponse.json(
         {
           error: `ภาพนี้ถูกปฏิเสธโดยระบบคัดกรองของ Google (เหตุผล: ${data.promptFeedback.blockReason})`,
@@ -486,6 +505,12 @@ async function handleTranslationRequest(
       candidate?.finishReason === "SAFETY" ||
       candidate?.finishReason === "PROHIBITED_CONTENT"
     ) {
+      writeServerLog({
+        level: "warn",
+        category: "translate",
+        message: `Translation candidate blocked by Safety filter (${candidate.finishReason})`,
+        details: { finishReason: candidate.finishReason },
+      });
       return NextResponse.json(
         {
           error: "เนื้อหาถูกแบนโดยระบบ Safety ของ AI",
@@ -501,6 +526,12 @@ async function handleTranslationRequest(
         "Gemini returned unexpected format:",
         JSON.stringify(data, null, 2),
       );
+      writeServerLog({
+        level: "error",
+        category: "translate",
+        message: "Gemini returned empty or unexpected format response",
+        details: data,
+      });
       return NextResponse.json(
         { error: "AI ไม่สามารถอ่านข้อความจากภาพนี้ได้ หรือภาพถูกบล็อก" },
         { status: 500 },
@@ -511,6 +542,12 @@ async function handleTranslationRequest(
     return NextResponse.json({ text: cleanText, meta: translationMeta });
   } catch (error) {
     console.error("Translation Error:", error);
+    writeServerLog({
+      level: "error",
+      category: "translate",
+      message: error instanceof Error ? error.message : "Translation server internal error",
+      details: error instanceof Error ? { stack: error.stack } : error,
+    });
     return NextResponse.json(
       { error: "Internal Server Error" },
       { status: 500 },
@@ -611,6 +648,11 @@ async function handleOpenAICompatible({
       choice.finish_reason === "content_filter" ||
       choice.finish_reason === "safety"
     ) {
+      writeServerLog({
+        level: "warn",
+        category: "translate",
+        message: `9router content filter triggered (${choice.finish_reason})`,
+      });
       return NextResponse.json(
         { error: "เนื้อหาถูกแบนโดยระบบ Safety" },
         { status: 400 },
@@ -624,6 +666,12 @@ async function handleOpenAICompatible({
     return NextResponse.json({ text: cleanText });
   } catch (error) {
     if (error instanceof GeminiRequestError) {
+      writeServerLog({
+        level: error.status >= 500 ? "error" : "warn",
+        category: "translate",
+        message: `9router API error [${error.status}]: ${error.message}`,
+        details: { code: error.code, retryable: error.retryable, retryAfterMs: error.retryAfterMs },
+      });
       return NextResponse.json(
         {
           error: error.message,
@@ -635,6 +683,12 @@ async function handleOpenAICompatible({
       );
     }
     console.error("9router Translation Error:", error);
+    writeServerLog({
+      level: "error",
+      category: "translate",
+      message: error instanceof Error ? error.message : "9router internal error",
+      details: error instanceof Error ? { stack: error.stack } : error,
+    });
     return NextResponse.json(
       { error: "Internal Server Error" },
       { status: 500 },

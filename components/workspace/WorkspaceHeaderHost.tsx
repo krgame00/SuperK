@@ -111,6 +111,7 @@ export interface WorkspaceHeaderHostProps {
   onOpenShortcuts: () => void;
   onExportProjectFile?: () => void | Promise<void>;
   onImportProjectFile?: () => void;
+  onOpenLogs?: () => void;
   advancedToolsTriggerRef?: React.RefObject<HTMLButtonElement | null>;
 
   // Primary action & export
@@ -185,6 +186,7 @@ export function WorkspaceHeaderHost({
   onOpenShortcuts,
   onExportProjectFile,
   onImportProjectFile,
+  onOpenLogs,
   advancedToolsTriggerRef,
   primaryAction,
   onPrimaryAction,
@@ -431,6 +433,7 @@ export function WorkspaceHeaderHost({
                 onOpenShortcuts={onOpenShortcuts}
                 onExportProjectFile={onExportProjectFile}
                 onImportProjectFile={onImportProjectFile}
+                onOpenLogs={onOpenLogs}
                 triggerRef={advancedToolsTriggerRef}
               />
 
@@ -562,6 +565,7 @@ export function WorkspaceHeaderHost({
             onOpenShortcuts={onOpenShortcuts}
             onExportProjectFile={onExportProjectFile}
             onImportProjectFile={onImportProjectFile}
+            onOpenLogs={onOpenLogs}
           />
         )}
         {pages.length > 0 && (

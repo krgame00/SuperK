@@ -492,6 +492,7 @@ describe("translation overlay live editor and keyboard controls", () => {
       "เพิ่มขนาดข้อความ (A+ หรือคีย์ +)",
       "สลับตัวอักษรเอียง (Italic หรือคีย์ I)",
       "เอียงข้อความตามต้นฉบับ / สลับมุมเอียง (คีย์ Q / E)",
+      "ดัดรูปทรง SFX: ข้อความปกติ (None) (คลิกเพื่อเปลี่ยนรูปทรง)",
       "สลับโหมดสี ขาว-ดำ / ดำ-ขาว",
       "ลบกล่องข้อความ",
     ]);
@@ -500,6 +501,30 @@ describe("translation overlay live editor and keyboard controls", () => {
     expect(toolbar.querySelector('[aria-label="เปลี่ยนสีข้อความ"]')).toBeNull();
     expect(toolbar.querySelector('[aria-label="เครื่องมือเพิ่มเติม"]')).toBeNull();
     expect(document.querySelector("[data-bubble-more-menu]")).toBeNull();
+  });
+
+  test("cycles SFX warp effects (arch -> wave -> bulge -> squeeze -> none) from the floating toolbar with undo/redo", async () => {
+    const { bubble, toolbar } = await renderOverlay();
+    const warpBtn = toolbar.querySelector<HTMLButtonElement>('[aria-label^="ดัดรูปทรง SFX:"]')!;
+    expect(warpBtn).not.toBeNull();
+    expect(warpBtn.getAttribute("aria-pressed")).toBe("false");
+
+    warpBtn.click();
+    expect(bubble.warp?.type).toBe("arch");
+    expect(warpBtn.getAttribute("aria-pressed")).toBe("true");
+
+    warpBtn.click();
+    expect(bubble.warp?.type).toBe("wave");
+
+    warpBtn.click();
+    expect(bubble.warp?.type).toBe("bulge");
+
+    warpBtn.click();
+    expect(bubble.warp?.type).toBe("squeeze");
+
+    warpBtn.click();
+    expect(bubble.warp).toBeUndefined();
+    expect(warpBtn.getAttribute("aria-pressed")).toBe("false");
   });
 
   test("renders editor chrome in the dedicated unscaled chrome layer", async () => {

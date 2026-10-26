@@ -20,6 +20,9 @@ export function useWorkspaceModalsState() {
   const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
 
+  // System Logs Modal State
+  const [isLogsOpen, setIsLogsOpen] = useState(false);
+
   // Diagnostic Modal and Desktop Cleaner Recovery State
   const [isDiagnosticModalOpen, setIsDiagnosticModalOpen] = useState(false);
   const [cleanerRecoveryByGroup, setCleanerRecoveryByGroup] = useState<
@@ -77,6 +80,14 @@ export function useWorkspaceModalsState() {
 
   const closeDiagnostics = useCallback(() => {
     setIsDiagnosticModalOpen(false);
+  }, []);
+
+  const openLogs = useCallback(() => {
+    setIsLogsOpen(true);
+  }, []);
+
+  const closeLogs = useCallback(() => {
+    setIsLogsOpen(false);
   }, []);
 
   const openSettingsApiKey = useCallback((failureGroupId: string) => {
@@ -184,5 +195,11 @@ export function useWorkspaceModalsState() {
     setCleanerRecoveryByGroup,
     handleRecoverCleaner,
     validateRecoveryApiKey,
+
+    // System logs
+    isLogsOpen,
+    setIsLogsOpen,
+    openLogs,
+    closeLogs,
   };
 }

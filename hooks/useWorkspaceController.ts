@@ -124,6 +124,9 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     isDiagnosticModalOpen,
     openDiagnostics,
     closeDiagnostics,
+    isLogsOpen,
+    openLogs,
+    closeLogs,
     cleanerRecoveryByGroup,
     handleRecoverCleaner,
     validateRecoveryApiKey,
@@ -426,11 +429,6 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     setLegacyTargetPages,
   };
 
-  const operationBusyRef = useRef(operationBusy);
-  useEffect(() => {
-    operationBusyRef.current = operationBusy;
-  }, [operationBusy]);
-
   const { canUndo, canRedo } = useWorkspaceShortcuts({
     pagesCount: pages.length,
     onNavigatePage: setCurrentPage,
@@ -490,6 +488,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     onOpenShortcuts: openShortcuts,
     onExportProjectFile: () => void handleExportProjectFile(),
     onImportProjectFile: handleImportProjectFile,
+    onOpenLogs: openLogs,
     advancedToolsTriggerRef,
     primaryAction,
     onPrimaryAction: () => void handlePrimaryAction(),
@@ -729,6 +728,9 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     onRecoverCleaner: handleRecoverCleaner,
     cleanerRecoveryByGroup,
     apiKeyReadyByGroup,
+    isLogsOpen,
+    onCloseLogs: closeLogs,
+    onOpenLogs: openLogs,
   };
 
   return {

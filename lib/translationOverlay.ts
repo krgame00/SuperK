@@ -36,6 +36,13 @@ import {
   autoOrganizePageBubbles,
   isCorruptedAutoAdjustment,
 } from "./bubbleLayoutOptimizer";
+import {
+  renderWarpedText,
+  type WarpConfig,
+  type WarpEffectType,
+  getNextWarpType,
+  getWarpLabel,
+} from "./tools/TextWarpRenderer";
 
 const ADJ_KEY = "superk:overlay-adjustments";
 const WORD_WRAP_LOCALES: Record<string, string> = {
@@ -136,6 +143,8 @@ export interface TranslatedBubble {
   /** redraw callback attached to overlay bubbles */
   render?: () => void;
   styleProfile?: TextStyleProfile;
+  /** Non-linear SFX text warp deformation (arch, wave, bulge, squeeze) */
+  warp?: WarpConfig;
   [key: string]: unknown;
 }
 
@@ -185,6 +194,8 @@ export interface OverlayAdjustment {
   layoutSnapshot?: BubbleProportionalLayout;
   /** Persisted text style profile (including bwContrastMode and manual overrides). */
   styleProfile?: TextStyleProfile;
+  /** Persisted non-linear SFX text warp deformation (arch, wave, bulge, squeeze) */
+  warp?: WarpConfig;
 }
 
 /**
@@ -463,7 +474,7 @@ export const syncPageOverlayAdjustments = (pageKey: string, bubbles: TranslatedB
   if (typeof window === "undefined" || !window.localStorage) return;
   try {
     const storagePageKey = compactOverlayPageKey(pageKey);
-    const all = readOverlayAdjustments();
+    const all = { ...readOverlayAdjustments() };
     const nextPageAdj: Record<string, OverlayAdjustment> = {};
     for (const b of bubbles) {
       if (!b || b.deleted || !b.layoutAdjustment) continue;
@@ -488,16 +499,18 @@ export const syncPageOverlayAdjustments = (pageKey: string, bubbles: TranslatedB
 export const clearPageAdjustments = (pageIndex: number): void => {
   if (typeof window === "undefined" || !window.localStorage) return;
   try {
-    const all = readOverlayAdjustments();
+    const all = { ...readOverlayAdjustments() };
     const pageKey = `page-${pageIndex}`;
     if (all[pageKey]) {
       delete all[pageKey];
-      localStorage.setItem(ADJ_KEY, JSON.stringify(all));
+      saveOverlayAdjustments(all);
     }
   } catch {}
 };
 
 export const clearAllAdjustments = (): void => {
+  cachedOverlayAdjRaw = null;
+  cachedOverlayAdjMap = null;
   if (typeof window === "undefined" || !window.localStorage) return;
   try {
     localStorage.removeItem(ADJ_KEY);
@@ -610,11 +623,12 @@ export function measureBubbleRenderFit(
   isOval: boolean,
   targetFontSize?: number,
   locale = "th",
+  enableHyphenation = false,
 ): BubbleTextFit {
   if (typeof targetFontSize === "number" && targetFontSize > 0) {
     const effectiveFs = Math.max(8, Math.round(targetFontSize * globalMultiplier * bubbleMultiplier));
     const layout = layoutBubbleAtFixedFont(
-      text, width, effectiveFs, fontFamily, isOval, 0, height, locale,
+      text, width, effectiveFs, fontFamily, isOval, 0, height, locale, enableHyphenation,
     );
     return {
       fontSize: effectiveFs,
@@ -634,6 +648,7 @@ export function measureBubbleRenderFit(
     globalMultiplier * bubbleMultiplier,
     allowedMinimum,
     locale,
+    enableHyphenation,
   );
 }
 
@@ -651,6 +666,7 @@ export function growBubbleFrameToFit(
   lockWidth = false,
   targetFontSize?: number,
   locale = "th",
+  enableHyphenation = false,
 ): { width: number; height: number } {
   const maxWidth = lockWidth ? baseWidth : Math.min(pageWidth, baseWidth * 1.4);
   const maxHeight = Math.min(pageHeight, baseHeight * 2.5);
@@ -826,6 +842,7 @@ export function layoutBubbleAtFixedFont(
   manualMinHeightPx: number,
   availableHeightPx: number,
   locale = "th",
+  enableHyphenation = false,
 ): FixedFontWidthResult {
   const measureContext = getSharedMeasureCtx();
   if (measureContext) measureContext.font = `bold ${fontSizePx}px ${fontFamily}`;
@@ -838,6 +855,7 @@ export function layoutBubbleAtFixedFont(
     manualMinHeightPx,
     availableHeightPx,
     isOval,
+    enableHyphenation,
     measureText: measureContext
       ? (value) => measureContext.measureText(value).width
       : (value) => value.length * (fontSizePx * 0.6),
@@ -873,6 +891,7 @@ export function fitTextForBubble(
   fontSizeMultiplier = 1,
   minFontSize = 14,
   locale = "th",
+  enableHyphenation = false,
 ): BubbleTextFit {
   const effectiveIsOval = isOval && !isStructuredMangaList(text);
   const safeW = width * 0.88;
@@ -970,6 +989,7 @@ export function fitTextInAdaptiveBubble(
   minFontSize = 14,
   maxScale = 3.0,
   locale = "th",
+  enableHyphenation = false,
 ): AdaptiveBubbleLayout {
   let curW = width;
   let curH = height;
@@ -1337,6 +1357,9 @@ export const applyTranslationOverlay = async (
         const persistedSnapshot = adj?.layoutSnapshot ?? legacyAdj?.layoutSnapshot;
         if (persistedSnapshot) b.layoutSnapshot = persistedSnapshot;
       }
+      if (!b.warp && (adj?.warp || legacyAdj?.warp)) {
+        b.warp = adj?.warp ?? legacyAdj?.warp;
+      }
       let layoutOverflow = false;
       // Frame-floor bookkeeping: the size the floor grows from (so repeated
       // re-renders cannot compound it) and whether a resize drag is live.
@@ -1360,6 +1383,7 @@ export const applyTranslationOverlay = async (
           ...(typeof manualMinHeightPx === "number" ? { manualMinHeightPx } : {}),
           ...(b.layoutSnapshot ? { layoutSnapshot: b.layoutSnapshot } : {}),
           ...(b.styleProfile ? { styleProfile: cloneTextStyleProfile(b.styleProfile) } : {}),
+          ...(b.warp ? { warp: { ...b.warp } } : {}),
         };
         b.layoutAdjustment = persistedLayout;
 
@@ -1879,23 +1903,52 @@ export const applyTranslationOverlay = async (
         let inBulletItem = false;
         const leftPad = Math.max(6, Math.round(currentBw * 0.04));
         const indentPad = leftPad + Math.round(fontSize * 0.85);
+
+        const isWarped = Boolean(b.warp && b.warp.type !== "none");
+        let activeCtx: CanvasRenderingContext2D = ctx;
+        let warpCanvas: HTMLCanvasElement | OffscreenCanvas | null = null;
+        if (isWarped) {
+          warpCanvas =
+            typeof OffscreenCanvas !== "undefined"
+              ? new OffscreenCanvas(bCanvas.width, bCanvas.height)
+              : document.createElement("canvas");
+          warpCanvas.width = bCanvas.width;
+          warpCanvas.height = bCanvas.height;
+          activeCtx = warpCanvas.getContext("2d") as CanvasRenderingContext2D;
+          activeCtx.globalAlpha = opacity;
+          activeCtx.textAlign = "center";
+          activeCtx.textBaseline = "middle";
+          activeCtx.font = `${fontStylePrefix} ${fontSize}px ${currentFontFam}`;
+          activeCtx.lineJoin = "round";
+          activeCtx.lineCap = "round";
+          activeCtx.miterLimit = 2;
+          activeCtx.strokeStyle = outlineColor;
+          activeCtx.lineWidth = ctx.lineWidth;
+          if (visualEffect) {
+            activeCtx.shadowColor = ctx.shadowColor;
+            activeCtx.shadowBlur = ctx.shadowBlur;
+            activeCtx.shadowOffsetX = ctx.shadowOffsetX;
+            activeCtx.shadowOffsetY = ctx.shadowOffsetY;
+          }
+        }
+
         const drawLineWithOptionalSlant = (lineText: string, drawX: number, drawY: number) => {
-          if (currentIsItalic && typeof ctx.save === "function" && typeof ctx.transform === "function" && typeof ctx.restore === "function") {
-            ctx.save();
+          if (currentIsItalic && typeof activeCtx.save === "function" && typeof activeCtx.transform === "function" && typeof activeCtx.restore === "function") {
+            activeCtx.save();
             const slant = -0.18;
-            ctx.transform(1, 0, slant, 1, -drawY * slant, 0);
-            if (resolvedStyle.hasOutline && ctx.lineWidth > 0) {
-              ctx.strokeText(lineText, drawX, drawY);
+            activeCtx.transform(1, 0, slant, 1, -drawY * slant, 0);
+            if (resolvedStyle.hasOutline && activeCtx.lineWidth > 0) {
+              activeCtx.strokeText(lineText, drawX, drawY);
             }
-            ctx.fillStyle = fillPaint;
-            ctx.fillText(lineText, drawX, drawY);
-            ctx.restore();
+            activeCtx.fillStyle = fillPaint;
+            activeCtx.fillText(lineText, drawX, drawY);
+            activeCtx.restore();
           } else {
-            if (resolvedStyle.hasOutline && ctx.lineWidth > 0) {
-              ctx.strokeText(lineText, drawX, drawY);
+            if (resolvedStyle.hasOutline && activeCtx.lineWidth > 0) {
+              activeCtx.strokeText(lineText, drawX, drawY);
             }
-            ctx.fillStyle = fillPaint;
-            ctx.fillText(lineText, drawX, drawY);
+            activeCtx.fillStyle = fillPaint;
+            activeCtx.fillText(lineText, drawX, drawY);
           }
         };
 
@@ -1907,22 +1960,27 @@ export const applyTranslationOverlay = async (
             const isSectionHeader = !isBulletStart && (isStructuredSectionHeaderLine(trimmed) || !inBulletItem);
             if (isBulletStart) {
               inBulletItem = true;
-              ctx.textAlign = "left";
+              activeCtx.textAlign = "left";
               drawLineWithOptionalSlant(l, leftPad, yPos);
             } else if (isSectionHeader) {
               inBulletItem = false;
-              ctx.textAlign = "center";
+              activeCtx.textAlign = "center";
               drawLineWithOptionalSlant(l, currentBw / 2, yPos);
             } else {
-              ctx.textAlign = "left";
+              activeCtx.textAlign = "left";
               drawLineWithOptionalSlant(l, indentPad, yPos);
             }
           } else {
-            ctx.textAlign = "center";
+            activeCtx.textAlign = "center";
             drawLineWithOptionalSlant(l, currentBw / 2, yPos);
           }
         });
-        ctx.textAlign = "center";
+        activeCtx.textAlign = "center";
+
+        if (isWarped && warpCanvas && b.warp) {
+          ctx.clearRect(0, 0, currentBw, currentBh);
+          renderWarpedText(ctx, warpCanvas, 0, 0, b.warp);
+        }
         // Snapshot renders keep the captured selection (scaled for a corner
         // release) so the crisp redraw, reopening, and Undo/Redo all show the
         // exact previewed geometry; its padding is additive while scaling is
@@ -3583,11 +3641,62 @@ export const applyTranslationOverlay = async (
         },
       );
 
+      const syncWarpBtnStyle = (btnEl: HTMLButtonElement) => {
+        const active = Boolean(b.warp && b.warp.type !== "none");
+        btnEl.setAttribute("aria-pressed", String(active));
+        btnEl.title = `ดัดรูปทรง SFX: ${getWarpLabel(b.warp?.type ?? "none")} (คลิกเพื่อเปลี่ยนรูปทรง)`;
+        btnEl.style.color = active ? "#c084fc" : "#e4e4e7";
+        btnEl.style.background = active ? "rgba(192, 132, 252, 0.22)" : "transparent";
+      };
+
+      const warpBtn = createToolBtn(
+        `ดัดรูปทรง SFX: ${getWarpLabel(b.warp?.type ?? "none")} (คลิกเพื่อเปลี่ยนรูปทรง)`,
+        `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14c2-4 5-6 8-6s6 2 8 6"/><path d="M12 3v3"/><path d="M3 21l3-3"/><path d="M21 21l-3-3"/></svg>`,
+        () => {
+          const currentType = b.warp?.type ?? "none";
+          const nextType = getNextWarpType(currentType);
+          const prevWarp = b.warp ? { ...b.warp } : undefined;
+          const nextWarp: WarpConfig | undefined =
+            nextType === "none"
+              ? undefined
+              : { type: nextType, bend: 0.45, frequency: 1.5 };
+
+          b.warp = nextWarp;
+          syncWarpBtnStyle(warpBtn);
+          delete b.layoutSnapshot;
+          onBubblesMutated?.();
+          renderBubble();
+          saveAdjustment();
+
+          undoManager.push({
+            label: `ดัดรูปทรง SFX (${getWarpLabel(nextType)})`,
+            undo: () => {
+              b.warp = prevWarp;
+              syncWarpBtnStyle(warpBtn);
+              delete b.layoutSnapshot;
+              onBubblesMutated?.();
+              renderBubble();
+              saveAdjustment();
+            },
+            redo: () => {
+              b.warp = nextWarp;
+              syncWarpBtnStyle(warpBtn);
+              delete b.layoutSnapshot;
+              onBubblesMutated?.();
+              renderBubble();
+              saveAdjustment();
+            },
+          });
+        },
+      );
+      syncWarpBtnStyle(warpBtn);
+
       toolbar.appendChild(editBtn);
       toolbar.appendChild(decreaseFontBtn);
       toolbar.appendChild(increaseFontBtn);
       toolbar.appendChild(italicBtn);
       toolbar.appendChild(tiltBtn);
+      toolbar.appendChild(warpBtn);
       toolbar.appendChild(bwContrastBtn);
       toolbar.appendChild(createDivider());
       toolbar.appendChild(deleteBtn);

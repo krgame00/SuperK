@@ -23,6 +23,7 @@ from app.model_store import ModelStore
 from app.ort_utils import (
     create_cpu_inference_session,
     create_inference_session,
+    is_gpu_device_error,
     is_gpu_suspended,
     mark_gpu_device_suspended,
 )
@@ -178,7 +179,8 @@ class LamaLargeCleaner:
             if not can_fallback:
                 raise
 
-            mark_gpu_device_suspended(err)
+            if is_gpu_device_error(err):
+                mark_gpu_device_suspended(err)
             LOGGER.warning(
                 "LamaLarge execution failed on providers %s (%s). Retrying once on CPU.",
                 providers,

@@ -381,8 +381,9 @@ function inspectTargetText(text, target) {
             continue;
         }
         if (mark.test(char)) {
-            const nativeMark = allowed(char) && allowed(previous);
-            const sharedAccent = inherited.test(char) && scriptMatches(char, "Inherited") && /^[\u0300-\u036F]$/u.test(char) && allowed(previous) && profile.scripts.some(script => ["Latin", "Greek", "Cyrillic"].includes(script));
+            const prevAllowed = allowed(previous) || (!!previous && mark.test(previous) && !bad.has(previous));
+            const nativeMark = allowed(char) && prevAllowed;
+            const sharedAccent = inherited.test(char) && scriptMatches(char, "Inherited") && /^[\u0300-\u036F]$/u.test(char) && prevAllowed && profile.scripts.some(script => ["Latin", "Greek", "Cyrillic"].includes(script));
             if (!nativeMark && !sharedAccent)
                 bad.add(char);
             continue;

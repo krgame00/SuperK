@@ -146,7 +146,7 @@ describe("useTranslationWorkspaceCoordinator", () => {
     expect(setReviewedPageUrls).toHaveBeenCalled();
   });
 
-  it("switches to translated layer and marks reviewed when primaryAction is review", async () => {
+  it("switches to translated layer and marks reviewed when primaryAction is review with no issues", async () => {
     const props = createHookProps({
       hasCurrentTranslation: true,
       currentCleaningResult: { cleanUrl: "clean.png" },
@@ -161,6 +161,45 @@ describe("useTranslationWorkspaceCoordinator", () => {
 
     expect(setWorkspaceLayer).toHaveBeenCalledWith("translated");
     expect(setReviewedPageUrls).toHaveBeenCalled();
+    expect(result.current.reviewIssues).toBeNull();
+  });
+
+  it("opens reviewIssues modal when primaryAction is review and issues exist", async () => {
+    const mockIssues = [
+      {
+        pageUrl: "http://example.com/p1.jpg",
+        pageIndex: 0,
+        pageTotal: 1,
+        targetId: "Thai",
+        scriptIssues: [],
+        unverified: [
+          {
+            index: 0,
+            pointId: "1",
+            kind: "unverified" as const,
+            hasSource: true,
+            humanConfirmable: true,
+            suggestion: "คำแนะนำ",
+          },
+        ],
+      },
+    ];
+    inspectReviewIssues.mockReturnValue(mockIssues);
+    const props = createHookProps({
+      hasCurrentTranslation: true,
+      currentCleaningResult: { cleanUrl: "clean.png" },
+    });
+    const { result } = renderHook(() => useTranslationWorkspaceCoordinator(props));
+
+    expect(result.current.primaryAction.kind).toBe("review");
+
+    await act(async () => {
+      await result.current.handlePrimaryAction();
+    });
+
+    expect(setWorkspaceLayer).toHaveBeenCalledWith("translated");
+    expect(setReviewedPageUrls).toHaveBeenCalled();
+    expect(result.current.reviewIssues).toEqual(mockIssues);
   });
 
   it("handleScanTranslations scans pages and opens legacyTargetPages if pending", () => {

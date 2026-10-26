@@ -117,3 +117,64 @@ export function applyRestoreBrush(
   }
   return new ImageData(data, width, height);
 }
+
+
+export function dilateMask(
+  mask: ImageData,
+  radius: number,
+  rect?: { x: number; y: number; width: number; height: number },
+): ImageData {
+  if (radius <= 0) return mask;
+  const { width, height, data } = mask;
+  const output = new Uint8ClampedArray(data);
+  const r = Math.min(Math.round(radius), 32);
+  const rSq = r * r;
+
+  const minX = rect ? Math.max(0, Math.floor(rect.x)) : 0;
+  const minY = rect ? Math.max(0, Math.floor(rect.y)) : 0;
+  const maxX = rect ? Math.min(width, Math.ceil(rect.x + rect.width)) : width;
+  const maxY = rect ? Math.min(height, Math.ceil(rect.y + rect.height)) : height;
+
+  const activePoints: { x: number; y: number; r: number; g: number; b: number; a: number }[] = [];
+  for (let y = minY; y < maxY; y++) {
+    const rowOffset = y * width;
+    for (let x = minX; x < maxX; x++) {
+      const idx = (rowOffset + x) * 4;
+      if (data[idx + 3] > 0) {
+        activePoints.push({
+          x,
+          y,
+          r: data[idx],
+          g: data[idx + 1],
+          b: data[idx + 2],
+          a: data[idx + 3],
+        });
+      }
+    }
+  }
+
+  for (const p of activePoints) {
+    const startY = Math.max(minY, p.y - r);
+    const endY = Math.min(maxY - 1, p.y + r);
+    const startX = Math.max(minX, p.x - r);
+    const endX = Math.min(maxX - 1, p.x + r);
+
+    for (let y = startY; y <= endY; y++) {
+      const dy = y - p.y;
+      const dySq = dy * dy;
+      const rowOffset = y * width;
+      for (let x = startX; x <= endX; x++) {
+        const dx = x - p.x;
+        if (dx * dx + dySq <= rSq) {
+          const idx = (rowOffset + x) * 4;
+          output[idx] = p.r;
+          output[idx + 1] = p.g;
+          output[idx + 2] = p.b;
+          output[idx + 3] = Math.max(output[idx + 3], p.a);
+        }
+      }
+    }
+  }
+
+  return new ImageData(output, width, height);
+}

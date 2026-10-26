@@ -323,6 +323,14 @@ export function useTranslationWorkspaceCoordinator({
     if (primaryAction.kind === "review") {
       setWorkspaceLayer("translated");
       setReviewedPageUrls((current) => new Set(current).add(currentPageUrl));
+      const issues = inspectReviewIssues();
+      if (issues.length > 0) {
+        setReviewIssues(issues);
+      } else {
+        void import("react-hot-toast").then((m) =>
+          m.default("✨ ตรวจคำแปลหน้านี้เรียบร้อยแล้ว ไม่พบข้อผิดพลาด พร้อมส่งออก", { duration: 3500 }),
+        );
+      }
       return;
     }
     if (primaryAction.kind === "export") {

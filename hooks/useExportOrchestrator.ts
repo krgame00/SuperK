@@ -202,7 +202,7 @@ export function useExportOrchestrator({
   const [pendingReadabilityTarget, setPendingReadabilityTarget] = useState<ReadabilityFinding | null>(null);
 
   const buildExportReportRows = useCallback((): ExportReportRow[] => {
-    const inspected = inspectTranslatedPages();
+    const inspected = inspectTranslatedPages?.() ?? [];
     return pages.map((page, pageIndex) => {
       const source = normalizePageExportSource(page.exportSource);
       const info = source === "translated" ? inspected.find((item) => item.pageIndex === pageIndex) : undefined;
@@ -523,6 +523,8 @@ export function useExportOrchestrator({
           b.box,
           b.t ?? b.translated,
           b.deleted,
+          b.rotation,
+          b.isItalic ?? b.italic,
           b.layoutAdjustment,
           b.fontSizeMultiplier,
           b.targetFontSize,
@@ -530,6 +532,7 @@ export function useExportOrchestrator({
           b.styleProfile?.fill,
           b.styleProfile?.outline,
           b.styleProfile?.hasOutline,
+          b.warp,
         ]),
         textStyleRef.current,
         getCurrentRemnantReview?.(pageUrl, getExpectedRemnantEvidence(pageUrl))?.inspection.revisionKey,
@@ -1137,11 +1140,10 @@ export function useExportOrchestrator({
   }, [collectExportReviewPages, pages, currentPage, executeSaveCurrentPageImage]);
 
   const requestSinglePageExport = useCallback(async () => {
-    if (isChoosingExport || isZipping) return;
+    const page = pages[currentPage];
+    if (!page || isChoosingExport || isZipping) return;
     exportSnapshotRef.current = { pages: pages.map((p) => ({ ...p })), currentPage };
     setIsChoosingExport(true);
-    const page = pages[currentPage];
-    if (!page) return;
     const generation = ++reportScanGenerationRef.current;
     const result = await scanReadabilityPage(currentPage);
     if (generation !== reportScanGenerationRef.current) return;

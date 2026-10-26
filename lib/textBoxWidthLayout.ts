@@ -1,3 +1,5 @@
+import { breakWordIntoHyphenatedLines, canHyphenateWord, splitWordByHyphen } from "./text/hyphenation";
+
 export interface FixedFontWidthInput {
   text: string;
   widthPx: number;
@@ -7,6 +9,8 @@ export interface FixedFontWidthInput {
   manualMinHeightPx: number;
   availableHeightPx: number;
   isOval: boolean;
+  enableHyphenation?: boolean;
+  scanlineRatios?: number[];
   measureText: (value: string) => number;
 }
 
@@ -26,7 +30,28 @@ function allowedWidthAt(
   safeWidthPx: number,
   fontSizePx: number,
   isOval: boolean,
+  scanlineRatios?: number[],
 ): number {
+  if (scanlineRatios && scanlineRatios.length > 0) {
+    if (lineCount <= 1) {
+      const midSlice = Math.floor(scanlineRatios.length / 2);
+      const ratio = scanlineRatios[midSlice] ?? 1.0;
+      return Math.min(
+        safeWidthPx,
+        Math.max(Math.min(safeWidthPx, fontSizePx * 1.5), safeWidthPx * ratio * 0.95),
+      );
+    }
+    const verticalProgress = (lineIndex + 0.5) / lineCount;
+    const sliceIdx = Math.min(
+      scanlineRatios.length - 1,
+      Math.max(0, Math.floor(verticalProgress * scanlineRatios.length)),
+    );
+    const chordRatio = scanlineRatios[sliceIdx] ?? 1.0;
+    return Math.min(
+      safeWidthPx,
+      Math.max(Math.min(safeWidthPx, fontSizePx * 1.5), safeWidthPx * chordRatio * 0.95),
+    );
+  }
   if (!isOval || lineCount <= 1) return safeWidthPx;
   const vertical = ((lineIndex + 0.5) / lineCount - 0.5) * 2;
   const chordRatio = Math.sqrt(Math.max(0.2, 1 - vertical * vertical));
@@ -40,9 +65,10 @@ function singleWordAllowedWidth(
   safeWidthPx: number,
   fontSizePx: number,
   isOval: boolean,
+  scanlineRatios?: number[],
 ): number {
-  if (!isOval) return safeWidthPx;
-  return allowedWidthAt(0, 2, safeWidthPx, fontSizePx, true);
+  if (!isOval && (!scanlineRatios || scanlineRatios.length === 0)) return safeWidthPx;
+  return allowedWidthAt(0, 2, safeWidthPx, fontSizePx, true, scanlineRatios);
 }
 
 const graphemesOf = (value: string): string[] => {
@@ -250,14 +276,16 @@ function wrapForCandidate(
   isOval: boolean,
   locale: string,
   measureText: (value: string) => number,
+  enableHyphenation = false,
+  scanlineRatios?: number[],
 ): { lines: string[]; wordOverflow: boolean } {
   const lines: string[] = [];
   let current = "";
   let wordOverflow = false;
-  const singleWordLimit = singleWordAllowedWidth(safeWidthPx, fontSizePx, isOval);
+  const singleWordLimit = singleWordAllowedWidth(safeWidthPx, fontSizePx, isOval, scanlineRatios);
 
   const candidateWidthAt = (lineIndex: number): number =>
-    allowedWidthAt(lineIndex, candidateLineCount, safeWidthPx, fontSizePx, isOval);
+    allowedWidthAt(lineIndex, candidateLineCount, safeWidthPx, fontSizePx, isOval, scanlineRatios);
 
   const pushLine = (): void => {
     lines.push(current.trimEnd());
@@ -322,6 +350,23 @@ function wrapForCandidate(
         const limit = current
           ? effectiveLimitAt(lines.length)
           : Math.max(effectiveLimitAt(lines.length), singleWordLimit);
+        if (enableHyphenation && canHyphenateWord(remaining) && measureText(remaining) > limit * 1.05) {
+          if (current) pushLine();
+          const broken = breakWordIntoHyphenatedLines(
+            remaining,
+            measureText,
+            effectiveLimitAt,
+            lines.length,
+          );
+          if (broken.overflow) wordOverflow = true;
+          for (let i = 0; i < broken.lines.length - 1; i++) {
+            current = broken.lines[i];
+            pushLine();
+            if (isBulletParagraph) isContinuationLine = true;
+          }
+          current = broken.lines[broken.lines.length - 1];
+          continue;
+        }
         if (measureText(remaining) > limit * 1.05) wordOverflow = true;
         current += remaining;
       }
@@ -341,12 +386,15 @@ function linesFitTheirChords(
   isOval: boolean,
   locale: string,
   measureText: (value: string) => number,
+  enableHyphenation = false,
+  scanlineRatios?: number[],
 ): boolean {
+  const hasScanlines = Boolean(scanlineRatios && scanlineRatios.length > 0);
   const safeWidthPx = Math.max(1, widthPx * 0.88);
-  const singleWordLimit = singleWordAllowedWidth(safeWidthPx, fontSizePx, isOval);
+  const singleWordLimit = singleWordAllowedWidth(safeWidthPx, fontSizePx, isOval, scanlineRatios);
   return lines.every((line, lineIndex) => {
-    if (!isOval || lines.length <= 1) return measureText(line) <= safeWidthPx * 1.05;
-    const chordWidth = allowedWidthAt(lineIndex, lines.length, safeWidthPx, fontSizePx, isOval);
+    if ((!isOval && !hasScanlines) || (lines.length <= 1 && !hasScanlines)) return measureText(line) <= safeWidthPx * 1.05;
+    const chordWidth = allowedWidthAt(lineIndex, lines.length, safeWidthPx, fontSizePx, isOval, scanlineRatios);
     const wordCount = segmentTextIntoWords(line, locale).filter((segment) => !/^\s+$/u.test(segment)).length;
     const effectiveChord = wordCount <= 1 ? Math.max(chordWidth, singleWordLimit) : chordWidth;
     return measureText(line) <= effectiveChord * 1.05;
@@ -402,7 +450,8 @@ export function layoutTextAtFixedFont(input: FixedFontWidthInput): FixedFontWidt
   const locale = input.locale || "th";
   const structuredList = isStructuredMangaList(input.text);
   const effectiveText = structuredList ? formatStructuredMangaText(input.text) : input.text;
-  const effectiveIsOval = input.isOval && !structuredList;
+  const hasScanlines = Boolean(input.scanlineRatios && input.scanlineRatios.length > 0);
+  const effectiveIsOval = (input.isOval || hasScanlines) && !structuredList;
   const safeWidthPx = Math.max(1, finiteWidth * 0.88);
   const graphemeCount = graphemesOf(effectiveText).length;
   const maxCandidates = effectiveIsOval
@@ -425,6 +474,8 @@ export function layoutTextAtFixedFont(input: FixedFontWidthInput): FixedFontWidt
       effectiveIsOval,
       locale,
       input.measureText,
+      input.enableHyphenation,
+      input.scanlineRatios,
     );
     chosenLines = attempt.lines;
     wordOverflow = attempt.wordOverflow;
@@ -442,6 +493,8 @@ export function layoutTextAtFixedFont(input: FixedFontWidthInput): FixedFontWidt
       effectiveIsOval,
       locale,
       input.measureText,
+      input.enableHyphenation,
+      input.scanlineRatios,
     );
 
     if ((!effectiveIsOval || chosenLines.length <= candidateLineCount) && actualChordsFit && !wordOverflow) {

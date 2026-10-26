@@ -42,6 +42,22 @@ describe("layoutTextAtFixedFont", () => {
     expect(layout.overflow).toBe(true);
   });
 
+  it("hyphenates overlong Latin words across lines when enableHyphenation is true", () => {
+    const text = "supercalifragilistic";
+    const layout = layoutTextAtFixedFont({
+      ...base,
+      text,
+      fontSizePx: 10,
+      widthPx: 65,
+      enableHyphenation: true,
+    });
+
+    expect(layout.lines.length).toBeGreaterThan(1);
+    expect(layout.lines[0].endsWith("-")).toBe(true);
+    expect(layout.lines.join("").replace(/-/g, "")).toBe(text);
+    expect(layout.overflow).toBe(false);
+  });
+
   it("wraps at language-aware word boundaries and keeps trailing punctuation attached", () => {
     const layout = layoutTextAtFixedFont({
       ...base,
@@ -261,5 +277,21 @@ describe("layoutTextAtFixedFont", () => {
     ]);
     expect(segmentTextIntoWords("เป็นแม่วัวนมทั้งที่เป็นจอมเวท", "th")).toContain("แม่วัวนม");
     expect(hasBrokenThaiLineBreak(["• เธอก็ไม่รู้เหมือนกัน", "แต่เธอก็ไม่ได้ใส่ใจ พรสวรรค์:"])).toBe(true);
+  });
+
+  it("uses scanlineRatios for exact bubble contour line widths", () => {
+    const layout = layoutTextAtFixedFont({
+      text: "บรรทัดแรก บรรทัดสอง บรรทัดสาม",
+      widthPx: 250,
+      fontSizePx: 14,
+      fontFamily: "Noto Sans Thai",
+      manualMinHeightPx: 0,
+      availableHeightPx: 150,
+      isOval: false,
+      scanlineRatios: [0.75, 1.0, 0.75],
+      measureText: (val) => val.length * 8,
+    });
+    expect(layout.lines.length).toBeGreaterThanOrEqual(2);
+    expect(layout.overflow).toBe(false);
   });
 });

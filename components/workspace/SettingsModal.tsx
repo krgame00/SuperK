@@ -5,7 +5,7 @@ import { type GlossaryEntry } from "@/lib/translation/glossary";
 import { TARGET_LANGUAGES, resolveTargetLanguage } from "@/lib/languagePolicy";
 import { MANUAL_IMAGE_MODEL_IDS } from "@/lib/translation/imageModelChoices";
 import { workspaceResourceManager } from "@/lib/lifecycle/workspaceResourceManager";
-import { Plus, Trash2, BookText, Flame, X, ChevronDown, Download, Folder, Search, Check, Sparkles, Power, AlertTriangle, Loader2, Upload, Type } from "lucide-react";
+import { Plus, Trash2, BookText, Flame, X, ChevronDown, Download, Folder, Search, Check, Sparkles, Power, AlertTriangle, Loader2, Upload, Type, ScrollText } from "lucide-react";
 import {
   BUILTIN_MANGA_FONTS,
   BUILTIN_CANVAS_FONT_VARS,
@@ -141,6 +141,7 @@ export interface SettingsModalProps {
   sfxMode?: "ignore" | "preserve" | "translate";
   onSfxModeChange?: (mode: "ignore" | "preserve" | "translate") => void;
   onAutoExtractGlossary?: () => void;
+  onOpenLogs?: () => void;
 }
 
 export function SettingsModal({
@@ -170,6 +171,7 @@ export function SettingsModal({
   sfxMode = "ignore",
   onSfxModeChange,
   onAutoExtractGlossary,
+  onOpenLogs,
 }: SettingsModalProps): ReactElement | null {
   const targetResolution = resolveTargetLanguage(targetLang);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -2047,14 +2049,29 @@ export function SettingsModal({
                 </div>
               </div>
             ) : (
-              <button
-                type="button"
-                onClick={() => setIsConfirmingShutdown(true)}
-                className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/30 text-xs font-semibold transition-all cursor-pointer"
-              >
-                <Power className="w-4 h-4" />
-                <span>ปิดระบบ SuperK ทั้งหมด (Shutdown)</span>
-              </button>
+              <div className="space-y-2">
+                {onOpenLogs && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenLogs();
+                    }}
+                    className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-surface-hover hover:bg-surface-active text-foreground border border-border text-xs font-semibold transition-all cursor-pointer"
+                  >
+                    <ScrollText className="w-4 h-4 text-primary" />
+                    <span>ดูบันทึกข้อผิดพลาดและสถานะระบบ (System Logs)</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setIsConfirmingShutdown(true)}
+                  className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/30 text-xs font-semibold transition-all cursor-pointer"
+                >
+                  <Power className="w-4 h-4" />
+                  <span>ปิดระบบ SuperK ทั้งหมด (Shutdown)</span>
+                </button>
+              </div>
             )}
           </div>
         </div>

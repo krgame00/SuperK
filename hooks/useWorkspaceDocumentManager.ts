@@ -13,6 +13,7 @@ import {
 } from "react";
 import JSZip from "jszip";
 import { blobToDataUrl } from "@/lib/projectStore";
+import { undoManager } from "@/lib/undoManager";
 import { pageBlobStore } from "@/lib/lifecycle/pageBlobStore";
 import { workspaceResourceManager } from "@/lib/lifecycle/workspaceResourceManager";
 import { deriveProjectExportName } from "@/lib/export/exportManager";
@@ -493,6 +494,7 @@ export function useWorkspaceDocumentManager({
 
   const handleClearAllPages = useCallback(() => {
     if (exportSnapshotRef.current) return;
+    undoManager.clear();
     workspaceResourceManager.clear();
     setPages([]);
     setCurrentPage(0);

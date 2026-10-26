@@ -105,6 +105,64 @@ export async function retryCleaningRegion(
   );
 }
 
+export interface InpaintCropOptions {
+  cleaner?: CleanerOverride;
+  dilation?: number;
+  extendHints?: boolean;
+  featherBlend?: boolean;
+  signal?: AbortSignal;
+}
+
+export async function inpaintCrop(
+  imageBlob: Blob,
+  maskBlob: Blob,
+  options: InpaintCropOptions = {},
+): Promise<Blob> {
+  const form = new FormData();
+  const typedImage =
+    imageBlob.type && imageBlob.type !== "application/octet-stream"
+      ? imageBlob
+      : new Blob([imageBlob], { type: "image/png" });
+  const typedMask =
+    maskBlob.type === "image/png"
+      ? maskBlob
+      : new Blob([maskBlob], { type: "image/png" });
+
+  form.append("image", typedImage, "crop.png");
+  form.append("mask", typedMask, "mask.png");
+  if (options.cleaner) {
+    form.append("cleaner", options.cleaner);
+  }
+  if (typeof options.dilation === "number" && options.dilation > 0) {
+    form.append("dilation", String(Math.round(options.dilation)));
+  }
+  if (options.extendHints) {
+    form.append("extend_hints", "true");
+  }
+  if (options.featherBlend) {
+    form.append("feather_blend", "true");
+  }
+
+  const response = await fetch(`${PROXY_BASE}/v1/clean/crop`, {
+    method: "POST",
+    body: form,
+    signal: options.signal,
+  });
+
+  if (!response.ok) {
+    let message = "Inpainting failed";
+    try {
+      const err = await response.json();
+      if (err.detail) message = err.detail;
+    } catch {
+      // ignore
+    }
+    throw new CleaningClientError(response.status, message, recoveryFor(response.status));
+  }
+
+  return await response.blob();
+}
+
 export async function restoreCleaningJob(params: {
   jobId: string;
   sourceBlob: Blob;

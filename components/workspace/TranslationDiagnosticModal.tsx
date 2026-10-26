@@ -10,6 +10,7 @@ import {
   ServerOff,
   X,
   CheckCircle2,
+  ScrollText,
 } from "lucide-react";
 import type { TranslationFailureGroup } from "@/lib/translation/failureGroups";
 
@@ -38,6 +39,7 @@ export interface TranslationDiagnosticModalProps {
   onRecoverCleaner?: (failureGroupId: string) => void | Promise<void>;
   cleanerRecoveryByGroup?: Record<string, CleanerRecoveryViewState>;
   apiKeyReadyByGroup?: Record<string, boolean>;
+  onOpenLogs?: () => void;
 }
 
 export function TranslationDiagnosticModal({
@@ -50,6 +52,7 @@ export function TranslationDiagnosticModal({
   onRecoverCleaner,
   cleanerRecoveryByGroup = {},
   apiKeyReadyByGroup = {},
+  onOpenLogs,
 }: TranslationDiagnosticModalProps): ReactElement | null {
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -298,13 +301,28 @@ export function TranslationDiagnosticModal({
           <span className="text-[11px] text-muted">
             การกู้คืนบริการหรือคีย์จะไม่ส่งคำขอแปลใหม่จนกว่าคุณจะกดลองใหม่
           </span>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md bg-surface-hover px-3 py-1.5 text-xs font-medium text-foreground hover:bg-surface-active transition-colors"
-          >
-            ปิด
-          </button>
+          <div className="flex items-center gap-2">
+            {onOpenLogs && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenLogs();
+                }}
+                className="rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-primary hover:bg-surface-hover transition-colors flex items-center gap-1.5"
+              >
+                <ScrollText className="h-3.5 w-3.5" />
+                <span>ดูบันทึกข้อผิดพลาด (Logs)</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md bg-surface-hover px-3 py-1.5 text-xs font-medium text-foreground hover:bg-surface-active transition-colors"
+            >
+              ปิด
+            </button>
+          </div>
         </div>
       </div>
     </div>

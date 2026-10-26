@@ -13,6 +13,7 @@ import {
   Keyboard,
   FolderDown,
   FolderUp,
+  ScrollText,
 } from "lucide-react";
 
 import { WorkspaceMenu, type WorkspaceMenuItem } from "@/components/workspace/WorkspaceMenu";
@@ -37,6 +38,7 @@ export interface WorkspaceAdvancedToolsProps {
   onOpenShortcuts?: () => void;
   onExportProjectFile?: () => void;
   onImportProjectFile?: () => void;
+  onOpenLogs?: () => void;
   triggerRef?: RefObject<HTMLButtonElement | null>;
 }
 
@@ -60,6 +62,7 @@ export function WorkspaceAdvancedTools({
   onOpenShortcuts,
   onExportProjectFile,
   onImportProjectFile,
+  onOpenLogs,
   triggerRef,
 }: WorkspaceAdvancedToolsProps): ReactElement {
   const items: WorkspaceMenuItem[] = [
@@ -173,6 +176,17 @@ export function WorkspaceAdvancedTools({
             icon: <FolderUp className="h-4 w-4 text-primary" />,
             disabled: busy,
             onSelect: onImportProjectFile,
+          },
+        ]
+      : []),
+    ...(onOpenLogs
+      ? [
+          {
+            id: "system-logs",
+            label: "บันทึกข้อผิดพลาด (Logs)",
+            icon: <ScrollText className="h-4 w-4 text-primary" />,
+            disabled: false,
+            onSelect: onOpenLogs,
           },
         ]
       : []),

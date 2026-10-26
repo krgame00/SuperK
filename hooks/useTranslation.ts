@@ -49,6 +49,7 @@ import {
   buildFailureGroups,
   extendFailureGroupCooldown,
 } from "@/lib/translation/failureGroups";
+import { logError, logWarn } from "@/lib/logger/clientLogger";
 
 export type SaveStatus = "idle" | "saving" | "saved" | "error";
 export type TranslationWorkflowPhase = "cleaning" | "translating";
@@ -1789,6 +1790,12 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       }
       const message =
         error instanceof Error ? error.message : "ดำเนินการไม่สำเร็จ";
+      logError(
+        "translate",
+        `แปลหน้า ${currentPage + 1}/${pages.length} ไม่สำเร็จ: ${message}`,
+        error instanceof Error ? { message: error.message, stack: error.stack } : error,
+        error instanceof Error ? error.stack : undefined,
+      );
       setTranslationResult(`❌ Error: ${message}`);
       return false;
     } finally {
@@ -2218,6 +2225,14 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             diagnostic,
           };
           failures.push(failureItem);
+          logError(
+            "translate",
+            `แปลหน้า ${i + 1}/${pages.length} ไม่สำเร็จ (ชุดงาน): ${errMsg}`,
+            lastTranslationError instanceof Error
+              ? { message: lastTranslationError.message, stack: lastTranslationError.stack, status: errStatus, code: errCode }
+              : lastTranslationError,
+            lastTranslationError instanceof Error ? lastTranslationError.stack : undefined,
+          );
           setBatchFailures((prev) => {
             const next = prev.filter((f) => f.pageIndex !== i);
             return [...next, failureItem];

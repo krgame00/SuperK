@@ -129,7 +129,7 @@ export function useTranslationOrchestrator({
     isTranslatingAll,
     translatedImages,
     getPageSignature,
-    cacheRevision: translationCacheRevision,
+    cacheRevision: translationCacheRevision = 0,
     setActiveBubbles,
     textStyleRef,
     targetLang,

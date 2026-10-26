@@ -8,6 +8,7 @@ import { FindReplaceDialog } from "@/components/editing/FindReplaceDialog";
 import { KeyboardShortcutsDialog } from "@/components/editing/KeyboardShortcutsDialog";
 import { ExportReportModal } from "@/components/workspace/ExportReportModal";
 import { TranslationDiagnosticModal } from "@/components/workspace/TranslationDiagnosticModal";
+import { SystemLogsModal } from "@/components/workspace/SystemLogsModal";
 import type { PixelRect } from "@/lib/cleaning/types";
 import type { PageCleaningResult } from "@/hooks/useCleaning";
 import type { PageReviewInfo } from "@/lib/export/reviewGate";
@@ -146,6 +147,11 @@ export interface WorkspaceModalsHostProps {
   onRecoverCleaner: ComponentProps<typeof TranslationDiagnosticModal>["onRecoverCleaner"];
   cleanerRecoveryByGroup: ComponentProps<typeof TranslationDiagnosticModal>["cleanerRecoveryByGroup"];
   apiKeyReadyByGroup: ComponentProps<typeof TranslationDiagnosticModal>["apiKeyReadyByGroup"];
+
+  // 10. System Logs Modal
+  isLogsOpen?: boolean;
+  onCloseLogs?: () => void;
+  onOpenLogs?: () => void;
 }
 
 export function WorkspaceModalsHost(props: WorkspaceModalsHostProps): ReactNode {
@@ -243,6 +249,10 @@ export function WorkspaceModalsHost(props: WorkspaceModalsHostProps): ReactNode 
     onRecoverCleaner,
     cleanerRecoveryByGroup,
     apiKeyReadyByGroup,
+
+    isLogsOpen,
+    onCloseLogs,
+    onOpenLogs,
   } = props;
 
   return (
@@ -291,6 +301,7 @@ export function WorkspaceModalsHost(props: WorkspaceModalsHostProps): ReactNode 
         onNsfwBypassModeChange={onNsfwBypassModeChange}
         autoProceedOnReview={autoProceedOnReview}
         onAutoProceedOnReviewChange={onAutoProceedOnReviewChange}
+        onOpenLogs={onOpenLogs}
       />
 
       {/* 3. Find & Replace Dialog */}
@@ -679,6 +690,13 @@ export function WorkspaceModalsHost(props: WorkspaceModalsHostProps): ReactNode 
         onRecoverCleaner={onRecoverCleaner}
         cleanerRecoveryByGroup={cleanerRecoveryByGroup}
         apiKeyReadyByGroup={apiKeyReadyByGroup}
+        onOpenLogs={onOpenLogs}
+      />
+
+      {/* 10. System Logs Modal */}
+      <SystemLogsModal
+        isOpen={Boolean(isLogsOpen)}
+        onClose={onCloseLogs ?? (() => {})}
       />
     </>
   );

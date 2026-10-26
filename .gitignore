@@ -107,3 +107,6 @@ patch-probe.md
 # Saved local user projects
 /saved_projects/
 
+# Browser extension packages
+*.crx
+

@@ -43,6 +43,7 @@ import {
   RemnantConfirmationStore,
 } from "@/lib/cleaning/remnantReview";
 import type { BackgroundEligibilityState } from "@/lib/translation/pageEligibility";
+import { logError } from "@/lib/logger/clientLogger";
 
 const POLL_INTERVAL_MS = 500;
 const CURRENT_PIPELINE_VERSION = "2.3.1-enclosed-backing";
@@ -871,6 +872,14 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       setProgressState((previous) => (previous?.pageUrl === pageUrl ? undefined : previous));
     }
     if (caught instanceof PollingCancelled || (caught && typeof caught === "object" && "name" in caught && caught.name === "AbortError")) return;
+
+    logError(
+      "clean",
+      `การคลีนภาพล้มเหลว: ${caught instanceof Error ? caught.message : String(caught)}`,
+      caught instanceof Error ? { message: caught.message, stack: caught.stack } : caught,
+      caught instanceof Error ? caught.stack : undefined,
+    );
+
     if (caught instanceof CleaningClientError && caught.status === 503) {
       setError({ message: caught.message, recovery: "start-local-service" });
       return;

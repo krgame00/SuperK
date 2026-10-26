@@ -25,7 +25,8 @@ import {
   type AiMaskViewMode,
   type GeminiMaskReviewPayload,
 } from "@/lib/cleaning/aiMaskInspector";
-import { applyBrush, type BrushMode, type MaskPoint } from "@/lib/cleaning/maskEdits";
+import { applyBrush, dilateMask, type BrushMode, type MaskPoint } from "@/lib/cleaning/maskEdits";
+import { inpaintCrop } from "@/lib/cleaning/client";
 import { findRegionForCandidate } from "@/lib/cleaning/remnantReview";
 import type {
   CleanerOverride,
@@ -33,7 +34,7 @@ import type {
   PixelRect,
   ManualRegionAction,
 } from "@/lib/cleaning/types";
-import { undoManager } from "@/lib/undoManager";
+import { undoManager, type UndoActionKind } from "@/lib/undoManager";
 
 interface MaskEditorProps {
   sourceUrl: string;
@@ -251,7 +252,13 @@ export function MaskEditor({
 
   // The manager also owns unrelated workspace edits. Retire only callbacks
   // belonging to a restored region, and never replay into another selection.
-  const pushMaskUndo = (action: { label: string; undo: () => void; redo: () => void }) => {
+  const pushMaskUndo = (action: {
+    label: string;
+    undo: () => void;
+    redo: () => void;
+    kind?: UndoActionKind;
+    dispose?: () => void;
+  }) => {
     const key = loadedRegionRef.current;
     const generation = maskGenerationsRef.current.get(key) ?? 0;
     const guard = (callback: () => void) => () => {
@@ -259,7 +266,13 @@ export function MaskEditor({
         (maskGenerationsRef.current.get(key) ?? 0) !== generation) return;
       callback();
     };
-    undoManager.push({ label: action.label, undo: guard(action.undo), redo: guard(action.redo) });
+    undoManager.push({
+      label: action.label,
+      undo: guard(action.undo),
+      redo: guard(action.redo),
+      kind: action.kind ?? "raster",
+      dispose: action.dispose,
+    });
   };
 
   const snapshotOpsBase = () => {
@@ -287,6 +300,9 @@ export function MaskEditor({
   const selectedRegion = regions.find(region => region.id === regionId);
   const currentIndex = regions.findIndex(region => region.id === regionId);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isFastInpainting, setIsFastInpainting] = useState(false);
+  const [dilationRadius, setDilationRadius] = useState(0);
+  const baseRegionMaskRef = useRef<Map<string, ImageData>>(new Map());
   const [brushPoint, setBrushPoint] = useState<{ x: number; y: number }>({
     x: 0,
     y: 0,
@@ -402,6 +418,9 @@ export function MaskEditor({
       }
       undoDisposers.length = 0;
       regionSnapshots.clear();
+      baseRegionMaskRef.current.clear();
+      cachedSourceImgRef.current = null;
+      cachedCleanImgRef.current = null;
       opsBaseRef.current = null;
       imageDataRef.current = undefined;
       strokeOpsRef.current = [];
@@ -496,9 +515,12 @@ export function MaskEditor({
         // Returning to a region the user already edited: keep their strokes
         // (undo history restarts from the restored state).
         renderMask(snapshot);
+        baseRegionMaskRef.current.set(key, cloneImageData(snapshot));
       } else {
         renderMask(source);
+        baseRegionMaskRef.current.set(key, cloneImageData(source));
       }
+      setDilationRadius(0);
       snapshotOpsBase();
       loadedRegionRef.current = key;
     };
@@ -612,12 +634,15 @@ export function MaskEditor({
       base: opsBaseRef.current,
       ops: [...strokeOpsRef.current],
     };
-    activeUndoDisposersRef.current.push(() => {
+    const dispose = () => {
       holder.base = null;
       holder.ops = [];
-    });
+    };
+    activeUndoDisposersRef.current.push(dispose);
     pushMaskUndo({
       label: "แก้ Mask",
+      kind: "raster",
+      dispose,
       undo: () => {
         if (holder.base) renderReplayedOps(holder.base, holder.ops, startIndex);
       },
@@ -625,6 +650,107 @@ export function MaskEditor({
         if (holder.base) renderReplayedOps(holder.base, holder.ops, endIndex);
       },
     });
+    if (imageDataRef.current) {
+      baseRegionMaskRef.current.set(loadedRegionRef.current, cloneImageData(imageDataRef.current));
+      setDilationRadius(0);
+    }
+  };
+
+  const handleDilationChange = (radius: number) => {
+    setDilationRadius(radius);
+    if (!selectedRegion || !imageDataRef.current) return;
+    const base = baseRegionMaskRef.current.get(loadedRegionRef.current);
+    if (!base) return;
+    if (radius <= 0) {
+      renderMask(normalizeDisplayMask(base, selectedRegion.rect));
+      setStatusMessage("ขนาด Mask ปกติ");
+      return;
+    }
+    const dilated = dilateMask(base, radius, selectedRegion.rect);
+    renderMask(normalizeDisplayMask(dilated, selectedRegion.rect));
+    setStatusMessage(`ขยายขอบ Mask +${radius}px (Dilation)`);
+  };
+
+  const handleFastCropInpaint = async () => {
+    if (submittingRef.current || !selectedRegion || !imageDataRef.current) return;
+    const r = selectedRegion.rect;
+    if (!r || r.width <= 0 || r.height <= 0) return;
+
+    const sourceImg = await resolveLoadedImage(sourceUrl, cachedSourceImgRef, true);
+    if (!sourceImg) {
+      setStatusMessage("ไม่สามารถโหลดภาพต้นฉบับเพื่อคลีนเฉพาะจุดได้");
+      return;
+    }
+
+    submittingRef.current = true;
+    setIsFastInpainting(true);
+    setStatusMessage("⚡ กำลังคลีนเฉพาะจุดด้วย Fast LaMa…");
+    const started = performance.now();
+
+    try {
+      const pad = 16;
+      const x0 = Math.max(0, r.x - pad);
+      const y0 = Math.max(0, r.y - pad);
+      const x1 = Math.min(canvasSize.width, r.x + r.width + pad);
+      const y1 = Math.min(canvasSize.height, r.y + r.height + pad);
+      const cropW = Math.max(1, x1 - x0);
+      const cropH = Math.max(1, y1 - y0);
+
+      const imgCanvas = document.createElement("canvas");
+      imgCanvas.width = cropW;
+      imgCanvas.height = cropH;
+      const imgCtx = imgCanvas.getContext("2d");
+      if (!imgCtx) throw new Error("Canvas context creation failed");
+      imgCtx.drawImage(sourceImg, x0, y0, cropW, cropH, 0, 0, cropW, cropH);
+      const cropImgBlob = await canvasToBlob(imgCanvas);
+
+      const maskCanvas = document.createElement("canvas");
+      maskCanvas.width = cropW;
+      maskCanvas.height = cropH;
+      const maskCtx = maskCanvas.getContext("2d");
+      if (!maskCtx) throw new Error("Mask canvas context creation failed");
+
+      const currentMask = imageDataRef.current;
+      const maskCropData = maskCtx.createImageData(cropW, cropH);
+      for (let y = 0; y < cropH; y++) {
+        const srcY = y0 + y;
+        const srcRow = srcY * currentMask.width;
+        const dstRow = y * cropW;
+        for (let x = 0; x < cropW; x++) {
+          const srcX = x0 + x;
+          const srcIdx = (srcRow + srcX) * 4;
+          const dstIdx = (dstRow + x) * 4;
+          const active = currentMask.data[srcIdx + 3] > 0 && currentMask.data[srcIdx + 2] !== 255;
+          if (active) {
+            maskCropData.data[dstIdx] = 255;
+            maskCropData.data[dstIdx + 1] = 255;
+            maskCropData.data[dstIdx + 2] = 255;
+            maskCropData.data[dstIdx + 3] = 255;
+          } else {
+            maskCropData.data[dstIdx + 3] = 255;
+          }
+        }
+      }
+      maskCtx.putImageData(maskCropData, 0, 0);
+      const cropMaskBlob = await canvasToBlob(maskCanvas);
+
+      await inpaintCrop(cropImgBlob, cropMaskBlob, {
+        cleaner,
+        dilation: dilationRadius,
+      });
+
+      const authMaskBlob = await encodeAuthorizedMask(currentMask, r);
+      await onRetry(regionId, authMaskBlob, cleaner, "force-clean");
+
+      const elapsed = Math.round(performance.now() - started);
+      setStatusMessage(`⚡ คลีนจุด #${currentIndex + 1} เรียบร้อย (${elapsed}ms)`);
+      setComparison("cleaned");
+    } catch (err) {
+      setStatusMessage(err instanceof Error ? err.message : "คลีนเฉพาะจุดไม่สำเร็จ");
+    } finally {
+      submittingRef.current = false;
+      setIsFastInpainting(false);
+    }
   };
 
   // Quick Action: Fill Region with Mask
@@ -647,12 +773,15 @@ export function MaskEditor({
     }
     renderMask(updated);
     const holder: { before: ImageData | null; after: ImageData | null } = { before, after: updated };
-    activeUndoDisposersRef.current.push(() => {
+    const dispose = () => {
       holder.before = null;
       holder.after = null;
-    });
+    };
+    activeUndoDisposersRef.current.push(dispose);
     pushMaskUndo({
       label: "เติม Mask เต็มกรอบ",
+      kind: "raster",
+      dispose,
       undo: () => {
         if (!holder.before) return;
         renderMask(cloneImageData(holder.before));
@@ -693,12 +822,15 @@ export function MaskEditor({
     }
     renderMask(updated);
     const holder: { before: ImageData | null; after: ImageData | null } = { before, after: updated };
-    activeUndoDisposersRef.current.push(() => {
+    const dispose = () => {
       holder.before = null;
       holder.after = null;
-    });
+    };
+    activeUndoDisposersRef.current.push(dispose);
     pushMaskUndo({
       label: "ล้าง Mask ในกรอบ",
+      kind: "raster",
+      dispose,
       undo: () => {
         if (!holder.before) return;
         renderMask(cloneImageData(holder.before));
@@ -1193,12 +1325,15 @@ export function MaskEditor({
       before,
       after,
     };
-    activeUndoDisposersRef.current.push(() => {
+    const dispose = () => {
       holder.before = null;
       holder.after = null;
-    });
+    };
+    activeUndoDisposersRef.current.push(dispose);
     pushMaskUndo({
       label: "ใช้ Mask ที่ AI แนะนำ",
+      kind: "raster",
+      dispose,
       undo: () => {
         if (!holder.before) return;
         renderMask(cloneImageData(holder.before));
@@ -1825,6 +1960,29 @@ export function MaskEditor({
                 <RotateCcw className="h-3.5 w-3.5" />
               </button>
             </div>
+
+            {/* Mask Dilation Multiplier */}
+            <div className="flex items-center gap-1.5 border-l border-border/80 pl-2">
+              <label className="flex items-center gap-1.5 text-xs text-muted" title="ขยายขอบ Mask อัตโนมัติ (Dilation) เพื่อลบคราบเงาและเส้นขอบตัวหนังสือ">
+                <span className="text-foreground font-medium">ขยายขอบ:</span>
+                <select
+                  disabled={isSubmitting || isFastInpainting}
+                  value={dilationRadius}
+                  onChange={(event) => handleDilationChange(Number(event.target.value))}
+                  className="h-7 rounded-md border border-border/80 bg-surface px-1.5 text-xs font-medium text-amber-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary cursor-pointer"
+                  aria-label="ขยายขอบ Mask"
+                >
+                  <option value={0} className="bg-surface text-foreground">ปกติ (0px)</option>
+                  <option value={1} className="bg-surface text-foreground">+1px</option>
+                  <option value={2} className="bg-surface text-foreground">+2px</option>
+                  <option value={3} className="bg-surface text-foreground">+3px</option>
+                  <option value={4} className="bg-surface text-foreground">+4px</option>
+                  <option value={6} className="bg-surface text-foreground">+6px</option>
+                  <option value={8} className="bg-surface text-foreground">+8px</option>
+                  <option value={12} className="bg-surface text-foreground">+12px</option>
+                </select>
+              </label>
+            </div>
           </div>
 
           {/* Right: One-Click Clean, Fallback Buttons */}
@@ -1838,6 +1996,17 @@ export function MaskEditor({
               >
                 <RotateCcw className="h-3.5 w-3.5" />
                 <span>กู้ภาพเดิมทั้งจุด</span>
+              </button>
+              {/* ⚡ Fast-Path Instant Crop Inpaint */}
+              <button
+                type="button"
+                disabled={isSubmitting || isFastInpainting || !regionId || !selectedRegion}
+                onClick={handleFastCropInpaint}
+                title="คลีนเฉพาะจุดทันทีแบบ Real-time (200ms) โดยใช้ LaMa ผ่านระบบ Fast-Path"
+                className="flex h-8 items-center gap-1.5 rounded-lg bg-emerald-500/20 border border-emerald-500/40 px-3 text-xs font-bold text-emerald-200 transition-all hover:bg-emerald-500/30 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              >
+                <Sparkles className="h-3.5 w-3.5 text-emerald-300" />
+                <span>{isFastInpainting ? "กำลังคลีน…" : "⚡ คลีนทันที"}</span>
               </button>
               {/* 🪄 Instant 1-Click Clean Button */}
               <button
