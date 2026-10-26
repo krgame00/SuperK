@@ -394,6 +394,9 @@ export async function requestGemini<T = unknown>(
           }
           keyOffset += 1;
           fallbackCount++;
+          if (keyOffset >= 2 && modelIdx < models.length - 1) {
+            break keyLoop;
+          }
           continue keyLoop;
         }
 
@@ -421,6 +424,12 @@ export async function requestGemini<T = unknown>(
           retryAfterMsFromHeaders(response.headers, now()),
         );
         firstHttpError ??= error;
+
+        const rawMsg = upstreamMessage(data, response.status);
+        if (isHighDemandError(response.status, rawMsg) && modelIdx < models.length - 1) {
+          fallbackCount++;
+          break keyLoop;
+        }
 
         if (
           (response.status === 500 || response.status === 503) &&

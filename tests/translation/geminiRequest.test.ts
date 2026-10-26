@@ -137,6 +137,32 @@ describe("requestGemini", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
+  test("503 high demand skips immediately to next model without burning remaining keys", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse(
+          { error: { message: "This model is currently experiencing high demand. Spikes in demand are usually temporary." } },
+          503,
+        ),
+      )
+      .mockResolvedValueOnce(jsonResponse(successBody));
+
+    const result = await requestGemini({
+      apiKeys: ["key-a", "key-b", "key-c"],
+      models: ["model-overloaded", "model-next"],
+      payload: { contents: [] },
+      fetchImpl,
+      sleep: vi.fn().mockResolvedValue(undefined),
+    });
+
+    expect(result.model).toBe("model-next");
+    expect(result.keyIndex).toBe(0);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(String(fetchImpl.mock.calls[0][0])).toContain("/models/model-overloaded:generateContent");
+    expect(String(fetchImpl.mock.calls[1][0])).toContain("/models/model-next:generateContent");
+  });
+
   test("transport timeout tries the next key before abandoning Flash Lite", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()

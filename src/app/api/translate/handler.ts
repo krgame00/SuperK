@@ -399,8 +399,8 @@ async function handleTranslationRequest(
             models,
             payload,
             initialKeyIndex,
-            attemptTimeoutMs: 15_000,
-            totalBudgetMs: 90_000,
+            attemptTimeoutMs: 28_000,
+            totalBudgetMs: 120_000,
             signal,
           })
         : await executeGeminiTranslation<GeminiResponseData>({
