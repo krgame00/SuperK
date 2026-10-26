@@ -685,7 +685,7 @@ export function MaskEditor({
     submittingRef.current = true;
     setIsFastInpainting(true);
     setStatusMessage("⚡ กำลังคลีนเฉพาะจุดด้วย Fast LaMa…");
-    const started = performance.now();
+    const started = Date.now();
 
     try {
       const pad = 16;
@@ -742,7 +742,7 @@ export function MaskEditor({
       const authMaskBlob = await encodeAuthorizedMask(currentMask, r);
       await onRetry(regionId, authMaskBlob, cleaner, "force-clean");
 
-      const elapsed = Math.round(performance.now() - started);
+      const elapsed = Math.round(Date.now() - started);
       setStatusMessage(`⚡ คลีนจุด #${currentIndex + 1} เรียบร้อย (${elapsed}ms)`);
       setComparison("cleaned");
     } catch (err) {

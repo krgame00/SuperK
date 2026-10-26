@@ -18,7 +18,7 @@ import {
   Server,
   Monitor,
 } from "lucide-react";
-import type { LogCategory, LogEntry, LogLevel, LogSource } from "@/lib/logger/types";
+import type { LogEntry, LogLevel, LogSource } from "@/lib/logger/types";
 import { getLogs, clearLogs, subscribeLogs } from "@/lib/logger/clientLogger";
 
 export interface SystemLogsModalProps {
@@ -317,6 +317,44 @@ export function SystemLogsModal({
               <Info className="h-3.5 w-3.5" />
               Info ({counts.infos})
             </button>
+            <div className="mx-1 h-4 w-px bg-border" />
+            <div className="flex items-center rounded-lg border border-border bg-surface p-0.5 text-[11px]">
+              <button
+                type="button"
+                onClick={() => setSourceFilter("ALL")}
+                className={`rounded px-2 py-0.5 font-medium transition-colors ${
+                  sourceFilter === "ALL"
+                    ? "bg-surface-hover text-foreground"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                ทั้งหมด
+              </button>
+              <button
+                type="button"
+                onClick={() => setSourceFilter("client")}
+                className={`flex items-center gap-1 rounded px-2 py-0.5 font-medium transition-colors ${
+                  sourceFilter === "client"
+                    ? "bg-surface-hover text-foreground"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                <Monitor className="h-3 w-3" />
+                Client
+              </button>
+              <button
+                type="button"
+                onClick={() => setSourceFilter("server")}
+                className={`flex items-center gap-1 rounded px-2 py-0.5 font-medium transition-colors ${
+                  sourceFilter === "server"
+                    ? "bg-surface-hover text-foreground"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                <Server className="h-3 w-3" />
+                Server
+              </button>
+            </div>
           </div>
 
           {/* Search & Actions */}
@@ -484,7 +522,7 @@ export function SystemLogsModal({
         {/* Footer */}
         <div className="flex items-center justify-between border-t border-border bg-surface-hover/20 px-5 py-3 text-xs">
           <p className="text-muted">
-            💡 กด <span className="text-primary font-semibold">"คัดลอก"</span> เพื่อนำข้อมูล Log ส่งให้ AI หรือทีมพัฒนาวิเคราะห์แก้บั๊กได้ทันที
+            💡 กด <span className="text-primary font-semibold">&ldquo;คัดลอก&rdquo;</span> เพื่อนำข้อมูล Log ส่งให้ AI หรือทีมพัฒนาวิเคราะห์แก้บั๊กได้ทันที
           </p>
           <button
             type="button"
