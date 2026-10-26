@@ -400,7 +400,10 @@ function findAllowedThaiLatinIndices(text, chars) {
             if (!token)
                 continue;
             const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-            const regex = new RegExp(`(?<=$|[^A-Za-z])${escaped}(?=$|[^A-Za-z])`, "giu");
+            const isWord = /^[A-Za-z0-9_-]+$/u.test(token);
+            const regex = isWord
+                ? new RegExp(`(?<=^|[^A-Za-z0-9])${escaped}(?=$|[^A-Za-z0-9])`, "giu")
+                : new RegExp(escaped, "gu");
             for (const m of text.matchAll(regex)) {
                 const startUtf16 = m.index ?? 0;
                 let curUtf16 = startUtf16;
@@ -475,7 +478,7 @@ function inspectTargetText(text, target) {
         }
         // Only known punctuation, symbols, spacing and explicit formatting can fall through.
         // Runtime Unicode tables cannot verify unassigned/private-use/surrogate characters.
-        if (/[\p{P}\p{S}\p{Z}]/u.test(char) || /^[\t\n\r]$/u.test(char) || ["\u200B", "\uFEFF"].includes(char))
+        if (/[\p{P}\p{S}\p{Z}]/u.test(char) || /^[\t\n\r]$/u.test(char) || ["\u200B", "\uFEFF"].includes(char) || allowed(char, index))
             continue;
         bad.add(char);
     }

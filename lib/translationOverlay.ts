@@ -2411,12 +2411,15 @@ export const applyTranslationOverlay = async (
           const latinTokens = currentText.match(/[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*/g) || [];
           const offendingSet = new Set(inspection.offendingCharacters);
           const tokensToWhitelist = latinTokens.filter(t => Array.from(t).some(ch => offendingSet.has(ch)));
+          const finalTokensToWhitelist = tokensToWhitelist.length > 0
+            ? tokensToWhitelist
+            : inspection.offendingCharacters;
           cleanScript.hidden = !isExcludedScript;
           cleanScript.disabled = !isExcludedScript;
-          whitelistToken.hidden = !isExcludedScript || tokensToWhitelist.length === 0;
-          whitelistToken.disabled = !isExcludedScript || tokensToWhitelist.length === 0;
-          if (tokensToWhitelist.length > 0) {
-            whitelistToken.textContent = `➕ อนุญาต "${tokensToWhitelist.slice(0, 2).join(", ")}"`;
+          whitelistToken.hidden = !isExcludedScript || finalTokensToWhitelist.length === 0;
+          whitelistToken.disabled = !isExcludedScript || finalTokensToWhitelist.length === 0;
+          if (finalTokensToWhitelist.length > 0) {
+            whitelistToken.textContent = `➕ อนุญาต "${finalTokensToWhitelist.slice(0, 2).join(", ")}"`;
           }
           askAiReview.hidden = !b.original_text;
           askAiReview.disabled = isRequestingAiSuggestion || !b.original_text;
@@ -2473,8 +2476,11 @@ export const applyTranslationOverlay = async (
           const latinTokens = currentText.match(/[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*/g) || [];
           const offendingSet = new Set(inspection.offendingCharacters);
           const tokensToWhitelist = latinTokens.filter(t => Array.from(t).some(ch => offendingSet.has(ch)));
-          if (tokensToWhitelist.length > 0) {
-            saveCustomAllowedThaiTokens(tokensToWhitelist);
+          const finalTokensToWhitelist = tokensToWhitelist.length > 0
+            ? tokensToWhitelist
+            : inspection.offendingCharacters;
+          if (finalTokensToWhitelist.length > 0) {
+            saveCustomAllowedThaiTokens(finalTokensToWhitelist);
             const baseReview = b.translationReview ?? displayedReview();
             if (baseReview) {
               b.translationReview = {

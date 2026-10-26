@@ -114,6 +114,14 @@ describe("strict script eligibility", () => {
     removeAllowedThaiTokens("Rimuru");
   });
 
+  it("permits custom non-Latin/symbol tokens when explicitly whitelisted", () => {
+    addAllowedThaiTokens("ヴィヴィ");
+    const result = inspectTargetText("คุณ ヴィヴィ มาแล้ว", "th");
+    expect(result.status).toBe("eligible");
+    expect(result.offendingCharacters).toEqual([]);
+    removeAllowedThaiTokens("ヴィヴィ");
+  });
+
   it("normalizes Japanese prolonged sound mark (ー U+30FC) to Em dash for Thai while preserving for Japanese", () => {
     const rawThai = "ไม่ได้หรอกนะー ต้องใช้ให้เต็มที่หน่อยสิ";
     const inspection = inspectTargetText(rawThai, "th");
