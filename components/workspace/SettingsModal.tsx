@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { type GlossaryEntry } from "@/lib/translation/glossary";
-import { TARGET_LANGUAGES, resolveTargetLanguage } from "@/lib/languagePolicy";
+import { TARGET_LANGUAGES, resolveTargetLanguage, getAllowedThaiTokens, saveCustomAllowedThaiTokens, removeAllowedThaiTokens } from "@/lib/languagePolicy";
 import { MANUAL_IMAGE_MODEL_IDS } from "@/lib/translation/imageModelChoices";
 import { workspaceResourceManager } from "@/lib/lifecycle/workspaceResourceManager";
 import { Plus, Trash2, BookText, Flame, X, ChevronDown, Download, Folder, Search, Check, Sparkles, Power, AlertTriangle, Loader2, Upload, Type, ScrollText } from "lucide-react";
@@ -188,6 +188,8 @@ export function SettingsModal({
   const apiKeySlots = splitApiKeySlots(userApiKey, apiKeyLimit);
   const [newSource, setNewSource] = useState("");
   const [newTarget, setNewTarget] = useState("");
+  const [customTokens, setCustomTokens] = useState<readonly string[]>(() => getAllowedThaiTokens());
+  const [newCustomToken, setNewCustomToken] = useState("");
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
   const [fontPickerOpen, setFontPickerOpen] = useState(false);
@@ -1286,6 +1288,69 @@ export function SettingsModal({
                 />
               </label>
             </div>
+          </div>
+
+          <div className="rounded-xl border border-border/70 bg-background/45 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <div>
+                <span className="text-xs font-medium text-foreground">คำ/ตัวย่อภาษาอังกฤษที่อนุญาต (Whitelist)</span>
+                <p className="text-[11px] text-muted">คำที่ไม่ต้องการให้ระบบแจ้งเตือนว่ามีภาษาอื่นปน เช่น AV, NTR, 3D, Vivi</p>
+              </div>
+              <span className="text-[10px] text-muted">{customTokens.length} คำ</span>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!newCustomToken.trim()) return;
+                saveCustomAllowedThaiTokens([newCustomToken.trim()]);
+                setCustomTokens(getAllowedThaiTokens());
+                setNewCustomToken("");
+              }}
+              className="flex gap-2 mb-2"
+            >
+              <input
+                id="settings-custom-token-input"
+                aria-label="เพิ่มคำที่อนุญาต"
+                type="text"
+                value={newCustomToken}
+                onChange={(e) => setNewCustomToken(e.target.value)}
+                placeholder="เช่น AV, NTR, Vivi"
+                className="flex-1 rounded border border-surface-hover bg-background px-2 py-1 text-xs text-foreground placeholder:text-muted/60 focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+              <button
+                type="submit"
+                className="flex items-center justify-center rounded bg-primary px-2.5 py-1 text-xs text-primary-content hover:bg-primary-hover cursor-pointer"
+                title="เพิ่มคำที่อนุญาต"
+                aria-label="เพิ่มคำที่อนุญาต"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            </form>
+
+            {customTokens.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pt-1">
+                {customTokens.map((token) => (
+                  <span
+                    key={token}
+                    className="inline-flex items-center gap-1 rounded bg-surface px-2 py-0.5 text-[11px] font-medium text-foreground border border-border/60"
+                  >
+                    {token}
+                    <button
+                      type="button"
+                      aria-label={`ลบคำ ${token}`}
+                      onClick={() => {
+                        removeAllowedThaiTokens(token);
+                        setCustomTokens(getAllowedThaiTokens());
+                      }}
+                      className="text-muted hover:text-destructive cursor-pointer ml-0.5"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           {onSfxModeChange && (

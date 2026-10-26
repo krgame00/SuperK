@@ -4,7 +4,7 @@ import { calibrateOutputBodyMetric, resolveSourceFontSize, sourceRegionKey, manu
 import { measureTextSelection, rotateLocalPoint, type SelectionRect } from "./textSelectionBounds";
 import { guardQualityReview, unavailableReview, invalidateQualityReview, isReviewCurrent } from "./translation/qualityReview";
 import type { TranslationReview } from "./translation/qualityReview";
-import { inspectTargetText, formatOffendingCharacters, LANGUAGE_POLICY_VERSION, repairExcludedScriptText } from "./languagePolicy";
+import { inspectTargetText, formatOffendingCharacters, LANGUAGE_POLICY_VERSION, repairExcludedScriptText, saveCustomAllowedThaiTokens } from "./languagePolicy";
 
 export { repairExcludedScriptText };
 import {
@@ -2336,7 +2336,8 @@ export const applyTranslationOverlay = async (
         const updateReviewPanel = () => {
           const review = displayedReview();
           const currentText = b.t || b.translated || "";
-          const isExcludedScript = inspectTargetText(currentText, effectiveTarget).reason === "excluded-script";
+          const inspection = inspectTargetText(currentText, effectiveTarget);
+          const isExcludedScript = inspection.reason === "excluded-script";
           const autoRepairedPreview = isExcludedScript ? repairExcludedScriptText(currentText, effectiveTarget) : "";
           const effectiveSuggestion = review?.suggestion || (b.translationReview?.suggestion && inspectTargetText(b.translationReview.suggestion, effectiveTarget).status === "eligible" ? b.translationReview.suggestion : "") || (autoRepairedPreview && autoRepairedPreview !== currentText.trim() ? autoRepairedPreview : "");
           reviewPanel.hidden = !review && !b.original_text;
@@ -2345,8 +2346,16 @@ export const applyTranslationOverlay = async (
           reviewStatus.textContent = review ? `${reviewLabels[review.status]}${review.reason ? `: ${review.reason}` : ""}` : "";
           suggestion.textContent = effectiveSuggestion ? `💡 คำแปลที่แนะนำ: ${effectiveSuggestion}` : "";
           const current = isReviewCurrent(b) && review?.status !== "stale";
+          const latinTokens = currentText.match(/[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*/g) || [];
+          const offendingSet = new Set(inspection.offendingCharacters);
+          const tokensToWhitelist = latinTokens.filter(t => Array.from(t).some(ch => offendingSet.has(ch)));
           cleanScript.hidden = !isExcludedScript;
           cleanScript.disabled = !isExcludedScript;
+          whitelistToken.hidden = !isExcludedScript || tokensToWhitelist.length === 0;
+          whitelistToken.disabled = !isExcludedScript || tokensToWhitelist.length === 0;
+          if (tokensToWhitelist.length > 0) {
+            whitelistToken.textContent = `➕ อนุญาต "${tokensToWhitelist.slice(0, 2).join(", ")}"`;
+          }
           askAiReview.hidden = !b.original_text;
           askAiReview.disabled = isRequestingAiSuggestion || !b.original_text;
           askAiReview.textContent = isRequestingAiSuggestion ? "⏳ กำลังขอคำแนะนำ AI..." : "✨ ขอคำแนะนำจาก AI";
@@ -2356,7 +2365,7 @@ export const applyTranslationOverlay = async (
           dismissReview.disabled = !current || !["suggested", "needs_review", "unavailable"].includes(review?.status ?? "");
           restoreOriginal.hidden = review?.status !== "accepted" || review.originalTranslation === undefined;
           restoreOriginal.disabled = !current;
-          for (const button of [cleanScript, askAiReview, acceptReview, dismissReview, restoreOriginal]) {
+          for (const button of [cleanScript, whitelistToken, askAiReview, acceptReview, dismissReview, restoreOriginal]) {
             button.style.display = button.hidden ? "none" : "flex";
             button.style.opacity = button.disabled ? "0.5" : "1";
             button.style.cursor = button.disabled ? "default" : "pointer";
@@ -2396,6 +2405,30 @@ export const applyTranslationOverlay = async (
         });
         cleanScript.style.background = "#d97706";
         cleanScript.style.borderColor = "#f59e0b";
+        const whitelistToken = reviewAction("whitelist-token", "➕ อนุญาตคำนี้", () => {
+          const currentText = b.t || b.translated || textarea.value || "";
+          const inspection = inspectTargetText(currentText, effectiveTarget);
+          const latinTokens = currentText.match(/[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*/g) || [];
+          const offendingSet = new Set(inspection.offendingCharacters);
+          const tokensToWhitelist = latinTokens.filter(t => Array.from(t).some(ch => offendingSet.has(ch)));
+          if (tokensToWhitelist.length > 0) {
+            saveCustomAllowedThaiTokens(tokensToWhitelist);
+            const baseReview = b.translationReview ?? displayedReview();
+            if (baseReview) {
+              b.translationReview = {
+                ...baseReview,
+                status: "dismissed",
+                reviewedText: currentText,
+                reason: undefined,
+              };
+            }
+            renderBubble();
+            updateReviewPanel();
+            saveAdjustment();
+          }
+        });
+        whitelistToken.style.background = "#059669";
+        whitelistToken.style.borderColor = "#10b981";
         const askAiReview = reviewAction("ask-ai", "✨ ขอคำแนะนำจาก AI", async () => {
           if (isRequestingAiSuggestion || !b.original_text) return;
           isRequestingAiSuggestion = true;

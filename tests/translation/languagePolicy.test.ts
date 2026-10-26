@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TARGET_LANGUAGES, inspectTargetText, resolveTargetLanguage, normalizeTargetTranslationPayload } from "@/lib/languagePolicy";
+import { TARGET_LANGUAGES, inspectTargetText, resolveTargetLanguage, normalizeTargetTranslationPayload, addAllowedThaiTokens, removeAllowedThaiTokens } from "@/lib/languagePolicy";
 
 describe("canonical language catalog", () => {
   it("enumerates broad writing systems with exact, unambiguous aliases", () => {
@@ -93,10 +93,25 @@ describe("strict script eligibility", () => {
     "นับจากนี้ไป ได้โปรดให้ฉันได้ทำตามสัญชาตญาณสายเลือด และรับใช้เจ้านายของฉัน ท่านลอร์ดปีศาจวัว ในฐานะแม่โคสาวโง่เง่าแรงค์ S อย่างเชื่อฟังด้วยเถอะค่ะ!",
     "นักผจญภัยระดับ S และคลาส A+",
     "เวทมนตร์ S-Rank และ S-Class",
+    "คือว่าคุณวิววิคะ มีติดต่องานแสดง AV มาอีกแล้วค่ะ...",
+    "อนิเมะเรื่องนี้มีทั้ง OVA และ OAD ให้ดู",
+    "สาว OL คนนั้นชอบอ่านการ์ตูน BL",
+    "เกมแนว NTR ติดเรต R-18G",
+    "ฟังเสียง ASMR ของน้อง VTuber",
+    "ติดต่องานผ่าน LINE ได้เลย",
   ])("permits standard international loan tokens in Thai: %s", (text) => {
     const result = inspectTargetText(text, "th");
     expect(result.status).toBe("eligible");
     expect(result.offendingCharacters).toEqual([]);
+  });
+
+  it("permits custom whitelisted tokens in Thai", () => {
+    addAllowedThaiTokens("KFC", "Rimuru");
+    const result = inspectTargetText("ไปกิน KFC กับคุณ Rimuru กันเถอะ", "th");
+    expect(result.status).toBe("eligible");
+    expect(result.offendingCharacters).toEqual([]);
+    removeAllowedThaiTokens("KFC");
+    removeAllowedThaiTokens("Rimuru");
   });
 });
 

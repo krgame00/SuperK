@@ -636,12 +636,12 @@ test("fixed image route advances initialKeyIndex round-robin and uses 15s timeou
 
   await makeReq();
   const firstCall = requestGeminiMock.mock.calls[0][0];
-  expect(firstCall.attemptTimeoutMs).toBe(15_000);
+  expect(firstCall.attemptTimeoutMs).toBe(28_000);
   const firstKeyIndex = firstCall.initialKeyIndex ?? 0;
 
   await makeReq();
   const secondCall = requestGeminiMock.mock.calls[1][0];
-  expect(secondCall.attemptTimeoutMs).toBe(15_000);
+  expect(secondCall.attemptTimeoutMs).toBe(28_000);
   expect(secondCall.initialKeyIndex).toBe((firstKeyIndex + 1) % 3);
 });
 

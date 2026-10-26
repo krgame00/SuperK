@@ -149,6 +149,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.TARGET_LANGUAGES = exports.LANGUAGE_POLICY_VERSION = void 0;
 exports.resolveTargetLanguage = resolveTargetLanguage;
 exports.formatOffendingCharacters = formatOffendingCharacters;
+exports.addAllowedThaiTokens = addAllowedThaiTokens;
+exports.removeAllowedThaiTokens = removeAllowedThaiTokens;
+exports.getAllowedThaiTokens = getAllowedThaiTokens;
+exports.saveCustomAllowedThaiTokens = saveCustomAllowedThaiTokens;
 exports.inspectTargetText = inspectTargetText;
 exports.normalizeTargetTranslationPayload = normalizeTargetTranslationPayload;
 exports.repairExcludedScriptText = repairExcludedScriptText;
@@ -316,7 +320,56 @@ function formatOffendingCharacters(characters, limit = 24) {
     const codes = shown.map(character => `U+${character.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")}`).join(" ");
     return [visible, codes ? `[${codes}]` : "", unique.length > shown.length ? `(+${unique.length - shown.length})` : ""].filter(Boolean).join(" ");
 }
-const ALLOWED_THAI_INTL_TOKEN_RE = /(?:(?:\d+|[๐-๙]+)(?:\.\d+)?\s*(?:[kKdDgGpP]|fps|FPS|km|KM|kg|KG|cm|CM|mm|MM|mg|MG|ml|ML|gb|GB|tb|TB|mb|MB|hz|Hz|HZ|st|nd|rd|th)|(?:Lv|LV|lv|No|NO|Ver|VER|ver|Ep|EP|Ch|CH)\.?\s*\d+|(?:แรงค์|แรงก์|แร็งก์|ระดับ|คลาส|เกรด|เทียร์|ขั้น|ไซส์|ขนาด|คัพ|กรุ๊ป|หมู่เลือด|ไทป์|แบบ|รุ่น|วิตามิน|พอยต์|โซน|บล็อก|กลุ่ม|ทีม|ห้อง|เกต|ดันเจี้ยน)\s*(?:SSS|SS|SSR|UR|LR|SR|EX|XXL|XL|XS|AB|[A-Za-z][+-]?)|(?:SSS|SS|SSR|UR|LR|SR|EX|[SABCDEFG])[-\s]?(?:Rank|Class|Tier|Grade|rank|class|tier|grade|RANK|CLASS|TIER|GRADE)|(?:OK|VIP|MVP|VR|AR|AI|TV|PC|SNS|DM|VS|HP|MP|SP|AP|CP|LP|BP|TP|XP|EXP|ATK|DEF|AGI|INT|STR|VIT|DEX|LUK|SPD|CRIT|DPS|AOE|DOT|BUFF|NERF|BOSS|NPC|PK|PVP|PVE|GM|MMO|MMORPG|SSR|SR|UR|LR|SSS|SS|EX|XXL|XL|XS|HD|FHD|UHD|QHD|2D|3D|4D|CG|VFX|SFX|Wi-Fi|DNA|GPS|USB|ATM|CEO|PR|HR|DJ|MC|ID|RPG|BGM|OST|CD|DVD|VCD|FPS|fps|LED|OLED|LCD|CPU|GPU|RAM|ROM|SSD|HDD|OS|UI|UX|API|URL|QR|PIN|OTP|SIM|SMS|PRO|MAX|PLUS|MINI|ULTRA|KO|GG|EZ|AFK|SOS))(?=$|[^A-Za-z])/gu;
+const ALLOWED_THAI_INTL_TOKEN_RE = /(?:(?:\d+|[๐-๙]+)(?:\.\d+)?\s*(?:[kKdDgGpP]|fps|FPS|km|KM|kg|KG|cm|CM|mm|MM|mg|MG|ml|ML|gb|GB|tb|TB|mb|MB|hz|Hz|HZ|st|nd|rd|th)|(?:Lv|LV|lv|No|NO|Ver|VER|ver|Ep|EP|Ch|CH)\.?\s*\d+|(?:แรงค์|แรงก์|แร็งก์|ระดับ|คลาส|เกรด|เทียร์|ขั้น|ไซส์|ขนาด|คัพ|กรุ๊ป|หมู่เลือด|ไทป์|แบบ|รุ่น|วิตามิน|พอยต์|โซน|บล็อก|กลุ่ม|ทีม|ห้อง|เกต|ดันเจี้ยน)\s*(?:SSS|SS|SSR|UR|LR|SR|EX|XXL|XL|XS|AB|[A-Za-z][+-]?)|(?:SSS|SS|SSR|UR|LR|SR|EX|[SABCDEFG])[-\s]?(?:Rank|Class|Tier|Grade|rank|class|tier|grade|RANK|CLASS|TIER|GRADE)|(?:OK|VIP|MVP|VR|AR|AI|TV|PC|SNS|DM|VS|HP|MP|SP|AP|CP|LP|BP|TP|XP|EXP|ATK|DEF|AGI|INT|STR|VIT|DEX|LUK|SPD|CRIT|DPS|AOE|DOT|BUFF|NERF|BOSS|NPC|PK|PVP|PVE|GM|MMO|MMORPG|SSR|SR|UR|LR|SSS|SS|EX|XXL|XL|XS|HD|FHD|UHD|QHD|2D|3D|4D|CG|VFX|SFX|Wi-Fi|DNA|GPS|USB|ATM|CEO|PR|HR|DJ|MC|ID|RPG|BGM|OST|CD|DVD|VCD|FPS|fps|LED|OLED|LCD|CPU|GPU|RAM|ROM|SSD|HDD|OS|UI|UX|API|URL|QR|PIN|OTP|SIM|SMS|PRO|MAX|PLUS|MINI|ULTRA|KO|GG|EZ|AFK|SOS|AV|BL|GL|NTR|BSS|OL|JK|JC|JS|DK|PV|MV|OP|ED|CV|BD|NG|OVA|OAD|ASMR|VTuber|Vtuber|LINE|LN|WN|TL|RAW|HQ|APP|App|WEB|Web|MOBA|CC|DC|R-?18(?:[Gg])?))(?=$|[^A-Za-z])/gu;
+const customAllowedThaiTokens = new Set();
+function addAllowedThaiTokens(...tokens) {
+    for (const token of tokens) {
+        const trimmed = token.trim();
+        if (trimmed) {
+            customAllowedThaiTokens.add(trimmed);
+        }
+    }
+}
+function removeAllowedThaiTokens(token) {
+    const trimmed = token.trim();
+    customAllowedThaiTokens.delete(trimmed);
+    if (typeof window !== "undefined" && typeof window.localStorage !== "undefined") {
+        try {
+            window.localStorage.setItem("manga_custom_allowed_tokens", JSON.stringify(Array.from(customAllowedThaiTokens)));
+        }
+        catch {
+            // ignore
+        }
+    }
+}
+function getAllowedThaiTokens() {
+    return Array.from(customAllowedThaiTokens);
+}
+function saveCustomAllowedThaiTokens(tokens) {
+    addAllowedThaiTokens(...tokens);
+    if (typeof window !== "undefined" && typeof window.localStorage !== "undefined") {
+        try {
+            window.localStorage.setItem("manga_custom_allowed_tokens", JSON.stringify(Array.from(customAllowedThaiTokens)));
+        }
+        catch {
+            // ignore
+        }
+    }
+}
+if (typeof window !== "undefined" && typeof window.localStorage !== "undefined") {
+    try {
+        const saved = window.localStorage.getItem("manga_custom_allowed_tokens");
+        if (saved) {
+            const parsed = JSON.parse(saved);
+            if (Array.isArray(parsed)) {
+                addAllowedThaiTokens(...parsed);
+            }
+        }
+    }
+    catch {
+        // ignore
+    }
+}
 function findAllowedThaiLatinIndices(text, chars) {
     const allowedIndices = new Set();
     const utf16ToCpIdx = new Map();
@@ -335,6 +388,24 @@ function findAllowedThaiLatinIndices(text, chars) {
             if (cpIdx !== undefined)
                 allowedIndices.add(cpIdx);
             curUtf16 += ch.length;
+        }
+    }
+    if (customAllowedThaiTokens.size > 0) {
+        for (const token of customAllowedThaiTokens) {
+            if (!token)
+                continue;
+            const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const regex = new RegExp(`(?<=$|[^A-Za-z])${escaped}(?=$|[^A-Za-z])`, "giu");
+            for (const m of text.matchAll(regex)) {
+                const startUtf16 = m.index ?? 0;
+                let curUtf16 = startUtf16;
+                for (const ch of Array.from(m[0])) {
+                    const cpIdx = utf16ToCpIdx.get(curUtf16);
+                    if (cpIdx !== undefined)
+                        allowedIndices.add(cpIdx);
+                    curUtf16 += ch.length;
+                }
+            }
         }
     }
     return allowedIndices;
