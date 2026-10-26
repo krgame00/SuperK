@@ -685,6 +685,7 @@ export function MaskEditor({
     submittingRef.current = true;
     setIsFastInpainting(true);
     setStatusMessage("⚡ กำลังคลีนเฉพาะจุดด้วย Fast LaMa…");
+    // eslint-disable-next-line react-hooks/purity
     const started = Date.now();
 
     try {
@@ -742,6 +743,7 @@ export function MaskEditor({
       const authMaskBlob = await encodeAuthorizedMask(currentMask, r);
       await onRetry(regionId, authMaskBlob, cleaner, "force-clean");
 
+      // eslint-disable-next-line react-hooks/purity
       const elapsed = Math.round(Date.now() - started);
       setStatusMessage(`⚡ คลีนจุด #${currentIndex + 1} เรียบร้อย (${elapsed}ms)`);
       setComparison("cleaned");
