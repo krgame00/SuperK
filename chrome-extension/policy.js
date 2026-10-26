@@ -312,6 +312,11 @@ function normalizeThaiNumeral(character) {
     }
     return character;
 }
+function normalizeThaiCharacter(character) {
+    if (character === "\u30FC")
+        return "\u2014";
+    return normalizeThaiNumeral(character);
+}
 /** Bound diagnostic display while making invisible/unsupported characters identifiable. */
 function formatOffendingCharacters(characters, limit = 24) {
     const unique = [...new Set(characters)];
@@ -423,7 +428,7 @@ function inspectTargetText(text, target) {
     const normalized = [];
     for (let index = 0; index < chars.length; index++) {
         const char = chars[index], previous = chars[index - 1], next = chars[index + 1];
-        const numeric = profile.id === "th" ? normalizeThaiNumeral(char) : char;
+        const numeric = profile.id === "th" ? normalizeThaiCharacter(char) : char;
         normalized.push(numeric);
         if (numeric !== char)
             continue;
@@ -502,6 +507,7 @@ function repairExcludedScriptText(rawText, targetLang) {
     let candidate = rawText;
     if (resolution.status === "resolved" && resolution.profile.id === "th") {
         candidate = candidate
+            .replace(/\u30FC+/g, "—")
             .replace(/ชู+\s*st(?=[.\s!?,…]|$)/giu, "ชู่ว")
             .replace(/ชู่+\s*st(?=[.\s!?,…]|$)/giu, "ชู่ว")
             .replace(/\bshh+\b/giu, "ชู่ว");
@@ -521,10 +527,10 @@ function repairExcludedScriptText(rawText, targetLang) {
 },"lib/thaiSpellcheck.ts":(module,exports,require)=>{
 "use strict";
 /**
-* SuperK Thai Manga Text Normalizer & Spellcheck Engine.
-* Fixes common LLM tokenization glitches, vowel stacking,
-* manga slang typos (นะค่ะ -> นะคะ), and punctuation spacing.
-*/
+ * SuperK Thai Manga Text Normalizer & Spellcheck Engine.
+ * Fixes common LLM tokenization glitches, vowel stacking,
+ * manga slang typos (นะค่ะ -> นะคะ), and punctuation spacing.
+ */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.cleanThaiVowelStacking = cleanThaiVowelStacking;
 exports.cleanPunctuationAndSpacing = cleanPunctuationAndSpacing;
@@ -610,6 +616,8 @@ function cleanPunctuationAndSpacing(text) {
     if (!text)
         return "";
     return text
+        // Replace Japanese prolonged sound mark (ー U+30FC) with standard manga Em dash (— U+2014)
+        .replace(/\u30FC+/g, "—")
         // Replace multiple newlines inside a single bubble with a space
         .replace(/\r?\n+/g, " ")
         // Collapse 4+ periods into standard ellipsis (...)

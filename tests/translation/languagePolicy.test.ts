@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TARGET_LANGUAGES, inspectTargetText, resolveTargetLanguage, normalizeTargetTranslationPayload, addAllowedThaiTokens, removeAllowedThaiTokens } from "@/lib/languagePolicy";
+import { TARGET_LANGUAGES, inspectTargetText, resolveTargetLanguage, normalizeTargetTranslationPayload, addAllowedThaiTokens, removeAllowedThaiTokens, repairExcludedScriptText } from "@/lib/languagePolicy";
 
 describe("canonical language catalog", () => {
   it("enumerates broad writing systems with exact, unambiguous aliases", () => {
@@ -112,6 +112,22 @@ describe("strict script eligibility", () => {
     expect(result.offendingCharacters).toEqual([]);
     removeAllowedThaiTokens("KFC");
     removeAllowedThaiTokens("Rimuru");
+  });
+
+  it("normalizes Japanese prolonged sound mark (ー U+30FC) to Em dash for Thai while preserving for Japanese", () => {
+    const rawThai = "ไม่ได้หรอกนะー ต้องใช้ให้เต็มที่หน่อยสิ";
+    const inspection = inspectTargetText(rawThai, "th");
+    expect(inspection.status).toBe("eligible");
+    expect(inspection.offendingCharacters).toEqual([]);
+    expect(inspection.normalizedText).toBe("ไม่ได้หรอกนะ— ต้องใช้ให้เต็มที่หน่อยสิ");
+
+    const repaired = repairExcludedScriptText(rawThai, "th");
+    expect(repaired).toBe("ไม่ได้หรอกนะ— ต้องใช้ให้เต็มที่หน่อยสิ");
+
+    const jaInspection = inspectTargetText("ダメですよー", "ja");
+    expect(jaInspection.status).toBe("eligible");
+    expect(jaInspection.offendingCharacters).toEqual([]);
+    expect(jaInspection.normalizedText).toBe("ダメですよー");
   });
 });
 

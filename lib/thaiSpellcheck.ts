@@ -1,4 +1,4 @@
-﻿/**
+/**
  * SuperK Thai Manga Text Normalizer & Spellcheck Engine.
  * Fixes common LLM tokenization glitches, vowel stacking,
  * manga slang typos (นะค่ะ -> นะคะ), and punctuation spacing.
@@ -82,6 +82,8 @@ export function cleanPunctuationAndSpacing(text: string): string {
   if (!text) return "";
 
   return text
+    // Replace Japanese prolonged sound mark (ー U+30FC) with standard manga Em dash (— U+2014)
+    .replace(/\u30FC+/g, "—")
     // Replace multiple newlines inside a single bubble with a space
     .replace(/\r?\n+/g, " ")
     // Collapse 4+ periods into standard ellipsis (...)
