@@ -915,11 +915,18 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
             ? sourceFingerprintValue
             : await sourceFingerprintValue;
         if (signal?.aborted) throw new DOMException("Cleaning cancelled", "AbortError");
+        const expectedMode =
+          typeof window !== "undefined" && typeof localStorage !== "undefined"
+            ? (() => {
+                const savedSfx = localStorage.getItem("superk:sfx-policy");
+                return savedSfx === "ignore" || savedSfx === "preserve" ? "safe" : "all-text";
+              })()
+            : "all-text";
         if (
           cached &&
           cached.sourceFingerprint &&
           cached.maskFingerprint &&
-          cached.cleaningMode === "all-text" &&
+          cached.cleaningMode === expectedMode &&
           cached.sourceFingerprint === sourceFingerprint &&
           cached.pipelineVersion === CURRENT_PIPELINE_VERSION
         ) {

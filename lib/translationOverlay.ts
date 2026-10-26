@@ -43,6 +43,7 @@ import {
   getNextWarpType,
   getWarpLabel,
 } from "./tools/TextWarpRenderer";
+import { fitTextToBubbleContour } from "./typeset/BubbleTypesetEngine";
 
 const ADJ_KEY = "superk:overlay-adjustments";
 const WORD_WRAP_LOCALES: Record<string, string> = {
@@ -145,6 +146,8 @@ export interface TranslatedBubble {
   styleProfile?: TextStyleProfile;
   /** Non-linear SFX text warp deformation (arch, wave, bulge, squeeze) */
   warp?: WarpConfig;
+  /** Authentic speech bubble scanline chord width ratios (20 vertical slices) */
+  scanlineRatios?: number[];
   [key: string]: unknown;
 }
 
@@ -624,6 +627,7 @@ export function measureBubbleRenderFit(
   targetFontSize?: number,
   locale = "th",
   enableHyphenation = false,
+  scanlineRatios?: number[],
 ): BubbleTextFit {
   if (typeof targetFontSize === "number" && targetFontSize > 0) {
     const effectiveFs = Math.max(8, Math.round(targetFontSize * globalMultiplier * bubbleMultiplier));
@@ -649,6 +653,7 @@ export function measureBubbleRenderFit(
     allowedMinimum,
     locale,
     enableHyphenation,
+    scanlineRatios,
   );
 }
 
@@ -667,12 +672,13 @@ export function growBubbleFrameToFit(
   targetFontSize?: number,
   locale = "th",
   enableHyphenation = false,
+  scanlineRatios?: number[],
 ): { width: number; height: number } {
   const maxWidth = lockWidth ? baseWidth : Math.min(pageWidth, baseWidth * 1.4);
   const maxHeight = Math.min(pageHeight, baseHeight * 2.5);
   let width = baseWidth;
   let height = baseHeight;
-  if (measureBubbleRenderFit(text, width, height, pageWidth, fontFamily, globalMultiplier, bubbleMultiplier, isOval, targetFontSize, locale).fits) {
+  if (measureBubbleRenderFit(text, width, height, pageWidth, fontFamily, globalMultiplier, bubbleMultiplier, isOval, targetFontSize, locale, enableHyphenation, scanlineRatios).fits) {
     return { width, height };
   }
   for (let guard = 0; guard < 30; guard++) {
@@ -681,7 +687,7 @@ export function growBubbleFrameToFit(
     if (nextWidth <= width + 0.5 && nextHeight <= height + 0.5) break;
     width = nextWidth;
     height = nextHeight;
-    if (measureBubbleRenderFit(text, width, height, pageWidth, fontFamily, globalMultiplier, bubbleMultiplier, isOval, targetFontSize, locale).fits) break;
+    if (measureBubbleRenderFit(text, width, height, pageWidth, fontFamily, globalMultiplier, bubbleMultiplier, isOval, targetFontSize, locale, enableHyphenation, scanlineRatios).fits) break;
   }
   return { width, height };
 }
@@ -694,6 +700,7 @@ export const wrapTextForBubble = (
   fontFamily: string = "sans-serif",
   isOval: boolean = true,
   locale: string = "th",
+  scanlineRatios?: number[],
 ): string[] => {
   if (!text || !text.trim()) return [];
 
@@ -755,6 +762,14 @@ export const wrapTextForBubble = (
   const getLineMaxW = (lineIndex: number, totalLines: number): number => {
     if (!effectiveIsOval || totalLines <= 1) return maxW;
     const yCenter = (lineIndex + 0.5) / totalLines;
+    if (Array.isArray(scanlineRatios) && scanlineRatios.length > 0) {
+      const sliceIdx = Math.min(
+        scanlineRatios.length - 1,
+        Math.max(0, Math.floor(yCenter * scanlineRatios.length)),
+      );
+      const chordRatio = Math.max(0.25, Math.min(1.0, scanlineRatios[sliceIdx] ?? 0.85));
+      return Math.min(maxW, Math.max(Math.min(maxW, fs * 1.5), maxW * chordRatio));
+    }
     const v = (yCenter - 0.5) * 2;
     const chordRatio = Math.sqrt(Math.max(0.2, 1 - v * v));
     return Math.min(maxW, Math.max(Math.min(maxW, fs * 1.5), maxW * chordRatio * 0.95));
@@ -892,30 +907,69 @@ export function fitTextForBubble(
   minFontSize = 14,
   locale = "th",
   enableHyphenation = false,
+  scanlineRatios?: number[],
 ): BubbleTextFit {
   const effectiveIsOval = isOval && !isStructuredMangaList(text);
   const safeW = width * 0.88;
   const safeH = height * 0.88;
   const maxFs = Math.max(minFontSize, Math.round(Math.min(height * 0.55, width * 0.55, 96) * fontSizeMultiplier));
-  
+
+  const tempCtx = getSharedMeasureCtx();
+
+  // If authentic contour scanlineRatios are provided, delegate to BubbleTypesetEngine
+  if (effectiveIsOval && Array.isArray(scanlineRatios) && scanlineRatios.length > 0 && !text.includes("\n")) {
+    const measureFn = tempCtx
+      ? (str: string, fs: number, fam: string) => {
+          tempCtx.font = `bold ${fs}px ${fam}`;
+          return tempCtx.measureText(str).width;
+        }
+      : (str: string, fs: number) => str.length * (fs * 0.6);
+    const contourRes = fitTextToBubbleContour(
+      measureFn,
+      text,
+      { x: 0, y: 0, width: safeW, height: safeH, scanlineRatios },
+      fontFamily,
+      minFontSize,
+      maxFs,
+      1.30,
+    );
+    const lines = contourRes.lines.map((l) => l.text);
+    const totalH = lines.length * contourRes.lineHeight;
+    let maxWidthOk = true;
+    for (let i = 0; i < contourRes.lines.length; i++) {
+      const w = measureFn(contourRes.lines[i].text, contourRes.fontSize, fontFamily);
+      if (w > contourRes.lines[i].maxWidth * 1.05) {
+        maxWidthOk = false;
+        break;
+      }
+    }
+    return {
+      fontSize: contourRes.fontSize,
+      lines: lines.length > 0 ? lines : [text],
+      lineHeight: contourRes.lineHeight,
+      fits: totalH <= safeH && maxWidthOk,
+    };
+  }
+
   let bestFit: BubbleTextFit = {
     fontSize: minFontSize,
-    lines: wrapTextForBubble(text, safeW, safeH, minFontSize, fontFamily, effectiveIsOval, locale),
+    lines: wrapTextForBubble(text, safeW, safeH, minFontSize, fontFamily, effectiveIsOval, locale, scanlineRatios),
     lineHeight: minFontSize * 1.30,
     fits: false,
   };
 
   for (let fs = maxFs; fs >= minFontSize; fs--) {
     const lineH = fs * 1.30;
-    const lines = wrapTextForBubble(text, safeW, safeH, fs, fontFamily, effectiveIsOval, locale);
+    const lines = wrapTextForBubble(text, safeW, safeH, fs, fontFamily, effectiveIsOval, locale, scanlineRatios);
     const totalH = lines.length * lineH;
-    
+
     let maxWidthOk = true;
-    const tempCtx = getSharedMeasureCtx();
     if (tempCtx) {
       tempCtx.font = `bold ${fs}px ${fontFamily}`;
       for (let i = 0; i < lines.length; i++) {
-        const allowed = effectiveIsOval && lines.length > 1 ? safeW * Math.sqrt(Math.max(0.2, 1 - Math.pow(((i + 0.5) / lines.length - 0.5) * 2, 2))) : safeW;
+        const allowed = effectiveIsOval && lines.length > 1
+          ? safeW * Math.sqrt(Math.max(0.2, 1 - Math.pow(((i + 0.5) / lines.length - 0.5) * 2, 2)))
+          : safeW;
         if (tempCtx.measureText(lines[i]).width > allowed * 1.05) {
           maxWidthOk = false;
           break;
@@ -1705,6 +1759,8 @@ export const applyTranslationOverlay = async (
             currentStyle.fontSizeMultiplier || 1.0, bubbleMult, !b.isInvalidBox,
             lockedFs,
             wordWrapLocale,
+            false,
+            b.scanlineRatios,
           );
           if (legacyFit.fits) {
             floorBase = { w: currentBw, h: currentBh };
@@ -1718,6 +1774,8 @@ export const applyTranslationOverlay = async (
               lockWidth,
               lockedFs,
               wordWrapLocale,
+              false,
+              b.scanlineRatios,
             );
             currentBw = grown.width;
             currentBh = grown.height;
@@ -1732,6 +1790,8 @@ export const applyTranslationOverlay = async (
               text, currentBw, currentBh, iw, currentFontFam,
               currentStyle.fontSizeMultiplier || 1.0, bubbleMult, !b.isInvalidBox,
               lockedFs, wordWrapLocale,
+              false,
+              b.scanlineRatios,
             );
           }
         }
@@ -1741,6 +1801,8 @@ export const applyTranslationOverlay = async (
             text, currentBw, currentBh, iw, currentFontFam,
             currentStyle.fontSizeMultiplier || 1.0, bubbleMult, !b.isInvalidBox,
             lockedFs, wordWrapLocale,
+            false,
+            b.scanlineRatios,
           );
         }
         textLayoutOverflow = fixedLayout ? fixedLayout.overflow : Boolean(text && !legacyFit?.fits);

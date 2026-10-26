@@ -467,12 +467,62 @@ export function useTranslation({
     }
     return "ignore";
   });
+  const sfxModeRef = useRef<"ignore" | "preserve" | "translate">(sfxMode);
+  sfxModeRef.current = sfxMode;
   const setSfxMode = useCallback((mode: "ignore" | "preserve" | "translate") => {
+    sfxModeRef.current = mode;
     setSfxModeState(mode);
     if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
       localStorage.setItem("superk:sfx-policy", mode);
     }
+    // Immediately filter or restore SFX bubbles on the currently active page
+    setActiveBubbles((prev) => {
+      if (!prev || prev.length === 0) return prev;
+      const filtered = prev.filter((b) => {
+        if (mode !== "ignore") return true;
+        const rawCat = String(
+          (b as { styleCategory?: string; category?: string }).styleCategory ??
+          (b as { category?: string }).category ??
+          b.styleProfile?.category ??
+          ""
+        ).trim().toLowerCase();
+        const textVal = String(b.t ?? b.translated ?? "").trim();
+        const isAsteriskWrappedSfx = /^\*[^*\n]{1,24}\*$/u.test(textVal);
+        return !(rawCat === "sfx" || isAsteriskWrappedSfx);
+      });
+      if (activePageRef.current && filtered.length !== prev.length) {
+        bubbleCacheRef.current.set(activePageRef.current, filtered);
+      }
+      return filtered;
+    });
   }, []);
+
+  const applySfxPolicyToBubbles = useCallback(
+    (bubbles: TranslatedBubble[], mode: "ignore" | "preserve" | "translate" = sfxModeRef.current): TranslatedBubble[] => {
+      if (mode === "translate") return bubbles;
+      return bubbles.flatMap((b) => {
+        const rawCat = String(
+          (b as { styleCategory?: string; category?: string }).styleCategory ??
+          (b as { category?: string }).category ??
+          b.styleProfile?.category ??
+          ""
+        ).trim().toLowerCase();
+        const textVal = String(b.t ?? b.translated ?? "").trim();
+        const isAsteriskWrappedSfx = /^\*[^*\n]{1,24}\*$/u.test(textVal);
+        const isSfx = rawCat === "sfx" || isAsteriskWrappedSfx;
+        if (!isSfx) return [b];
+        if (mode === "ignore") {
+          return [];
+        }
+        // mode === "preserve": keep original source text if available
+        if (b.original_text && b.original_text.trim()) {
+          return [{ ...b, t: b.original_text.trim(), translated: b.original_text.trim() }];
+        }
+        return [b];
+      });
+    },
+    [],
+  );
   const textStyleRef = useRef(textStyle);
 
   const [nsfwBypassMode, setNsfwBypassMode] = useState(false);
@@ -1008,6 +1058,7 @@ export function useTranslation({
           apiKey: userApiKey,
           allowPreview: allowPreviewModels,
           glossary,
+          policy: { sfx: sfxModeRef.current },
         }),
       });
       const data = await readTranslationResponse<{ text: string }>(res);
@@ -1322,7 +1373,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           const response = await fetch("/api/translate", {
             method:"POST", headers:{"Content-Type":"application/json"}, signal,
             body:JSON.stringify({imageBase64:cropBase64,mimeType:"image/png",
-              targetLang,sourceLang,modelPreference,apiKey:userApiKey,allowPreview:allowPreviewModels,glossary}),
+              targetLang,sourceLang,modelPreference,apiKey:userApiKey,allowPreview:allowPreviewModels,glossary,policy:{sfx:sfxModeRef.current}}),
           });
           const data = await readTranslationResponse<{text:string}>(response);
           const parsed = parseLLMJSON(data.text) as {bubbles?:TranslatedBubble[]} | null;
@@ -1393,6 +1444,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
                 apiKey: userApiKey,
                 allowPreview: allowPreviewModels,
                 glossary,
+                policy: { sfx: sfxModeRef.current },
               }),
               signal,
             });
@@ -1498,7 +1550,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           throw new Error("Translation failed: no valid NSFW slice responses.");
         }
 
-        allBubbles = deduplicateBubbleSFX(allBubbles, 3).filter(b => withinTranslationScope(b.box, textScope));
+        allBubbles = applySfxPolicyToBubbles(deduplicateBubbleSFX(allBubbles, 3)).filter(b => withinTranslationScope(b.box, textScope));
         const completeness = await recoverDetectedOmissions(allBubbles);
         console.info("[Translation Coverage]", {page:pageIndex+1, detected:textScope?.allowed.length ?? null,
           retained:allBubbles.length, recovered:completeness.bubbles.length-allBubbles.length, missing:completeness.missing.length});
@@ -1578,6 +1630,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             apiKey: userApiKey,
             allowPreview: allowPreviewModels,
             glossary,
+            policy: { sfx: sfxModeRef.current },
           }),
           signal,
         });
@@ -1664,6 +1717,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             allowPreview: allowPreviewModels,
             isRetry: true,
             glossary,
+            policy: { sfx: sfxModeRef.current },
           }),
           signal,
         });
@@ -1694,7 +1748,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         }
       }
 
-      const filteredParsed = deduplicateBubbleSFX(pageBubbles, 3).filter(b => withinTranslationScope(b.box, textScope));
+      const filteredParsed = applySfxPolicyToBubbles(deduplicateBubbleSFX(pageBubbles, 3)).filter(b => withinTranslationScope(b.box, textScope));
       const completeness = await recoverDetectedOmissions(filteredParsed);
       console.info("[Translation Coverage]", {page:pageIndex+1, detected:textScope?.allowed.length ?? null,
         received:pageBubbles.length, retained:filteredParsed.length, recovered:completeness.bubbles.length-filteredParsed.length,

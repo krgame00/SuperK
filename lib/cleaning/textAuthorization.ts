@@ -11,13 +11,25 @@ export interface TranslationScope {
   excluded: number[][];
 }
 
-export function translationScope(result: CleaningResult): TranslationScope {
+export function translationScope(
+  result: CleaningResult,
+  sfxMode: "ignore" | "preserve" | "translate" = "translate",
+): TranslationScope {
   const scope: TranslationScope = { allowed: [], excluded: [] };
   for (const region of result.regions) {
     const r = region.rect;
-    const box = [r.y / result.height * 1000, r.x / result.width * 1000,
-      (r.y + r.height) / result.height * 1000, (r.x + r.width) / result.width * 1000];
-    if (region.textRole === "protected") {
+    const box = [
+      (r.y / result.height) * 1000,
+      (r.x / result.width) * 1000,
+      ((r.y + r.height) / result.height) * 1000,
+      ((r.x + r.width) / result.width) * 1000,
+    ];
+    const isSfxRegion =
+      region.textRole === "sfx" ||
+      (Array.isArray(region.protectionReasons) &&
+        region.protectionReasons.includes("sfx-policy"));
+
+    if (region.textRole === "protected" || (sfxMode === "ignore" && isSfxRegion)) {
       scope.excluded.push(box);
     } else {
       scope.allowed.push(box);

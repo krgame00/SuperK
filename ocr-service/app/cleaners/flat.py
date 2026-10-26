@@ -4,12 +4,16 @@ import cv2
 import numpy as np
 
 from app.cleaners.aot import _context_bounds
+from app.cleaners.hybrid_inpainter import HybridInpainter
 from app.detector import RgbImage
 from app.mask_refiner import BinaryMask, MaskRegion
 from app.region_router import extract_region_features
 
 
 class FlatCleaner:
+    def __init__(self) -> None:
+        self._hybrid = HybridInpainter()
+
     def clean(
         self,
         image_rgb: RgbImage,
@@ -21,6 +25,24 @@ class FlatCleaner:
         result = image_rgb.copy()
         if not np.any(support) or not np.any(ring):
             return result
+
+        # Fast-path Tier 1 via HybridInpainter on the localized region crop
+        x0, y0, x1, y1 = _context_bounds(
+            region,
+            image_rgb.shape[1],
+            image_rgb.shape[0],
+            context=16,
+        )
+        crop_rgb = image_rgb[y0:y1, x0:x1]
+        crop_support = support[y0:y1, x0:x1]
+
+        ring_pixels = crop_rgb[_ring(crop_support, radius=6)]
+        if len(ring_pixels) >= 8:
+            channel_stds = np.std(ring_pixels.astype(np.float32), axis=0)
+            if float(np.max(channel_stds)) < self._hybrid.solid_std_threshold:
+                dominant_rgb = np.median(ring_pixels, axis=0).astype(np.uint8)
+                result[y0:y1, x0:x1][crop_support] = dominant_rgb
+                return result
 
         features = extract_region_features(image_rgb, mask, region)
         if features.gradient_coherence >= 0.55:

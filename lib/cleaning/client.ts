@@ -22,7 +22,11 @@ export class CleaningClientError extends Error {
   }
 }
 
-export async function createCleaningJob(file: Blob, signal?: AbortSignal): Promise<CleaningJob> {
+export async function createCleaningJob(
+  file: Blob,
+  signal?: AbortSignal,
+  cleaningMode: "safe" | "all-text" = "all-text",
+): Promise<CleaningJob> {
   const form = new FormData();
   let resolvedFile = file;
   const filename =
@@ -56,7 +60,16 @@ export async function createCleaningJob(file: Blob, signal?: AbortSignal): Promi
   }
 
   form.append("image", resolvedFile, filename);
-  form.append("cleaning_mode", "all-text");
+  let effectiveCleaningMode: "safe" | "all-text" = cleaningMode;
+  if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
+    const savedSfx = localStorage.getItem("superk:sfx-policy");
+    if (savedSfx === "ignore" || savedSfx === "preserve") {
+      effectiveCleaningMode = "safe";
+    } else if (savedSfx === "translate") {
+      effectiveCleaningMode = "all-text";
+    }
+  }
+  form.append("cleaning_mode", effectiveCleaningMode);
   return decodeJob(
     await requestJson(`${PROXY_BASE}/v1/jobs`, {
       method: "POST",

@@ -291,9 +291,13 @@ export function useCleaningOrchestrator(
       if (result.maskUrl) {
         workspaceResourceManager.registerResource(pageId, "mask", result.maskUrl, 256 * 1024);
       }
+      const activeSfxMode: "ignore" | "preserve" | "translate" =
+        typeof window !== "undefined" && typeof localStorage !== "undefined"
+          ? ((localStorage.getItem("superk:sfx-policy") as "ignore" | "preserve" | "translate" | null) ?? "ignore")
+          : "ignore";
       return {
         recognitionUrl: pageUrl,
-        textScope: translationScope(result),
+        textScope: translationScope(result, activeSfxMode),
         backgroundUrl: result.cleanUrl,
         maskUrl: result.maskUrl,
         preparedIdentity: result.preparedIdentity,
