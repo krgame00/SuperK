@@ -20,14 +20,18 @@ def extract_bubble_profiles(
     padding_ratio: float = 0.12,
     num_slices: int = 20,
     brightness_threshold: int = 215,
+    color_order: str = "rgb",
 ) -> list[BubbleProfile]:
     """
     Extracts authentic Speech Bubble contours and scanline chords for each OCR box.
     Partitions shared multi-bubble components cleanly via Voronoi distance bisector.
+    Supports both RGB (PIL/API) and BGR (OpenCV) input arrays via `color_order`.
     """
     h_img, w_img = image.shape[:2]
     if len(image.shape) == 2:
         gray = image
+    elif color_order.lower() == "bgr":
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     else:
         gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
 

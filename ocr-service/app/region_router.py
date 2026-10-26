@@ -96,15 +96,14 @@ def extract_region_features(
 
     crop_rgb = image_rgb[y0:y1, x0:x1]
     crop_mask = mask[y0:y1, x0:x1]
+    from app.schemas import PixelRect
     local_region = MaskRegion(
         id=region.id,
-        rect=rect.model_copy(
-            update={
-                "x": max(0, rect.x - x0),
-                "y": max(0, rect.y - y0),
-                "width": min(x1 - x0, rect.width),
-                "height": min(y1 - y0, rect.height),
-            },
+        rect=PixelRect(
+            x=max(0, rect.x - x0),
+            y=max(0, rect.y - y0),
+            width=max(1, min(x1 - x0, rect.width)),
+            height=max(1, min(y1 - y0, rect.height)),
         ),
         component_ids=region.component_ids,
         stroke_radius=region.stroke_radius,

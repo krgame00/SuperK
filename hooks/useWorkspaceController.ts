@@ -238,6 +238,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     handleAutoOrganizeAllPages,
     handleApplyBwContrastCurrentPage,
     handleApplyBwContrastAllPages,
+    translateCrop,
   } = useTranslationOrchestrator({
     pages,
     currentPage,
@@ -584,6 +585,54 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     cleaningResultsByPage,
     translatedImagesMap,
     brokenPages,
+    onOpenFindReplace: openFindReplace,
+    onOpenShortcuts: openShortcuts,
+    onAddManualTextBubble: () => {
+      if (!currentPageUrl) return;
+      const newBubble = {
+        t: "ข้อความใหม่",
+        translated: "ข้อความใหม่",
+        original_text: "",
+        box: [420, 380, 540, 620],
+        isManual: true,
+      };
+      const next = [...activeBubbles, newBubble];
+      bubbleCacheRef?.current?.set(currentPageUrl, next);
+      setActiveBubbles(next);
+      setWorkspaceLayer("translated");
+    },
+    onDetectOcrRegion: async (rect) => {
+      if (!currentPageUrl || typeof document === "undefined") return;
+      const imgEl = document.querySelector<HTMLImageElement>("#pageContainer img");
+      if (!imgEl || !imgEl.naturalWidth || !imgEl.naturalHeight) return;
+      const cvs = document.createElement("canvas");
+      cvs.width = Math.max(16, Math.round(rect.width));
+      cvs.height = Math.max(16, Math.round(rect.height));
+      const ctx = cvs.getContext("2d");
+      if (!ctx) return;
+      ctx.drawImage(
+        imgEl,
+        rect.x,
+        rect.y,
+        rect.width,
+        rect.height,
+        0,
+        0,
+        cvs.width,
+        cvs.height,
+      );
+      const cropBase64 = cvs.toDataURL("image/jpeg", 0.92).split(",")[1] || "";
+      cvs.width = 0;
+      cvs.height = 0;
+      if (cropBase64 && typeof translateCrop === "function") {
+        await translateCrop(
+          { x: rect.x, y: rect.y, w: rect.width, h: rect.height },
+          cropBase64,
+          imgEl.naturalWidth,
+          imgEl.naturalHeight,
+        );
+      }
+    },
   };
 
   const bottomStripProps: WorkspaceBottomStripHostProps = {

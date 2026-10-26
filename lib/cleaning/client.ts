@@ -163,6 +163,39 @@ export async function inpaintCrop(
   return await response.blob();
 }
 
+export interface BubbleContourProfile {
+  text_box_id: number;
+  bbox: [number, number, number, number];
+  polygon: Array<[number, number]>;
+  scanline_ratios: number[];
+}
+
+export async function detectBubbleProfiles(
+  imageBlob: Blob,
+  boxes: Array<{ x: number; y: number; width: number; height: number } | [number, number, number, number]>,
+  numSlices = 20,
+  signal?: AbortSignal,
+): Promise<BubbleContourProfile[]> {
+  const form = new FormData();
+  const typedImage =
+    imageBlob.type && imageBlob.type !== "application/octet-stream"
+      ? imageBlob
+      : new Blob([imageBlob], { type: "image/png" });
+  form.append("image", typedImage, "page.png");
+  form.append("boxes", JSON.stringify(boxes));
+  form.append("num_slices", String(numSlices));
+
+  const payload = await requestJson(`${PROXY_BASE}/v1/detect/bubbles`, {
+    method: "POST",
+    body: form,
+    ...(signal ? { signal } : {}),
+  });
+  if (isRecord(payload) && Array.isArray(payload.profiles)) {
+    return payload.profiles as BubbleContourProfile[];
+  }
+  return [];
+}
+
 export async function restoreCleaningJob(params: {
   jobId: string;
   sourceBlob: Blob;

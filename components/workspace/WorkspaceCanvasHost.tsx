@@ -28,6 +28,8 @@ import {
 } from "@/components/cleaning/CleaningToolbar";
 import { PageReviewNotice } from "@/components/cleaning/PageReviewNotice";
 import { PageViewer } from "@/components/workspace/PageViewer";
+import { StudioToolbar, type StudioTool } from "@/components/editing/StudioToolbar";
+import { OcrAreaTool, type PixelRect as OcrPixelRect } from "@/components/editing/OcrAreaTool";
 import type { BwContrastMode } from "@/lib/colorMatching/types";
 import type { PageCleaningResult, CleaningHookError } from "@/hooks/useCleaning";
 import type { CleaningProgress } from "@/lib/cleaning/types";
@@ -130,6 +132,12 @@ export interface WorkspaceCanvasHostProps {
   cleaningResultsByPage: Map<string, PageCleaningResult>;
   translatedImagesMap: Map<string, string>;
   brokenPages: Set<string>;
+
+  // Optional Studio Tools integration (Ctrl+1..7 / Text / OCR / FindReplace / Shortcuts)
+  onOpenFindReplace?: () => void;
+  onOpenShortcuts?: () => void;
+  onAddManualTextBubble?: () => void;
+  onDetectOcrRegion?: (rect: OcrPixelRect) => void | Promise<void>;
 }
 
 export function WorkspaceCanvasHost({
@@ -189,11 +197,16 @@ export function WorkspaceCanvasHost({
   cleaningResultsByPage,
   translatedImagesMap,
   brokenPages,
+  onOpenFindReplace,
+  onOpenShortcuts,
+  onAddManualTextBubble,
+  onDetectOcrRegion,
 }: WorkspaceCanvasHostProps): ReactElement {
   const [isOrganizeMenuOpen, setIsOrganizeMenuOpen] = useState(false);
   const organizeMenuRef = useRef<HTMLDivElement>(null);
   const [isBwContrastMenuOpen, setIsBwContrastMenuOpen] = useState(false);
   const bwContrastMenuRef = useRef<HTMLDivElement>(null);
+  const [activeStudioTool, setActiveStudioTool] = useState<StudioTool>("select");
 
   useEffect(() => {
     if (!isOrganizeMenuOpen && !isBwContrastMenuOpen) return;
@@ -852,6 +865,31 @@ export function WorkspaceCanvasHost({
 
           {/* PageViewer in full flex container */}
           <div className="flex-1 min-h-0 w-full h-full relative flex justify-center items-center overflow-hidden">
+            {onOpenFindReplace && onOpenShortcuts && !isFocusMode && (
+              <div className="fixed left-3 top-1/2 -translate-y-1/2 z-30 hidden xl:flex flex-col gap-2">
+                <StudioToolbar
+                  activeTool={activeStudioTool}
+                  onSelectTool={setActiveStudioTool}
+                  onAddText={() => {
+                    onAddManualTextBubble?.();
+                    setActiveStudioTool("select");
+                  }}
+                  onOpenFindReplace={onOpenFindReplace}
+                  onOpenShortcuts={onOpenShortcuts}
+                  onEditMask={onEditMask}
+                  disabled={operationBusy}
+                />
+              </div>
+            )}
+            <OcrAreaTool
+              active={activeStudioTool === "ocr"}
+              loading={operationBusy}
+              onDetectRegion={async (rect) => {
+                await onDetectOcrRegion?.(rect);
+                setActiveStudioTool("select");
+              }}
+              onClose={() => setActiveStudioTool("select")}
+            />
             <PageViewer
               pages={pages}
               currentPage={currentPage}

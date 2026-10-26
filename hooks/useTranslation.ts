@@ -945,6 +945,42 @@ export function useTranslation({
     const original = await waitForImageReady(originalUrl, 2000).catch(() => document.createElement('img'));
     if (!ownsPage()) return false;
     await prepareNewSourceSizing(bubbles, original, textStyleRef.current.fontFamily || 'Itim, sans-serif');
+    // Best-effort contour scanline ratio extraction when original image dimensions are available
+    if (original.naturalWidth > 0 && original.naturalHeight > 0 && bubbles.length > 0) {
+      try {
+        const iw = original.naturalWidth;
+        const ih = original.naturalHeight;
+        const validIndices: number[] = [];
+        const boxes: Array<[number, number, number, number]> = [];
+        bubbles.forEach((b, idx) => {
+          if (Array.isArray(b.box) && b.box.length === 4 && !b.isInvalidBox) {
+            const [ymin, xmin, ymax, xmax] = b.box;
+            const x = Math.max(0, Math.round((xmin / 1000) * iw));
+            const y = Math.max(0, Math.round((ymin / 1000) * ih));
+            const w = Math.max(8, Math.round(((xmax - xmin) / 1000) * iw));
+            const h = Math.max(8, Math.round(((ymax - ymin) / 1000) * ih));
+            validIndices.push(idx);
+            boxes.push([x, y, w, h]);
+          }
+        });
+        if (boxes.length > 0 && typeof fetch === "function" && originalUrl.startsWith("blob:")) {
+          const blobRes = await fetch(originalUrl);
+          if (blobRes.ok) {
+            const imgBlob = await blobRes.blob();
+            const { detectBubbleProfiles } = await import("@/lib/cleaning/client");
+            const profiles = await detectBubbleProfiles(imgBlob, boxes, 20, signal);
+            for (const prof of profiles) {
+              const targetIdx = validIndices[prof.text_box_id];
+              if (targetIdx !== undefined && bubbles[targetIdx] && Array.isArray(prof.scanline_ratios)) {
+                bubbles[targetIdx].scanlineRatios = prof.scanline_ratios;
+              }
+            }
+          }
+        }
+      } catch {
+        // Fallback to analytical ellipse chord ratios when local cleaner service is offline or in unit tests
+      }
+    }
     return ownsPage();
   };
 

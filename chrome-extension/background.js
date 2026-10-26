@@ -203,16 +203,64 @@ chrome.runtime.onMessage?.addListener?.(async (message, sender) => {
   }
 });
 
+async function withAntiHotlinkRule(url, taskFn) {
+  if (!/^https?:/i.test(url) || !chrome?.declarativeNetRequest?.updateDynamicRules) {
+    return await taskFn();
+  }
+  let origin = "";
+  try {
+    origin = new URL(url).origin + "/";
+  } catch {
+    return await taskFn();
+  }
+  const ruleId = 9001 + Math.floor(Math.random() * 900);
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: [ruleId],
+      addRules: [
+        {
+          id: ruleId,
+          priority: 1,
+          action: {
+            type: "modifyHeaders",
+            requestHeaders: [
+              { header: "Referer", operation: "set", value: origin },
+              { header: "Origin", operation: "set", value: origin.replace(/\/$/, "") }
+            ]
+          },
+          condition: {
+            urlFilter: url,
+            resourceTypes: ["xmlhttprequest", "image", "other"]
+          }
+        }
+      ]
+    });
+  } catch {
+    // Ignore if declarativeNetRequest is unavailable in test or older browser
+  }
+  try {
+    return await taskFn();
+  } finally {
+    try {
+      await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [ruleId] });
+    } catch {
+      // Ignore cleanup error
+    }
+  }
+}
+
 async function fetchImageAsBase64(url) {
   if (!/^(https?:|data:image\/)/i.test(url)) {
     throw new Error("ภาพชนิดนี้ยังไม่รองรับ กรุณาบันทึกภาพแล้วเปิดในเว็บ SuperK");
   }
-  const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
-  if (!response.ok) throw new Error("โหลดภาพไม่ได้ (HTTP " + response.status + ")");
-  const blob = await response.blob();
-  if (!blob.type.startsWith("image/")) throw new Error("ลิงก์นี้ไม่ได้ส่งไฟล์ภาพกลับมา");
-  if (blob.size > 20 * 1024 * 1024) throw new Error("ภาพใหญ่เกิน 20 MB กรุณาย่อภาพก่อน");
-  return { base64: await SuperKServer.blobToBase64(blob), mimeType: blob.type };
+  return await withAntiHotlinkRule(url, async () => {
+    const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
+    if (!response.ok) throw new Error("โหลดภาพไม่ได้ (HTTP " + response.status + ")");
+    const blob = await response.blob();
+    if (!blob.type.startsWith("image/")) throw new Error("ลิงก์นี้ไม่ได้ส่งไฟล์ภาพกลับมา");
+    if (blob.size > 20 * 1024 * 1024) throw new Error("ภาพใหญ่เกิน 20 MB กรุณาย่อภาพก่อน");
+    return { base64: await SuperKServer.blobToBase64(blob), mimeType: blob.type };
+  });
 }
 
 // Helper: Call Gemini API with model rotation & retries

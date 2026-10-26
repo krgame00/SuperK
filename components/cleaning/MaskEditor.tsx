@@ -689,13 +689,14 @@ export function MaskEditor({
     const started = Date.now();
 
     try {
-      const pad = 16;
+      const pad = 32;
       const x0 = Math.max(0, r.x - pad);
       const y0 = Math.max(0, r.y - pad);
-      const x1 = Math.min(canvasSize.width, r.x + r.width + pad);
-      const y1 = Math.min(canvasSize.height, r.y + r.height + pad);
-      const cropW = Math.max(1, x1 - x0);
-      const cropH = Math.max(1, y1 - y0);
+      const rawW = Math.max(1, Math.min(canvasSize.width, r.x + r.width + pad) - x0);
+      const rawH = Math.max(1, Math.min(canvasSize.height, r.y + r.height + pad) - y0);
+      // Enforce Modulo-8 alignment for LaMa tensor compatibility
+      const cropW = Math.min(canvasSize.width - x0, Math.max(8, Math.ceil(rawW / 8) * 8));
+      const cropH = Math.min(canvasSize.height - y0, Math.max(8, Math.ceil(rawH / 8) * 8));
 
       const imgCanvas = document.createElement("canvas");
       imgCanvas.width = cropW;
@@ -735,10 +736,35 @@ export function MaskEditor({
       maskCtx.putImageData(maskCropData, 0, 0);
       const cropMaskBlob = await canvasToBlob(maskCanvas);
 
-      await inpaintCrop(cropImgBlob, cropMaskBlob, {
+      const repairedCropBlob = await inpaintCrop(cropImgBlob, cropMaskBlob, {
         cleaner,
         dilation: dilationRadius,
+        extendHints: true,
+        featherBlend: true,
       });
+
+      // Composite repaired patch onto preview immediately before background job sync
+      if (repairedCropBlob && sourceImageRef.current && typeof createImageBitmap === "function") {
+        try {
+          const bmp = await createImageBitmap(repairedCropBlob);
+          const fullCvs = document.createElement("canvas");
+          fullCvs.width = canvasSize.width;
+          fullCvs.height = canvasSize.height;
+          const fullCtx = fullCvs.getContext("2d");
+          if (fullCtx) {
+            const baseDisplayImg =
+              (comparison === "cleaned" && cleanUrl
+                ? await resolveLoadedImage(cleanUrl, cachedCleanImgRef, true)
+                : null) ?? sourceImg;
+            fullCtx.drawImage(baseDisplayImg, 0, 0);
+            fullCtx.drawImage(bmp, x0, y0, cropW, cropH);
+            sourceImageRef.current.src = fullCvs.toDataURL("image/png");
+          }
+          bmp.close?.();
+        } catch {
+          // Non-fatal in test/headless environments
+        }
+      }
 
       const authMaskBlob = await encodeAuthorizedMask(currentMask, r);
       await onRetry(regionId, authMaskBlob, cleaner, "force-clean");
