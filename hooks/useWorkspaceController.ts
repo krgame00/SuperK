@@ -718,6 +718,9 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
         console.warn("[SuperK] Export layered archive error:", err);
       }
     },
+    glossary,
+    onGlossaryChange: setGlossary,
+    onAutoExtractGlossary: () => void handleAutoExtractGlossary(),
   };
 
   const bottomStripProps: WorkspaceBottomStripHostProps = {

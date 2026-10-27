@@ -84,4 +84,27 @@ describe("BubbleTypesetEngine", () => {
       expect(line.y).toBeLessThanOrEqual(320);
     }
   });
+
+  it("splits multisyllabic English words using hyphens when fitting narrow bubbles", () => {
+    const bubble: BubbleShapeInput = {
+      x: 0,
+      y: 0,
+      width: 70,
+      height: 100,
+      scanlineRatios: [0.9, 0.9, 0.9, 0.9, 0.9],
+    };
+    const measureFn = (text: string, fontSize: number) => text.length * fontSize * 0.55;
+
+    const result = fitTextToBubbleContour(
+      measureFn,
+      "Congratulations",
+      bubble,
+      "sans-serif",
+      12,
+      24,
+    );
+
+    expect(result.lines.length).toBeGreaterThan(1);
+    expect(result.lines.some((l) => l.text.endsWith("-"))).toBe(true);
+  });
 });

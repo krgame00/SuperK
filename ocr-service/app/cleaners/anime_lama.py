@@ -8,6 +8,7 @@ from typing import Self
 import numpy as np
 
 from app.cleaners.aot import _context_bounds, _round_up
+from app.cleaners.stroke_hints import extend_mask_with_stroke_hints
 from app.detector import RgbImage
 from app.mask_refiner import BinaryMask, MaskRegion
 from app.model_store import ModelStore
@@ -55,13 +56,19 @@ class AnimeLamaCleaner:
         if not np.any(crop_mask):
             return image_rgb.copy()
 
+        hint_mask = extend_mask_with_stroke_hints(
+            crop,
+            crop_mask,
+            dilation_px=max(2, int(getattr(region, "stroke_radius", 3) or 3)),
+        )
+
         height, width = crop_mask.shape
         padded_height = _round_up(height, 8)
         padded_width = _round_up(width, 8)
         image_padded = np.zeros((padded_height, padded_width, 3), np.float32)
         image_padded[:height, :width] = crop.astype(np.float32) / 255.0
         mask_padded = np.zeros((padded_height, padded_width), np.float32)
-        mask_padded[:height, :width] = crop_mask > 0
+        mask_padded[:height, :width] = hint_mask > 0
 
         image_tensor = self.torch.from_numpy(
             image_padded.transpose(2, 0, 1)[None, ...],

@@ -4,13 +4,20 @@ import {
   BookOpen,
   FileText,
   ImageDown,
+  Layers,
   Rows3,
   Wand2,
 } from "lucide-react";
 
 import { WorkspaceMenu } from "@/components/workspace/WorkspaceMenu";
 
-export type WorkspaceExportKind = "image" | "pdf" | "strip" | "zip" | "cbz";
+export type WorkspaceExportKind =
+  | "image"
+  | "pdf"
+  | "strip"
+  | "zip"
+  | "cbz"
+  | "layered";
 
 interface WorkspaceExportMenuProps {
   disabled: boolean;
@@ -27,7 +34,14 @@ export function WorkspaceExportMenu({
   triggerRef,
   variant = "default",
 }: WorkspaceExportMenuProps): ReactElement {
-  const kinds: WorkspaceExportKind[] = ["image", "pdf", "strip", "zip", "cbz"];
+  const kinds: WorkspaceExportKind[] = [
+    "image",
+    "pdf",
+    "strip",
+    "zip",
+    "cbz",
+    "layered",
+  ];
   const allKindsDisabled = kinds.every((kind) => disabledKinds[kind]);
 
   return (
@@ -76,6 +90,13 @@ export function WorkspaceExportMenu({
           icon: <BookOpen className="h-4 w-4" />,
           disabled: disabled || disabledKinds.cbz,
           onSelect: () => onExport("cbz"),
+        },
+        {
+          id: "layered",
+          label: "Layered PSD / Photopea Pack (.zip)",
+          icon: <Layers className="h-4 w-4 text-primary" />,
+          disabled: disabled || Boolean(disabledKinds.layered),
+          onSelect: () => onExport("layered"),
         },
       ]}
     />

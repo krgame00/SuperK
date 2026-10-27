@@ -17,6 +17,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from app.cleaners.aot import _context_bounds, _round_up
+from app.cleaners.stroke_hints import extend_mask_with_stroke_hints
 from app.detector import RgbImage
 from app.mask_refiner import BinaryMask, MaskRegion
 from app.model_store import ModelStore
@@ -223,7 +224,12 @@ class LamaLargeCleaner:
         if not np.any(crop_mask):
             return image_rgb.copy()
 
-        repaired = self._run(crop, crop_mask)
+        hint_mask = extend_mask_with_stroke_hints(
+            crop,
+            crop_mask,
+            dilation_px=max(2, int(getattr(region, "stroke_radius", 3) or 3)) if "region" in locals() else 3,
+        )
+        repaired = self._run(crop, hint_mask)
         result = image_rgb.copy()
         support = crop_mask > 0
         destination = result[y0:y1, x0:x1]
@@ -246,7 +252,12 @@ class LamaLargeCleaner:
         if crop.size == 0 or not np.any(crop_mask):
             return image_rgb.copy()
 
-        repaired = self._run(crop, crop_mask)
+        hint_mask = extend_mask_with_stroke_hints(
+            crop,
+            crop_mask,
+            dilation_px=max(2, int(getattr(region, "stroke_radius", 3) or 3)) if "region" in locals() else 3,
+        )
+        repaired = self._run(crop, hint_mask)
         result = image_rgb.copy()
         support = crop_mask > 0
         destination = result[y0:y1, x0:x1]

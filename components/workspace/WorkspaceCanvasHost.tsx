@@ -31,6 +31,8 @@ import { PageViewer } from "@/components/workspace/PageViewer";
 import { StudioToolbar, type StudioTool } from "@/components/editing/StudioToolbar";
 import { OcrAreaTool, type PixelRect as OcrPixelRect } from "@/components/editing/OcrAreaTool";
 import { TranscriptModal, type TranscriptPageData } from "@/components/editing/TranscriptModal";
+import { GlossaryModal } from "@/components/editing/GlossaryModal";
+import type { GlossaryEntry } from "@/lib/translation/glossary";
 import type { BwContrastMode } from "@/lib/colorMatching/types";
 import type { PageCleaningResult, CleaningHookError } from "@/hooks/useCleaning";
 import type { CleaningProgress } from "@/lib/cleaning/types";
@@ -142,6 +144,9 @@ export interface WorkspaceCanvasHostProps {
   transcriptPagesData?: TranscriptPageData[];
   onApplyTranscriptUpdates?: (updatesByPageUrl: Map<string, Map<number, string>>) => void;
   onExportLayeredArchive?: () => void;
+  glossary?: GlossaryEntry[];
+  onGlossaryChange?: (entries: GlossaryEntry[]) => void;
+  onAutoExtractGlossary?: () => void;
 }
 
 export function WorkspaceCanvasHost({
@@ -208,6 +213,9 @@ export function WorkspaceCanvasHost({
   transcriptPagesData,
   onApplyTranscriptUpdates,
   onExportLayeredArchive,
+  glossary = [],
+  onGlossaryChange,
+  onAutoExtractGlossary,
 }: WorkspaceCanvasHostProps): ReactElement {
   const [isOrganizeMenuOpen, setIsOrganizeMenuOpen] = useState(false);
   const organizeMenuRef = useRef<HTMLDivElement>(null);
@@ -215,6 +223,7 @@ export function WorkspaceCanvasHost({
   const bwContrastMenuRef = useRef<HTMLDivElement>(null);
   const [activeStudioTool, setActiveStudioTool] = useState<StudioTool>("select");
   const [isTranscriptModalOpen, setIsTranscriptModalOpen] = useState(false);
+  const [isGlossaryModalOpen, setIsGlossaryModalOpen] = useState(false);
 
   useEffect(() => {
     if (!isOrganizeMenuOpen && !isBwContrastMenuOpen) return;
@@ -885,6 +894,7 @@ export function WorkspaceCanvasHost({
                   onOpenFindReplace={onOpenFindReplace}
                   onOpenShortcuts={onOpenShortcuts}
                   onOpenTranscript={transcriptPagesData ? () => setIsTranscriptModalOpen(true) : undefined}
+                  onOpenGlossary={onGlossaryChange ? () => setIsGlossaryModalOpen(true) : undefined}
                   onEditMask={onEditMask}
                   disabled={operationBusy}
                 />
@@ -898,6 +908,15 @@ export function WorkspaceCanvasHost({
                 currentPageIndex={currentPage}
                 onApplyTranscript={onApplyTranscriptUpdates}
                 onExportLayeredArchive={onExportLayeredArchive}
+              />
+            )}
+            {onGlossaryChange && (
+              <GlossaryModal
+                isOpen={isGlossaryModalOpen}
+                onClose={() => setIsGlossaryModalOpen(false)}
+                glossary={glossary}
+                onGlossaryChange={onGlossaryChange}
+                onAutoExtractGlossary={onAutoExtractGlossary}
               />
             )}
             <OcrAreaTool

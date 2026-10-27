@@ -1,3 +1,5 @@
+import { canHyphenateWord, splitWordByHyphen } from "../text/hyphenation";
+
 export interface BubbleShapeInput {
   x: number;
   y: number;
@@ -160,12 +162,13 @@ function layoutAtFontSize(
   const ratios =
     bubble.scanlineRatios.length > 0 ? bubble.scanlineRatios : [1.0];
 
+  const workingTokens = [...tokens];
   const linesText: string[] = [];
   let tokenIdx = 0;
 
   for (
     let lineIdx = 0;
-    lineIdx < maxLinesPossible && tokenIdx < tokens.length;
+    lineIdx < maxLinesPossible && tokenIdx < workingTokens.length;
     lineIdx++
   ) {
     const verticalProgress = (lineIdx + 0.5) / maxLinesPossible;
@@ -176,24 +179,54 @@ function layoutAtFontSize(
     const allowedWidth = bubble.width * (ratios[sliceIdx] ?? 0.85);
 
     let currentLine = "";
-    while (tokenIdx < tokens.length) {
-      const candidate = currentLine + tokens[tokenIdx];
+    while (tokenIdx < workingTokens.length) {
+      const nextTok = workingTokens[tokenIdx];
+      if (!currentLine && /^\s+$/.test(nextTok)) {
+        tokenIdx++;
+        continue;
+      }
+      const candidate = currentLine + nextTok;
       const candidateWidth = measure(candidate, fontSize, fontFamily);
 
-      if (candidateWidth <= allowedWidth || currentLine === "") {
+      if (candidateWidth <= allowedWidth) {
         currentLine = candidate;
         tokenIdx++;
-        if (candidateWidth > allowedWidth && !forceFit) {
-          return null;
-        }
       } else {
+        // Attempt Latin/English syllable hyphenation if the token can be hyphenated
+        const trimmedTok = nextTok.trim();
+        const leadingSpace = nextTok.startsWith(" ") && currentLine.length > 0 ? " " : "";
+        const prefixWidth = measure(currentLine + leadingSpace, fontSize, fontFamily);
+        const remainingWidth = allowedWidth - prefixWidth;
+
+        if (remainingWidth > fontSize * 1.5 && canHyphenateWord(trimmedTok)) {
+          const split = splitWordByHyphen(
+            trimmedTok,
+            remainingWidth,
+            (val) => measure(val, fontSize, fontFamily),
+          );
+          if (split) {
+            currentLine = currentLine + leadingSpace + split.head;
+            workingTokens[tokenIdx] = split.tail;
+            break;
+          }
+        }
+
+        if (currentLine === "") {
+          if (!forceFit) {
+            return null;
+          }
+          currentLine = candidate;
+          tokenIdx++;
+        }
         break;
       }
     }
-    linesText.push(currentLine.trim());
+    if (currentLine.trim()) {
+      linesText.push(currentLine.trim());
+    }
   }
 
-  if (tokenIdx < tokens.length && !forceFit) {
+  if (tokenIdx < workingTokens.length && !forceFit) {
     return null;
   }
 

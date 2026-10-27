@@ -8,6 +8,7 @@ from typing import Protocol, Self, cast
 import numpy as np
 from numpy.typing import NDArray
 
+from app.cleaners.stroke_hints import extend_mask_with_stroke_hints
 from app.detector import RgbImage
 from app.mask_refiner import BinaryMask, MaskRegion
 from app.model_store import ModelStore
@@ -121,9 +122,15 @@ class AotCleaner:
         if not np.any(crop_mask):
             return image_rgb.copy()
 
-        image_tensor, mask_tensor, transform = prepare_aot_inputs(
+        hint_mask = extend_mask_with_stroke_hints(
             crop,
             crop_mask,
+            dilation_px=max(2, int(getattr(region, "stroke_radius", 3) or 3)),
+        )
+
+        image_tensor, mask_tensor, transform = prepare_aot_inputs(
+            crop,
+            hint_mask,
         )
         masked_image = image_tensor * (1 - mask_tensor)
         input_feed = {

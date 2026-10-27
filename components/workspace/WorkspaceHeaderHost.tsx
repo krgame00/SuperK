@@ -123,7 +123,7 @@ export interface WorkspaceHeaderHostProps {
   isChoosingExport: boolean;
   activeBubbles: TranslatedBubble[];
   onRequestSinglePageExport: () => void | Promise<void>;
-  onRequestBookExport: (kind: "strip" | "zip" | "cbz" | "pdf") => void | Promise<void>;
+  onRequestBookExport: (kind: "strip" | "zip" | "cbz" | "pdf" | "layered") => void | Promise<void>;
 
   // Reading view return
   isPublishingBack: boolean;
@@ -491,6 +491,7 @@ export function WorkspaceHeaderHost({
                   strip: isZipping || isChoosingExport || pages.length === 0,
                   zip: isZipping || isChoosingExport || pages.length === 0,
                   cbz: isZipping || isChoosingExport || pages.length === 0,
+                  layered: isZipping || isChoosingExport || pages.length === 0,
                 }}
                 onExport={(kind) => {
                   if (kind === "image") {

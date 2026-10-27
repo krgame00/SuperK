@@ -25,6 +25,7 @@ import {
 import {
   generateArchiveFilename,
   generateComicInfoXml,
+  generatePhotoshopBuildScript,
   generateStripFilename,
 } from "@/lib/export/exportManager";
 import {
@@ -654,7 +655,7 @@ export function useExportOrchestrator({
   );
 
   const executeDownloadAll = useCallback(
-    async (format: "zip" | "cbz" | "pdf" | "strip" = "zip") => {
+    async (format: "zip" | "cbz" | "pdf" | "strip" | "layered" = "zip") => {
       const activePages = exportSnapshotRef.current?.pages ?? [];
       if (activePages.length === 0) {
         allowUnreviewedExportRef.current = false;
@@ -716,6 +717,57 @@ export function useExportOrchestrator({
         );
         return selectedUrl.startsWith("data:") ? selectedUrl : blobToDataUrl(await exportImageBlob(selectedUrl));
       };
+
+      if (format === "layered") {
+        try {
+          setTranslationResult("⏳ กำลังสร้างแพ็กเกจแยกเลเยอร์ (Photoshop / Photopea Pack)...");
+          const layeredZip = new JSZip();
+          let layeredCount = 0;
+          for (let i = 0; i < activePages.length; i++) {
+            const p = activePages[i];
+            if (p.exportExcluded) continue;
+            const numStr = String(i + 1).padStart(3, "0");
+            const folder = layeredZip.folder(`Page_${numStr}`);
+            if (!folder) continue;
+            const origName = `page_${numStr}_original.png`;
+            const cleanName = `page_${numStr}_inpainted.png`;
+            try {
+              const origBlob = await exportImageBlob(p.url);
+              folder.file(origName, origBlob);
+            } catch {}
+            const cleanUrl = cleaningResultsByPage.get(p.url)?.cleanUrl;
+            if (cleanUrl) {
+              try {
+                const cleanBlob = await exportImageBlob(cleanUrl);
+                folder.file(cleanName, cleanBlob);
+              } catch {}
+            }
+            const bubbles = bubbleCacheRef.current.get(p.url) ?? [];
+            folder.file(
+              `page_${numStr}_layers.json`,
+              JSON.stringify({ page: i + 1, name: p.name, bubbles }, null, 2),
+            );
+            folder.file(
+              `build_layered_page_${numStr}.jsx`,
+              generatePhotoshopBuildScript(i + 1, origName, cleanName, bubbles),
+            );
+            layeredCount++;
+          }
+          const content = await layeredZip.generateAsync({ type: "blob", compression: "DEFLATE" });
+          await saveBlob(content, "SuperK_Layered_Photoshop_Pack.zip", destDir);
+          setTranslationResult(`✅ ดาวน์โหลดแพ็กเกจแยกเลเยอร์สำเร็จ! (${layeredCount} หน้า)${excludedNote}`);
+          setTimeout(() => setTranslationResult(null), 3000);
+        } catch (err) {
+          console.error("Failed to export layered pack", err);
+          setTranslationResult("❌ เกิดข้อผิดพลาดในการสร้างแพ็กเกจแยกเลเยอร์");
+          setTimeout(() => setTranslationResult(null), 3000);
+        } finally {
+          setIsZipping(false);
+          allowUnreviewedExportRef.current = false;
+          exportSnapshotRef.current = null;
+        }
+        return;
+      }
 
       if (format === "strip") {
         try {
@@ -1056,7 +1108,7 @@ export function useExportOrchestrator({
   );
 
   const handleDownloadAll = useCallback(
-    async (format: "zip" | "cbz" | "pdf" | "strip" = "zip") => {
+    async (format: "zip" | "cbz" | "pdf" | "strip" | "layered" = "zip") => {
       if (pages.length === 0) return;
 
       const unconfirmed = collectExportReviewPages(exportSnapshotRef.current?.pages ?? pages);
@@ -1197,7 +1249,7 @@ export function useExportOrchestrator({
   ]);
 
   const requestBookExport = useCallback(
-    async (format: "zip" | "cbz" | "pdf" | "strip") => {
+    async (format: "zip" | "cbz" | "pdf" | "strip" | "layered") => {
       if (pages.length === 0 || isChoosingExport || isZipping) return;
       exportSnapshotRef.current = { pages: pages.map((p) => ({ ...p })), currentPage };
       setIsChoosingExport(true);

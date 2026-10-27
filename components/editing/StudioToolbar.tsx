@@ -11,6 +11,7 @@ import {
   Keyboard,
   Plus,
   FileText,
+  BookText,
 } from "lucide-react";
 
 export type StudioTool = "select" | "text" | "mask" | "ocr" | "warp";
@@ -22,6 +23,7 @@ export interface StudioToolbarProps {
   onOpenFindReplace: () => void;
   onOpenShortcuts: () => void;
   onOpenTranscript?: () => void;
+  onOpenGlossary?: () => void;
   onEditMask: () => void;
   disabled?: boolean;
 }
@@ -33,6 +35,7 @@ export function StudioToolbar({
   onOpenFindReplace,
   onOpenShortcuts,
   onOpenTranscript,
+  onOpenGlossary,
   onEditMask,
   disabled = false,
 }: StudioToolbarProps): ReactElement {
@@ -154,6 +157,20 @@ export function StudioToolbar({
           className="h-12 w-12 rounded-xl flex items-center justify-center gap-1 text-muted hover:text-foreground hover:bg-surface-hover transition-colors disabled:opacity-30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
         >
           <FileText className="w-6 h-6" aria-hidden="true" />
+        </button>
+      )}
+
+      {/* 6.8 Glossary Manager */}
+      {onOpenGlossary && (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={onOpenGlossary}
+          aria-label="คลังคำศัพท์เฉพาะเรื่อง"
+          title="คลังคำศัพท์เฉพาะเรื่อง &amp; ล็อกชื่อตัวละคร (Glossary)"
+          className="h-12 w-12 rounded-xl flex items-center justify-center gap-1 text-muted hover:text-foreground hover:bg-surface-hover transition-colors disabled:opacity-30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        >
+          <BookText className="w-6 h-6" aria-hidden="true" />
         </button>
       )}
 
