@@ -782,6 +782,7 @@ class CleaningPipeline:
         mask: BinaryMask,
         cleaner: str,
         action: ManualRegionAction = ManualRegionAction.AUTOMATIC,
+        root_text_mask: np.ndarray | None = None,
     ) -> PipelineOutput:
         if mask.shape != output.mask.shape:
             raise ValueError("retry mask dimensions must match the image")
@@ -851,6 +852,29 @@ class CleaningPipeline:
             source_region = output.source_image[ys, xs]
             working_region[removed_from_mask] = source_region[removed_from_mask]
             eligible[ys, xs] = 0
+            if (
+                root_text_mask is not None
+                and root_text_mask.shape == binary_mask.shape
+                and not previous_region_mask.any()
+            ):
+                # A force-clean over a restored (de-authorized) region
+                # re-authorizes the region's original text mask: the user is
+                # erasing the text that กู้ภาพเดิมทั้งจุด brought back, and thin
+                # brush strokes alone leave glyph fragments behind. Only the
+                # text mask near the painted strokes joins, so artwork the user
+                # kept stays untouched.
+                near_strokes = cv2.dilate(
+                    binary_mask,
+                    cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31)),
+                )
+                root_ys = slice(record.rect.y, record.rect.y + record.rect.height)
+                root_xs = slice(record.rect.x, record.rect.x + record.rect.width)
+                root_support = (root_text_mask[root_ys, root_xs] > 0) & (
+                    near_strokes[root_ys, root_xs] > 0
+                )
+                binary_mask[root_ys, root_xs][root_support] = 255
+                points = cv2.findNonZero(binary_mask)
+                x, y, width, height = cv2.boundingRect(points)
 
         region = MaskRegion(
             id=region_id,

@@ -42,6 +42,7 @@ class _TestPipeline:
         mask: np.ndarray,
         cleaner: str,
         action: ManualRegionAction,
+        root_text_mask: np.ndarray | None = None,
     ) -> PipelineOutput:
         return output
 

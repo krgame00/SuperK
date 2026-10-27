@@ -689,6 +689,17 @@ class JobStore:
                 self._worker_finished()
             self._schedule_idle_unload_if_idle()
 
+    def _find_root_job(self, job: JobState) -> JobState | None:
+        seen = {job.id}
+        current = job
+        while current.parent_id:
+            parent = self.get(current.parent_id)
+            if parent is None or parent.id in seen:
+                return None
+            seen.add(parent.id)
+            current = parent
+        return current
+
     def _run_retry(
         self,
         job: JobState,
@@ -707,6 +718,20 @@ class JobStore:
         watchdog = self._start_watchdog(job)
         try:
             mask = _decode_mask(mask_bytes)
+            root_text_mask = None
+            if action is ManualRegionAction.FORCE_CLEAN:
+                # A force-clean over a restored (de-authorized) region re-erases
+                # the restored text: the root job's text mask joins the user's
+                # strokes within a brush-sized neighborhood so glyph fragments
+                # between thin strokes disappear with the strokes.
+                root_job = self._find_root_job(parent)
+                if root_job is not None and root_job.asset_dir is not None:
+                    root_mask_file = root_job.asset_dir / "mask.png"
+                    if root_mask_file.is_file():
+                        try:
+                            root_text_mask = _decode_mask(root_mask_file.read_bytes())
+                        except Exception:
+                            root_text_mask = None
             pipeline = self._pipeline()
             retry = getattr(pipeline, "retry_region", None)
             if retry is None:
@@ -769,7 +794,7 @@ class JobStore:
             if mask.shape != parent_output.mask.shape:
                 raise ValueError("retry mask dimensions do not match the image")
             try:
-                output = retry(parent_output, region_id, mask, cleaner, action)
+                output = retry(parent_output, region_id, mask, cleaner, action, root_text_mask)
             except Exception as retry_exc:
                 if not is_gpu_device_error(retry_exc):
                     raise
@@ -785,7 +810,7 @@ class JobStore:
                 cpu_retry = getattr(cpu_pipeline, "retry_region", None)
                 if cpu_retry is None:
                     raise
-                output = cpu_retry(parent_output, region_id, mask, cleaner, action)
+                output = cpu_retry(parent_output, region_id, mask, cleaner, action, root_text_mask)
             self._worker_finished()
             worker_active = False
             self._complete(

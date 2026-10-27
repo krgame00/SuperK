@@ -706,3 +706,37 @@ def test_pipeline_uses_feathering_for_artwork_route_and_none_for_flat() -> None:
     assert _feather_radius_for_route(CleanerRoute.GRADIENT) == 2
     assert _feather_radius_for_route(CleanerRoute.ARTWORK) == 2
 
+
+
+def test_force_clean_over_restored_region_re_erases_original_text_with_root_mask() -> None:
+    """A thin brush stroke over a restored (กู้ภาพเดิมทั้งจุด) region must erase the
+    whole original text again: the root job's text mask joins the user's stroke."""
+    output = _single_region_output(source_value=30, clean_value=30)
+    root_text_mask = np.zeros(output.mask.shape, np.uint8)
+    root_text_mask[8:20, 8:20] = 255
+    stroke = np.zeros(output.mask.shape, np.uint8)
+    stroke[9:11, 9:11] = 255
+    pipeline = CleaningPipeline(
+        detector=NoTextDetector(),
+        cleaners={"flat": SolidCleaner(255)},
+        page_classifier=_comic_page,
+        protection_detector=_empty_protection,
+        eligibility_classifier=_clean_decision,
+    )
+
+    confirmed = pipeline.retry_region(output, "region-1", stroke, "flat", ManualRegionAction.CONFIRM_TEXT)
+    fixed = pipeline.retry_region(
+        confirmed,
+        "region-1",
+        stroke,
+        "flat",
+        ManualRegionAction.FORCE_CLEAN,
+        root_text_mask=root_text_mask,
+    )
+
+    support = root_text_mask > 0
+    assert np.all(fixed.clean_image[support] == 255)
+    assert np.array_equal(
+        fixed.clean_image[root_text_mask == 0],
+        output.clean_image[root_text_mask == 0],
+    )

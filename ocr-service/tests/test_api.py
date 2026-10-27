@@ -408,9 +408,11 @@ class _RetryPipeline(_IdentityPipeline):
         mask,
         cleaner: str,
         action,
+        root_text_mask=None,
     ) -> PipelineOutput:
         self.retry_cleaner = cleaner
         self.retry_action = action.value
+        self.retry_root_text_mask = root_text_mask
         clean = output.clean_image.copy()
         clean[mask > 0] = 128
         return PipelineOutput(
