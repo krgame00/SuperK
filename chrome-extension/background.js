@@ -9,6 +9,9 @@ chrome.runtime.onInstalled?.addListener?.(() => {
   chrome.contextMenus?.create?.({
     id: "superk-translate-page", title: "⚡ แปลทั้งหน้าเว็บอัตโนมัติ (>= 500x500px)", contexts: ["page"]
   });
+  chrome.contextMenus?.create?.({
+    id: "superk-capture-viewport", title: "📸 แคปหน้าจอแปลมังงะ (สำหรับเว็บล็อก Canvas)", contexts: ["page", "image"]
+  });
 });
 
 const pending = new Set();
@@ -167,6 +170,17 @@ chrome.contextMenus?.onClicked?.addListener?.(async (info, tab) => {
     await runTranslationFlow(tab.id, info.frameId ?? 0, info.srcUrl);
   } else if (info.menuItemId === "superk-translate-page") {
     chrome.tabs.sendMessage(tab.id, { action: "AUTO_TRANSLATE_PAGE" }, { frameId: info.frameId ?? 0 }).catch(() => {});
+  } else if (info.menuItemId === "superk-capture-viewport") {
+    try {
+      if (typeof chrome.tabs?.captureVisibleTab === "function") {
+        const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+        if (dataUrl) {
+          await runTranslationFlow(tab.id, info.frameId ?? 0, dataUrl);
+        }
+      }
+    } catch (err) {
+      console.warn("[SuperK] Viewport capture failed:", err);
+    }
   }
 });
 
@@ -175,6 +189,18 @@ chrome.runtime.onMessage?.addListener?.(async (message, sender) => {
     await checkPublishedUpdates();
   } else if ((message.action === "RETRY_TRANSLATE" || message.action === "TRANSLATE_IMAGE_URL") && sender.tab?.id && message.imageUrl) {
     await runTranslationFlow(sender.tab.id, sender.frameId ?? 0, message.imageUrl);
+  } else if (message.action === "CAPTURE_VIEWPORT_TRANSLATE" && (message.tabId || sender.tab?.id)) {
+    const targetTabId = message.tabId || sender.tab?.id;
+    try {
+      if (typeof chrome.tabs?.captureVisibleTab === "function") {
+        const dataUrl = await chrome.tabs.captureVisibleTab(sender.tab?.windowId, { format: "png" });
+        if (dataUrl) {
+          await runTranslationFlow(targetTabId, sender.frameId ?? 0, dataUrl);
+        }
+      }
+    } catch (err) {
+      console.warn("[SuperK] Capture viewport failed:", err);
+    }
   } else if (message.action === "OPEN_EDITOR" && message.payload) {
     try {
       const stored = await loadExtensionSettings({

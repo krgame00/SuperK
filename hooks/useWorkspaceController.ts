@@ -721,6 +721,15 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     glossary,
     onGlossaryChange: setGlossary,
     onAutoExtractGlossary: () => void handleAutoExtractGlossary(),
+    onQuickExport: (kind) => {
+      if (kind === "image") {
+        void requestSinglePageExport();
+      } else if (kind === "layered") {
+        void canvasProps.onExportLayeredArchive?.();
+      } else {
+        void requestBookExport(kind);
+      }
+    },
   };
 
   const bottomStripProps: WorkspaceBottomStripHostProps = {

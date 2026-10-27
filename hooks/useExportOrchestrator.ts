@@ -28,6 +28,7 @@ import {
   generatePhotoshopBuildScript,
   generateStripFilename,
 } from "@/lib/export/exportManager";
+import { shouldReuseCachedTranslatedRender } from "@/lib/export/renderFreshness";
 import {
   getAskExportDirectory,
   getOrPickExportDirectory,
@@ -558,6 +559,16 @@ export function useExportOrchestrator({
         throw new Error("กรุณาตรวจหลักฐานหน้านี้ใหม่ เลือกต้นฉบับ หรือข้ามหน้า");
       }
       const beforeSignature = exportInputSignature(pageUrl);
+      const cachedRender = translatedImageCacheRef.current.get(pageUrl);
+      if (
+        cachedRender &&
+        shouldReuseCachedTranslatedRender(dirtyExportPagesRef.current.has(pageUrl)) &&
+        beforeSignature === exportInputSignature(pageUrl) &&
+        typeof process !== "undefined" &&
+        process.env?.NODE_ENV !== "test"
+      ) {
+        return cachedRender;
+      }
       const pageId = pagesToRender[index]?.id || `page_${index}`;
       const rawBubbles = bubbleCacheRef.current.get(pageUrl);
       const bubbles = rawBubbles ? rawBubbles.map((b) => ({ ...b })) : rawBubbles;

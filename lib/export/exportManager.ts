@@ -139,14 +139,18 @@ export function generatePhotoshopBuildScript(
     translated?: string;
     original_text?: string;
     box?: number[];
+    deleted?: boolean;
   }>,
 ): string {
-  const safeBubbles = bubbles.map((b, i) => ({
-    index: i + 1,
-    text: String(b.t ?? b.translated ?? "").replace(/\r?\n/g, " "),
-    orig: String(b.original_text ?? "").replace(/\r?\n/g, " "),
-    box: Array.isArray(b.box) && b.box.length === 4 ? b.box : [100, 100, 200, 300],
-  }));
+  const safeBubbles = bubbles
+    .map((b, i) => ({
+      index: i + 1,
+      deleted: Boolean(b.deleted),
+      text: String(b.t ?? b.translated ?? "").replace(/\r?\n/g, " "),
+      orig: String(b.original_text ?? "").replace(/\r?\n/g, " "),
+      box: Array.isArray(b.box) && b.box.length === 4 ? b.box : [100, 100, 200, 300],
+    }))
+    .filter((b) => !b.deleted);
   return `// SuperK Layered PSD Builder Script for Page ${pageNumber}
 // Run in Adobe Photoshop or Photopea via File -> Scripts -> Browse...
 #target photoshop

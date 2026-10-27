@@ -27,6 +27,7 @@ import {
 } from "@/lib/cleaning/aiMaskInspector";
 import { applyBrush, dilateMask, type BrushMode, type MaskPoint } from "@/lib/cleaning/maskEdits";
 import { inpaintCrop } from "@/lib/cleaning/client";
+import { BrushStrokeTracker } from "@/lib/inpaint/DirtyRectInpainter";
 import { findRegionForCandidate } from "@/lib/cleaning/remnantReview";
 import type {
   CleanerOverride,
@@ -536,6 +537,7 @@ export function MaskEditor({
   const lastStrokePointRef = useRef<MaskPoint | null>(null);
   const coalescedPointsQueueRef = useRef<MaskPoint[]>([]);
   const rafBrushIdRef = useRef<number | null>(null);
+  const strokeTrackerRef = useRef(new BrushStrokeTracker());
 
   const updateBrushCursorDom = (point: { x: number; y: number }, width: number, height: number) => {
     brushPointRef.current = point;
@@ -557,6 +559,9 @@ export function MaskEditor({
       activeOp.points.push(...batch);
     } else {
       strokeOpsRef.current.push({ points: [...batch], radius, mode });
+    }
+    for (const pt of batch) {
+      strokeTrackerRef.current.recordBrushDab(pt.x, pt.y, radius);
     }
     const dirtyRect = applyEditorBrushInPlace(current, batch, radius, mode);
     renderMask(current, dirtyRect);
@@ -601,6 +606,9 @@ export function MaskEditor({
     updateBrushCursorDom(latestPoint, canvas.width, canvas.height);
     if (!appendToCurrentStroke) {
       setBrushPoint(latestPoint);
+      for (const pt of allPoints) {
+        strokeTrackerRef.current.recordBrushDab(pt.x, pt.y, radius);
+      }
       strokeOpsRef.current.push({ points: [...allPoints], radius, mode });
       const dirtyRect = applyEditorBrushInPlace(current, allPoints, radius, mode);
       renderMask(current, dirtyRect);
@@ -736,11 +744,11 @@ export function MaskEditor({
     const started = Date.now();
 
     try {
-      const pad = 32;
-      const x0 = Math.max(0, r.x - pad);
-      const y0 = Math.max(0, r.y - pad);
-      const rawW = Math.max(1, Math.min(canvasSize.width, r.x + r.width + pad) - x0);
-      const rawH = Math.max(1, Math.min(canvasSize.height, r.y + r.height + pad) - y0);
+      const customBox = strokeTrackerRef.current.getAlignedCropBox(canvasSize.width, canvasSize.height, 32, 8);
+      const x0 = customBox ? customBox.x : Math.max(0, r.x - 32);
+      const y0 = customBox ? customBox.y : Math.max(0, r.y - 32);
+      const rawW = customBox ? customBox.width : Math.max(1, Math.min(canvasSize.width, r.x + r.width + 32) - x0);
+      const rawH = customBox ? customBox.height : Math.max(1, Math.min(canvasSize.height, r.y + r.height + 32) - y0);
       // Enforce Modulo-8 alignment for LaMa tensor compatibility
       const cropW = Math.min(canvasSize.width - x0, Math.max(8, Math.ceil(rawW / 8) * 8));
       const cropH = Math.min(canvasSize.height - y0, Math.max(8, Math.ceil(rawH / 8) * 8));
@@ -825,6 +833,7 @@ export function MaskEditor({
     } finally {
       submittingRef.current = false;
       setIsFastInpainting(false);
+      strokeTrackerRef.current.reset();
     }
   };
 

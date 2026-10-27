@@ -32,6 +32,15 @@ import { StudioToolbar, type StudioTool } from "@/components/editing/StudioToolb
 import { OcrAreaTool, type PixelRect as OcrPixelRect } from "@/components/editing/OcrAreaTool";
 import { TranscriptModal, type TranscriptPageData } from "@/components/editing/TranscriptModal";
 import { GlossaryModal } from "@/components/editing/GlossaryModal";
+import { WarpPanel } from "@/components/editing/WarpPanel";
+import { ImageLayerPanel } from "@/components/editing/ImageLayerPanel";
+import { TextPropertiesPanel } from "@/components/editing/TextPropertiesPanel";
+import { TextLayerCanvas } from "@/components/editing/TextLayerCanvas";
+import { ColorMatchStatus } from "@/components/colorMatching/ColorMatchStatus";
+import { WorkspaceExportButtons } from "@/components/workspace/WorkspaceExportButtons";
+import { useTextLayers } from "@/hooks/useTextLayers";
+import type { ImageLayer, TextLayer, WarpEffect } from "@/lib/editing/commands";
+import type { TranslatedBubble } from "@/lib/translationOverlay";
 import type { GlossaryEntry } from "@/lib/translation/glossary";
 import type { BwContrastMode } from "@/lib/colorMatching/types";
 import type { PageCleaningResult, CleaningHookError } from "@/hooks/useCleaning";
@@ -147,6 +156,7 @@ export interface WorkspaceCanvasHostProps {
   glossary?: GlossaryEntry[];
   onGlossaryChange?: (entries: GlossaryEntry[]) => void;
   onAutoExtractGlossary?: () => void;
+  onQuickExport?: (kind: "image" | "pdf" | "strip" | "zip" | "cbz" | "layered") => void;
 }
 
 export function WorkspaceCanvasHost({
@@ -216,6 +226,7 @@ export function WorkspaceCanvasHost({
   glossary = [],
   onGlossaryChange,
   onAutoExtractGlossary,
+  onQuickExport,
 }: WorkspaceCanvasHostProps): ReactElement {
   const [isOrganizeMenuOpen, setIsOrganizeMenuOpen] = useState(false);
   const organizeMenuRef = useRef<HTMLDivElement>(null);
@@ -224,6 +235,36 @@ export function WorkspaceCanvasHost({
   const [activeStudioTool, setActiveStudioTool] = useState<StudioTool>("select");
   const [isTranscriptModalOpen, setIsTranscriptModalOpen] = useState(false);
   const [isGlossaryModalOpen, setIsGlossaryModalOpen] = useState(false);
+  const [inspectorScope, setInspectorScope] = useState<"this-page" | "all-pages">("this-page");
+  const [, setInspectorTick] = useState(0);
+  const [selectedBubbleBridge, setSelectedBubbleBridge] = useState<{
+    bubble: TranslatedBubble;
+    bubbleId: string;
+    getFontSize: () => number;
+    applyUpdates: (updates: Record<string, unknown>) => void;
+    deleteBubble: () => void;
+    reanalyzeColor: () => void;
+  } | null>(null);
+  const imageLayerInputRef = useRef<HTMLInputElement>(null);
+  const [imageLayersByPage, setImageLayersByPage] = useState<Record<string, ImageLayer[]>>({});
+  const [selectedImageLayerId, setSelectedImageLayerId] = useState<string | null>(null);
+  const activePageUrlKey = pages[currentPage]?.url ?? "page_0";
+  const textLayersManager = useTextLayers({ pageId: activePageUrlKey });
+  const currentPageImageLayers = imageLayersByPage[activePageUrlKey] ?? [];
+  const selectedImageLayer =
+    currentPageImageLayers.find((l) => l.id === selectedImageLayerId) ?? null;
+
+  useEffect(() => {
+    const handleBubbleSelected = (e: Event) => {
+      const custom = e as CustomEvent;
+      setSelectedBubbleBridge(custom.detail ?? null);
+      if (custom.detail) {
+        setSelectedImageLayerId(null);
+      }
+    };
+    window.addEventListener("superk:bubble-selected", handleBubbleSelected);
+    return () => window.removeEventListener("superk:bubble-selected", handleBubbleSelected);
+  }, []);
 
   useEffect(() => {
     if (!isOrganizeMenuOpen && !isBwContrastMenuOpen) return;
@@ -891,12 +932,214 @@ export function WorkspaceCanvasHost({
                     onAddManualTextBubble?.();
                     setActiveStudioTool("select");
                   }}
+                  onAddImageLayer={() => imageLayerInputRef.current?.click()}
                   onOpenFindReplace={onOpenFindReplace}
                   onOpenShortcuts={onOpenShortcuts}
                   onOpenTranscript={transcriptPagesData ? () => setIsTranscriptModalOpen(true) : undefined}
                   onOpenGlossary={onGlossaryChange ? () => setIsGlossaryModalOpen(true) : undefined}
                   onEditMask={onEditMask}
                   disabled={operationBusy}
+                />
+                <input
+                  ref={imageLayerInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="sr-only"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (!file || !activePage) return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      const src = String(reader.result || "");
+                      if (!src) return;
+                      const newLayer: ImageLayer = {
+                        id: `img_${Date.now()}`,
+                        pageId: activePage.url,
+                        src,
+                        x: 120,
+                        y: 120,
+                        width: 220,
+                        height: 220,
+                        opacity: 1,
+                        flipX: false,
+                        flipY: false,
+                      };
+                      setImageLayersByPage((prev) => ({
+                        ...prev,
+                        [activePage.url]: [...(prev[activePage.url] ?? []), newLayer],
+                      }));
+                      setSelectedImageLayerId(newLayer.id);
+                    };
+                    reader.readAsDataURL(file);
+                  }}
+                />
+              </div>
+            )}
+            {!isFocusMode && (selectedBubbleBridge || selectedImageLayer) && (
+              <div className="fixed right-3 top-20 z-30 hidden lg:flex flex-col gap-2 max-h-[calc(100dvh-9rem)] overflow-y-auto pr-0.5">
+                {selectedBubbleBridge && (
+                  <>
+                    <ColorMatchStatus
+                      profile={selectedBubbleBridge.bubble.styleProfile}
+                      onReanalyze={() => {
+                        selectedBubbleBridge.reanalyzeColor();
+                        setInspectorTick((t) => t + 1);
+                      }}
+                      onSelectMode={(mode) => {
+                        selectedBubbleBridge.applyUpdates({ ownershipMode: mode });
+                        setInspectorTick((t) => t + 1);
+                      }}
+                    />
+                    <TextPropertiesPanel
+                      layer={{
+                        id: selectedBubbleBridge.bubbleId,
+                        pageId: activePageUrlKey,
+                        text: selectedBubbleBridge.bubble.t ?? selectedBubbleBridge.bubble.translated ?? "",
+                        x: 0,
+                        y: 0,
+                        width: 200,
+                        height: 80,
+                        fontFamily:
+                          (selectedBubbleBridge.bubble as { fontFamily?: string }).fontFamily ||
+                          "var(--font-manga)",
+                        fontSize: selectedBubbleBridge.getFontSize(),
+                        color: selectedBubbleBridge.bubble.styleProfile?.fill || "#000000",
+                        strokeColor: selectedBubbleBridge.bubble.styleProfile?.outline || "#ffffff",
+                        strokeWidth:
+                          (selectedBubbleBridge.bubble as { strokeWidth?: number }).strokeWidth ?? 3,
+                        align:
+                          (selectedBubbleBridge.bubble as { align?: "left" | "center" | "right" }).align ||
+                          "center",
+                        isBold:
+                          (selectedBubbleBridge.bubble as { isBold?: boolean }).isBold ?? true,
+                        isItalic: Boolean(
+                          selectedBubbleBridge.bubble.isItalic ?? selectedBubbleBridge.bubble.italic,
+                        ),
+                        boxFill: (selectedBubbleBridge.bubble as { boxFill?: string }).boxFill,
+                        opacity: (selectedBubbleBridge.bubble as { opacity?: number }).opacity ?? 1,
+                      }}
+                      scope={inspectorScope}
+                      onScopeChange={setInspectorScope}
+                      onChange={(updates: Partial<TextLayer>) => {
+                        selectedBubbleBridge.applyUpdates(updates as Record<string, unknown>);
+                        setInspectorTick((t) => t + 1);
+                      }}
+                      onDelete={() => {
+                        selectedBubbleBridge.deleteBubble();
+                        setSelectedBubbleBridge(null);
+                      }}
+                    />
+                    <WarpPanel
+                      warp={{
+                        effect: (selectedBubbleBridge.bubble.warp?.type ?? "none") as WarpEffect,
+                        bend: Math.round((selectedBubbleBridge.bubble.warp?.bend ?? 0) * 100),
+                        horizontal: 0,
+                        vertical: 0,
+                      }}
+                      onChange={(warpUpdates) => {
+                        const prevType = selectedBubbleBridge.bubble.warp?.type ?? "none";
+                        const nextEffect = (warpUpdates.effect ?? prevType) as
+                          | "none"
+                          | "arch"
+                          | "wave"
+                          | "bulge"
+                          | "squeeze";
+                        const rawBend =
+                          typeof warpUpdates.bend === "number"
+                            ? warpUpdates.bend / 100
+                            : (selectedBubbleBridge.bubble.warp?.bend ?? 0.45);
+                        selectedBubbleBridge.applyUpdates({
+                          warp:
+                            nextEffect === "none"
+                              ? undefined
+                              : {
+                                  type: nextEffect,
+                                  bend: rawBend,
+                                  frequency: selectedBubbleBridge.bubble.warp?.frequency ?? 1.5,
+                                },
+                        });
+                        setInspectorTick((t) => t + 1);
+                      }}
+                      onReset={() => {
+                        selectedBubbleBridge.applyUpdates({ warp: undefined });
+                        setInspectorTick((t) => t + 1);
+                      }}
+                    />
+                  </>
+                )}
+                {selectedImageLayer && activePage && (
+                  <ImageLayerPanel
+                    layer={selectedImageLayer}
+                    onChange={(updates) => {
+                      setImageLayersByPage((prev) => ({
+                        ...prev,
+                        [activePage.url]: (prev[activePage.url] ?? []).map((item) =>
+                          item.id === selectedImageLayer.id ? { ...item, ...updates } : item,
+                        ),
+                      }));
+                    }}
+                    onDelete={(id) => {
+                      setImageLayersByPage((prev) => ({
+                        ...prev,
+                        [activePage.url]: (prev[activePage.url] ?? []).filter((item) => item.id !== id),
+                      }));
+                      setSelectedImageLayerId(null);
+                    }}
+                  />
+                )}
+              </div>
+            )}
+            {textLayersManager.layers.length > 0 && (
+              <TextLayerCanvas
+                pageId={activePageUrlKey}
+                layers={textLayersManager.layers}
+                selectedId={textLayersManager.selectedId ?? null}
+                onSelect={textLayersManager.selectLayer}
+                onChange={textLayersManager.updateLayer}
+                onDelete={textLayersManager.deleteLayer}
+              />
+            )}
+            {currentPageImageLayers.length > 0 && activePage && (
+              <div className="pointer-events-none absolute inset-0 z-25 overflow-hidden">
+                {currentPageImageLayers.map((imgLayer) => (
+                  <div
+                    key={imgLayer.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedImageLayerId(imgLayer.id);
+                    }}
+                    style={{
+                      position: "absolute",
+                      left: imgLayer.x,
+                      top: imgLayer.y,
+                      width: imgLayer.width,
+                      height: imgLayer.height,
+                      opacity: imgLayer.opacity ?? 1,
+                      transform: `scaleX(${imgLayer.flipX ? -1 : 1}) scaleY(${imgLayer.flipY ? -1 : 1})`,
+                    }}
+                    className={`pointer-events-auto cursor-move select-none ${
+                      selectedImageLayerId === imgLayer.id
+                        ? "ring-2 ring-primary shadow-lg"
+                        : "hover:ring-1 hover:ring-primary/50"
+                    }`}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={imgLayer.src}
+                      alt="Image Layer"
+                      draggable={false}
+                      className="w-full h-full object-contain pointer-events-none"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+            {onQuickExport && isFocusMode && isFocusToolbarVisible && (
+              <div className="fixed bottom-4 right-4 z-40">
+                <WorkspaceExportButtons
+                  disabled={isExportBusy || pages.length === 0}
+                  onExport={onQuickExport}
                 />
               </div>
             )}

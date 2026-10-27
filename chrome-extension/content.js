@@ -100,12 +100,78 @@ function scanAndTranslateEligibleImages(minSize = 500) {
   return triggered;
 }
 
+function ensureViewportCaptureHost(dataUrl) {
+  if (typeof document === 'undefined' || !document.body) return null;
+  let wrapper = document.getElementById('superk-viewport-capture-wrapper');
+  let img = document.getElementById('superk-viewport-capture-img');
+  if (!wrapper || !img) {
+    wrapper = document.createElement('div');
+    wrapper.id = 'superk-viewport-capture-wrapper';
+    wrapper.style.cssText = [
+      'position: fixed',
+      'inset: 0',
+      'width: 100vw',
+      'height: 100vh',
+      'z-index: 99990',
+      'background: rgba(9, 9, 11, 0.92)',
+      'display: flex',
+      'align-items: center',
+      'justify-content: center',
+    ].join(';');
+
+    img = document.createElement('img');
+    img.id = 'superk-viewport-capture-img';
+    img.alt = 'SuperK Viewport Capture';
+    img.style.cssText = 'width: 100vw; height: 100vh; object-fit: contain; display: block; user-select: none;';
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.textContent = '✕ ปิดภาพแคปหน้าจอ (Esc)';
+    closeBtn.style.cssText = [
+      'position: fixed',
+      'top: 14px',
+      'right: 18px',
+      'z-index: 100005',
+      'background: rgba(24, 24, 27, 0.92)',
+      'color: #f4f4f5',
+      'border: 1px solid rgba(255, 255, 255, 0.25)',
+      'border-radius: 999px',
+      'padding: 6px 14px',
+      'font-size: 12px',
+      'font-weight: 600',
+      'cursor: pointer',
+      'box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45)',
+    ].join(';');
+    const teardown = () => {
+      const currentSrc = img.getAttribute('src') || dataUrl;
+      removeExistingLoadingScrim(currentSrc);
+      const ov = document.querySelector(`.superk-overlay-container[data-superk-for="${hashCode(currentSrc)}"]`);
+      if (ov) ov.remove();
+      wrapper.remove();
+    };
+    closeBtn.addEventListener('click', teardown);
+    wrapper.appendChild(img);
+    wrapper.appendChild(closeBtn);
+    document.body.appendChild(wrapper);
+  }
+  if (img.src !== dataUrl) {
+    img.src = dataUrl;
+  }
+  return img;
+}
+
 // Helper: Find target image element on page by URL or context
 function findImageElement(imageUrl) {
+  if (!imageUrl || typeof imageUrl !== 'string') return null;
   const images = Array.from(document.querySelectorAll('img'));
   // Try exact match
   let target = images.find(img => img.src === imageUrl || img.currentSrc === imageUrl);
   if (target) return target;
+
+  // For viewport screenshot captures on canvas-locked pages, mount a viewport host <img>
+  if (imageUrl.startsWith('data:image/')) {
+    return ensureViewportCaptureHost(imageUrl);
+  }
   
   // Try matching filename or substring
   const urlFilename = imageUrl.split('/').pop().split('?')[0];

@@ -165,6 +165,10 @@ export const resolveBubbleFontFamily = (
   bubble?: TranslatedBubble,
   style?: OverlayTextStyle,
 ): string => {
+  const customBubbleFont = (bubble as { fontFamily?: string } | undefined)?.fontFamily;
+  if (typeof customBubbleFont === "string" && customBubbleFont.trim().length > 0) {
+    return resolveCanvasFontFamily(customBubbleFont);
+  }
   const category =
     bubble?.styleProfile?.category ||
     (bubble as { styleCategory?: string } | undefined)?.styleCategory;
@@ -1203,6 +1207,16 @@ export const applyTranslationOverlay = async (
 
     let fallbackY2 = 10;
 
+    type SelectedBubbleBridge = {
+      bubble: TranslatedBubble;
+      bubbleId: string;
+      getFontSize: () => number;
+      applyUpdates: (updates: Record<string, unknown>) => void;
+      deleteBubble: () => void;
+      reanalyzeColor: () => void;
+    };
+    const selectedBubbleBridgeByWrapper = new WeakMap<HTMLElement, SelectedBubbleBridge>();
+
     let selectedBubbleWrapper: HTMLElement | null = null;
     const setSelectedBubble = (wrapper: HTMLElement | null) => {
       (chromeRoot ?? tlContainer).querySelectorAll<HTMLElement>("[data-bubble-more-menu]").forEach((menu) => {
@@ -1217,7 +1231,12 @@ export const applyTranslationOverlay = async (
         chromeControlsByWrapper.get(selectedBubbleWrapper)?.setVisible(false);
       }
       selectedBubbleWrapper = wrapper;
-      if (!wrapper) return;
+      if (!wrapper) {
+        if (viewMode !== "offscreen" && typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("superk:bubble-selected", { detail: null }));
+        }
+        return;
+      }
 
       const selectedFrame = wrapper.querySelector<HTMLElement>(".bubble-text-selection");
       if (selectedFrame) selectedFrame.style.outline = "1.5px dashed #3b82f6";
@@ -1227,6 +1246,13 @@ export const applyTranslationOverlay = async (
       const controls = chromeControlsByWrapper.get(wrapper);
       controls?.position();
       controls?.setVisible(true);
+      if (viewMode !== "offscreen" && typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("superk:bubble-selected", {
+            detail: selectedBubbleBridgeByWrapper.get(wrapper) ?? null,
+          }),
+        );
+      }
     };
 
     if (img && (img.naturalWidth > 0 || img.width > 0)) {
@@ -1822,7 +1848,8 @@ export const applyTranslationOverlay = async (
         const resolvedStyle = resolveBubbleTextStyle(b, currentStyle);
         const textColor = resolvedStyle.textColor;
         const outlineColor = resolvedStyle.textOutline;
-        const opacity = resolvedStyle.opacity ?? 1.0;
+        const customOpacity = (b as { opacity?: number }).opacity;
+        const opacity = typeof customOpacity === "number" ? customOpacity : (resolvedStyle.opacity ?? 1.0);
         const fit = snapshotFit
           ? {
               fontSize: snapshotFit.layout.fontSizePx * snapshotFit.scale,
@@ -1857,7 +1884,9 @@ export const applyTranslationOverlay = async (
           : fixedLayout ? fontSize * 1.30 : Math.min(fontSize * 1.30, currentBh / Math.max(1, lines.length));
 
         currentIsItalic = Boolean(b.isItalic ?? b.italic ?? currentIsItalic);
-        const fontStylePrefix = currentIsItalic ? "italic bold" : "bold";
+        const isBoldFlag = (b as { isBold?: boolean }).isBold ?? true;
+        const weightToken = isBoldFlag ? "bold" : "normal";
+        const fontStylePrefix = currentIsItalic ? `italic ${weightToken}` : weightToken;
         ctx.globalAlpha = opacity;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
@@ -1866,9 +1895,13 @@ export const applyTranslationOverlay = async (
         ctx.lineCap = "round";
         ctx.miterLimit = 2;
         ctx.strokeStyle = outlineColor;
-        ctx.lineWidth = resolvedStyle.hasOutline
-          ? Math.max(resolvedStyle.outlineWidthRatio >= 0.18 ? 3.2 : 1, fontSize * resolvedStyle.outlineWidthRatio)
-          : 0;
+        const customStrokeWidth = (b as { strokeWidth?: number }).strokeWidth;
+        ctx.lineWidth =
+          typeof customStrokeWidth === "number"
+            ? customStrokeWidth
+            : resolvedStyle.hasOutline
+              ? Math.max(resolvedStyle.outlineWidthRatio >= 0.18 ? 3.2 : 1, fontSize * resolvedStyle.outlineWidthRatio)
+              : 0;
 
         let fillPaint: string | CanvasGradient = textColor;
         const gradient = resolvedStyle.fillGradient;
@@ -1994,6 +2027,14 @@ export const applyTranslationOverlay = async (
           }
         }
 
+        const customBoxFill = (b as { boxFill?: string }).boxFill;
+        if (typeof customBoxFill === "string" && customBoxFill.trim()) {
+          activeCtx.save();
+          activeCtx.fillStyle = customBoxFill;
+          activeCtx.fillRect(0, 0, currentBw, currentBh);
+          activeCtx.restore();
+        }
+
         const drawLineWithOptionalSlant = (lineText: string, drawX: number, drawY: number) => {
           if (currentIsItalic && typeof activeCtx.save === "function" && typeof activeCtx.transform === "function" && typeof activeCtx.restore === "function") {
             activeCtx.save();
@@ -2033,8 +2074,15 @@ export const applyTranslationOverlay = async (
               drawLineWithOptionalSlant(l, indentPad, yPos);
             }
           } else {
-            activeCtx.textAlign = "center";
-            drawLineWithOptionalSlant(l, currentBw / 2, yPos);
+            const customAlign = (b as { align?: "left" | "center" | "right" }).align || "center";
+            activeCtx.textAlign = customAlign;
+            const alignX =
+              customAlign === "left"
+                ? leftPad
+                : customAlign === "right"
+                  ? currentBw - leftPad
+                  : currentBw / 2;
+            drawLineWithOptionalSlant(l, alignX, yPos);
           }
         });
         activeCtx.textAlign = "center";
@@ -2672,6 +2720,100 @@ export const applyTranslationOverlay = async (
           },
         });
       };
+
+      selectedBubbleBridgeByWrapper.set(wrapper, {
+        bubble: b,
+        bubbleId,
+        getFontSize: () => Math.round(renderedFontSize || b.targetFontSize || 20),
+        applyUpdates: (updates: Record<string, unknown>) => {
+          if (typeof updates.fontFamily === "string") {
+            (b as { fontFamily?: string }).fontFamily = updates.fontFamily;
+          }
+          if (typeof updates.fontSize === "number" && updates.fontSize > 0) {
+            b.targetFontSize = updates.fontSize;
+          }
+          if (typeof updates.isBold === "boolean") {
+            (b as { isBold?: boolean }).isBold = updates.isBold;
+          }
+          if (typeof updates.isItalic === "boolean") {
+            currentIsItalic = updates.isItalic;
+            b.isItalic = updates.isItalic;
+            b.italic = updates.isItalic;
+          }
+          if (typeof updates.align === "string") {
+            (b as { align?: string }).align = updates.align;
+          }
+          if ("boxFill" in updates) {
+            (b as { boxFill?: string }).boxFill = updates.boxFill as string | undefined;
+          }
+          if (typeof updates.opacity === "number") {
+            (b as { opacity?: number }).opacity = updates.opacity;
+          }
+          if (typeof updates.strokeWidth === "number") {
+            (b as { strokeWidth?: number }).strokeWidth = updates.strokeWidth;
+          }
+          if (typeof updates.color === "string") {
+            b.styleProfile = {
+              ...(b.styleProfile ?? {
+                fill: updates.color,
+                outline: "#ffffff",
+                hasOutline: true,
+                outlineWidthRatio: 0.16,
+                source: "manual",
+              }),
+              fill: updates.color,
+              source: "manual",
+              ownershipMode: "manual",
+            };
+          }
+          if (typeof updates.strokeColor === "string") {
+            b.styleProfile = {
+              ...(b.styleProfile ?? {
+                fill: "#000000",
+                outline: updates.strokeColor,
+                hasOutline: true,
+                outlineWidthRatio: 0.16,
+                source: "manual",
+              }),
+              outline: updates.strokeColor,
+              hasOutline: true,
+              source: "manual",
+              ownershipMode: "manual",
+            };
+          }
+          if (typeof updates.ownershipMode === "string") {
+            if (b.styleProfile) {
+              b.styleProfile = {
+                ...b.styleProfile,
+                ownershipMode: updates.ownershipMode as "auto" | "readable" | "manual",
+                source: updates.ownershipMode === "manual" ? "manual" : "auto",
+              };
+            }
+          }
+          if ("warp" in updates) {
+            b.warp = updates.warp as WarpConfig | undefined;
+          }
+          delete b.layoutSnapshot;
+          renderBubble();
+          saveAdjustment();
+          onBubblesMutated?.();
+        },
+        deleteBubble: () => deleteBubbleWithUndo(),
+        reanalyzeColor: () => {
+          if (img && (img.naturalWidth > 0 || img.width > 0) && b.box && b.box.length === 4) {
+            const sample = sampleBubbleRegion(img, b.box);
+            if (sample) {
+              const profile = extractTextColors(sample);
+              profile.category = inferTextStyleCategory(b);
+              b.styleProfile = profile;
+              delete b.layoutSnapshot;
+              renderBubble();
+              saveAdjustment();
+              onBubblesMutated?.();
+            }
+          }
+        },
+      });
 
       wrapper.addEventListener("focus", () => {
         setSelectedBubble(wrapper);

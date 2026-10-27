@@ -10,6 +10,7 @@ import {
   Replace,
   Keyboard,
   Plus,
+  ImagePlus,
   FileText,
   BookText,
 } from "lucide-react";
@@ -20,6 +21,7 @@ export interface StudioToolbarProps {
   activeTool: StudioTool;
   onSelectTool: (tool: StudioTool) => void;
   onAddText: () => void;
+  onAddImageLayer?: () => void;
   onOpenFindReplace: () => void;
   onOpenShortcuts: () => void;
   onOpenTranscript?: () => void;
@@ -32,6 +34,7 @@ export function StudioToolbar({
   activeTool,
   onSelectTool,
   onAddText,
+  onAddImageLayer,
   onOpenFindReplace,
   onOpenShortcuts,
   onOpenTranscript,
@@ -80,6 +83,20 @@ export function StudioToolbar({
         <Type className="w-6 h-6" aria-hidden="true" />
         <Plus className="w-3.5 h-3.5 absolute top-1.5 right-1.5 text-primary stroke-[3]" aria-hidden="true" />
       </button>
+
+      {/* 2.5 Image / Sticker Layer Tool */}
+      {onAddImageLayer && (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={onAddImageLayer}
+          aria-label="รูปภาพ"
+          title="รูปภาพ / โลโก้ / สติกเกอร์แปะทับหน้ามังงะ (Image Layer)"
+          className="h-12 w-12 rounded-xl flex items-center justify-center gap-1 text-muted hover:text-foreground hover:bg-surface-hover transition-all duration-150 disabled:opacity-30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        >
+          <ImagePlus className="w-6 h-6" aria-hidden="true" />
+        </button>
+      )}
 
       {/* 3. Brush / Mask Tool */}
       <button
