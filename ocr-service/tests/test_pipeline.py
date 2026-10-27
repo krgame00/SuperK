@@ -740,3 +740,46 @@ def test_force_clean_over_restored_region_re_erases_original_text_with_root_mask
         fixed.clean_image[root_text_mask == 0],
         output.clean_image[root_text_mask == 0],
     )
+
+
+def test_force_clean_over_stale_mask_restored_region_re_erases_text() -> None:
+    """The user-reported bug: after กู้ภาพเดิมทั้งจุด the stored mask still
+    holds old deletion strokes while the clean pixels equal the source; a
+    thin new stroke over the restored text must erase the whole text instead
+    of letting the stale mask resurrect it."""
+    from dataclasses import replace
+
+    output = _single_region_output(source_value=30, clean_value=30)
+    stale = np.zeros(output.mask.shape, np.uint8)
+    stale[9:11, 9:11] = 255
+    output = replace(output, mask=stale, regions=[output.regions[0].model_copy(update={
+        "text_role": TextRole.PROTECTED, "status": RegionStatus.PRESERVED,
+    })])
+    root_text_mask = np.zeros(output.mask.shape, np.uint8)
+    root_text_mask[8:20, 8:20] = 255
+    stroke = np.zeros(output.mask.shape, np.uint8)
+    stroke[9:11, 9:11] = 255
+    pipeline = CleaningPipeline(
+        detector=NoTextDetector(),
+        cleaners={"flat": SolidCleaner(255)},
+        page_classifier=_comic_page,
+        protection_detector=_empty_protection,
+        eligibility_classifier=_clean_decision,
+    )
+
+    confirmed = pipeline.retry_region(output, "region-1", stroke, "flat", ManualRegionAction.CONFIRM_TEXT)
+    fixed = pipeline.retry_region(
+        confirmed,
+        "region-1",
+        stroke,
+        "flat",
+        ManualRegionAction.FORCE_CLEAN,
+        root_text_mask=root_text_mask,
+    )
+
+    support = root_text_mask > 0
+    assert np.all(fixed.clean_image[support] == 255)
+    assert np.array_equal(
+        fixed.clean_image[root_text_mask == 0],
+        output.clean_image[root_text_mask == 0],
+    )

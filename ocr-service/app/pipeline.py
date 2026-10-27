@@ -852,17 +852,21 @@ class CleaningPipeline:
             source_region = output.source_image[ys, xs]
             working_region[removed_from_mask] = source_region[removed_from_mask]
             eligible[ys, xs] = 0
+            # A region whose record says PROTECTED/PRESERVED was restored
+            # (กู้ภาพเดิมทั้งจุด): the user painting over it is re-erasing the
+            # text, and the stale accumulated mask from earlier rounds must not
+            # resurrect it.
+            restored_region = (
+                record.text_role is TextRole.PROTECTED
+                or record.status is RegionStatus.PRESERVED
+            )
             if (
                 root_text_mask is not None
                 and root_text_mask.shape == binary_mask.shape
-                and not previous_region_mask.any()
+                and restored_region
             ):
-                # A force-clean over a restored (de-authorized) region
-                # re-authorizes the region's original text mask: the user is
-                # erasing the text that กู้ภาพเดิมทั้งจุด brought back, and thin
-                # brush strokes alone leave glyph fragments behind. Only the
-                # text mask near the painted strokes joins, so artwork the user
-                # kept stays untouched.
+                # Only the text mask near the painted strokes joins, so artwork
+                # the user kept stays untouched.
                 near_strokes = cv2.dilate(
                     binary_mask,
                     cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31)),
