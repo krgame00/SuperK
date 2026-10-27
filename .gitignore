@@ -110,3 +110,4 @@ patch-probe.md
 # Browser extension packages
 *.crx
 
+/.cache/
