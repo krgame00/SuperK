@@ -149,6 +149,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  const btnAutoPage = document.getElementById('btnAutoTranslatePage');
+  if (btnAutoPage) {
+    btnAutoPage.addEventListener('click', async () => {
+      try {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        const tabId = tabs?.[0]?.id;
+        if (tabId != null) {
+          await chrome.tabs.sendMessage(tabId, { action: 'AUTO_TRANSLATE_PAGE', minSize: 500 });
+          report('เริ่มแปลภาพมังงะทั้งหมดในหน้านี้แล้ว (>= 500x500px)');
+        }
+      } catch {
+        report('กรุณารีเฟรชหน้าเว็บที่กำลังอ่านก่อนกดแปลทั้งหน้า', true);
+      }
+    });
+  }
+
   document.getElementById('btnOpen').addEventListener('click', async () => {
     try {
       await chrome.tabs.create({ url: SuperKServer.normalizeUrl(fields.serverUrl.value) });

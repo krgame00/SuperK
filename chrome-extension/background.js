@@ -6,6 +6,9 @@ chrome.runtime.onInstalled?.addListener?.(() => {
   chrome.contextMenus?.create?.({
     id: "superk-translate-image", title: "🪄 แปลภาพมังงะด้วย SuperK", contexts: ["image"]
   });
+  chrome.contextMenus?.create?.({
+    id: "superk-translate-page", title: "⚡ แปลทั้งหน้าเว็บอัตโนมัติ (>= 500x500px)", contexts: ["page"]
+  });
 });
 
 const pending = new Set();
@@ -159,14 +162,18 @@ async function runTranslationFlow(tabId, frameId, imageUrl) {
 }
 
 chrome.contextMenus?.onClicked?.addListener?.(async (info, tab) => {
-  if (info.menuItemId !== "superk-translate-image" || !info.srcUrl || tab?.id == null) return;
-  await runTranslationFlow(tab.id, info.frameId ?? 0, info.srcUrl);
+  if (tab?.id == null) return;
+  if (info.menuItemId === "superk-translate-image" && info.srcUrl) {
+    await runTranslationFlow(tab.id, info.frameId ?? 0, info.srcUrl);
+  } else if (info.menuItemId === "superk-translate-page") {
+    chrome.tabs.sendMessage(tab.id, { action: "AUTO_TRANSLATE_PAGE" }, { frameId: info.frameId ?? 0 }).catch(() => {});
+  }
 });
 
 chrome.runtime.onMessage?.addListener?.(async (message, sender) => {
   if (message.action === "SYNC_PUBLISHED_UPDATES") {
     await checkPublishedUpdates();
-  } else if (message.action === "RETRY_TRANSLATE" && sender.tab?.id && message.imageUrl) {
+  } else if ((message.action === "RETRY_TRANSLATE" || message.action === "TRANSLATE_IMAGE_URL") && sender.tab?.id && message.imageUrl) {
     await runTranslationFlow(sender.tab.id, sender.frameId ?? 0, message.imageUrl);
   } else if (message.action === "OPEN_EDITOR" && message.payload) {
     try {

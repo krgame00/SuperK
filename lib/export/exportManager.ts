@@ -129,3 +129,58 @@ export function generateComicInfoXml(meta: ComicInfoMetadata = {}): string {
   <Manga>YesAndRightToLeft</Manga>
 </ComicInfo>`;
 }
+
+export function generatePhotoshopBuildScript(
+  pageNumber: number,
+  origFilename: string,
+  cleanFilename: string,
+  bubbles: Array<{
+    t?: string;
+    translated?: string;
+    original_text?: string;
+    box?: number[];
+  }>,
+): string {
+  const safeBubbles = bubbles.map((b, i) => ({
+    index: i + 1,
+    text: String(b.t ?? b.translated ?? "").replace(/\r?\n/g, " "),
+    orig: String(b.original_text ?? "").replace(/\r?\n/g, " "),
+    box: Array.isArray(b.box) && b.box.length === 4 ? b.box : [100, 100, 200, 300],
+  }));
+  return `// SuperK Layered PSD Builder Script for Page ${pageNumber}
+// Run in Adobe Photoshop or Photopea via File -> Scripts -> Browse...
+#target photoshop
+(function() {
+  var folder = File($.fileName).parent;
+  var origFile = File(folder + "/${origFilename}");
+  var cleanFile = File(folder + "/${cleanFilename}");
+  if (!origFile.exists) { alert("Missing " + origFile.fsName); return; }
+  var doc = app.open(origFile);
+  doc.activeLayer.name = "Original Raw";
+  if (cleanFile.exists) {
+    var cleanDoc = app.open(cleanFile);
+    cleanDoc.activeLayer.duplicate(doc, ElementPlacement.PLACEATBEGINNING);
+    cleanDoc.close(SaveOptions.DONOTSAVECHANGES);
+    doc.activeLayer.name = "Inpainted Clean";
+  }
+  var textGroup = doc.layerSets.add();
+  textGroup.name = "Translated Text Layers";
+  var bubbles = ${JSON.stringify(safeBubbles)};
+  var w = doc.width.as("px");
+  var h = doc.height.as("px");
+  for (var i = 0; i < bubbles.length; i++) {
+    var b = bubbles[i];
+    if (!b.text) continue;
+    var tl = textGroup.artLayers.add();
+    tl.kind = LayerKind.TEXT;
+    tl.name = "#" + b.index + " " + b.text.substring(0, 20);
+    var ti = tl.textItem;
+    ti.contents = b.text;
+    ti.justification = Justification.CENTER;
+    var cx = ((b.box[1] + b.box[3]) / 2000) * w;
+    var cy = ((b.box[0] + b.box[2]) / 2000) * h;
+    ti.position = [UnitValue(cx, "px"), UnitValue(cy, "px")];
+  }
+})();
+`;
+}

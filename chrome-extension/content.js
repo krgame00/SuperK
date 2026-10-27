@@ -74,8 +74,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       message.cleanUrl,
       message.textStyle, message
     );
+  } else if (message.action === "AUTO_TRANSLATE_PAGE") {
+    const count = scanAndTranslateEligibleImages(message.minSize || 500);
+    if (typeof sendResponse === "function") sendResponse({ count });
   }
 });
+
+function scanAndTranslateEligibleImages(minSize = 500) {
+  const images = Array.from(document.querySelectorAll("img"));
+  let triggered = 0;
+  for (const img of images) {
+    const src = img.src || img.currentSrc;
+    if (!src || activeOverlays.has(src)) continue;
+    const rect = img.getBoundingClientRect();
+    const w = Math.max(img.naturalWidth || 0, rect.width || 0);
+    const h = Math.max(img.naturalHeight || 0, rect.height || 0);
+    // Only translate manga panels >= 500x500px, skipping icons and banners
+    if (w >= minSize && h >= minSize) {
+      triggered++;
+      if (typeof chrome !== "undefined" && chrome?.runtime?.sendMessage) {
+        chrome.runtime.sendMessage({ action: "TRANSLATE_IMAGE_URL", imageUrl: src });
+      }
+    }
+  }
+  return triggered;
+}
 
 // Helper: Find target image element on page by URL or context
 function findImageElement(imageUrl) {

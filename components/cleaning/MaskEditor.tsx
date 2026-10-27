@@ -534,6 +534,8 @@ export function MaskEditor({
   }, [sourceUrl, maskUrl, proposalMaskUrl, regionId, regions, selectedRegion?.textRole]);
 
   const lastStrokePointRef = useRef<MaskPoint | null>(null);
+  const coalescedPointsQueueRef = useRef<MaskPoint[]>([]);
+  const rafBrushIdRef = useRef<number | null>(null);
 
   const updateBrushCursorDom = (point: { x: number; y: number }, width: number, height: number) => {
     brushPointRef.current = point;
@@ -542,6 +544,22 @@ export function MaskEditor({
       cursorEl.style.left = `${(point.x / width) * 100}%`;
       cursorEl.style.top = `${(point.y / height) * 100}%`;
     }
+  };
+
+  const flushCoalescedBrushQueue = () => {
+    rafBrushIdRef.current = null;
+    const current = imageDataRef.current;
+    const queued = coalescedPointsQueueRef.current;
+    if (!current || queued.length === 0) return;
+    const batch = queued.splice(0, queued.length);
+    if (strokeOpsRef.current.length > strokeStartIndexRef.current) {
+      const activeOp = strokeOpsRef.current[strokeOpsRef.current.length - 1];
+      activeOp.points.push(...batch);
+    } else {
+      strokeOpsRef.current.push({ points: [...batch], radius, mode });
+    }
+    const dirtyRect = applyEditorBrushInPlace(current, batch, radius, mode);
+    renderMask(current, dirtyRect);
   };
 
   const drawAt = (event: React.PointerEvent<HTMLCanvasElement>, appendToCurrentStroke = false) => {
@@ -553,28 +571,52 @@ export function MaskEditor({
         ? canvasBoundsRef.current
         : canvas.getBoundingClientRect();
     canvasBoundsRef.current = bounds;
-    const point = {
+
+    // Extract high-frequency coalesced events when available (iPad Pencil / 120Hz touch)
+    const nativeEvt = event.nativeEvent as PointerEvent & { getCoalescedEvents?: () => PointerEvent[] };
+    const rawEvents =
+      appendToCurrentStroke && typeof nativeEvt?.getCoalescedEvents === "function"
+        ? nativeEvt.getCoalescedEvents()
+        : [];
+    const sampleEvents = rawEvents.length > 0 ? rawEvents : [event];
+
+    const allPoints: MaskPoint[] = [];
+    for (const sample of sampleEvents) {
+      const pt = {
+        x: (sample.clientX - bounds.left) * (canvas.width / Math.max(1, bounds.width)),
+        y: (sample.clientY - bounds.top) * (canvas.height / Math.max(1, bounds.height)),
+      };
+      const seg =
+        (appendToCurrentStroke || allPoints.length > 0) && lastStrokePointRef.current
+          ? interpolateBrushPoints(lastStrokePointRef.current, pt, radius)
+          : [pt];
+      lastStrokePointRef.current = pt;
+      allPoints.push(...seg);
+    }
+
+    const latestPoint = lastStrokePointRef.current ?? {
       x: (event.clientX - bounds.left) * (canvas.width / Math.max(1, bounds.width)),
       y: (event.clientY - bounds.top) * (canvas.height / Math.max(1, bounds.height)),
     };
-    updateBrushCursorDom(point, canvas.width, canvas.height);
+    updateBrushCursorDom(latestPoint, canvas.width, canvas.height);
     if (!appendToCurrentStroke) {
-      setBrushPoint(point);
+      setBrushPoint(latestPoint);
+      strokeOpsRef.current.push({ points: [...allPoints], radius, mode });
+      const dirtyRect = applyEditorBrushInPlace(current, allPoints, radius, mode);
+      renderMask(current, dirtyRect);
+      return;
     }
-    const points =
-      appendToCurrentStroke && lastStrokePointRef.current
-        ? interpolateBrushPoints(lastStrokePointRef.current, point, radius)
-        : [point];
-    lastStrokePointRef.current = point;
 
-    if (appendToCurrentStroke && strokeOpsRef.current.length > strokeStartIndexRef.current) {
-      const activeOp = strokeOpsRef.current[strokeOpsRef.current.length - 1];
-      activeOp.points.push(...points);
+    coalescedPointsQueueRef.current.push(...allPoints);
+    if (typeof process !== "undefined" && process.env?.NODE_ENV === "test") {
+      flushCoalescedBrushQueue();
+    } else if (typeof requestAnimationFrame === "function") {
+      if (rafBrushIdRef.current === null) {
+        rafBrushIdRef.current = requestAnimationFrame(flushCoalescedBrushQueue);
+      }
     } else {
-      strokeOpsRef.current.push({ points: [...points], radius, mode });
+      flushCoalescedBrushQueue();
     }
-    const dirtyRect = applyEditorBrushInPlace(current, points, radius, mode);
-    renderMask(current, dirtyRect);
   };
 
   const startStroke = (event: React.PointerEvent<HTMLCanvasElement>) => {
@@ -618,6 +660,11 @@ export function MaskEditor({
       setIsPanning(false);
       return;
     }
+    if (rafBrushIdRef.current !== null && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(rafBrushIdRef.current);
+      rafBrushIdRef.current = null;
+    }
+    flushCoalescedBrushQueue();
     canvasBoundsRef.current = null;
     lastStrokePointRef.current = null;
     if (!drawingRef.current || !imageDataRef.current) {

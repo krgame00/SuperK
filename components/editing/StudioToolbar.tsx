@@ -10,6 +10,7 @@ import {
   Replace,
   Keyboard,
   Plus,
+  FileText,
 } from "lucide-react";
 
 export type StudioTool = "select" | "text" | "mask" | "ocr" | "warp";
@@ -20,6 +21,7 @@ export interface StudioToolbarProps {
   onAddText: () => void;
   onOpenFindReplace: () => void;
   onOpenShortcuts: () => void;
+  onOpenTranscript?: () => void;
   onEditMask: () => void;
   disabled?: boolean;
 }
@@ -30,6 +32,7 @@ export function StudioToolbar({
   onAddText,
   onOpenFindReplace,
   onOpenShortcuts,
+  onOpenTranscript,
   onEditMask,
   disabled = false,
 }: StudioToolbarProps): ReactElement {
@@ -139,6 +142,20 @@ export function StudioToolbar({
       >
         <Replace className="w-6 h-6" aria-hidden="true" />
       </button>
+
+      {/* 6.5 Batch Transcript Editor */}
+      {onOpenTranscript && (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={onOpenTranscript}
+          aria-label="แก้ไขสคริปต์คำแปล"
+          title="แก้ไขบทแปลทั้งตอน &amp; ส่งออกแยกเลเยอร์ (Transcript)"
+          className="h-12 w-12 rounded-xl flex items-center justify-center gap-1 text-muted hover:text-foreground hover:bg-surface-hover transition-colors disabled:opacity-30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        >
+          <FileText className="w-6 h-6" aria-hidden="true" />
+        </button>
+      )}
 
       {/* 7. Keyboard Shortcuts Guide */}
       <button

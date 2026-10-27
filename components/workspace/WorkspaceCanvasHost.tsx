@@ -30,6 +30,7 @@ import { PageReviewNotice } from "@/components/cleaning/PageReviewNotice";
 import { PageViewer } from "@/components/workspace/PageViewer";
 import { StudioToolbar, type StudioTool } from "@/components/editing/StudioToolbar";
 import { OcrAreaTool, type PixelRect as OcrPixelRect } from "@/components/editing/OcrAreaTool";
+import { TranscriptModal, type TranscriptPageData } from "@/components/editing/TranscriptModal";
 import type { BwContrastMode } from "@/lib/colorMatching/types";
 import type { PageCleaningResult, CleaningHookError } from "@/hooks/useCleaning";
 import type { CleaningProgress } from "@/lib/cleaning/types";
@@ -138,6 +139,9 @@ export interface WorkspaceCanvasHostProps {
   onOpenShortcuts?: () => void;
   onAddManualTextBubble?: () => void;
   onDetectOcrRegion?: (rect: OcrPixelRect) => void | Promise<void>;
+  transcriptPagesData?: TranscriptPageData[];
+  onApplyTranscriptUpdates?: (updatesByPageUrl: Map<string, Map<number, string>>) => void;
+  onExportLayeredArchive?: () => void;
 }
 
 export function WorkspaceCanvasHost({
@@ -201,12 +205,16 @@ export function WorkspaceCanvasHost({
   onOpenShortcuts,
   onAddManualTextBubble,
   onDetectOcrRegion,
+  transcriptPagesData,
+  onApplyTranscriptUpdates,
+  onExportLayeredArchive,
 }: WorkspaceCanvasHostProps): ReactElement {
   const [isOrganizeMenuOpen, setIsOrganizeMenuOpen] = useState(false);
   const organizeMenuRef = useRef<HTMLDivElement>(null);
   const [isBwContrastMenuOpen, setIsBwContrastMenuOpen] = useState(false);
   const bwContrastMenuRef = useRef<HTMLDivElement>(null);
   const [activeStudioTool, setActiveStudioTool] = useState<StudioTool>("select");
+  const [isTranscriptModalOpen, setIsTranscriptModalOpen] = useState(false);
 
   useEffect(() => {
     if (!isOrganizeMenuOpen && !isBwContrastMenuOpen) return;
@@ -876,10 +884,21 @@ export function WorkspaceCanvasHost({
                   }}
                   onOpenFindReplace={onOpenFindReplace}
                   onOpenShortcuts={onOpenShortcuts}
+                  onOpenTranscript={transcriptPagesData ? () => setIsTranscriptModalOpen(true) : undefined}
                   onEditMask={onEditMask}
                   disabled={operationBusy}
                 />
               </div>
+            )}
+            {transcriptPagesData && onApplyTranscriptUpdates && (
+              <TranscriptModal
+                isOpen={isTranscriptModalOpen}
+                onClose={() => setIsTranscriptModalOpen(false)}
+                pagesData={transcriptPagesData}
+                currentPageIndex={currentPage}
+                onApplyTranscript={onApplyTranscriptUpdates}
+                onExportLayeredArchive={onExportLayeredArchive}
+              />
             )}
             <OcrAreaTool
               active={activeStudioTool === "ocr"}

@@ -633,6 +633,91 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
         );
       }
     },
+    transcriptPagesData: pages.map((p, idx) => ({
+      pageIndex: idx,
+      pageName: p.name,
+      pageUrl: p.url,
+      bubbles:
+        idx === currentPage && activeBubbles.length > 0
+          ? activeBubbles
+          : (bubbleCacheRef?.current?.get(p.url) ?? []),
+    })),
+    onApplyTranscriptUpdates: (updatesByPageUrl) => {
+      const targetUrls = Array.from(updatesByPageUrl.keys());
+      if (targetUrls.length === 0) return;
+      const bgMap: Record<string, string> = {};
+      for (const u of targetUrls) {
+        bgMap[u] = cleaningResultsByPage.get(u)?.cleanUrl ?? u;
+      }
+      for (const [pageUrlKey, idxMap] of updatesByPageUrl.entries()) {
+        const list =
+          pageUrlKey === currentPageUrl && activeBubbles.length > 0
+            ? [...activeBubbles]
+            : [...(bubbleCacheRef?.current?.get(pageUrlKey) ?? [])];
+        let changed = false;
+        for (let i = 0; i < list.length; i++) {
+          if (list[i].deleted) continue;
+          const nextText = idxMap.get(i);
+          if (typeof nextText === "string" && nextText !== (list[i].t ?? list[i].translated ?? "")) {
+            list[i] = { ...list[i], t: nextText, translated: nextText };
+            changed = true;
+          }
+        }
+        if (changed) {
+          bubbleCacheRef?.current?.set(pageUrlKey, list);
+          if (pageUrlKey === currentPageUrl) {
+            setActiveBubbles(list);
+          }
+        }
+      }
+      replaceBubbleText({
+        pageUrls: targetUrls,
+        backgroundUrls: bgMap,
+        transform: () => true,
+      });
+    },
+    onExportLayeredArchive: async () => {
+      if (pages.length === 0) return;
+      try {
+        const JSZipMod = (await import("jszip")).default;
+        const { generatePhotoshopBuildScript } = await import("@/lib/export/exportManager");
+        const zip = new JSZipMod();
+        for (let i = 0; i < pages.length; i++) {
+          const p = pages[i];
+          const numStr = String(i + 1).padStart(3, "0");
+          const folder = zip.folder(`Page_${numStr}`);
+          if (!folder) continue;
+          const origName = `page_${numStr}_original.png`;
+          const cleanName = `page_${numStr}_inpainted.png`;
+          try {
+            const origRes = await fetch(p.url);
+            if (origRes.ok) folder.file(origName, await origRes.blob());
+          } catch {}
+          const cleanUrl = cleaningResultsByPage.get(p.url)?.cleanUrl;
+          if (cleanUrl) {
+            try {
+              const cleanRes = await fetch(cleanUrl);
+              if (cleanRes.ok) folder.file(cleanName, await cleanRes.blob());
+            } catch {}
+          }
+          const bubbles =
+            i === currentPage && activeBubbles.length > 0
+              ? activeBubbles
+              : (bubbleCacheRef?.current?.get(p.url) ?? []);
+          folder.file(`page_${numStr}_layers.json`, JSON.stringify({ page: i + 1, name: p.name, bubbles }, null, 2));
+          folder.file(`build_layered_page_${numStr}.jsx`, generatePhotoshopBuildScript(i + 1, origName, cleanName, bubbles));
+        }
+        const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "SuperK_Layered_Photoshop_Pack.zip";
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+      } catch (err) {
+        console.warn("[SuperK] Export layered archive error:", err);
+      }
+    },
   };
 
   const bottomStripProps: WorkspaceBottomStripHostProps = {
