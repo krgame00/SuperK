@@ -28,6 +28,10 @@ export interface RemnantReviewPanelProps {
   onConfirmAllArtwork?: () => void;
   /** Re-run local inspection for unverified evidence. */
   onRecheck?: () => void;
+  /** Active position of the workspace cleaning toolbar. */
+  toolbarPosition?: "top" | "bottom";
+  /** Whether the active page requires review before export (displays PageReviewNotice below toolbar). */
+  isPageReviewRequired?: boolean;
 }
 
 const UNVERIFIED_LABELS: Record<BackgroundInspectionUnverifiedReason, string> = {
@@ -73,6 +77,8 @@ export function RemnantReviewPanel({
   onConfirmArtwork,
   onConfirmAllArtwork,
   onRecheck,
+  toolbarPosition = "top",
+  isPageReviewRequired = false,
 }: RemnantReviewPanelProps) {
   const [side, setSide] = useState<"right" | "left">("right");
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -170,16 +176,38 @@ export function RemnantReviewPanel({
     </p>
   );
 
+  const topPositionClass =
+    toolbarPosition === "bottom"
+      ? "top-14 sm:top-16"
+      : isPageReviewRequired
+        ? "top-[168px] sm:top-[172px]"
+        : "top-28 sm:top-32";
+
+  const maxHeightClass = isCollapsed
+    ? ""
+    : toolbarPosition === "bottom"
+      ? "max-h-[calc(100vh-8.5rem)]"
+      : isPageReviewRequired
+        ? "max-h-[calc(100vh-14rem)]"
+        : "max-h-[calc(100vh-10.5rem)]";
+
+  const innerListMaxHeightClass =
+    toolbarPosition === "bottom"
+      ? "max-h-[calc(100vh-12rem)]"
+      : isPageReviewRequired
+        ? "max-h-[calc(100vh-18rem)]"
+        : "max-h-[calc(100vh-15rem)]";
+
   return (
     <div
       role="region"
       aria-label="รายการจุดตรวจข้อความที่เหลือ"
-      className={`fixed top-28 sm:top-32 z-40 flex flex-col overflow-hidden rounded-2xl transition-all duration-250 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+      className={`fixed ${topPositionClass} z-40 flex flex-col overflow-hidden rounded-2xl transition-all duration-250 ease-[cubic-bezier(0.16,1,0.3,1)] ${
         side === "right" ? "right-3 sm:right-4 origin-top-right" : "left-3 sm:left-4 origin-top-left"
       } ${
         isCollapsed
           ? "w-auto max-w-[280px] border border-[#e61972]/50 bg-surface/95 px-3 py-1.5 shadow-lg backdrop-blur-md"
-          : "w-[calc(100%-2rem)] max-w-sm sm:max-w-md md:max-w-[420px] max-h-[calc(100vh-10.5rem)] border border-border/80 bg-surface/95 p-3 text-xs shadow-2xl backdrop-blur-md"
+          : `w-[calc(100%-2rem)] max-w-sm sm:max-w-md md:max-w-[420px] ${maxHeightClass} border border-border/80 bg-surface/95 p-3 text-xs shadow-2xl backdrop-blur-md`
       }`}
       data-testid="remnant-review-findings"
     >
@@ -258,7 +286,7 @@ export function RemnantReviewPanel({
             data-testid="remnant-candidate-list"
             aria-label="จุดข้อความที่เหลือ · เลื่อนเพื่อดูทั้งหมด"
             tabIndex={0}
-            className="flex max-h-[calc(100vh-15rem)] flex-col gap-2.5 overflow-y-auto overscroll-contain pr-1 [scrollbar-width:thin]"
+            className={`flex ${innerListMaxHeightClass} flex-col gap-2.5 overflow-y-auto overscroll-contain pr-1 [scrollbar-width:thin]`}
           >
             {[...openCandidates, ...confirmedCandidates].map((candidate) => {
               const region = findRegionForCandidate(regions, candidate.rect);

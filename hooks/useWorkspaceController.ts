@@ -774,6 +774,12 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     onRecheckPageRemnants: () => {
       if (currentPageUrl) void recheckPageRemnants(currentPageUrl);
     },
+    toolbarPosition,
+    isPageReviewRequired: Boolean(
+      currentPageUrl &&
+      !confirmedPages.has(currentPageUrl) &&
+      doesPageRequireReview(currentCleaningResult, activeBubbles),
+    ),
   };
 
   const modalsProps: WorkspaceModalsHostProps = {
