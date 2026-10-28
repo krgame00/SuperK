@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeftRight, ChevronDown, Eraser, ImageOff, Minimize2, Sparkles, X } from "lucide-react";
+import { ArrowLeftRight, ChevronDown, Eraser, ImageOff, Loader2, Minimize2, RotateCcw, Sparkles, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import type {
@@ -22,6 +22,10 @@ export interface RemnantReviewPanelProps {
   onReimportSource?: () => void;
   /** Open the mask editor on the candidate's authorized removal region. */
   onOpenMask?: (candidate: RemnantCandidate, region: CleaningRegion | undefined) => void;
+  /** Revert / restore original artwork pixels for this candidate or its enclosing region. */
+  onRestoreOriginal?: (candidate: RemnantCandidate, region: CleaningRegion | undefined) => Promise<void> | void;
+  /** Immediately inpaint / clean this remnant candidate or its enclosing region. */
+  onCleanCandidate?: (candidate: RemnantCandidate, region: CleaningRegion | undefined) => Promise<void> | void;
   /** Confirm this exact candidate (this revision) is artwork. */
   onConfirmArtwork?: (candidate: RemnantCandidate) => void;
   /** Confirm all open candidates / background on the current page. */
@@ -74,6 +78,8 @@ export function RemnantReviewPanel({
   onConfirmHumanInspection,
   onReimportSource,
   onOpenMask,
+  onRestoreOriginal,
+  onCleanCandidate,
   onConfirmArtwork,
   onConfirmAllArtwork,
   onRecheck,
@@ -82,6 +88,8 @@ export function RemnantReviewPanel({
 }: RemnantReviewPanelProps) {
   const [side, setSide] = useState<"right" | "left">("right");
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [busyCandidateId, setBusyCandidateId] = useState<string | null>(null);
+  const [busyAction, setBusyAction] = useState<"restore" | "clean" | null>(null);
   const [comparison, setComparison] = useState<{ candidate: RemnantCandidate; revisionKey: string; sourceUrl: string; cleanUrl: string }>();
   const [wholeComparison, setWholeComparison] = useState<{ revisionKey: string; sourceUrl: string; cleanUrl: string; loaded: number }>();
   const returnFocus = useRef<HTMLButtonElement | null>(null);
@@ -145,9 +153,45 @@ export function RemnantReviewPanel({
                   setComparison({ candidate, revisionKey: inspection.revisionKey, sourceUrl, cleanUrl });
                 }}>เทียบจุดนี้</button>}
                 {!confirmed && <>
-                  <button type="button" disabled={!region} className="rounded bg-primary px-2 py-1 text-primary-content disabled:opacity-40"
+                  <button
+                    type="button"
+                    disabled={!region || Boolean(busyCandidateId)}
+                    className="rounded bg-emerald-600 hover:bg-emerald-500 px-2 py-1 text-white text-xs disabled:opacity-40 cursor-pointer"
+                    onClick={async () => {
+                      if (!region || busyCandidateId) return;
+                      setBusyCandidateId(candidate.id);
+                      setBusyAction("restore");
+                      try {
+                        await onRestoreOriginal?.(candidate, region);
+                      } finally {
+                        setBusyCandidateId(null);
+                        setBusyAction(null);
+                      }
+                    }}
+                  >
+                    {busyCandidateId === candidate.id && busyAction === "restore" ? "กำลังกู้คืน…" : "กู้คืนภาพเดิม"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!region || Boolean(busyCandidateId)}
+                    className="rounded bg-[#e61972] hover:bg-[#d01564] px-2 py-1 text-white text-xs disabled:opacity-40 cursor-pointer"
+                    onClick={async () => {
+                      if (!region || busyCandidateId) return;
+                      setBusyCandidateId(candidate.id);
+                      setBusyAction("clean");
+                      try {
+                        await onCleanCandidate?.(candidate, region);
+                      } finally {
+                        setBusyCandidateId(null);
+                        setBusyAction(null);
+                      }
+                    }}
+                  >
+                    {busyCandidateId === candidate.id && busyAction === "clean" ? "กำลังคลีน…" : "คลีนจุดนี้"}
+                  </button>
+                  <button type="button" disabled={!region || Boolean(busyCandidateId)} className="rounded bg-primary px-2 py-1 text-primary-content text-xs disabled:opacity-40 cursor-pointer"
                     onClick={() => region && onOpenMask?.(candidate, region)}>แก้ Mask จุดนี้</button>
-                  <button type="button" className="rounded bg-surface px-2 py-1" onClick={() => onConfirmArtwork?.(candidate)}>ยืนยันจุดนี้เป็นลายภาพ</button>
+                  <button type="button" disabled={Boolean(busyCandidateId)} className="rounded bg-surface px-2 py-1 text-xs cursor-pointer" onClick={() => onConfirmArtwork?.(candidate)}>ยืนยันจุดนี้เป็นลายภาพ</button>
                 </>}
               </li>;
             })}
@@ -372,25 +416,102 @@ export function RemnantReviewPanel({
                     >
                       เปรียบเทียบภาพเดิม/ภาพคลีน
                     </button>
-                    {!confirmed && (
-                      <div className="grid grid-cols-2 gap-1.5">
+                    {!confirmed ? (
+                      <div className="flex flex-col gap-1.5">
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <button
+                            type="button"
+                            disabled={!region || Boolean(busyCandidateId)}
+                            title={region ? "กู้คืนลายเส้น/ภาพเดิมของบริเวณนี้กลับมา" : "จุดนี้ไม่อยู่ในพื้นที่คลีนที่อนุมัติ จึงกู้คืนไม่ได้"}
+                            onClick={async () => {
+                              if (!region || busyCandidateId) return;
+                              setBusyCandidateId(candidate.id);
+                              setBusyAction("restore");
+                              try {
+                                await onRestoreOriginal?.(candidate, region);
+                              } finally {
+                                setBusyCandidateId(null);
+                                setBusyAction(null);
+                              }
+                            }}
+                            className="flex items-center justify-center gap-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 px-2 py-1.5 font-semibold text-white text-xs shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+                          >
+                            {busyCandidateId === candidate.id && busyAction === "restore" ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                            ) : (
+                              <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                            )}
+                            <span>{busyCandidateId === candidate.id && busyAction === "restore" ? "กำลังกู้คืน…" : "กู้คืนภาพเดิม"}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={!region || Boolean(busyCandidateId)}
+                            title={region ? "คลีน/ลบข้อความที่ยังเหลือในจุดนี้ทันที" : "จุดนี้ไม่อยู่ในพื้นที่คลีนที่อนุมัติ จึงคลีนอัตโนมัติไม่ได้"}
+                            onClick={async () => {
+                              if (!region || busyCandidateId) return;
+                              setBusyCandidateId(candidate.id);
+                              setBusyAction("clean");
+                              try {
+                                await onCleanCandidate?.(candidate, region);
+                              } finally {
+                                setBusyCandidateId(null);
+                                setBusyAction(null);
+                              }
+                            }}
+                            className="flex items-center justify-center gap-1 rounded-lg bg-[#e61972] hover:bg-[#d01564] active:bg-[#b81258] px-2 py-1.5 font-semibold text-white text-xs shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+                          >
+                            {busyCandidateId === candidate.id && busyAction === "clean" ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                            ) : (
+                              <Eraser className="h-3.5 w-3.5" aria-hidden="true" />
+                            )}
+                            <span>{busyCandidateId === candidate.id && busyAction === "clean" ? "กำลังคลีน…" : "คลีนจุดนี้"}</span>
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <button
+                            type="button"
+                            disabled={!region || Boolean(busyCandidateId)}
+                            title={region ? "เปิดแก้ Mask ที่บริเวณนี้ (เทียบภาพเดิม/ภาพคลีน พร้อมเครื่องมือแปรง)" : "จุดนี้ไม่อยู่ในพื้นที่คลีนที่อนุมัติ จึงแก้ Mask ไม่ได้"}
+                            onClick={() => region && onOpenMask?.(candidate, region)}
+                            className="flex items-center justify-center gap-1 rounded-lg bg-surface hover:bg-surface-hover active:bg-surface/80 px-2 py-1.5 font-medium text-foreground text-xs border border-border/60 transition-colors disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+                          >
+                            แก้ Mask ที่จุดนี้
+                          </button>
+                          <button
+                            type="button"
+                            disabled={Boolean(busyCandidateId)}
+                            title="อนุมัติว่าจุดนี้คือลายเส้นภาพที่ถูกต้องแล้ว โดยไม่ต้องเปลี่ยนพิกเซล"
+                            onClick={() => onConfirmArtwork?.(candidate)}
+                            className="flex items-center justify-center gap-1 rounded-lg bg-surface hover:bg-surface-hover active:bg-surface/80 px-2 py-1.5 font-medium text-foreground text-xs border border-border/60 transition-colors disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+                          >
+                            <Sparkles className="h-3.5 w-3.5 text-amber-400" aria-hidden="true" />
+                            ยืนยันเป็นลายภาพ
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between rounded-lg bg-emerald-500/10 px-2.5 py-1.5 text-xs text-emerald-400 border border-emerald-500/20">
+                        <span>✓ ยืนยันเป็นลายภาพแล้ว</span>
                         <button
                           type="button"
-                          disabled={!region}
-                          title={region ? "เปิดแก้ Mask ที่บริเวณนี้ (เทียบภาพเดิม/ภาพคลีน)" : "จุดนี้ไม่อยู่ในพื้นที่คลีนที่อนุมัติ จึงแก้ Mask ไม่ได้"}
-                          onClick={() => region && onOpenMask?.(candidate, region)}
-                          className="flex items-center justify-center gap-1 rounded-lg bg-[#e61972] hover:bg-[#d01564] active:bg-[#b81258] px-2 py-1.5 font-semibold text-white text-xs shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+                          disabled={!region || Boolean(busyCandidateId)}
+                          onClick={async () => {
+                            if (!region || busyCandidateId) return;
+                            setBusyCandidateId(candidate.id);
+                            setBusyAction("clean");
+                            try {
+                              await onCleanCandidate?.(candidate, region);
+                            } finally {
+                              setBusyCandidateId(null);
+                              setBusyAction(null);
+                            }
+                          }}
+                          className="text-[11px] underline hover:text-emerald-300 cursor-pointer disabled:opacity-40"
                         >
-                          <Eraser className="h-3.5 w-3.5" aria-hidden="true" />
-                          แก้ Mask ที่จุดนี้
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onConfirmArtwork?.(candidate)}
-                          className="flex items-center justify-center gap-1 rounded-lg bg-surface hover:bg-surface-hover active:bg-surface/80 px-2 py-1.5 font-medium text-foreground text-xs border border-border/60 transition-colors cursor-pointer"
-                        >
-                          <Sparkles className="h-3.5 w-3.5 text-amber-400" aria-hidden="true" />
-                          ยืนยันเป็นลายภาพ
+                          เปลี่ยนใจคลีนจุดนี้
                         </button>
                       </div>
                     )}

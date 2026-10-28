@@ -1,10 +1,14 @@
 "use client";
 
-import { useState, useRef, type DragEvent } from "react";
+import { useState, useRef, useCallback, type DragEvent } from "react";
 import type { WorkspaceHeaderHostProps } from "@/components/workspace/WorkspaceHeaderHost";
 import type { WorkspaceCanvasHostProps } from "@/components/workspace/WorkspaceCanvasHost";
 import type { WorkspaceBottomStripHostProps } from "@/components/workspace/WorkspaceBottomStripHost";
 import type { WorkspaceModalsHostProps } from "@/components/workspace/WorkspaceModalsHost";
+import { createRegionMaskBlob } from "@/lib/cleaning/maskUtils";
+import { findRegionForCandidate } from "@/lib/cleaning/remnantReview";
+import type { RemnantCandidate } from "@/lib/cleaning/backgroundRemnantInspection";
+import type { CleaningRegion } from "@/lib/cleaning/types";
 import {
   useExportOrchestrator,
   type WorkspaceExportPage,
@@ -732,6 +736,53 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     },
   };
 
+  const handleRestoreCandidate = useCallback(
+    async (candidate: RemnantCandidate, region?: CleaningRegion) => {
+      const pageUrl = currentPageUrl;
+      if (!pageUrl || !currentCleaningResult) return;
+      const targetRegion =
+        region ??
+        findRegionForCandidate(currentCleaningResult.regions, candidate.rect) ??
+        currentCleaningResult.regions.find((r) =>
+          candidate.evidence.removalRegionIds.includes(r.id),
+        );
+
+      if (!targetRegion) {
+        confirmArtworkCandidate(pageUrl, candidate.id);
+        return;
+      }
+
+      const { width, height } = currentCleaningResult;
+      const maskBlob = await createRegionMaskBlob(width, height, targetRegion.rect);
+      await handleRetryRegion(targetRegion.id, maskBlob, "auto", "protect");
+      confirmArtworkCandidate(pageUrl, candidate.id);
+    },
+    [currentPageUrl, currentCleaningResult, handleRetryRegion, confirmArtworkCandidate],
+  );
+
+  const handleCleanCandidate = useCallback(
+    async (candidate: RemnantCandidate, region?: CleaningRegion) => {
+      const pageUrl = currentPageUrl;
+      if (!pageUrl || !currentCleaningResult) return;
+      const targetRegion =
+        region ??
+        findRegionForCandidate(currentCleaningResult.regions, candidate.rect) ??
+        currentCleaningResult.regions.find((r) =>
+          candidate.evidence.removalRegionIds.includes(r.id),
+        );
+
+      if (!targetRegion) return;
+
+      const { width, height } = currentCleaningResult;
+      const maskBlob = await createRegionMaskBlob(width, height, targetRegion.rect);
+      if (targetRegion.textConfirmed !== true) {
+        await handleRetryRegion(targetRegion.id, maskBlob, "auto", "confirm-text");
+      }
+      await handleRetryRegion(targetRegion.id, maskBlob, "auto", "force-clean");
+    },
+    [currentPageUrl, currentCleaningResult, handleRetryRegion],
+  );
+
   const bottomStripProps: WorkspaceBottomStripHostProps = {
     pages,
     currentPage,
@@ -758,6 +809,8 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
         )?.inspection
       : undefined,
     onOpenMaskCandidate: openMaskCandidate,
+    onRestoreOriginalRemnant: handleRestoreCandidate,
+    onCleanRemnantCandidate: handleCleanCandidate,
     onConfirmArtworkCandidate: (candidateId) => {
       if (currentPageUrl) confirmArtworkCandidate(currentPageUrl, candidateId);
     },

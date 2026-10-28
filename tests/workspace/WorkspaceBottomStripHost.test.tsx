@@ -19,11 +19,17 @@ vi.mock("@/components/workspace/PageFilmstrip", () => ({
 
 // Mock RemnantReviewPanel
 vi.mock("@/components/cleaning/RemnantReviewPanel", () => ({
-  RemnantReviewPanel: vi.fn(({ regions, onOpenMask, onConfirmAllArtwork, onRecheck }: any) => (
+  RemnantReviewPanel: vi.fn(({ regions, onOpenMask, onRestoreOriginal, onCleanCandidate, onConfirmAllArtwork, onRecheck }: any) => (
     <div data-testid="mock-remnant-review-panel" data-region-count={regions?.length ?? 0}>
       <span>RemnantReviewPanel: {regions?.length ?? 0} regions</span>
       <button type="button" onClick={() => onOpenMask({ id: "cand-1", rect: { x: 0, y: 0, width: 10, height: 10 } })}>
         Open Mask
+      </button>
+      <button type="button" onClick={() => onRestoreOriginal({ id: "cand-1", rect: { x: 0, y: 0, width: 10, height: 10 } }, regions?.[0])}>
+        Restore Original
+      </button>
+      <button type="button" onClick={() => onCleanCandidate({ id: "cand-1", rect: { x: 0, y: 0, width: 10, height: 10 } }, regions?.[0])}>
+        Clean Candidate
       </button>
       <button type="button" onClick={onConfirmAllArtwork}>
         Confirm All
@@ -61,6 +67,8 @@ function createDefaultProps(): WorkspaceBottomStripHostProps {
     canConfirmHumanInspection: false,
     remnantInspection: undefined,
     onOpenMaskCandidate: vi.fn(),
+    onRestoreOriginalRemnant: vi.fn(),
+    onCleanRemnantCandidate: vi.fn(),
     onConfirmArtworkCandidate: vi.fn(),
     onConfirmAllPageRemnants: vi.fn(),
     onConfirmHumanInspection: vi.fn(),
@@ -108,5 +116,17 @@ describe("WorkspaceBottomStripHost", () => {
 
     fireEvent.click(screen.getByText("Recheck"));
     expect(props.onRecheckPageRemnants).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByText("Restore Original"));
+    expect(props.onRestoreOriginalRemnant).toHaveBeenCalledWith(
+      { id: "cand-1", rect: { x: 0, y: 0, width: 10, height: 10 } },
+      props.currentCleaningResult?.regions[0],
+    );
+
+    fireEvent.click(screen.getByText("Clean Candidate"));
+    expect(props.onCleanRemnantCandidate).toHaveBeenCalledWith(
+      { id: "cand-1", rect: { x: 0, y: 0, width: 10, height: 10 } },
+      props.currentCleaningResult?.regions[0],
+    );
   });
 });

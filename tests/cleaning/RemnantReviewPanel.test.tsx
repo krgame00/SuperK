@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 
 import { RemnantReviewPanel } from "@/components/cleaning/RemnantReviewPanel";
@@ -249,5 +249,81 @@ describe("RemnantReviewPanel", () => {
     // Switch back to right
     fireEvent.click(screen.getByRole("button", { name: "สลับพาเนลไปฝั่งขวา" }));
     expect(panel).toHaveClass("right-3");
+  });
+
+  test("offers direct buttons to choose between restoring original artwork or cleaning candidate", async () => {
+    const onRestoreOriginal = vi.fn().mockResolvedValue(undefined);
+    const onCleanCandidate = vi.fn().mockResolvedValue(undefined);
+    const testCandidate = candidate({ id: "rem-action" });
+
+    render(
+      <RemnantReviewPanel
+        inspection={inspected([testCandidate])}
+        regions={[region]}
+        onRestoreOriginal={onRestoreOriginal}
+        onCleanCandidate={onCleanCandidate}
+      />,
+    );
+
+    const restoreBtn = screen.getByRole("button", { name: "กู้คืนภาพเดิม" });
+    const cleanBtn = screen.getByRole("button", { name: "คลีนจุดนี้" });
+
+    expect(restoreBtn).toBeEnabled();
+    expect(cleanBtn).toBeEnabled();
+
+    // Trigger restore original artwork
+    await act(async () => {
+      fireEvent.click(restoreBtn);
+    });
+    expect(onRestoreOriginal).toHaveBeenCalledWith(testCandidate, region);
+
+    // Trigger clean candidate
+    await act(async () => {
+      fireEvent.click(cleanBtn);
+    });
+    expect(onCleanCandidate).toHaveBeenCalledWith(testCandidate, region);
+  });
+
+  test("disables restore and clean buttons when no region covers the finding", () => {
+    const onRestoreOriginal = vi.fn();
+    const onCleanCandidate = vi.fn();
+
+    render(
+      <RemnantReviewPanel
+        inspection={inspected([candidate()])}
+        regions={[farRegion]}
+        onRestoreOriginal={onRestoreOriginal}
+        onCleanCandidate={onCleanCandidate}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "กู้คืนภาพเดิม" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "คลีนจุดนี้" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "แก้ Mask ที่จุดนี้" })).toBeDisabled();
+  });
+
+  test("allows user to reconsider and clean a previously confirmed artwork candidate", async () => {
+    const onCleanCandidate = vi.fn().mockResolvedValue(undefined);
+    const confirmedCand = candidate({
+      id: "rem-confirmed",
+      state: "human-confirmed-artwork",
+      artworkConfirmation: { candidateId: "rem-confirmed", revisionKey: "rk-1" },
+    });
+
+    render(
+      <RemnantReviewPanel
+        inspection={inspected([confirmedCand])}
+        regions={[region]}
+        onCleanCandidate={onCleanCandidate}
+      />,
+    );
+
+    const changeMindBtn = screen.getByRole("button", { name: "เปลี่ยนใจคลีนจุดนี้" });
+    expect(changeMindBtn).toBeEnabled();
+
+    await act(async () => {
+      fireEvent.click(changeMindBtn);
+    });
+    expect(onCleanCandidate).toHaveBeenCalledWith(confirmedCand, region);
   });
 });

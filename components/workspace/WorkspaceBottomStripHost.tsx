@@ -5,8 +5,11 @@ import { PageFilmstrip } from "@/components/workspace/PageFilmstrip";
 import { RemnantReviewPanel } from "@/components/cleaning/RemnantReviewPanel";
 import type { WorkspaceExportPage } from "@/hooks/useExportOrchestrator";
 import type { PageCleaningResult } from "@/hooks/useCleaning";
-import type { PixelRect } from "@/lib/cleaning/types";
-import type { BackgroundInspectionResult } from "@/lib/cleaning/backgroundRemnantInspection";
+import type { PixelRect, CleaningRegion } from "@/lib/cleaning/types";
+import type {
+  BackgroundInspectionResult,
+  RemnantCandidate,
+} from "@/lib/cleaning/backgroundRemnantInspection";
 
 export interface WorkspaceBottomStripHostProps {
   // PageFilmstrip props
@@ -27,6 +30,14 @@ export interface WorkspaceBottomStripHostProps {
   canConfirmHumanInspection?: boolean;
   remnantInspection?: BackgroundInspectionResult;
   onOpenMaskCandidate: (candidate: { id?: string; rect: PixelRect }) => void;
+  onRestoreOriginalRemnant?: (
+    candidate: RemnantCandidate,
+    region: CleaningRegion | undefined,
+  ) => Promise<void> | void;
+  onCleanRemnantCandidate?: (
+    candidate: RemnantCandidate,
+    region: CleaningRegion | undefined,
+  ) => Promise<void> | void;
   onConfirmArtworkCandidate: (candidateId: string) => void;
   onConfirmAllPageRemnants: () => void;
   onConfirmHumanInspection: (
@@ -55,6 +66,8 @@ export function WorkspaceBottomStripHost({
   canConfirmHumanInspection,
   remnantInspection,
   onOpenMaskCandidate,
+  onRestoreOriginalRemnant,
+  onCleanRemnantCandidate,
   onConfirmArtworkCandidate,
   onConfirmAllPageRemnants,
   onConfirmHumanInspection,
@@ -95,6 +108,8 @@ export function WorkspaceBottomStripHost({
         inspection={remnantInspection}
         regions={currentCleaningResult?.regions ?? []}
         onOpenMask={onOpenMaskCandidate}
+        onRestoreOriginal={onRestoreOriginalRemnant}
+        onCleanCandidate={onCleanRemnantCandidate}
         onConfirmArtwork={(candidate) => {
           if (currentPageUrl) onConfirmArtworkCandidate(candidate.id);
         }}

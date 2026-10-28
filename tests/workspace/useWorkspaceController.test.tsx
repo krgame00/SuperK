@@ -130,5 +130,7 @@ describe("useWorkspaceController", () => {
     expect(result.current.headerProps.saveStatus).toBe("idle");
     expect(result.current.canvasProps.workspaceLayer).toBe("original");
     expect(result.current.modalsProps.isSettingsOpen).toBe(false);
+    expect(result.current.bottomStripProps.onRestoreOriginalRemnant).toBeTypeOf("function");
+    expect(result.current.bottomStripProps.onCleanRemnantCandidate).toBeTypeOf("function");
   });
 });
