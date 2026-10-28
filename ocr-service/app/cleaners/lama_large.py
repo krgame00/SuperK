@@ -227,7 +227,7 @@ class LamaLargeCleaner:
         hint_mask = extend_mask_with_stroke_hints(
             crop,
             crop_mask,
-            dilation_px=max(2, int(getattr(region, "stroke_radius", 3) or 3)) if "region" in locals() else 3,
+            dilation_px=max(2, int(getattr(region, "stroke_radius", 3) or 3)),
         )
         repaired = self._run(crop, hint_mask)
         result = image_rgb.copy()
@@ -255,7 +255,7 @@ class LamaLargeCleaner:
         hint_mask = extend_mask_with_stroke_hints(
             crop,
             crop_mask,
-            dilation_px=max(2, int(getattr(region, "stroke_radius", 3) or 3)) if "region" in locals() else 3,
+            dilation_px=max(2, int(getattr(rect, "stroke_radius", 3) or 3)),
         )
         repaired = self._run(crop, hint_mask)
         result = image_rgb.copy()

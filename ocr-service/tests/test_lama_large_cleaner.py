@@ -178,3 +178,17 @@ def test_legacy_buffer_fallback_produces_the_same_result(monkeypatch) -> None:
     )
 
     np.testing.assert_array_equal(optimized, legacy)
+
+
+def test_lama_large_clean_roi_with_stroke_hints() -> None:
+    session = _EchoSession()
+    image, mask = _inputs()
+    rect = PixelRect(x=16, y=16, width=32, height=32)
+    output = LamaLargeCleaner.from_session(session).clean_roi(
+        image,
+        mask,
+        rect,
+    )
+    assert output.shape == image.shape
+    assert session.calls == 1
+    assert session.last_inputs is not None
