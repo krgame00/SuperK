@@ -164,6 +164,7 @@ function layoutAtFontSize(
 
   const workingTokens = [...tokens];
   const linesText: string[] = [];
+  const linesAllowedWidth: number[] = [];
   let tokenIdx = 0;
 
   for (
@@ -223,6 +224,7 @@ function layoutAtFontSize(
     }
     if (currentLine.trim()) {
       linesText.push(currentLine.trim());
+      linesAllowedWidth.push(allowedWidth);
     }
   }
 
@@ -241,7 +243,8 @@ function layoutAtFontSize(
       Math.min(0.999, (yPos - bubble.y) / Math.max(1, bubble.height)),
     );
     const sliceIdx = Math.floor(relY * ratios.length);
-    const maxWidth = bubble.width * (ratios[sliceIdx] ?? 1.0);
+    const sliceWidth = bubble.width * (ratios[sliceIdx] ?? 1.0);
+    const maxWidth = linesAllowedWidth[idx] ?? sliceWidth;
     return {
       text: lineStr,
       x: bubble.x + bubble.width / 2,
