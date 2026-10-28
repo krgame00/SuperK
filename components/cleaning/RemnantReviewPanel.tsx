@@ -258,11 +258,19 @@ export function RemnantReviewPanel({
       {isCollapsed ? (
         <div className="flex items-center gap-2 animate-in fade-in zoom-in-95 duration-200 select-none">
           <span className="relative flex h-2.5 w-2.5 items-center justify-center">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#e61972] opacity-75" />
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-[#e61972]" />
+            {openCandidates.length > 0 ? (
+              <>
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#e61972] opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-[#e61972]" />
+              </>
+            ) : (
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+            )}
           </span>
           <span className="font-semibold text-foreground text-xs whitespace-nowrap">
-            จุดสงสัย {openCandidates.length} จุด
+            {openCandidates.length > 0
+              ? `จุดสงสัย ${openCandidates.length} จุด`
+              : `อนุมัติแล้ว ${confirmedCandidates.length} จุด ✓`}
           </span>
           <button
             type="button"
@@ -279,13 +287,27 @@ export function RemnantReviewPanel({
           <div className="flex items-start justify-between gap-2 border-b border-border/60 pb-2">
             <div className="flex items-start gap-2 min-w-0">
               <span className="relative flex h-2.5 w-2.5 shrink-0 mt-1">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#e61972] opacity-75" />
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#e61972]" />
+                {openCandidates.length > 0 ? (
+                  <>
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#e61972] opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#e61972]" />
+                  </>
+                ) : (
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+                )}
               </span>
               <div className="flex flex-col gap-0.5 min-w-0">
                 <p className="font-semibold text-foreground text-xs leading-snug">
-                  พบจุดสงสัยว่ามีข้อความต้นฉบับหลงเหลือบนภาพคลีน {openCandidates.length} จุด
-                  {confirmedCandidates.length > 0 && ` (ยืนยันลายภาพแล้ว ${confirmedCandidates.length} จุด)`}
+                  {openCandidates.length > 0 ? (
+                    <>
+                      พบจุดสงสัยว่ามีข้อความต้นฉบับหลงเหลือบนภาพคลีน {openCandidates.length} จุด
+                      {confirmedCandidates.length > 0 && ` (ยืนยันลายภาพแล้ว ${confirmedCandidates.length} จุด)`}
+                    </>
+                  ) : (
+                    <span className="text-emerald-400 font-semibold">
+                      อนุมัติลายภาพเรียบร้อยแล้วทั้งหมด ({confirmedCandidates.length} จุด)
+                    </span>
+                  )}
                 </p>
                 {openCandidates.length > 4 && (
                   <span className="text-[11px] font-normal text-muted">
@@ -298,7 +320,10 @@ export function RemnantReviewPanel({
               {openCandidates.length > 0 && onConfirmAllArtwork && (
                 <button
                   type="button"
-                  onClick={onConfirmAllArtwork}
+                  onClick={() => {
+                    onConfirmAllArtwork();
+                    setIsCollapsed(true);
+                  }}
                   title="อนุมัติทุกจุดในหน้านี้ว่าเป็นลายภาพ/คลีนผ่านแล้ว"
                   className="rounded-lg bg-emerald-600/90 hover:bg-emerald-500 px-2 py-1 text-[11px] font-semibold text-white shadow-sm transition-all cursor-pointer"
                 >
@@ -325,6 +350,27 @@ export function RemnantReviewPanel({
               </button>
             </div>
           </div>
+
+          {openCandidates.length === 0 && (
+            <div className="flex flex-col items-center justify-center p-3 text-center gap-1.5 bg-emerald-500/10 rounded-xl border border-emerald-500/20">
+              <div className="flex items-center gap-1.5 text-emerald-400 font-semibold text-xs">
+                <span className="flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500/20 text-[11px] font-bold">
+                  ✓
+                </span>
+                <span>อนุมัติลายภาพครบทุกจุดเรียบร้อยแล้ว</span>
+              </div>
+              <p className="text-[11px] text-muted">
+                หน้านี้ผ่านการตรวจทานแล้ว สามารถแปลหรือส่งออกต่อได้ทันที
+              </p>
+              <button
+                type="button"
+                onClick={() => setIsCollapsed(true)}
+                className="mt-1 rounded-lg bg-surface hover:bg-surface-hover border border-border/80 px-3 py-1 text-xs font-medium text-foreground transition-all cursor-pointer shadow-xs"
+              >
+                ย่อหน้าต่างนี้
+              </button>
+            </div>
+          )}
 
           <ul
             data-testid="remnant-candidate-list"

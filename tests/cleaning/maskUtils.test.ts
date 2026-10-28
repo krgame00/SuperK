@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { createRegionMaskBlob } from "@/lib/cleaning/maskUtils";
+import { createRegionMaskBlob, createInkMaskBlob } from "@/lib/cleaning/maskUtils";
 
 describe("createRegionMaskBlob", () => {
   it("creates a mask blob with correct dimensions and bounds", async () => {
-    let fillRectCalls: Array<[number, number, number, number]> = [];
+    const fillRectCalls: Array<[number, number, number, number]> = [];
     const originalGetContext = HTMLCanvasElement.prototype.getContext;
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(function (
       this: HTMLCanvasElement,
@@ -61,5 +61,64 @@ describe("createRegionMaskBlob", () => {
     expect(blob.type).toBe("image/png");
 
     HTMLCanvasElement.prototype.toBlob = originalToBlob;
+  });
+
+  it("createInkMaskBlob creates a targeted ink mask with dark pixel detection and dilation", async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(function (
+      this: HTMLCanvasElement,
+      callback: BlobCallback,
+    ) {
+      callback(new Blob(["ink-mask"], { type: "image/png" }));
+    });
+
+    const originalImage = globalThis.Image;
+    class MockImage {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      crossOrigin = "";
+      private _src = "";
+      set src(value: string) {
+        this._src = value;
+        setTimeout(() => {
+          this.onload?.();
+        }, 0);
+      }
+      get src() {
+        return this._src;
+      }
+    }
+    // @ts-expect-error mock Image
+    globalThis.Image = MockImage;
+
+    const originalGetContext = HTMLCanvasElement.prototype.getContext;
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(function (
+      this: HTMLCanvasElement,
+      contextId: string,
+    ) {
+      if (contextId === "2d") {
+        return {
+          fillStyle: "#000000",
+          fillRect: vi.fn(),
+          drawImage: vi.fn(),
+          getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(100 * 100 * 4) })),
+          createImageData: vi.fn(() => ({ data: new Uint8ClampedArray(100 * 100 * 4) })),
+          putImageData: vi.fn(),
+        } as unknown as CanvasRenderingContext2D;
+      }
+      return null;
+    });
+
+    const blob = await createInkMaskBlob("blob:source", 100, 100, {
+      x: 10,
+      y: 10,
+      width: 30,
+      height: 30,
+    });
+
+    expect(blob).toBeInstanceOf(Blob);
+    expect(blob.type).toBe("image/png");
+
+    HTMLCanvasElement.prototype.getContext = originalGetContext;
+    globalThis.Image = originalImage;
   });
 });

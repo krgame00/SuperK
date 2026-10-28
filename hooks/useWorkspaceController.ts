@@ -5,7 +5,7 @@ import type { WorkspaceHeaderHostProps } from "@/components/workspace/WorkspaceH
 import type { WorkspaceCanvasHostProps } from "@/components/workspace/WorkspaceCanvasHost";
 import type { WorkspaceBottomStripHostProps } from "@/components/workspace/WorkspaceBottomStripHost";
 import type { WorkspaceModalsHostProps } from "@/components/workspace/WorkspaceModalsHost";
-import { createRegionMaskBlob } from "@/lib/cleaning/maskUtils";
+import { createRegionMaskBlob, createInkMaskBlob } from "@/lib/cleaning/maskUtils";
 import { findRegionForCandidate } from "@/lib/cleaning/remnantReview";
 import type { RemnantCandidate } from "@/lib/cleaning/backgroundRemnantInspection";
 import type { CleaningRegion } from "@/lib/cleaning/types";
@@ -756,6 +756,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
       const maskBlob = await createRegionMaskBlob(width, height, targetRegion.rect);
       await handleRetryRegion(targetRegion.id, maskBlob, "auto", "protect");
       confirmArtworkCandidate(pageUrl, candidate.id);
+      void import("react-hot-toast").then((m) => m.default.success("กู้คืนภาพเดิมเรียบร้อย"));
     },
     [currentPageUrl, currentCleaningResult, handleRetryRegion, confirmArtworkCandidate],
   );
@@ -774,11 +775,14 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
       if (!targetRegion) return;
 
       const { width, height } = currentCleaningResult;
-      const maskBlob = await createRegionMaskBlob(width, height, targetRegion.rect);
+      // Extract ONLY dark text ink pixels from candidate.rect with 2px dilation
+      // Never use a solid bounding box, which causes inpainting to erase characters and artwork!
+      const maskBlob = await createInkMaskBlob(pageUrl, width, height, candidate.rect);
       if (targetRegion.textConfirmed !== true) {
         await handleRetryRegion(targetRegion.id, maskBlob, "auto", "confirm-text");
       }
       await handleRetryRegion(targetRegion.id, maskBlob, "auto", "force-clean");
+      void import("react-hot-toast").then((m) => m.default.success("คลีนจุดนี้เรียบร้อย"));
     },
     [currentPageUrl, currentCleaningResult, handleRetryRegion],
   );
@@ -817,6 +821,8 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     onConfirmAllPageRemnants: () => {
       if (currentPageUrl) {
         confirmAllPageRemnants?.(currentPageUrl, getExpectedRemnantEvidence(currentPageUrl));
+        setConfirmedPages((prev) => new Set(prev).add(currentPageUrl));
+        void import("react-hot-toast").then((m) => m.default.success("อนุมัติลายภาพทั้งหน้าเรียบร้อย"));
       }
     },
     onConfirmHumanInspection: (revisionKey, sourceUrl, cleanUrl) => {

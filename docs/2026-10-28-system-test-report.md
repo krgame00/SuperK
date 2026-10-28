@@ -305,13 +305,13 @@ GET /api/extension/publish-back?sinceSeq=3&sinceEpoch=epoch_muvjnn9p_vmlemp 401
 
 ข้อเสนอ: ให้ extension หยุด poll หรือ backoff เมื่อได้ 401 ซ้ำ.
 
-### F7. คลีนไม่หมด นารเรชันและ SFX ยังเหลือบนภาพคลีน (Medium, ยืนยันแล้ว)
+### F7. คลีนไม่หมด นารเรชันและ SFX ยังเหลือบนภาพคลีน (Medium, ยืนยันแล้ว — ทดสอบรอบ 3)
 
-ภาพคลีนของหน้าทดสอบยังมีข้อความ 2 จุดที่ remnant review ตรวจพบ (ตำแหน่งและตัวเลขอยู่ในหัวข้อ Remnant review). ตัวตรวจทำงานถูกต้อง แต่ผลลัพธ์การคลีนยังไม่สะอาดพอสำหรับหน้านี้.
+ภาพ `synthetic_manga_page.png` (800x1200) ผ่าน clean แล้ว remnant panel แสดง `รายการจุดตรวจข้อความที่เหลือ` + `listitem` 4 รายการ (`จุดข้อความที่เหลือ · เลื่อนเพื่อดูทั้งหมด`). หลักฐานที่หน้า 1 มีจุดคงเหลือ 2 จุด (x665 y704 40x222, x113 y822 258x108) ตามรายงานรอบก่อน + การทดสอบใหม่ยืนยันว่า AI ตรวจจับได้แต่ cleaning pipeline ยังลไม่หมดอันเนื่องจาก SFX/นารเรชัน.
 
-ผลกระทบ: ผู้ใช้ที่กดอนุมัติภาพจะได้ภาพที่มีข้อความญี่ปุ่นหลงเหลือ และคำแปลไทยอาจทับข้อความเดิม.
+ผลกระทบ: ผู้ใช้อนุมัติภาพจะได้ภาพที่มีข้อความญี่ปุ่นหลงเหลือ + คำแปลไทยอาจทับข้อความเดิม.
 
-ข้อเสนอ: ตรวจ heuristic ของ SFX และกล่องนารเรชันใน cleaning pipeline และเพิ่มเคสทดสอบภาพสังเคราะห์นี้เป็น regression fixture.
+ข้อเสนอ: ปรับ heuristic SFX/นารเรชัน + เพิ่ม regression fixture (ตามเดิม).
 
 ### F8. นำเข้า Glossary แทนที่รายการเดิมทั้งชุด (Low, ยืนยันแล้ว)
 
@@ -425,6 +425,7 @@ dialog แก้ Mask เขียนว่า "Ctrl+Z เลิกทำ". ท�
   - `SuperK_handoff_synthetic_LongStrip.jpg` 201,210 bytes, 1200x3600
   - `SuperK_handoff_synthetic.superk.json` 892,920 bytes
 - Trace `trace.json.gz` 183,085 bytes
+- F7 verification (รอบ 3): upload `synthetic_manga_page.png` (800x1200) → clean job → remnant panel แสดง `รายการจุดตรวจข้อความที่เหลือ` + `listitem` 4 รายการ. ยืนยัน cleaning pipeline ยังไม่หมด SFX/narration.
 
 ## Recommended next steps
 
