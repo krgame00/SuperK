@@ -122,7 +122,12 @@ export function useWorkspaceTextActions({
           });
         }
       } else {
-        const pageUrls = [...bubbleCacheRef.current.keys()];
+        const pageUrls = Array.from(
+          new Set([
+            ...pages.map((p) => p.url),
+            ...bubbleCacheRef.current.keys(),
+          ]),
+        );
         count = replaceBubbleText({
           pageUrls,
           backgroundUrls: Object.fromEntries(
@@ -136,10 +141,11 @@ export function useWorkspaceTextActions({
       }
 
       import("react-hot-toast").then((m) => {
+        const toast = m.default;
         if (count > 0) {
-          m.default(`🔄 แทนที่ข้อความสำเร็จ ${count} จุด`, { duration: 2000 });
+          toast.success(`🔄 แทนที่ข้อความสำเร็จ ${count} จุด`, { duration: 2500 });
         } else {
-          m.default("ไม่พบข้อความที่ตรงกับคำค้นหา", { duration: 2000 });
+          toast("ไม่พบข้อความที่ตรงกับคำค้นหา", { icon: "ℹ️", duration: 2500 });
         }
       });
     },

@@ -130,6 +130,75 @@ describe("useWorkspaceTextActions", () => {
     expect(testBubble.translated).toBe("ฮัลโหลชาวโลก");
   });
 
+  it("triggers toast notification with success when bubbles are replaced and info when none match", async () => {
+    const pages = [{ url: "http://example.com/p1.jpg", name: "page1.jpg" }];
+    const toastModule = await import("react-hot-toast");
+
+    const { result } = renderHook(() =>
+      useWorkspaceTextActions({
+        pages,
+        currentPage: 0,
+        activeBubbles: [],
+        bubbleCacheRef,
+        translatedImages: new Map(),
+        translationCacheRevision: 1,
+        setWorkspaceLayer,
+        setGlossary,
+        glossary: [],
+        cleaningResultsByPage: new Map(),
+        replaceBubbleText: vi.fn(() => 2),
+      }),
+    );
+
+    await act(async () => {
+      result.current.handleFindReplace({
+        find: "ทดสอบ",
+        replace: "คำใหม่",
+        scope: "this-page",
+        caseSensitive: false,
+      });
+      // Allow dynamic import promise to resolve
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    expect(toastModule.default.success).toHaveBeenCalledWith(
+      expect.stringContaining("แทนที่ข้อความสำเร็จ 2 จุด"),
+      expect.objectContaining({ duration: 2500 }),
+    );
+
+    // Now test with 0 replaced
+    const { result: zeroResult } = renderHook(() =>
+      useWorkspaceTextActions({
+        pages,
+        currentPage: 0,
+        activeBubbles: [],
+        bubbleCacheRef,
+        translatedImages: new Map(),
+        translationCacheRevision: 1,
+        setWorkspaceLayer,
+        setGlossary,
+        glossary: [],
+        cleaningResultsByPage: new Map(),
+        replaceBubbleText: vi.fn(() => 0),
+      }),
+    );
+
+    await act(async () => {
+      zeroResult.current.handleFindReplace({
+        find: "คำที่ไม่มีอยู่จริง",
+        replace: "xyz",
+        scope: "this-page",
+        caseSensitive: false,
+      });
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    expect(toastModule.default).toHaveBeenCalledWith(
+      expect.stringContaining("ไม่พบข้อความที่ตรงกับคำค้นหา"),
+      expect.objectContaining({ icon: "ℹ️", duration: 2500 }),
+    );
+  });
+
   it("handles auto-extract glossary from bubbles", async () => {
     const pages = [{ url: "http://example.com/p1.jpg", name: "page1.jpg" }];
 

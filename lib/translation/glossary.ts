@@ -130,3 +130,75 @@ export function extractGlossaryCandidatesFromBubbles(
 
   return results.slice(0, 30);
 }
+
+export function mergeGlossaryEntries(
+  existing: FlexibleGlossaryEntry[] | null | undefined,
+  incoming: FlexibleGlossaryEntry[] | null | undefined,
+): { merged: GlossaryEntry[]; addedCount: number; updatedCount: number } {
+  const merged: GlossaryEntry[] = [];
+  const sourceIndexMap = new Map<string, number>();
+
+  const normalize = (entry: unknown): GlossaryEntry | null => {
+    if (!entry || typeof entry !== "object") return null;
+    const c = entry as Record<string, unknown>;
+    const rawSource =
+      typeof c.source === "string" && c.source.trim().length > 0
+        ? c.source
+        : typeof c.original === "string" && c.original.trim().length > 0
+          ? c.original
+          : typeof c.src === "string" && c.src.trim().length > 0
+            ? c.src
+            : "";
+    const rawTarget =
+      typeof c.target === "string" && c.target.trim().length > 0
+        ? c.target
+        : typeof c.translation === "string" && c.translation.trim().length > 0
+          ? c.translation
+          : typeof c.dst === "string" && c.dst.trim().length > 0
+            ? c.dst
+            : "";
+    if (!rawSource || !rawTarget) return null;
+    const note =
+      typeof c.note === "string" && c.note.trim().length > 0
+        ? c.note.trim()
+        : undefined;
+    return { source: rawSource.trim(), target: rawTarget.trim(), note };
+  };
+
+  for (const item of existing ?? []) {
+    const valid = normalize(item);
+    if (!valid) continue;
+    const key = valid.source.toLowerCase();
+    if (sourceIndexMap.has(key)) {
+      merged[sourceIndexMap.get(key)!] = valid;
+    } else {
+      sourceIndexMap.set(key, merged.length);
+      merged.push(valid);
+    }
+  }
+
+  let addedCount = 0;
+  let updatedCount = 0;
+
+  for (const item of incoming ?? []) {
+    const valid = normalize(item);
+    if (!valid) continue;
+    const key = valid.source.toLowerCase();
+    if (sourceIndexMap.has(key)) {
+      const idx = sourceIndexMap.get(key)!;
+      const prev = merged[idx];
+      merged[idx] = {
+        source: valid.source,
+        target: valid.target,
+        note: valid.note !== undefined ? valid.note : prev.note,
+      };
+      updatedCount += 1;
+    } else {
+      sourceIndexMap.set(key, merged.length);
+      merged.push(valid);
+      addedCount += 1;
+    }
+  }
+
+  return { merged, addedCount, updatedCount };
+}

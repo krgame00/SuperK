@@ -72,7 +72,7 @@ export function WorkspaceExportMenu({
         },
         {
           id: "strip",
-          label: "Strip ภาพยาว (หลายส่วนรวม ZIP)",
+          label: "Strip ภาพยาว (JPG เดียว หรือ ZIP เมื่อแบ่งหลายส่วน)",
           icon: <Rows3 className="h-4 w-4" />,
           disabled: disabled || disabledKinds.strip,
           onSelect: () => onExport("strip"),

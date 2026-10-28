@@ -1271,13 +1271,15 @@ export function SettingsModal({
                       const raw = await file.text();
                       const parsed = JSON.parse(raw);
                       if (!Array.isArray(parsed)) throw new Error("Invalid format");
-                      const validEntries: GlossaryEntry[] = parsed
-                        .map((item) => ({
-                          source: typeof item?.source === "string" ? item.source.trim() : typeof item?.src === "string" ? item.src.trim() : "",
-                          target: typeof item?.target === "string" ? item.target.trim() : typeof item?.dst === "string" ? item.dst.trim() : "",
-                        }))
-                        .filter((item) => item.source.length > 0 && item.target.length > 0);
-                      onGlossaryChange?.(validEntries);
+                      const { mergeGlossaryEntries } = await import("@/lib/translation/glossary");
+                      const { merged, addedCount, updatedCount } = mergeGlossaryEntries(glossary, parsed);
+                      onGlossaryChange?.(merged);
+                      const toast = (await import("react-hot-toast")).default;
+                      if (addedCount > 0 || updatedCount > 0) {
+                        toast.success(`✨ นำเข้าคลังคำศัพท์สำเร็จ (เพิ่มใหม่ ${addedCount} คำ, ปรับปรุง ${updatedCount} คำ)`);
+                      } else {
+                        toast("คำศัพท์ทั้งหมดมีอยู่ในคลังแล้ว", { icon: "ℹ️" });
+                      }
                     } catch {
                       const toast = (await import("react-hot-toast")).default;
                       toast.error("รูปแบบไฟล์คลังคำศัพท์ไม่ถูกต้อง");

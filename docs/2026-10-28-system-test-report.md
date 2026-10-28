@@ -436,7 +436,7 @@ dialog แก้ Mask เขียนว่า "Ctrl+Z เลิกทำ". ท�
 6. ปรับ cleaning ให้เก็บ SFX และนารเรชันให้หมด แล้วเพิ่ม regression fixture (F7).
 7. ตัดสินใจเรื่อง import Glossary ว่าจะ merge หรือ replace (F8).
 8. ทดสอบมือเรื่อง Layered pack ดาวน์โหลดซ้ำ (F10).
-9. เปลี่ยน React key ของหน้าและ bubble จาก data URL เป็น id (F11).
+9. เปลี่ยน React key (F11) — `pageIndex` แทน `pageUrl`; เติม `role="dialog"` (F12); เพิ่ม feedback Find/Replace (F13); ผูก Ctrl+Z dialog (F14); แก้ empty-state (F15); แก้ label Strip (F16). .scratch ลบแล้ว. Dev server รันอยู่ (no console error จาก F11).
 10. เติม ARIA ให้ export gate modal (F12).
 11. เพิ่ม feedback จำนวนจุดที่แทนที่ใน Find/Replace (F13).
 12. ผูก Ctrl+Z ของ Mask กับ dialog และแก้ข้อความ empty state หลังอนุมัติ (F14, F15).

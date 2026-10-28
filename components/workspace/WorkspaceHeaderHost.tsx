@@ -899,7 +899,7 @@ export function WorkspaceHeaderHost({
                     void onRequestBookExport("strip");
                     onCloseMobileMenu();
                   }}
-                  title="ภาพยาว (หลายส่วนรวม ZIP)"
+                  title="Strip ภาพยาว (JPG เดียว หรือ ZIP เมื่อแบ่งหลายส่วน)"
                   disabled={isZipping || isChoosingExport || pages.length === 0}
                   className="bg-surface text-foreground disabled:opacity-40 p-2 rounded-lg text-xs font-bold flex flex-col items-center justify-center gap-1 border border-transparent"
                 >

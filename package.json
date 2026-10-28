@@ -4,8 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev -H 127.0.0.1",
-    "build": "node scripts/build-extension-policy.mjs && next build && node scripts/sync-standalone-assets.mjs",
-    "start": "next start -H 127.0.0.1",
+    "build": "node scripts/prebuild-check.mjs && node scripts/build-extension-policy.mjs && next build && node scripts/sync-standalone-assets.mjs",
+    "start": "node .next/standalone/server.js",
+    "start:next": "next start -H 127.0.0.1",
     "postinstall": "node scripts/copy-pdf-worker.mjs",
     "lint": "eslint",
     "test": "vitest run --root .",
