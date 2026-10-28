@@ -132,7 +132,7 @@ def classify_eligibility(
         )
 
     # 2. Text embedded in artwork / clothing / sound effects without rectangular caption backing
-    if has_sfx_features and features.margin_fraction < 0.50:
+    if has_sfx_features:
         return _sfx_decision(sfx_score, features)
 
     # 3. Borderless caption on margin or clean uniform space
@@ -143,9 +143,6 @@ def classify_eligibility(
             NARRATION_THRESHOLD,
             features,
         )
-
-    if has_sfx_features:
-        return _sfx_decision(sfx_score, features)
 
     if _looks_like_ui_label(region, image_rgb.shape, features):
         return _preserve(

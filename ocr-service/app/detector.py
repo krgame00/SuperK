@@ -606,12 +606,12 @@ class HybridTextDetector:
                 ry = max(0, by - pad)
                 rw = min(w - rx, bw + pad * 2)
                 rh = min(h - ry, bh + pad * 2)
-                recovered_blocks.append(
-                    DetectedBlock(
-                        rect=PixelRect(x=rx, y=ry, width=rw, height=rh),
-                        confidence=comp_prob,
-                    ),
+                candidate_block = DetectedBlock(
+                    rect=PixelRect(x=rx, y=ry, width=rw, height=rh),
+                    confidence=comp_prob,
                 )
+                if _has_glyph_support(prob, candidate_block):
+                    recovered_blocks.append(candidate_block)
 
 
         if recovered_blocks:
@@ -932,9 +932,32 @@ def _has_glyph_support(probability: FloatMask, block: DetectedBlock) -> bool:
     if seed.size == 0 or block.confidence < 0.25:
         return False
     count, _, stats, _ = cv2.connectedComponentsWithStats(seed, connectivity=8)
-    valid_comps = [stats[i, cv2.CC_STAT_AREA] for i in range(1, count) if stats[i, cv2.CC_STAT_AREA] >= 3]
+    valid_comps: list[tuple[int, int, int]] = []
+    for i in range(1, count):
+        area = int(stats[i, cv2.CC_STAT_AREA])
+        w = int(stats[i, cv2.CC_STAT_WIDTH])
+        h = int(stats[i, cv2.CC_STAT_HEIGHT])
+        if area < 4:
+            continue
+        extent = float(area) / max(w * h, 1)
+        # Disqualify long curving lines/hair strands with very low extent across large spans
+        if max(w, h) >= 40 and extent < 0.22:
+            continue
+        valid_comps.append((area, w, h))
+
     if not valid_comps:
         return False
-    return (len(valid_comps) >= 2 and sum(valid_comps) >= 10) or (len(valid_comps) == 1 and valid_comps[0] >= 120)
+
+    # Multi-glyph text: at least 2 glyphs
+    if len(valid_comps) >= 2 and sum(c[0] for c in valid_comps) >= 10:
+        return True
+
+    # Single glyph or solid text column/block
+    if len(valid_comps) == 1:
+        area, w, h = valid_comps[0]
+        extent = float(area) / max(w * h, 1)
+        return area >= 120 and extent >= 0.25
+
+    return False
 
 
