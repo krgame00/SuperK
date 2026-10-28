@@ -120,6 +120,14 @@ export interface TranslatedBubble {
   __resized?: boolean;
   /** runtime flag set once the user has deleted a bubble */
   deleted?: boolean;
+  /** runtime flag set when bubble is hidden (e.g. SFX policy: ignore) */
+  hidden?: boolean;
+  /** cached translated text for SFX bubbles when switching policy modes */
+  sfxTranslated?: string;
+  /** cached original source text for SFX bubbles when switching policy modes */
+  sfxOriginal?: string;
+  /** explicit marker whether this bubble is an SFX bubble */
+  isSfx?: boolean;
   /** runtime font size multiplier for this bubble */
   fontSizeMultiplier?: number;
   /** rotation angle in degrees (-180..180; negative = tilted upward-right) */
@@ -1122,7 +1130,7 @@ export const applyTranslationOverlay = async (
   img.ondragstart = (e) => e.preventDefault();
 
   // Saved empty edits retain their geometry so users can select and refill them.
-  const real = bubbles.filter(b => b && !b.deleted && (
+  const real = bubbles.filter(b => b && !b.deleted && !b.hidden && (
     (b.t ?? b.translated ?? "").trim() || b.layoutAdjustment
   ));
   if (real.length === 0) {

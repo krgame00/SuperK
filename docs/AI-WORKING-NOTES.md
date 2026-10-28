@@ -1,5 +1,9 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Reactive Live SFX Policy Toggle across Canvas, Cache & Export — 2026-10-28
+
+### Status: VERIFIED WORKING (User requested Item 1 from Open Items: 'SFX live toggle ไม่มี implementation (สลับ policy มีผลรอบคลีน/แปลถัดไป — ไม่ซ่อนกล่องเดิมทันที)' under /Poteto Mode. Implemented instant non-destructive live policy switching across canvas overlays, in-memory cache, and exports: 1) Architecture & Features Built: a) `lib/translation/sfxPolicy.ts`: Engineered domain model with `SfxMode` ("ignore" | "preserve" | "translate"), robust `isSfxBubble` checking category metadata, asterisk syntax, and text heuristics, and `applyLiveSfxPolicy` applying reversible transitions with lazy caching of `sfxTranslated` and `sfxOriginal` on first pass; b) `lib/translationOverlay.ts`: Added `hidden?: boolean; sfxTranslated?: string; sfxOriginal?: string; isSfx?: boolean;` to `TranslatedBubble` and updated `applyTranslationOverlay` line 1133 to filter `!b.deleted && !b.hidden`, omitting hidden SFX from DOM overlays and offscreen canvases; c) `hooks/useTranslation.ts`: Enhanced `setSfxMode` to immediately apply policy to all cached pages in `bubbleCacheRef.current`, mark pages dirty, update `activeBubbles`, and synchronously trigger `applyTranslationOverlay` on the active page canvas. In `performTranslation`, preserved returned SFX bubbles under "ignore" mode with `hidden: true` instead of permanently stripping them. Updated `inspectTranslatedPages` and `inspectReviewIssues` to skip hidden bubbles, preventing false contamination/review warnings on hidden SFX; d) `hooks/useExportOrchestrator.ts` & `lib/export/exportManager.ts`: Added `b.hidden` to export render freshness signatures and filtered `!(b.hidden === true)` in Photoshop/Photopea `.jsx` export; 2) Verification Evidence: a) All 8/8 tests in `tests/translation/sfxPolicy.test.ts` passed; b) All 2/2 tests in `tests/translation/useTranslation.sfxLiveToggle.test.tsx` passed; c) All 99/99 tests in `tests/cleaning/translationOverlay.test.ts` passed; d) Full translation suite passed (54 test files, 518 tests passed); e) Full export & workspace suites passed (47 test files, 255 tests passed); f) Full workspace Vitest passed (238 test files, 1,965 tests passed, 0 failures); g) TypeScript check `npx tsc --noEmit` passed with 0 errors).
+
 ## Four-Spec Integration, Live Browser QA & Restored-Region Reclean Fix — 2026-10-28
 
 ### Status: VERIFIED WORKING (15 tickets จาก 4 spec families ปิดครบ + Live Browser QA ผ่าน 20+ รายการพร้อมภาพ + Bug ใหม่ที่ผู้ใช้รายงานถูก fix และ deploy; main = origin/main ที่ f83ffe3)
@@ -29,7 +33,7 @@
   - main = origin/main ที่ `f83ffe3` (รวม fix นี้), production web = build `VL8YkIuQC5ewuz6jsMF0m`+ (รันอยู่), OCR = pipeline fix ฉบับสมบูรณ์ (pid รีสตาร์ทแล้ว, health 200)
 
 - **Open Items (บันทึกไว้ ยังไม่ด่วน)**:
-  1. SFX live toggle ไม่มี implementation (สลับ policy มีผลรอบคลีน/แปลถัดไป — ไม่ซ่อนกล่องเดิมทันที)
+  1. [RESOLVED 2026-10-28] SFX live toggle: ทำเสร็จสมบูรณ์ สลับ policy ("ignore" | "preserve" | "translate") แล้ว canvas overlay, memory cache, และ export อัปเดตทันทีแบบ non-destructive
   2. RemnantReviewPanel (fixed right) ทับปุ่ม "ยืนยันภาพปัจจุบันเพื่อส่งออก" — ต้องย่อพาเนลก่อน
   3. SFX default ตอน profile ใหม่ (ไม่มี policy บันทึก) ลบ SFX นอกบอลลูนทิ้ง — ขัด default "ignore" ที่ doc อ้าง
   4. Stress test 40 หน้า + tone-mark visual ยังเป็น manual checklist

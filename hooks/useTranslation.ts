@@ -12,6 +12,11 @@ import {
 } from "@/lib/translation/requestError";
 import { applyTranslationOverlay } from "@/lib/translationOverlay";
 import type { TranslatedBubble } from "@/lib/translationOverlay";
+import {
+  applyLiveSfxPolicy,
+  isSfxBubble,
+  type SfxMode,
+} from "@/lib/translation/sfxPolicy";
 import { prepareNewSourceSizing } from '@/lib/sourceTextSizeClient';
 import { manualSourceSizing } from '@/lib/sourceTextSize';
 import { isManualSized, resetSizingToAuto, restoreSizing, snapshotSizing, type SizeSnapshot } from '@/lib/savedTextSizing';
@@ -460,66 +465,19 @@ export function useTranslation({
     fontSizeMultiplier: 1.0,
     categoryFonts: {},
   });
-  const [sfxMode, setSfxModeState] = useState<"ignore" | "preserve" | "translate">(() => {
+  const [sfxMode, setSfxModeState] = useState<SfxMode>(() => {
     if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
       const saved = localStorage.getItem("superk:sfx-policy");
       if (saved === "preserve" || saved === "translate" || saved === "ignore") return saved;
     }
     return "ignore";
   });
-  const sfxModeRef = useRef<"ignore" | "preserve" | "translate">(sfxMode);
+  const sfxModeRef = useRef<SfxMode>(sfxMode);
   sfxModeRef.current = sfxMode;
-  const setSfxMode = useCallback((mode: "ignore" | "preserve" | "translate") => {
-    sfxModeRef.current = mode;
-    setSfxModeState(mode);
-    if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
-      localStorage.setItem("superk:sfx-policy", mode);
-    }
-    // Immediately filter or restore SFX bubbles on the currently active page
-    setActiveBubbles((prev) => {
-      if (!prev || prev.length === 0) return prev;
-      const filtered = prev.filter((b) => {
-        if (mode !== "ignore") return true;
-        const rawCat = String(
-          (b as { styleCategory?: string; category?: string }).styleCategory ??
-          (b as { category?: string }).category ??
-          b.styleProfile?.category ??
-          ""
-        ).trim().toLowerCase();
-        const textVal = String(b.t ?? b.translated ?? "").trim();
-        const isAsteriskWrappedSfx = /^\*[^*\n]{1,24}\*$/u.test(textVal);
-        return !(rawCat === "sfx" || isAsteriskWrappedSfx);
-      });
-      if (activePageRef.current && filtered.length !== prev.length) {
-        bubbleCacheRef.current.set(activePageRef.current, filtered);
-      }
-      return filtered;
-    });
-  }, []);
 
   const applySfxPolicyToBubbles = useCallback(
-    (bubbles: TranslatedBubble[], mode: "ignore" | "preserve" | "translate" = sfxModeRef.current): TranslatedBubble[] => {
-      if (mode === "translate") return bubbles;
-      return bubbles.flatMap((b) => {
-        const rawCat = String(
-          (b as { styleCategory?: string; category?: string }).styleCategory ??
-          (b as { category?: string }).category ??
-          b.styleProfile?.category ??
-          ""
-        ).trim().toLowerCase();
-        const textVal = String(b.t ?? b.translated ?? "").trim();
-        const isAsteriskWrappedSfx = /^\*[^*\n]{1,24}\*$/u.test(textVal);
-        const isSfx = rawCat === "sfx" || isAsteriskWrappedSfx;
-        if (!isSfx) return [b];
-        if (mode === "ignore") {
-          return [];
-        }
-        // mode === "preserve": keep original source text if available
-        if (b.original_text && b.original_text.trim()) {
-          return [{ ...b, t: b.original_text.trim(), translated: b.original_text.trim() }];
-        }
-        return [b];
-      });
+    (bubbles: TranslatedBubble[], mode: SfxMode = sfxModeRef.current): TranslatedBubble[] => {
+      return applyLiveSfxPolicy(bubbles, mode);
     },
     [],
   );
@@ -660,6 +618,52 @@ export function useTranslation({
     };
     undoManager.push({label:'ปรับขนาดข้อความทั้งหมด',undo:()=>apply('before',before.fontSizeMultiplier),redo:()=>apply('after',after.fontSizeMultiplier)});
   }, [markPageDirty]);
+
+  const setSfxMode = useCallback(
+    (mode: SfxMode) => {
+      sfxModeRef.current = mode;
+      setSfxModeState(mode);
+      if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
+        localStorage.setItem("superk:sfx-policy", mode);
+      }
+
+      // 1. Immediately apply policy across all pages in the bubble cache
+      for (const [pageUrl, bubbles] of bubbleCacheRef.current.entries()) {
+        applyLiveSfxPolicy(bubbles, mode);
+        markPageDirty(pageUrl);
+      }
+
+      // 2. Reactively update activeBubbles state
+      setActiveBubbles((prev) => {
+        if (!prev || prev.length === 0) return prev;
+        return applyLiveSfxPolicy([...prev], mode);
+      });
+
+      // 3. Immediately re-render canvas overlay on the active page
+      const currentUrl = activePageRef.current;
+      if (currentUrl) {
+        const currentBubbles = bubbleCacheRef.current.get(currentUrl) ?? activeBubbles;
+        const pageIndex = pagesRef.current.indexOf(currentUrl);
+        const renderTarget =
+          getPageTargetLanguage(currentUrl) || targetLangRef.current || "th";
+        void applyTranslationOverlay(
+          currentBubbles,
+          viewMode,
+          pageIndex >= 0 ? pageIndex : currentPage,
+          setTranslationResult,
+          undefined,
+          textStyleRef,
+          undefined,
+          currentUrl,
+          () => markPageDirty(currentUrl),
+          renderTarget,
+        );
+      }
+
+      setCacheRevision((rev) => rev + 1);
+    },
+    [markPageDirty, getPageTargetLanguage, viewMode, currentPage, activeBubbles],
+  );
 
   const getPageRevision = useCallback((pageUrl: string): number => {
     return pageRevisionsRef.current.get(pageUrl) ?? 0;
@@ -1748,7 +1752,11 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         }
       }
 
-      const filteredParsed = applySfxPolicyToBubbles(deduplicateBubbleSFX(pageBubbles, 3)).filter(b => withinTranslationScope(b.box, textScope));
+      const dedupedBubbles = deduplicateBubbleSFX(pageBubbles, 3);
+      const withPolicy = applySfxPolicyToBubbles(dedupedBubbles);
+      const filteredParsed = withPolicy.filter(
+        (b) => isSfxBubble(b) || withinTranslationScope(b.box, textScope),
+      );
       const completeness = await recoverDetectedOmissions(filteredParsed);
       console.info("[Translation Coverage]", {page:pageIndex+1, detected:textScope?.allowed.length ?? null,
         received:pageBubbles.length, retained:filteredParsed.length, recovered:completeness.bubbles.length-filteredParsed.length,
@@ -2657,7 +2665,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         pageUrl,
         pageIndex,
         total: bubbles.length,
-        contaminated: bubbles.filter(bubble=>!bubble.deleted && inspectTargetText(bubble.t || bubble.translated || "",getPageTargetLanguage(pageUrl)).status === "blocked").length,
+        contaminated: bubbles.filter(bubble=>!bubble.deleted && !bubble.hidden && inspectTargetText(bubble.t || bubble.translated || "",getPageTargetLanguage(pageUrl)).status === "blocked").length,
         invalidBoxes: bubbles.filter(
           (b) => (b as { isInvalidBox?: boolean }).isInvalidBox === true,
         ).length,
@@ -2723,7 +2731,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       const scriptIssues: ReviewIssuePoint[] = [];
       const unverified: ReviewIssuePoint[] = [];
       bubbles.forEach((bubble, index) => {
-        if (bubble.deleted) return;
+        if (bubble.deleted || bubble.hidden) return;
         const text = bubble.t || bubble.translated || "";
         if (!text.trim()) return;
         const source = typeof bubble.original_text === "string" ? bubble.original_text : "";

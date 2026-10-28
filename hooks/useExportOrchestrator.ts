@@ -525,6 +525,7 @@ export function useExportOrchestrator({
           b.box,
           b.t ?? b.translated,
           b.deleted,
+          b.hidden,
           b.rotation,
           b.isItalic ?? b.italic,
           b.layoutAdjustment,

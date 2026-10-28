@@ -145,7 +145,7 @@ export function generatePhotoshopBuildScript(
   const safeBubbles = bubbles
     .map((b, i) => ({
       index: i + 1,
-      deleted: Boolean(b.deleted),
+      deleted: Boolean(b.deleted || (b as { hidden?: boolean }).hidden),
       text: String(b.t ?? b.translated ?? "").replace(/\r?\n/g, " "),
       orig: String(b.original_text ?? "").replace(/\r?\n/g, " "),
       box: Array.isArray(b.box) && b.box.length === 4 ? b.box : [100, 100, 200, 300],

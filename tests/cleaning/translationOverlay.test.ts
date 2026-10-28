@@ -2617,3 +2617,52 @@ test("supports toggling italic slant and tilting text via toolbar buttons and ke
   expect(bubble.rotation).toBe(0);
   expect(wrapper.style.transform).toBe("");
 });
+
+test("applyTranslationOverlay respects hidden: true flag and excludes hidden bubbles from DOM canvas", async () => {
+  const container = document.createElement("div");
+  container.id = "pageContainer";
+  document.body.appendChild(container);
+
+  const img = document.createElement("img");
+  Object.defineProperties(img, {
+    complete: { configurable: true, value: true },
+    naturalWidth: { configurable: true, value: 1000 },
+    naturalHeight: { configurable: true, value: 1200 },
+  });
+  container.appendChild(img);
+
+  const bubbles: TranslatedBubble[] = [
+    {
+      id: "bubble-visible",
+      t: "บทพูดทั่วไป",
+      translated: "บทพูดทั่วไป",
+      box: [100, 100, 200, 300],
+      hidden: false,
+    },
+    {
+      id: "bubble-hidden-sfx",
+      t: "*ตู้ม*",
+      translated: "*ตู้ม*",
+      box: [400, 400, 500, 500],
+      hidden: true,
+      isSfx: true,
+    },
+  ];
+
+  await applyTranslationOverlay(bubbles, "single", 0, () => {}, undefined, undefined, container);
+  await vi.runAllTimersAsync();
+
+  const renderedBubbles = container.querySelectorAll<HTMLElement>(".translation-bubble");
+  expect(renderedBubbles.length).toBe(1);
+  expect(renderedBubbles[0].getAttribute("data-bubble-id")).toContain("bubble-visible");
+
+  // Unhide the SFX bubble
+  bubbles[1].hidden = false;
+  await applyTranslationOverlay(bubbles, "single", 0, () => {}, undefined, undefined, container);
+  await vi.runAllTimersAsync();
+
+  const reRenderedBubbles = container.querySelectorAll<HTMLElement>(".translation-bubble");
+  expect(reRenderedBubbles.length).toBe(2);
+
+  container.remove();
+});
