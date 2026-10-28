@@ -1,5 +1,41 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Four-Spec Integration, Live Browser QA & Restored-Region Reclean Fix — 2026-10-28
+
+### Status: VERIFIED WORKING (15 tickets จาก 4 spec families ปิดครบ + Live Browser QA ผ่าน 20+ รายการพร้อมภาพ + Bug ใหม่ที่ผู้ใช้รายงานถูก fix และ deploy; main = origin/main ที่ f83ffe3)
+
+- **Four-Spec Workstream (15 tickets, 4 families)**:
+  - multilingual-translation-guard (G01–G06): strict script policy, contextual review + point repair, saved-work/book review, export gates, extension evidence, combined verification.
+  - dense-page-text-interaction (P01–P03): dense baseline, bitmap corner-drag preview (zero drag-time measures/draws), live reflow.
+  - source-text-remnant-review (R01–R03): background remnant inspection (fail-closed), mask repair + artwork confirmation, combined background output review.
+  - source-matched-text-size (S01–S03): source size evidence, safe layout, saved-work manual size parity.
+  - Ledger เดิมอยู่ใน git history (`.superpowers/` ถูกล้างใน commit ฝั่ง consolidation แล้ว — ดึงกลับได้ด้วย `git show e462f2b:.superpowers/...`)
+
+- **Confirmed Bug + Fix (ผู้ใช้รายงานเอง + automation re-produce)**:
+  - อาการ: หลังกด "กู้ภาพเดิมทั้งจุด" การระบายลบทับข้อความที่กู้กลับมา + "ใช้กับจุดนี้" **เงียบ ไม่มีผล** (ผู้ใช้เจอเอง + automation ยืนยันภาพก่อน-หลังเหมือนกันทุกพิกเซล)
+  - Root cause 2 ชั้น: (1) FORCE_CLEAN ใช้เฉพาะเส้นแปรงเป็น mask — เส้นบางคลุม glyph ไม่หมด LaMa จึงสร้างข้อความซ้ำจากบริบท (2) เงื่อนไขเดิมตรวจ "eligible ว่าง" ซึ่ง stale mask จากรอบเก่าทำให้ไม่ว่าง → union ไม่ trigger
+  - Fix (commits `5c1dbf0` + `29baa18`): ตรวจสถานะ restored จาก **region record** (`text_role=protected`/`status=preserved` ซึ่งอยู่รอดใน derived-job chain) → union text mask เดิมจาก root job เข้ากับเส้นแปรงใน brush-neighborhood → ข้อความหายเต็มตัวในคลิกเดียว
+  - Regression test: `test_force_clean_over_stale_mask_restored_region_re_erases_text` (stale mask + restored pixels + เส้นบาง = สถานการณ์ผู้ใช้เป๊ะ)
+
+- **Live Browser QA (IAB isolated profile, ไม่ใช้ key จริง/ไม่แตะ session จริง)**:
+  - ผ่านพร้อมภาพ: session inject+restore, คลีน 3-tier end-to-end (ข้อความญี่ปุ่นหายหมดผิวเนียน), กู้ภาพเดิมทั้งจุด + status "กู้ภาพเดิมทั้งจุดแล้ว", RemnantReviewPanel สด (0 จุดสงสัย + ยืนยันลายภาพ + ภาพเทียบ), แปลจริงผ่าน server key pool + quality review ("กำลังตรวจความหมายและสำนวนคำแปล…"), **เคารพลายภาพที่ยืนยันแล้ว (ไม่แปลทับ)**, Inspector panels + Warp Arch สด, Transcript modal round-trip (แก้แล้วเข้ากล่องจริง), Export gate 2 ชั้น (readability + script violation "ยืนยันผ่านไม่ได้"), จัดระเบียบ, Find&Replace, Glossary เพิ่มคำ, Memory readout (1 MB / 492 MB), **Disconnect recovery** (ปิด OCR → แจ้งเตือน graceful → เปิดคืน → คลีนได้ปกติ)
+  - พบ policy ทำงานจริง: คำอังกฤษที่ผมใส่ในข้อความทดสอบถูกจับ → ซ่อนคำแปล + เตือน inline (G01 invariant ครอบ manual edit)
+
+- **PWA Cache Fix (ผู้ใช้แจ้ง "เปิดครั้งแรกยังเป็นของเก่า")**:
+  - ปิด PWA service worker (`next.config.ts` disable: true) + `public/sw.js` เป็น kill switch (ล้างแคช + unregister + reload controlled tabs) + root layout เพิ่ม script ล้าง SW/caches ทุกโหลด
+  - Launcher (`start-production.ps1`) เพิ่ม **auto-rebuild**: ตรวจ source ใหม่กว่า build → หยุด web → rebuild → เปิดใหม่เอง (ผู้ใช้เขียน ผมเติม test scenario "stale" + mocks ครบ)
+
+- **Deployment**:
+  - main = origin/main ที่ `f83ffe3` (รวม fix นี้), production web = build `VL8YkIuQC5ewuz6jsMF0m`+ (รันอยู่), OCR = pipeline fix ฉบับสมบูรณ์ (pid รีสตาร์ทแล้ว, health 200)
+
+- **Open Items (บันทึกไว้ ยังไม่ด่วน)**:
+  1. SFX live toggle ไม่มี implementation (สลับ policy มีผลรอบคลีน/แปลถัดไป — ไม่ซ่อนกล่องเดิมทันที)
+  2. RemnantReviewPanel (fixed right) ทับปุ่ม "ยืนยันภาพปัจจุบันเพื่อส่งออก" — ต้องย่อพาเนลก่อน
+  3. SFX default ตอน profile ใหม่ (ไม่มี policy บันทึก) ลบ SFX นอกบอลลูนทิ้ง — ขัด default "ignore" ที่ doc อ้าง
+  4. Stress test 40 หน้า + tone-mark visual ยังเป็น manual checklist
+  5. Find&Replace ผ่านปุ่ม toolbar ✓ แต่ Ctrl+F ยังไม่เปิด dialog ใน automation (ต้องตรวจเงื่อนไข handler)
+
+
 ## Live Workload Verification of Mask Detection & Inspection Subsystems: HybridTextDetector, Local Heuristic Inspector, Background Remnant Review, & Gemini Vision Mask Reviewer — 2026-10-27
 
 Status: **VERIFIED WORKING (User requested 'พวกระบบตรวจจับของ mask ละ ไปลองแล้วเอามาให้ผมดูด้วย' to run live tests across all mask detection systems and bring back concrete evidence: 1) Backend Text Mask & Bounding Box Detector (`HybridTextDetector` in `ocr-service/app/detector.py`): Tested live against real manga image `compare_page_2.jpg` (903x1280); detector successfully generated probability mask `(903, 1280)` and detected 22 text blocks with high confidences (e.g. Block 1 conf=0.96, Block 4 conf=0.91, Block 5 conf=0.89, Block 8 conf=0.95) and 20 text evidence regions; 2) Gemini Vision Multimodal Mask Reviewer (`POST /api/mask-review`): Tested live with generated 3-panel comparison strip (Original vs Red Mask vs Clean Inpainted with remaining text); endpoint returned HTTP 200 with structured JSON: `verdict: "under_masked"`, `summary: "มาสก์สีแดงคลุมพื้นที่ไม่หมด ยังเหลือบางส่วนทางขวาที่ยังไม่ได้ถูกลบ"`, and `addBoxes: [[230, 690, 743, 856]]`, precisely detecting missed text coordinates on the right side; 3) Local Heuristic Mask Inspector (`lib/cleaning/aiMaskInspector.ts`): Verified `buildMaskDiffOverlay` and `analyzeRegionMaskLocally` generating 3-color overlays (Red=Kept, Green=AI Added/Under-masked, Sky Blue=AI Removed/Protected) with 7/7 Vitest tests passing; 4) Background Remnant Inspector (`lib/cleaning/backgroundRemnantInspection.ts`): Verified pure-observation remnant detection bounded to text regions without false alarms on screentones, with 25/25 Vitest tests passing and 22/22 remnant review tests passing; 5) Verification Evidence: Live API responses, real manga block detection coordinates, 100% test pass rate across all mask inspection suites).**
@@ -2685,4 +2721,3 @@ Verification evidence:
   - Python OCR test suite: `.\ocr-service\venv\Scripts\pytest.exe ocr-service/tests -q -m "not model"` — **222 passed, 3 deselected, 1 warning** in 16.94s.
   - TypeScript validation: `npx tsc --noEmit` — **0 errors**.
   - ESLint: `npm run lint` — **0 errors (42 warnings pre-existing, 0 errors)**.
-
