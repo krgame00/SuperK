@@ -111,3 +111,8 @@ patch-probe.md
 *.crx
 
 /.cache/
+
+desktop.ini
+[Dd]esktop.ini
+Thumbs.db
+

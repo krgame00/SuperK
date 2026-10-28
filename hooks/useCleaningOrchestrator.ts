@@ -5,7 +5,6 @@ import {
   findRecoveredRegionId,
   useCleaning,
   type PageCleaningResult,
-  type PageRemnantReview,
   type PageRemnantTextEvidence,
 } from "@/hooks/useCleaning";
 import type { WorkspaceExportPage } from "@/hooks/useExportOrchestrator";

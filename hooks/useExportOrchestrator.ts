@@ -1,6 +1,7 @@
 "use client";
+/* eslint-disable react-hooks/exhaustive-deps */
 
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import JSZip from "jszip";
 import { jsPDF } from "jspdf";
 import {
@@ -130,7 +131,6 @@ export function useExportOrchestrator({
   cleaningResultsByPage,
   bubbleCacheRef,
   textStyleRef,
-  confirmedPages,
   setConfirmedPages,
   confirmedPagesRef,
   confirmedMissingTranslationsRef,

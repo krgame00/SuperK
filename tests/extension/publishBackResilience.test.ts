@@ -326,4 +326,29 @@ describe("Publish-Back Sync Resiliency & Epoch Recovery (Ticket PR-2)", () => {
     // Cursor MUST remain at 1, NOT 2 or 3!
     expect(storageMap.get(cursorKey).seq).toBe(1);
   });
+
+  it("backs off polling for 30s when server responds with 401 Unauthorized", async () => {
+    const checkUpdates = (globalThis as any).checkPublishedUpdates;
+    (globalThis as any).resetSyncAuthBackoff?.();
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: "Unauthorized",
+    });
+
+    const res1 = await checkUpdates();
+    expect(res1).toEqual([]);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+
+    const backoffUntil = (globalThis as any).getSyncAuthBackoffUntil?.() ?? 0;
+    expect(backoffUntil).toBeGreaterThan(Date.now());
+
+    // Subsequent call while backoff is active should NOT trigger fetch
+    const res2 = await checkUpdates();
+    expect(res2).toEqual([]);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+
+    (globalThis as any).resetSyncAuthBackoff?.();
+  });
 });

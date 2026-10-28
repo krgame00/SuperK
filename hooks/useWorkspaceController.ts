@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, type DragEvent } from "react";
+import { useState, useRef, type DragEvent } from "react";
 import type { WorkspaceHeaderHostProps } from "@/components/workspace/WorkspaceHeaderHost";
 import type { WorkspaceCanvasHostProps } from "@/components/workspace/WorkspaceCanvasHost";
 import type { WorkspaceBottomStripHostProps } from "@/components/workspace/WorkspaceBottomStripHost";

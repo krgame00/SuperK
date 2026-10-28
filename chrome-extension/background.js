@@ -488,6 +488,7 @@ async function saveSyncCursor(normalizedUrl, cursor) {
 }
 
 let isSyncInProgress = false;
+let syncAuthBackoffUntil = 0;
 
 async function pruneTranslationCache(storageKey) {
   if (!chrome.storage?.local?.get || !chrome.storage?.local?.remove) return;
@@ -505,6 +506,7 @@ async function pruneTranslationCache(storageKey) {
 
 async function checkPublishedUpdates() {
   if (isSyncInProgress) return [];
+  if (Date.now() < syncAuthBackoffUntil) return [];
   isSyncInProgress = true;
   try {
     const stored = await loadExtensionSettings({
@@ -530,7 +532,14 @@ async function checkPublishedUpdates() {
       ? { Authorization: `Bearer ${stored.pairingToken}` }
       : {};
     const res = await fetch(url, { headers: syncHeaders, signal: AbortSignal.timeout(4000) });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        // Unpaired or expired pairing token: back off for 30s to prevent spamming server logs
+        syncAuthBackoffUntil = Date.now() + 30000;
+      }
+      return [];
+    }
+    syncAuthBackoffUntil = 0;
     const data = await res.json();
 
     const serverEpoch = data.epoch;
@@ -626,4 +635,6 @@ if (typeof globalThis !== "undefined") {
   globalThis.getSyncCursor = getSyncCursor;
   globalThis.saveSyncCursor = saveSyncCursor;
   globalThis.checkPublishedUpdates = checkPublishedUpdates;
+  globalThis.getSyncAuthBackoffUntil = () => syncAuthBackoffUntil;
+  globalThis.resetSyncAuthBackoff = () => { syncAuthBackoffUntil = 0; };
 }
