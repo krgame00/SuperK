@@ -35,7 +35,7 @@ test("createCleaningJob posts multipart to local proxy", async () => {
   expect(fetchMock.mock.calls[0][0]).toBe("/api/clean/v1/jobs");
   expect(fetchMock.mock.calls[0][1]?.body).toBeInstanceOf(FormData);
   expect(fetchMock.mock.calls[0][1]?.cache).toBe("no-store");
-  expect((fetchMock.mock.calls[0][1]?.body as FormData).get("cleaning_mode")).toBe("all-text");
+  expect((fetchMock.mock.calls[0][1]?.body as FormData).get("cleaning_mode")).toBe("safe");
 });
 
 test("aborting while reading a cleaning response is still cancellation", async () => {

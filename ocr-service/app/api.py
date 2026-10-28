@@ -156,7 +156,7 @@ def create_app(
         protected_mask: Annotated[UploadFile, File()],
         regions: Annotated[str, Form()],
         job_id: Annotated[str | None, Form()] = None,
-        cleaning_mode: Annotated[CleaningMode, Form()] = CleaningMode.ALL_TEXT,
+        cleaning_mode: Annotated[CleaningMode, Form()] = CleaningMode.SAFE,
     ) -> dict[str, object]:
         max_bytes = runtime_settings.max_upload_mb * 1024 * 1024
         max_px = runtime_settings.max_image_megapixels * 1_000_000

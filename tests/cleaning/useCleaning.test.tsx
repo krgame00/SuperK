@@ -42,6 +42,18 @@ vi.mock("@/lib/projectStore", () => ({
   saveCleaningResultMetadata: vi.fn(),
 }));
 
+const mockLocalStorage = (() => {
+  const values = new Map<string, string>();
+  return {
+    get length() { return values.size; },
+    clear: () => values.clear(),
+    getItem: (key: string) => values.get(key) ?? null,
+    key: (index: number) => [...values.keys()][index] ?? null,
+    removeItem: (key: string) => { values.delete(key); },
+    setItem: (key: string, value: string) => { values.set(key, String(value)); },
+  } satisfies Storage;
+})();
+
 const queuedJob = {
   jobId: "job-1",
   status: "queued" as const,
@@ -64,7 +76,7 @@ const succeededJob = {
   stage: "complete" as const,
 };
 const cleaningResult = {
-  cleaningMode: "all-text" as const,
+  cleaningMode: "safe" as const,
   jobId: "job-1",
   sourceHash: "a".repeat(64),
   width: 8,
@@ -99,6 +111,17 @@ const recoveredMaskRegion = {
 };
 
 beforeEach(() => {
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: mockLocalStorage,
+  });
+  if (typeof window !== "undefined") {
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: mockLocalStorage,
+    });
+  }
+  mockLocalStorage.clear();
   vi.useFakeTimers();
   vi.clearAllMocks();
   vi.mocked(createCleaningJob).mockReset();
@@ -259,6 +282,7 @@ test("cleanPage returns and reuses a result by original URL", async () => {
 });
 
 test("cleanPage does not reuse legacy safe cleaning for the clean-all workflow", async () => {
+  localStorage.setItem("superk:sfx-policy", "translate");
   vi.mocked(createCleaningJob).mockResolvedValue(succeededJob);
   vi.mocked(getCleaningResult).mockResolvedValue({ ...cleaningResult, cleaningMode: "safe" } as never);
   const { result } = renderHook(() => useCleaning({ pages: ["blob:one"], currentPage: 0 }));
@@ -932,7 +956,7 @@ test.each([true, undefined])("fast restore preserves review state (stored flag: 
     pageUrl: "blob:one", sourceHash: "a".repeat(64),
     sourceFingerprint: "5:image/png", maskFingerprint: "4:image/png",
     pipelineVersion: "2.3.1-enclosed-backing", jobId: "offline-review",
-    cleaningMode: "all-text",
+    cleaningMode: "safe",
     width: 8, height: 8, regions: [staleMaskRegion], updatedAt: 1,
     awaitingReview,
   }]]));
@@ -943,10 +967,10 @@ test.each([true, undefined])("fast restore preserves review state (stored flag: 
   const { result } = renderHook(() => useCleaning({ pages: ["blob:one"], currentPage: 0 }));
   await act(async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); });
   expect(result.current.currentResult?.awaitingReview).toBe(true);
-  expect(result.current.currentResult?.cleaningMode).toBe("all-text");
+  expect(result.current.currentResult?.cleaningMode).toBe("safe");
   const reused = await result.current.cleanPage("blob:one", new Blob(["asset"], { type: "image/png" }));
   expect(reused.awaitingReview).toBe(true);
-  expect(reused.preparedIdentity).toContain(":all-text");
+  expect(reused.preparedIdentity).toContain(":safe");
   expect(getCleaningResult).not.toHaveBeenCalled();
   expect(createCleaningJob).not.toHaveBeenCalled();
 });
@@ -962,7 +986,7 @@ test("cleaning persistence stores the awaiting-review flag", async () => {
     await vi.advanceTimersByTimeAsync(1000);
     await pending;
   });
-  expect(saveCleaningResultMetadata).toHaveBeenCalledWith(expect.objectContaining({ awaitingReview: true, cleaningMode: "all-text" }));
+  expect(saveCleaningResultMetadata).toHaveBeenCalledWith(expect.objectContaining({ awaitingReview: true, cleaningMode: "safe" }));
 });
 
 test("restore metadata without image dimensions stays unavailable without provider hydration", async () => {

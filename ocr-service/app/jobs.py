@@ -295,7 +295,7 @@ class JobStore:
         review_mask_bytes: bytes,
         protected_mask_bytes: bytes,
         regions_json: str,
-        cleaning_mode: CleaningMode = CleaningMode.ALL_TEXT,
+        cleaning_mode: CleaningMode = CleaningMode.SAFE,
     ) -> JobState:
         resolved_id = (
             job_id

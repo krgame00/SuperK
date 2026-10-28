@@ -919,9 +919,9 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
           typeof window !== "undefined" && typeof localStorage !== "undefined"
             ? (() => {
                 const savedSfx = localStorage.getItem("superk:sfx-policy");
-                return savedSfx === "ignore" || savedSfx === "preserve" ? "safe" : "all-text";
+                return savedSfx === "translate" ? "all-text" : "safe";
               })()
-            : "all-text";
+            : "safe";
         if (
           cached &&
           cached.sourceFingerprint &&

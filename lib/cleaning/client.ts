@@ -25,7 +25,7 @@ export class CleaningClientError extends Error {
 export async function createCleaningJob(
   file: Blob,
   signal?: AbortSignal,
-  cleaningMode: "safe" | "all-text" = "all-text",
+  cleaningMode: "safe" | "all-text" = "safe",
 ): Promise<CleaningJob> {
   const form = new FormData();
   let resolvedFile = file;
@@ -63,10 +63,10 @@ export async function createCleaningJob(
   let effectiveCleaningMode: "safe" | "all-text" = cleaningMode;
   if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
     const savedSfx = localStorage.getItem("superk:sfx-policy");
-    if (savedSfx === "ignore" || savedSfx === "preserve") {
-      effectiveCleaningMode = "safe";
-    } else if (savedSfx === "translate") {
+    if (savedSfx === "translate") {
       effectiveCleaningMode = "all-text";
+    } else if (savedSfx === "ignore" || savedSfx === "preserve") {
+      effectiveCleaningMode = "safe";
     }
   }
   form.append("cleaning_mode", effectiveCleaningMode);
@@ -250,7 +250,7 @@ export async function restoreCleaningJob(params: {
       })),
     ),
   );
-  form.append("cleaning_mode", params.cleaningMode ?? "all-text");
+  form.append("cleaning_mode", params.cleaningMode ?? "safe");
   return decodeJob(
     await requestJson(`${PROXY_BASE}/v1/jobs/restore`, {
       method: "POST",
