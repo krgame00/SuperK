@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Brush, ChevronUp, Eraser } from "lucide-react";
+import { ArrowDown, ArrowUp, Brush, ChevronDown, ChevronUp, Eraser } from "lucide-react";
 
 import type { CleaningHookError } from "@/hooks/useCleaning";
 import type { CleaningProgress } from "@/lib/cleaning/types";
