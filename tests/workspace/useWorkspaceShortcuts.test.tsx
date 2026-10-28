@@ -167,6 +167,56 @@ describe("useWorkspaceShortcuts", () => {
     expect(defaultOptions.onOpenShortcuts).toHaveBeenCalledTimes(1);
   });
 
+  it("handles Ctrl+F from within inputs, dialogs, and non-English keyboard layouts", () => {
+    renderHook(() => useWorkspaceShortcuts(defaultOptions));
+
+    // 1. Works with Thai keyboard layout (key: 'ด', code: 'KeyF')
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ด", code: "KeyF", ctrlKey: true })
+      );
+    });
+    expect(defaultOptions.onOpenFindReplace).toHaveBeenCalledTimes(1);
+
+    // 2. Works when an input element is focused
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    const inputEvent = new KeyboardEvent("keydown", {
+      key: "f",
+      code: "KeyF",
+      ctrlKey: true,
+      bubbles: true,
+    });
+    Object.defineProperty(inputEvent, "target", { value: input, writable: false });
+
+    act(() => {
+      window.dispatchEvent(inputEvent);
+    });
+    expect(defaultOptions.onOpenFindReplace).toHaveBeenCalledTimes(2);
+    document.body.removeChild(input);
+
+    // 3. Works when focused inside another dialog/panel
+    const otherDialog = document.createElement("div");
+    otherDialog.setAttribute("role", "dialog");
+    const panelButton = document.createElement("button");
+    otherDialog.appendChild(panelButton);
+    document.body.appendChild(otherDialog);
+
+    const dialogEvent = new KeyboardEvent("keydown", {
+      key: "f",
+      code: "KeyF",
+      ctrlKey: true,
+      bubbles: true,
+    });
+    Object.defineProperty(dialogEvent, "target", { value: panelButton, writable: false });
+
+    act(() => {
+      window.dispatchEvent(dialogEvent);
+    });
+    expect(defaultOptions.onOpenFindReplace).toHaveBeenCalledTimes(3);
+    document.body.removeChild(otherDialog);
+  });
+
   it("handles Undo and Redo shortcuts and tracks undoManager state", () => {
     const undoSpy = vi.spyOn(undoManager, "undo").mockReturnValue("Edit text");
     const redoSpy = vi.spyOn(undoManager, "redo").mockReturnValue("Edit text");

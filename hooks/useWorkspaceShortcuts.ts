@@ -103,14 +103,40 @@ export function useWorkspaceShortcuts({
 
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
+      const opts = optionsRef.current;
+
+      // Find & Replace: Ctrl+F / Cmd+F (global from canvas, inputs, and review panels)
+      const isF = e.code === "KeyF" || e.key.toLowerCase() === "f";
+      if ((e.ctrlKey || e.metaKey) && isF && !e.altKey) {
+        if (
+          target &&
+          typeof target.closest === "function" &&
+          target.closest('[aria-label="ค้นหาและแทนที่คำแปล"]')
+        ) {
+          e.preventDefault();
+          const findInput = document.getElementById("find-input") as HTMLInputElement | null;
+          if (findInput) {
+            findInput.focus();
+            findInput.select();
+          }
+          return;
+        }
+        e.preventDefault();
+        opts.onOpenFindReplace();
+        return;
+      }
+
       if (isShortcutTargetBlocked(target)) {
         return;
       }
 
-      const opts = optionsRef.current;
+      const isB = e.code === "KeyB" || e.key.toLowerCase() === "b";
+      const isT = e.code === "KeyT" || e.key.toLowerCase() === "t";
+      const isZ = e.code === "KeyZ" || e.key.toLowerCase() === "z";
+      const isY = e.code === "KeyY" || e.key.toLowerCase() === "y";
 
       // Focus Mode shortcuts (F, B, Escape)
-      if (e.key === "f" || e.key === "F") {
+      if (isF) {
         if (!e.ctrlKey && !e.metaKey && !e.altKey) {
           e.preventDefault();
           opts.onToggleFocusMode();
@@ -118,7 +144,7 @@ export function useWorkspaceShortcuts({
         }
       }
 
-      if (e.key === "b" || e.key === "B") {
+      if (isB) {
         if (!e.ctrlKey && !e.metaKey && !e.altKey) {
           e.preventDefault();
           opts.onToggleFocusToolbar();
@@ -135,7 +161,7 @@ export function useWorkspaceShortcuts({
       }
 
       // Undo: Ctrl+Z
-      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+      if ((e.ctrlKey || e.metaKey) && isZ && !e.shiftKey) {
         e.preventDefault();
         const label = undoManager.undo();
         if (label) {
@@ -149,7 +175,7 @@ export function useWorkspaceShortcuts({
       // Redo: Ctrl+Shift+Z / Ctrl+Y
       if (
         (e.ctrlKey || e.metaKey) &&
-        (e.key === "y" || (e.key === "z" && e.shiftKey))
+        (isY || (isZ && e.shiftKey))
       ) {
         e.preventDefault();
         const label = undoManager.redo();
@@ -158,13 +184,6 @@ export function useWorkspaceShortcuts({
             m.default(`↪️ Redo: ${label}`, { duration: 1500 })
           );
         }
-        return;
-      }
-
-      // Find & Replace: Ctrl+F
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
-        e.preventDefault();
-        opts.onOpenFindReplace();
         return;
       }
 
@@ -193,7 +212,7 @@ export function useWorkspaceShortcuts({
       }
 
       // T = Translate current page
-      if (e.key === "t" || e.key === "T") {
+      if (isT) {
         if (opts.canTranslate) {
           void opts.onTranslateCurrent();
         }
