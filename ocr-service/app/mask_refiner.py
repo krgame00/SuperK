@@ -372,9 +372,7 @@ def _group_component_rects(
     component_ids = sorted(rects)
     median_height = float(np.median([rect.height for rect in rects.values()]))
     mask_height, mask_width = image_shape[:2]
-    page_scale_floor = 0.02 * min(mask_height, mask_width)
-    uncapped_gap = max(1.0, 1.5 * median_height, page_scale_floor)
-    maximum_gap = min(uncapped_gap, 50.0)
+    maximum_gap = min(max(1.0, 1.0 * median_height), 18.0)
     parents = {component_id: component_id for component_id in component_ids}
 
     def find(component_id: int) -> int:

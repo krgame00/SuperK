@@ -194,9 +194,10 @@ def extract_eligibility_features(
         uniformity = 0.0
 
     edges = cv2.Canny(gray, 80, 160)
+    backing_edges = edges[~mask_crop] if mask_crop.any() else edges
     edge_density = min(
         1.0,
-        float(np.count_nonzero(edges)) / max(edges.size * 0.20, 1),
+        float(np.count_nonzero(backing_edges)) / max(backing_edges.size * 0.20, 1),
     )
     shape_padding = max(
         12,
