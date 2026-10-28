@@ -336,7 +336,7 @@ export function WorkspaceModalsHost(props: WorkspaceModalsHostProps): ReactNode 
             </div>
             <div className="max-h-48 overflow-y-auto border border-border/60 rounded-xl divide-y divide-border/40 bg-background/50">
               {legacyTargetPages.map((page) => (
-                <div key={page.pageUrl} className="px-3 py-2 text-xs text-foreground">
+                <div key={`legacy-page-${page.pageIndex}`} className="px-3 py-2 text-xs text-foreground">
                   หน้า {page.pageIndex + 1}
                 </div>
               ))}
@@ -416,7 +416,7 @@ export function WorkspaceModalsHost(props: WorkspaceModalsHostProps): ReactNode 
             </p>
             <div className="max-h-80 overflow-y-auto border border-border/60 rounded-xl divide-y divide-border/40 bg-background/50">
               {reviewIssues.map((page) => (
-                <div key={page.pageUrl} className="p-3 flex flex-col gap-2 text-xs">
+                <div key={`review-page-${page.pageIndex}`} className="p-3 flex flex-col gap-2 text-xs">
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-semibold text-foreground">หน้า {page.pageIndex + 1}</span>
                     <div className="flex items-center gap-1.5">
@@ -502,7 +502,12 @@ export function WorkspaceModalsHost(props: WorkspaceModalsHostProps): ReactNode 
 
       {/* 7. Human Review Confirmation Gate Modal */}
       {unconfirmedReviewPages && (unconfirmedReviewPages.length > 0 || pendingExportAction) && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+          role="dialog"
+          aria-modal="true"
+          aria-label="ยืนยันก่อนส่งออก"
+        >
           <div className="bg-surface border border-border shadow-2xl rounded-2xl max-w-2xl w-full p-5 flex flex-col gap-4">
             <div className="flex items-start gap-3">
               <div className="p-2.5 rounded-xl bg-amber-500/15 text-amber-500 text-xl flex-shrink-0">
@@ -520,7 +525,7 @@ export function WorkspaceModalsHost(props: WorkspaceModalsHostProps): ReactNode 
 
             <div className="max-h-60 overflow-y-auto border border-border/60 rounded-xl divide-y divide-border/40 bg-background/50">
               {unconfirmedReviewPages.map((p) => (
-                <div key={p.pageUrl} className="flex items-center justify-between p-3 text-xs">
+                <div key={`export-page-${p.pageIndex}`} className="flex items-center justify-between p-3 text-xs">
                   <div className="flex flex-wrap items-center gap-2 min-w-0">
                     <span className="font-semibold text-foreground">
                       หน้า {p.pageIndex + 1}
@@ -606,7 +611,7 @@ export function WorkspaceModalsHost(props: WorkspaceModalsHostProps): ReactNode 
 
             {unconfirmedReviewPages.length === 0 && (
               <p className="text-xs text-muted">
-                ทุกหน้าที่ได้รับผลกระทบถูกเลือกส่งออกเป็นต้นฉบับหรือตัดออกจากการส่งออกแล้ว
+                ทั้งหมดถูกตรวจเรียบร้อยแล้ว กดปุ่มส่งออกเพื่อดำเนินการต่อ
               </p>
             )}
 

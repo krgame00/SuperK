@@ -195,6 +195,40 @@
 
 ข้อจำกัด: เป็น dev build ไม่ใช่ production และ trace นี้ไม่คำนวณ LCP, INP, CLS หรือ Lighthouse score.
 
+## Third round: editing, navigation, project files
+
+รอบสามทดสอบบน `http://localhost:3000` เช่นเดิม viewport 514x654. ใช้ session ที่มี 2 ถึง 3 หน้า ซึ่งหน้าส่วนหนึ่งมี byte ของภาพซ้ำกัน (handoff กับ synthetic เป็นภาพเดียวกัน) เพื่อทดสอบเคสภาพซ้ำ.
+
+| ฟีเจอร์ | ผล | หลักฐาน |
+| :--- | :--- | :--- |
+| Extension handoff | ผ่าน | `/?handoff=hnd_8ioug0hu_mvronvh8` ถึง toast ใน 843 ms, query ถูกเคลียร์, ได้หน้า 2/2 |
+| เพิ่มหน้าด้วย upload | ผ่าน | toast "นำเข้าสำเร็จ 1 หน้า", thumbnail เพิ่มจาก 1 เป็น 2 |
+| Drag reorder | ผ่าน | ใช้ synthetic `DragEvent` (dragstart, dragover, drop) สลับหน้า 1/2 สำเร็จ. `browser.drag` แบบ native ไม่ trigger HTML5 DnD |
+| Session restore | ผ่าน | autosave นับ "2 หน้า" และ "3 หน้า" ตรงกับที่ restore, thumbnail ครบและลำดับคงที่ |
+| ลบหน้า | ผ่าน | 3 หน้า เหลือ 2 หน้า, หน้าปัจจุบันยังเป็น 2, ไม่มี confirm |
+| Find/Replace | ผ่าน | Ctrl+F เปิด dialog, แทน "สวัสดี" ด้วย "ทดสอบแทนที่", ข้อความเปลี่ยนเป็น "ทดสอบแทนที่ชาวโลก ..." |
+| Undo/Redo ข้อความ | ผ่าน | Ctrl+Z คืนเป็น "สวัสดีชาวโลก ...", Ctrl+Shift+Z กลับเป็น "ทดสอบแทนที่ ...", ปุ่ม Undo/Redo disabled ตรงสถานะ |
+| Mask undo (ปุ่ม) | ผ่าน | canvas 800x1200 signature เปลี่ยนเมื่อ "ล้างกรอบนี้" (len 38,650 เป็น 31,446) แล้วกลับเท่าเดิมเมื่อกด Undo Mask |
+| Mask undo (คีย์) | ผ่านบางเงื่อนไข | Ctrl+Z ใช้ได้เมื่อ focus อยู่ที่ canvas, ไม่ทำงานเมื่อ focus ค้างที่ปุ่ม "ล้างกรอบนี้" |
+| Shortcut help | ผ่าน | `?` เปิด dialog "คีย์ลัด (Shortcuts)", Esc ปิด |
+| Space toggle | ผ่าน | aria ปุ่มเปลี่ยนจาก "สลับไปแสดงคำแปล" เป็น "สลับไปดูภาพต้นฉบับ" |
+| Arrow navigation | ผ่าน | ArrowLeft ไปหน้า 1, ArrowRight กลับหน้า 2 (ต้องไม่ focus ที่ bubble) |
+| Focus mode | ผ่าน | `F` เข้าโหมด, แสดง "แสดงแถบบน B / ออกจากโหมดโฟกัส Esc", Esc ออกได้ |
+| Review: ใช้คำแปลที่เกลา | ผ่าน | "ใช้คำแปลที่เกลาทั้งหมด" เปลี่ยนข้อความเป็นข้อเสนอ AI "สวัสดีชาวโลก\nนี่คือการทดสอบ\nการแปลมังงะ", dialog ปิด |
+| Review: อนุมัติหน้า | ผ่าน | ปุ่ม "ยืนยันภาพปัจจุบันเพื่อส่งออก" ทำให้ banner เตือนหาย |
+| Export gate ตัวเลือกใหม่ | ผ่าน | มีปุ่มต่อหน้า "อนุมัติหน้านี้", "ส่งออกเป็นต้นฉบับ", "ตัดหน้านี้ออก", "ไปที่หน้านี้" และปุ่มระดับเล่ม "อนุมัติจุดค้างทุกหน้า", "ยืนยันทุกหน้าและดำเนินการ Export" |
+| Export หลังอนุมัติทั้งหมด | ผ่าน | ZIP 52,976 bytes, 2 entries WEBP 26,322 bytes ทั้งคู่ magic `52494646` |
+| Export ต้นฉบับหน้าเดียว | ผ่าน | `SuperK_Page_002_synthetic_manga_page.webp` 28,432 bytes |
+| Strip ภาพยาว | ผ่าน | `SuperK_handoff_synthetic_LongStrip.jpg` 201,210 bytes, 1200x3600 |
+| PDF หลายหน้า | ผ่าน | 126,124 bytes, 2 หน้า 1067x1600, header `%PDF-1.3` |
+| CBZ | ผ่าน | 84,072 bytes, 3 WEBP + `ComicInfo.xml` 462 bytes |
+| บันทึกโปรเจกต์ | ผ่าน | `SuperK_handoff_synthetic.superk.json` 892,920 bytes |
+| เปิดโปรเจกต์ | ผ่าน | toast "📂 เปิดโปรเจกต์สำเร็จ (2 หน้า)!" |
+| Logs dialog | ผ่าน | เปิดได้, แสดง "รวมทั้งหมด 0 รายการ", กรอง Error/Warn/Info ได้ |
+| Export trigger ที่ viewport แคบ | ผ่าน | ปุ่มหลักอยู่ใน `hidden lg:flex` (zero-size ที่ 514px) ต้องใช้ hamburger menu จึงเข้าถึงได้ |
+
+หมายเหตุวิธีทดสอบ: การเปิดโปรเจกต์ใช้การ patch `document.createElement` เพื่อให้ file input ที่แอปสร้างแบบ dynamic ปรากฏใน DOM แล้วอัปโหลดไฟล์จริงผ่าน input นั้น. ไม่ได้แก้โค้ดแอปและไม่ได้ใช้ API ลัด.
+
 ## Findings
 
 ### F1. `npm run build` ขณะ dev server รันอยู่ทำให้ `.next` เสียหาย (High, ยืนยันแล้ว)
@@ -301,6 +335,60 @@ GET /api/extension/publish-back?sinceSeq=3&sinceEpoch=epoch_muvjnn9p_vmlemp 401
 
 ข้อเสนอ: ทดสอบมือบนเบราว์เซอร์ปกติหนึ่งครั้งก่อนสรุปเป็น bug.
 
+### F11. ภาพที่ byte ซ้ำกันทำให้ React key ซ้ำ (Medium, ยืนยันแล้ว)
+
+เมื่อมีสองหน้าที่ใช้ภาพต้นฉบับ byte เดียวกัน (handoff กับ synthetic เป็นไฟล์เดียวกัน) console ขึ้น error ซ้ำ:
+
+```
+Encountered two children with the same key, `data:image/png;base64,iVBORw0KGgo...`
+```
+
+DOM มี `[data-bubble-id]` 4 โหนดสำหรับ bubble 2 จุด (id ไม่ซ้ำกันแค่ 2 ค่า) และก่อนหน้านี้เคยเห็นหน้า handoff ปรากฏซ้ำ 3 หน้าโดยอธิบายไม่ได้. หลักฐานชี้ว่า key มาจาก data URL ของภาพทั้งก้อน.
+
+ผลกระทบ: React อาจ reuse, omit หรือ remount โหนดผิดหน้า. ใน session นี้ยังไม่ทำให้ข้อมูลเพี้ยน แต่เป็นความเสี่ยงต่อการแก้ข้อความผิดหน้าและต่อการ reorder.
+
+ข้อเสนอ: เปลี่ยน key เป็น id ของหน้า (index หรือ uuid) ไม่ใช่ data URL, และเพิ่ม test ที่มีสองหน้าภาพเหมือนกัน.
+
+### F12. Export gate modal ไม่มี role="dialog" (Low, ยืนยันแล้ว)
+
+dialog "มีหน้าที่ต้องได้รับการยืนยันก่อน Export" ตรวจจับด้วย `[role=dialog]` ไม่เจอ (ได้ 0) แต่เจอด้วย `.fixed.inset-0`. dialog อื่นเช่น Find/Replace, แก้ Mask, Logs มี `role="dialog"` ครบ.
+
+ผลกระทบ: screen reader และ automation อาจไม่รู้ว่ามี modal เปิดอยู่ และ focus trap อาจไม่ทำงานสม่ำเสมอ.
+
+ข้อเสนอ: ใส่ `role="dialog"`, `aria-modal="true"` และ `aria-labelledby` ให้ gate modal.
+
+### F13. Find/Replace ไม่มี feedback หลังแทนที่ (Low, ยืนยันแล้ว)
+
+กด "แทนที่ทั้งหมด" แล้ว dialog ปิด ข้อความเปลี่ยนจริง แต่ไม่มี toast บอกจำนวนที่แทนที่ และไม่มีข้อความว่า 0 รายการเมื่อค้นไม่พบ. ผู้ใช้ต้องเปิดหน้าหรือ review panel ตรวจเอง.
+
+ข้อเสนอ: toast "แทนที่ N จุดใน M หน้า" หรือ "ไม่พบคำที่ค้นหา".
+
+### F14. Ctrl+Z ใน Mask editor ต้อง focus ที่ canvas (Low, ยืนยันแล้ว)
+
+dialog แก้ Mask เขียนว่า "Ctrl+Z เลิกทำ". ทดสอบจริง: กด "ล้างกรอบนี้" แล้วกด Ctrl+Z ทันที (focus ยังอยู่ที่ปุ่ม) ไม่เกิดอะไรขึ้น. เมื่อ focus canvas แล้วกด Ctrl+Z จึงย้อนกลับได้.
+
+ผลกระทบ: ผู้ใช้ที่เพิ่งกดปุ่มแล้วกด Ctrl+Z จะเข้าใจว่า undo ใช้ไม่ได้.
+
+ข้อเสนอ: ให้ handler ของ Mask จับ Ctrl+Z ที่ระดับ dialog ไม่ใช่เฉพาะ canvas หรือคืน focus ให้ canvas หลังกดปุ่มกระทำ.
+
+### F15. ข้อความหลัง "อนุมัติจุดค้างทุกหน้า" สื่อความผิด (Low, ยืนยันแล้ว)
+
+หลังกด "อนุมัติจุดค้างทุกหน้า" รายการหน้าถูกล้างจนว่าง แล้วขึ้นข้อความ:
+
+```
+ทุกหน้าที่ได้รับผลกระทบถูกเลือกส่งออกเป็นต้นฉบับหรือตัดออกจากการส่งออกแล้ว
+```
+
+แต่สิ่งที่เกิดขึ้นคือ "อนุมัติให้ส่งออกตามภาพและคำแปลปัจจุบัน" ไม่ใช่เปลี่ยนเป็นต้นฉบับหรือตัดหน้าออก. ข้อความนี้เป็น empty state เดียวกับกรณี "ส่งออกเป็นต้นฉบับ/ตัดหน้า" (WorkspaceModalsHost.tsx บรรทัด 607-611).
+
+ข้อเสนอ: แยกข้อความตาม action สุดท้าย หรือใช้ข้อความกลาง ๆ ว่า "ไม่มีจุดค้างที่ต้องยืนยันแล้ว".
+
+### F16. Strip export ใช้ชื่อเมนูว่า ZIP แต่ได้ไฟล์ JPG เมื่อไม่ต้องแบ่งส่วน (Info, ยืนยันแล้ว)
+
+เมนูเขียน "Strip ภาพยาว (หลายส่วนรวม ZIP)" แต่กับ 2 หน้าได้ `SuperK_handoff_synthetic_LongStrip.jpg` 1200x3600 ไฟล์เดียว ไม่มี ZIP. น่าจะเป็นพฤติกรรมตามดีไซน์เมื่อภาพยาวไม่เกินขีดจำกัดการแบ่ง.
+
+ข้อเสนอ: ระบุในเมนูว่า "ได้ JPG เดียว หรือ ZIP เมื่อแบ่งหลายส่วน".
+
 ## Incident during testing
 
 1. รัน `npm test`, `tsc`, `lint`, `build` พร้อมกัน. Build ล้มด้วย EBUSY.
@@ -328,6 +416,14 @@ GET /api/extension/publish-back?sinceSeq=3&sinceEpoch=epoch_muvjnn9p_vmlemp 401
   - `SuperK_Page_001_synthetic_manga_page.png` 50,538 bytes
   - `SuperK_Layered_Photoshop_Pack.zip` 106,559 bytes
   - `superk-glossary-2026-10-28.json` 70 bytes
+- ไฟล์ export รอบสาม (temp ของ browser อาจถูกล้าง):
+  - `SuperK_handoff_synthetic.zip` 105,060 bytes (2 หน้า, PNG + JPG)
+  - `SuperK_handoff_synthetic.pdf` 126,124 bytes (2 หน้า)
+  - `SuperK_handoff_synthetic.cbz` 84,072 bytes (3 WEBP + ComicInfo.xml)
+  - `SuperK_handoff_synthetic.zip` 52,976 bytes (หลังอนุมัติจุดค้างทุกหน้า)
+  - `SuperK_Page_002_synthetic_manga_page.webp` 28,432 bytes
+  - `SuperK_handoff_synthetic_LongStrip.jpg` 201,210 bytes, 1200x3600
+  - `SuperK_handoff_synthetic.superk.json` 892,920 bytes
 - Trace `trace.json.gz` 183,085 bytes
 
 ## Recommended next steps
@@ -340,3 +436,7 @@ GET /api/extension/publish-back?sinceSeq=3&sinceEpoch=epoch_muvjnn9p_vmlemp 401
 6. ปรับ cleaning ให้เก็บ SFX และนารเรชันให้หมด แล้วเพิ่ม regression fixture (F7).
 7. ตัดสินใจเรื่อง import Glossary ว่าจะ merge หรือ replace (F8).
 8. ทดสอบมือเรื่อง Layered pack ดาวน์โหลดซ้ำ (F10).
+9. เปลี่ยน React key ของหน้าและ bubble จาก data URL เป็น id (F11).
+10. เติม ARIA ให้ export gate modal (F12).
+11. เพิ่ม feedback จำนวนจุดที่แทนที่ใน Find/Replace (F13).
+12. ผูก Ctrl+Z ของ Mask กับ dialog และแก้ข้อความ empty state หลังอนุมัติ (F14, F15).

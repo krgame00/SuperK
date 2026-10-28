@@ -1000,6 +1000,22 @@ export function MaskEditor({
   };
 
   const handleDialogKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    // Allow Undo/Redo anywhere in the dialog (not just on canvas) so that
+    // Ctrl+Z works even when focus is on a button like "ล้างกรอบนี้"
+    if ((event.ctrlKey || event.metaKey) && (event.key === "z" || event.key === "Z") && !event.shiftKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      const action = undoManager.undo();
+      if (action) setStatusMessage("เลิกทำแล้ว");
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && (event.key === "y" || event.key === "Y" || ((event.key === "z" || event.key === "Z") && event.shiftKey))) {
+      event.preventDefault();
+      event.stopPropagation();
+      const action = undoManager.redo();
+      if (action) setStatusMessage("ทำซ้ำแล้ว");
+      return;
+    }
     if (event.key === "Escape") {
       event.preventDefault();
       closeAndRestoreFocus();
