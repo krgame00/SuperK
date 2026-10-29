@@ -89,7 +89,7 @@ def test_clean_crop_inpaints_masked_area(client: TestClient, mock_cleaner: _Mock
     img = Image.new("RGB", (32, 32), (0, 0, 0))
     mask_arr = np.zeros((32, 32), dtype=np.uint8)
     mask_arr[10:20, 10:20] = 255
-    mask = Image.fromarray(mask_arr, mode="L")
+    mask = Image.fromarray(mask_arr)
 
     response = client.post(
         "/v1/clean/crop",
@@ -113,7 +113,7 @@ def test_clean_crop_dilation_expands_mask(client: TestClient, mock_cleaner: _Moc
     img = Image.new("RGB", (32, 32), (0, 0, 0))
     mask_arr = np.zeros((32, 32), dtype=np.uint8)
     mask_arr[15:17, 15:17] = 255
-    mask = Image.fromarray(mask_arr, mode="L")
+    mask = Image.fromarray(mask_arr)
 
     response = client.post(
         "/v1/clean/crop",
@@ -136,8 +136,8 @@ def test_clean_crop_tier1_solid_bypass(client: TestClient, mock_cleaner: _MockCl
     mask_arr = np.zeros((32, 32), dtype=np.uint8)
     mask_arr[14:18, 14:18] = 255
 
-    img = Image.fromarray(img_arr, mode="RGB")
-    mask = Image.fromarray(mask_arr, mode="L")
+    img = Image.fromarray(img_arr)
+    mask = Image.fromarray(mask_arr)
 
     mock_cleaner.last_run_mask = None
     response = client.post(
@@ -168,8 +168,8 @@ def test_clean_crop_tier3_complex_calls_deep(client: TestClient, mock_cleaner: _
     mask_arr = np.zeros((32, 32), dtype=np.uint8)
     mask_arr[12:20, 12:20] = 255
 
-    img = Image.fromarray(img_arr, mode="RGB")
-    mask = Image.fromarray(mask_arr, mode="L")
+    img = Image.fromarray(img_arr)
+    mask = Image.fromarray(mask_arr)
 
     mock_cleaner.last_run_mask = None
     response = client.post(
@@ -222,7 +222,7 @@ def test_clean_crop_supports_stroke_hints_and_feather_blend(
     img = Image.new("RGB", (32, 32), (0, 0, 0))
     mask_arr = np.zeros((32, 32), dtype=np.uint8)
     mask_arr[10:20, 10:20] = 255
-    mask = Image.fromarray(mask_arr, mode="L")
+    mask = Image.fromarray(mask_arr)
 
     response = client.post(
         "/v1/clean/crop",

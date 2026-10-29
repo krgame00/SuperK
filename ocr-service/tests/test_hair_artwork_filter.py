@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-import pytest
 
 from app.detector import DetectedBlock, _has_glyph_support
 from app.mask_refiner import MaskRegion
@@ -15,7 +14,6 @@ from app.schemas import (
 from app.text_eligibility import (
     EligibilityFeatures,
     classify_eligibility,
-    extract_eligibility_features,
 )
 
 

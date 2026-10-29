@@ -38,7 +38,7 @@ def test_detect_bubbles_endpoint(client: TestClient) -> None:
     # 200x200 image with a white oval bubble
     img_arr = np.zeros((200, 200, 3), dtype=np.uint8)
     cv2.ellipse(img_arr, (100, 100), (60, 40), 0, 0, 360, (255, 255, 255), -1)
-    img = Image.fromarray(img_arr, mode="RGB")
+    img = Image.fromarray(img_arr)
 
     boxes = [{"x": 80, "y": 90, "width": 40, "height": 20}]
 

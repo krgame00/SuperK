@@ -313,13 +313,11 @@ GET /api/extension/publish-back?sinceSeq=3&sinceEpoch=epoch_muvjnn9p_vmlemp 401
 
 ข้อเสนอ: ปรับ heuristic SFX/นารเรชัน + เพิ่ม regression fixture (ตามเดิม).
 
-### F8. นำเข้า Glossary แทนที่รายการเดิมทั้งชุด (Low, ยืนยันแล้ว)
+### F8. นำเข้า Glossary แทนที่รายการเดิมทั้งชุด (Fixed — ยืนยันรอบห้า 2026-10-29)
 
-`SettingsModal.tsx` บรรทัด 1280 เรียก `onGlossaryChange?.(validEntries)` ด้วยรายการจากไฟล์โดยตรง ไม่ได้ merge กับรายการเดิม. ทดสอบจริง: มี 1 คำอยู่แล้ว นำเข้าไฟล์ 2 คำ ผลคือเหลือ 2 คำ.
+พฤติกรรมเดิม: `SettingsModal.tsx` นำรายการจากไฟล์โดยตรงข้ามรายการเดิมทุกชุด.
 
-ผลกระทบ: ผู้ใช้ที่นำเข้าไฟล์อาจทำรายการที่เพิ่มมือไว้หายโดยไม่รู้ตัว.
-
-ข้อเสนอ: ระบุให้ชัดว่า import คือ replace หรือเปลี่ยนเป็น merge พร้อมยืนยันก่อนแทนที่.
+**แก้แล้ว**: รอบห้าทดสอบจริง — มี 1 คำอยู่ นำเข้าไฟล์ 2 คำ → toast "เพิ่มใหม่ 2 คำ, ปรับปรุง 0 คำ" และ export ซ้ำได้ 3 รายการครบ (merge). แนะนำเพิ่ม regression test storage ให้ import จากไฟล์ไม่ลบของเดิม.
 
 ### F9. Export ต้นฉบับข้าม review gate โดยไม่แจ้ง (Info, ยืนยันแล้ว)
 
@@ -329,11 +327,11 @@ GET /api/extension/publish-back?sinceSeq=3&sinceEpoch=epoch_muvjnn9p_vmlemp 401
 
 ข้อเสนอ: แสดงสรุปในรายงานก่อนส่งออกว่ีกี่หน้าเป็นต้นฉบับ เพื่อความชัดเจน.
 
-### F10. ดาวน์โหลด Layered pack ซ้ำสองไฟล์จากการสั่งครั้งเดียว (Low, ยังไม่ยืนยัน)
+### F10. ดาวน์โหลด Layered pack ซ้ำสองไฟล์จากการสั่งครั้งเดียว (Not reproducible — ปิดแล้วรอบหก 2026-10-29)
 
-หลังสั่ง export Layered PSD หนึ่งครั้ง มีไฟล์ `SuperK_Layered_Photoshop_Pack.zip` ขนาด 106,559 bytes สองไฟล์ในรายการดาวน์โหลด. ยังไม่สามารถแยกได้ว่าเกิดจาก automation กดซ้ำหรือแอปสร้างดาวน์โหลดสองครั้ง.
+รอบหกทดสอบแบบควบคุม: export gate คลิกจริงครั้งเดียว → ได้ดาวน์โหลด 1 ไฟล์ โครงสร้างครบ (ดูหัวข้อ Sixth round). ไฟล์ซ้ำสองไฟล์ในรอบสองสรุปว่าเกิดจาก automation กดซ้ำ.
 
-ข้อเสนอ: ทดสอบมือบนเบราว์เซอร์ปกติหนึ่งครั้งก่อนสรุปเป็น bug.
+ข้อสังเกตค้างเล็กน้อย: ถ้าต้องการวงกันการกดซ้ำจริง พิจารณา debounce/disable ปุ่ม "ส่งออก" ขณะ `isZipping`.
 
 ### F11. ภาพที่ byte ซ้ำกันทำให้ React key ซ้ำ (Medium, ยืนยันแล้ว)
 
@@ -389,7 +387,82 @@ dialog แก้ Mask เขียนว่า "Ctrl+Z เลิกทำ". ท�
 
 ข้อเสนอ: ระบุในเมนูว่า "ได้ JPG เดียว หรือ ZIP เมื่อแบ่งหลายส่วน".
 
-## Incident during testing
+## Fifth round: glossary import merge (F8) + mobile export reachability
+
+รอบห้า (2026-10-29) ทดสอบบน `localhost:3000` แท็บใหม่ (สองแท็บบน origin เดียว) โดยกด "คืนค่างานเดิม" จาก autosave ของรอบสี่ต่อใช้งาน.
+
+| ขั้น | ผล | หลักฐาน |
+| :--- | :--- | :--- |
+| Restore ข้ามแท็บ | ผ่าน | แท็บใหม่แสดง "📂 คืนค่างานเดิม" → กด → หน้า 1/1 กลับพร้อมคำแปล |
+| เพิ่ม Glossary | ผ่าน | `ルフィ → ลูฟี่`, ปุ่มส่งออกเปลี่ยน disabled → enabled |
+| Export Glossary | ผ่าน | `superk-glossary-2026-10-29.json` 70 bytes `[{"source":"ルフィ","target":"ลูฟี่"}]` |
+| นำเข้า 2 คำ | ผ่าน | toast **"✨ นำเข้าคลังคำศัพท์สำเร็จ (เพิ่มใหม่ 2 คำ, ปรับปรุง 0 คำ)"** |
+| F8 ยืนยันแก้ | ผ่าน | export ซ้ำได้ **3 รายการ** (ルฟี่ + ナミ + ゾロ) — import เป็น **merge** แล้วไม่ replace |
+
+สรุป F8: **แก้แล้ว** — นำเข้าไม่ทับรายการเดิมแล้ว toast บอกยอดสรุปชัดเจน.
+
+ข้อสังเกตใหม่ (F18):
+- การเข้าถึง export บน viewport แคบ (< lg): hamburger drawer "📥 ดาวน์โหลด" มีเพียง บันทึกหน้านี้ / Strip / ZIP / CBZ / PDF — **ไม่มี Layered PSD pack** ซึ่งอยู่เฉพาะ desktop header (`WorkspaceExportMenu`). ผู้ใช้มือถือจะส่งออกแพ็กเลเยอร์ไม่ได้จาก UI ต้องทดสอบ layered ต่อเมื่อมีหน้าต่างกว้าง (F10 ยังค้าง เหตุผลเดียวกัน)
+
+## Sixth round: Layered pack duplicate-download check (F10)
+
+รอบหก (2026-10-29) — หน้าต่างยังแคบ ใช้วิธีถอด `hidden` บน desktop header ใน DOM เท่านั้น (ไม่แก้โค้ด/ไม่ลัด logic) แล้วกด export Layered **ผ่าน dialog gate เดียว การกระทำคลิกจริงครั้งเดียว** แล้วนับจำนวนไฟล์ดาวน์โหลด.
+
+| ขั้น | ผล | หลักฐาน |
+| :--- | :--- | :--- |
+| เปิดเมนู "ส่งออก" ฝั่ง desktop | ผ่าน | menuitem ครบ: รูปภาพหน้านี้ / PDF / **"Strip ภาพยาว (JPG เดียว หรือ ZIP เมื่อแบ่งหลายส่วน)"** (F16 เต็ม ✓) / ZIP / CBZ / Layered PSD |
+| กด "Layered PSD / Photopea Pack (.zip)" | ผ่าน | export gate "ยืนยันก่อนส่งออก" เปิด |
+| "ส่งออกภาพและคำแปลปัจจุบัน แม้มีจุดค้าง" ครั้งเดียว | ผ่าน | ได้ไฟล์ **ดาวน์โหลด 1 ไฟล์** เท่านั้น |
+| ไฟล์ | ผ่าน | `SuperK_Layered_Photoshop_Pack.zip` 118,214 bytes |
+| ตรวจข้างใน | ผ่าน | `page_001_original.png` 50,598 (= byte ต้นฉบับ), `page_001_inpainted.png` 82,296, `page_001_layers.json` 1,088,937, `build_layered_page_001.jsx` 1,929 |
+| Console | ผ่าน | 0 error |
+
+**สรุป F10:** ดาวน์โหลดซ้ำสองไฟล์ **ไม่เกิด** ในการสั่งครั้งเดียวที่ควบคุม. พฤติกรรมรอบสองที่เห็นไฟล์ซ้ำสองไฟล์สรุปน่าจะเกิดจาก automation กดซ้ำ ไม่ใช่ bug ของแอป. ปิด finding นี้.
+
+## Fourth round: fixes verification (F12, F15, F16, F11) + full flow
+
+รอบสี่ทดสอบบน dev server `localhost:3000` (รอบใหม่ หลังต้องเริ่ม service ทั้งคู่ — ดู F17) ใช้ `synthetic_manga_page.png` หน้าเดียว ผ่าน flow จริง: upload → คลีน → แปล (Auto) → ตรวจ remnant → export gate → ZIP.
+
+| ขั้น | ผล | หลักฐาน |
+| :--- | :--- | :--- |
+| เริ่ม service | หมายเหตุ | Dev server + sidecar ตายหลังข้ามวัน. เริ่ม `npm run dev` และ `ocr-service/run.ps1` ทั้งคู่, `/health` 200 |
+| Upload | ผ่าน | toast "นำเข้าสำเร็จ 1 หน้า" |
+| คลีน | ผ่าน | toast "กำลังคลีนหน้า 1/1" → เสร็จ |
+| แปล | ผ่าน | `POST /api/translate` 6 ครั้ง fallback model สุดท้าย 200 (21s), `POST /api/translation-review` 200. toast "⚠️ ยังขาดคำแปล 1 จุด" (นารเรชัน ไม่ใช่บับเบิล) |
+| Remnant review | ผ่าน | panel "พบจุดที่ยังมีข้อความเหลืออยู่บนภาพ 4 จุด" แสดงตำแหน่ง/ความมั่นใจ 95%, หมึกเหลือ, ปุ่มย้อนกิริยาครบ |
+| Export gate เปิด | ผ่าน | snapshot จับเป็น `[dialog] "ยืนยันก่อนส่งออก"` (เดิม F12 จับไม่ได้) |
+| F12 ARIA | ผ่าน | DOM: `role="dialog"` + `aria-modal="true"` + accessible name "ยืนยันก่อนส่งออก" |
+| F15 empty state | ผ่าน | หลัง "อนุมัติจุดค้างทุกหน้า": **"ทั้งหมดถูกตรวจเรียบร้อยแล้ว กดปุ่มส่งออกเพื่อดำเนินการต่อ"** (ไม่ใช่ข้อความ "ต้นฉบับ/ตัดออก" เดิมแล้ว) |
+| Export ZIP หลัง approve-all | ผ่าน | `SuperK_synthetic_manga_page.zip` 64,127 bytes, 1 entry JPEG 63,949 bytes, magic `ffd8ffe0` |
+| F16 label | ผ่าน | toolbar แสดง "รูปแบบ: JPG หรือ ZIP" |
+| ปุ่ม "ตรวจแก้คำแปล" | ผ่าน | toast "✨ ตรวจคำแปลหน้านี้เรียบร้อยแล้ว ไม่พบข้อผิดพลาด พร้อมส่งออก" |
+| Console สุทธิ | ผ่าน | error 1 ข้อเท่านั้น: `503` จาก `POST /api/clean/v1/jobs` ตอน sidecar ยังไม่เริ่ม — toast จัดการชัดเจน ไม่ crash. F11 duplicate-key error ไม่ปรากฏ |
+
+ข้อจำกัด: หน้าจอ desktop ถูกย่อช่วงทดสอบ screenshot ภาพคำแปลบน canvas ไม่ได้จับเพิ่ม (การ verify ภาพจบที่ export ไฟล์จริง). ตัวหนังสือไทยบนถังยังต้องแยก F4 ด้วยหน้าจริง.
+
+### F17. Dev server พังหลังข้ามวัน — Turbopack persistence DB เสียหาย (Medium, ยืนยันแล้ว แก้แล้ว)
+
+เริ่มทดสอบรอบสี่ พบ `next dev` ตายทั้งขั้นที่ 1) process ล้ม exit code 1 ด้วย และ 2) request ได้ `502 Bad Gateway` ก่อนหน้า:
+
+```
+Error: Failed to open database
+Caused by:
+    0: Loading persistence directory failed
+    1: invalid digit found in string
+{ code: 'GenericFailure' }
+```
+
+สาเหตุ: cache ของ Turbopack persistence ใน `.next/dev` มีไฟล์เสีย (ต้อง parse ตัวเลข แต่เจอ string ปลอม). แก้โดยลบ `.next/dev` (build cache เท่านั้น ไม่ใช่ session/data) แล้วรัน `npm run dev` ใหม่ — Ready in 5.2s และหน้า localhost:3000 กลับมาปกติ (/home 200, console error 0). ข้ามคืนมา sidecar uvicorn (8765) ไม่ทำงานด้วย ทำให้กด "เตรียมและแปลหน้านี้" ครั้งแรกได้ toast `❌ Local cleaning service is unavailable` แทน 503 แจ้งชัดเจน.
+
+ข้อสังเกต:
+- App ตรวจ sidecar offline แล้วแจ้ง toast error ภาษาอังกฤษชัดเจน ไม่ crash — พฤติกรรมจัดการดี
+- ยังต้องจับ 2 service (`:3000` dev + `:8765`) ให้ทำงานหลังเปิดเครื่องใหม่/ข้ามคืนด้วยมือ
+
+ข้อเสนอ:
+1. เพิ่ม auto-recovery: เมื่อ dev server วิเคราะห์ Turbopack persistence DB ล้ม ให้ล้าง `.next/dev` อัตโนมัติหรือแนะนำคำสั่งใน error message
+2. สรุปเป็น superk guard script เมื่อเปิดเครื่องใหม่ ต้องเริ่มทั้ง `npm run dev` และ `ocr-service/run.ps1` อัตโนมัติ (launcher มีแล้ว แต่ dev workflow ต้องทำขึ้นเอง)
+
+## Incident during testing (round 4)
 
 1. รัน `npm test`, `tsc`, `lint`, `build` พร้อมกัน. Build ล้มด้วย EBUSY.
 2. พบ asset 500 ทั้งหน้า. ตรวจ log และพบว่า dev server คือ `npm run dev`.
@@ -429,15 +502,16 @@ dialog แก้ Mask เขียนว่า "Ctrl+Z เลิกทำ". ท�
 
 ## Recommended next steps
 
-1. รัน flow เดิมบนหน้ามังงะจริงหนึ่งหน้า เพื่อปิด F4 และ F5.
+1. รัน flow เดิมบนหน้ามังงะจริงหน้าหนึ่ง เพื่อปิด F4 และ F5.
 2. เพิ่ม guard ให้ `npm run build` ไม่รันทับ dev server (F1).
 3. แก้ `package.json` script `start` ให้ตรงกับ standalone (F2).
 4. ตรวจ `useExportOrchestrator` dependency warnings (F3).
 5. ให้ extension backoff เมื่อ publish-back ตอบ 401 (F6).
 6. ปรับ cleaning ให้เก็บ SFX และนารเรชันให้หมด แล้วเพิ่ม regression fixture (F7).
-7. ตัดสินใจเรื่อง import Glossary ว่าจะ merge หรือ replace (F8).
+7. ตัดสินใจเรื่อง import Glossary ว่าจะ merge หรือ replace (F8) — **แก้แล้วยืนยันรอบห้า: merge + toast ยอดเพิ่ม/ปรับปรุง**.
 8. ทดสอบมือเรื่อง Layered pack ดาวน์โหลดซ้ำ (F10).
 9. เปลี่ยน React key (F11) — `pageIndex` แทน `pageUrl`; เติม `role="dialog"` (F12); เพิ่ม feedback Find/Replace (F13); ผูก Ctrl+Z dialog (F14); แก้ empty-state (F15); แก้ label Strip (F16). .scratch ลบแล้ว. Dev server รันอยู่ (no console error จาก F11).
 10. เติม ARIA ให้ export gate modal (F12).
 11. เพิ่ม feedback จำนวนจุดที่แทนที่ใน Find/Replace (F13).
 12. ผูก Ctrl+Z ของ Mask กับ dialog และแก้ข้อความ empty state หลังอนุมัติ (F14, F15).
+13. F11, F12, F15, F16 และ flow รอบสี่ ตรวจสอบจริงครบแล้ว. รอบห้ายืนยัน **F8 แก้แล้ว (merge)** รอบหกปิด **F10 (ไม่ซ้ำจริง)**. เหลือ: F4/F5 (หน้าจริง), F6 (extension backoff), F7 (cleaning heuristic), F18 (Layered PSD ไม่อยู่ใน drawer มือถือ), F17 (Turbopack dev persistence auto-recovery).
