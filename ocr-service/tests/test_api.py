@@ -530,3 +530,20 @@ def test_model_status_and_unload_endpoints(client: TestClient) -> None:
     assert unload_resp.json()["unloaded"] is True
     assert unload_resp.json()["loaded"] is False
 
+
+def test_storage_endpoint_reports_disk_usage(client: TestClient) -> None:
+    response = client.get("/v1/system/storage")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["cache_dir"].endswith("jobs")
+    assert body["retention_hours"] == 24.0
+
+    jobs = body["jobs"]
+    assert isinstance(jobs["count"], int)
+    assert "bytes" in jobs
+    assert "oldestMs" in jobs
+    assert "newestMs" in jobs
+    assert isinstance(jobs["largest"], list)
+    assert isinstance(body["models"], list)
+    assert isinstance(body["desktopIniHits"], list)
+

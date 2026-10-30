@@ -4,10 +4,11 @@ import asyncio
 import io
 import json
 import logging
+import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, time
 from typing import Annotated
 
 import cv2
@@ -116,6 +117,86 @@ def create_app(
         return {
             "loaded": store.is_model_loaded(),
             "idle_timeout_seconds": store.model_idle_timeout_seconds,
+        }
+
+    @app.get("/v1/system/storage")
+    def system_storage() -> dict[str, object]:
+        """Read-only disk usage report for job cache, models and temp dirs."""
+        now_ms = time() * 1000.0
+        cache_root = (
+            runtime_settings.cache_dir.parent
+            if runtime_settings.cache_dir.name == "jobs"
+            else runtime_settings.cache_dir
+        )
+
+        job_entries: list[dict[str, object]] = []
+        desktop_ini_hits: list[str] = []
+        try:
+            with os.scandir(store.cache_dir) as entries:
+                for entry in entries:
+                    if entry.name.lower() == "desktop.ini":
+                        desktop_ini_hits.append(entry.path)
+                        continue
+                    if not entry.is_dir():
+                        continue
+                    job_ini = Path(entry.path) / "desktop.ini"
+                    if job_ini.is_file():
+                        desktop_ini_hits.append(str(job_ini))
+                    job_entries.append(
+                        {
+                            "id": entry.name,
+                            "bytes": _dir_stats(Path(entry.path))["bytes"],
+                            "mtimeMs": entry.stat().st_mtime * 1000.0,
+                        }
+                    )
+        except OSError:
+            pass
+        job_entries.sort(key=lambda item: item["bytes"], reverse=True)
+        mtimes = [float(item["mtimeMs"]) for item in job_entries]
+        largest = [
+            {
+                "id": item["id"],
+                "bytes": item["bytes"],
+                "ageHours": round((now_ms - float(item["mtimeMs"])) / 3_600_000.0, 2),
+            }
+            for item in job_entries[:5]
+        ]
+
+        models: list[dict[str, object]] = []
+        for name, env_dir in (
+            ("paddle", os.environ.get("PADDLE_HOME")),
+            ("torch", os.environ.get("TORCH_HOME")),
+            ("huggingface", os.environ.get("HF_HOME")),
+        ):
+            model_path = Path(env_dir) if env_dir else cache_root / name
+            present = model_path.is_dir()
+            models.append(
+                {
+                    "name": name,
+                    "path": str(model_path),
+                    "bytes": _dir_stats(model_path)["bytes"] if present else None,
+                    "present": present,
+                }
+            )
+
+        temp_dir = cache_root / "temp"
+        temp_bytes: int | None = (
+            _dir_stats(temp_dir)["bytes"] if temp_dir.is_dir() else None
+        )
+
+        return {
+            "cache_dir": str(store.cache_dir),
+            "retention_hours": runtime_settings.job_retention_hours,
+            "jobs": {
+                "count": len(job_entries),
+                "bytes": sum(int(item["bytes"]) for item in job_entries),
+                "oldestMs": round(min(mtimes)) if mtimes else None,
+                "newestMs": round(max(mtimes)) if mtimes else None,
+                "largest": largest,
+            },
+            "models": models,
+            "tempBytes": temp_bytes,
+            "desktopIniHits": desktop_ini_hits,
         }
 
     @app.post("/v1/models/unload")
@@ -486,6 +567,28 @@ def create_app(
         return {"profiles": profiles_data}
 
     return app
+
+
+def _dir_stats(path: Path) -> dict[str, int]:
+    """Recursive byte and file counts; tolerant of missing or unreadable dirs."""
+    total_bytes = 0
+    file_count = 0
+    try:
+        with os.scandir(path) as entries:
+            for entry in entries:
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        sub = _dir_stats(Path(entry.path))
+                        total_bytes += sub["bytes"]
+                        file_count += sub["fileCount"]
+                    else:
+                        total_bytes += entry.stat().st_size
+                        file_count += 1
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return {"bytes": total_bytes, "fileCount": file_count}
 
 
 async def _validated_upload(
