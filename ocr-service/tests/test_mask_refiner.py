@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from app.detector import DetectionResult, LetterboxTransform
+from app.detector import DetectedBlock, DetectionResult, LetterboxTransform
 from app.mask_refiner import (
     MaskRefinementConfig,
     _group_component_rects,
@@ -10,7 +10,7 @@ from app.mask_refiner import (
     refine_mask,
     refine_probability_mask,
 )
-from app.schemas import PixelRect
+from app.schemas import PixelRect, TextEvidenceRegion
 
 
 def test_group_component_rects_preserves_spatial_groups_without_masks() -> None:
@@ -222,6 +222,76 @@ def test_paragraph_gap_closing_smoothes_notched_step() -> None:
     assert np.all(smoothed[21:24, 15:20] == 255), "Inter-line vertical gap should be closed"
     # Protected edges must still be respected
     assert np.all(smoothed[protected_edges > 0] == 0)
+
+
+def _image(height: int, width: int) -> np.ndarray:
+    return np.full((height, width, 3), 255, np.uint8)
+
+
+def _detection(
+    probability: np.ndarray,
+    evidence_regions: list[TextEvidenceRegion] | None = None,
+    blocks: list[DetectedBlock] | None = None,
+) -> DetectionResult:
+    height, width = probability.shape[:2]
+    return DetectionResult(
+        mask_probability=probability,
+        blocks=blocks or [],
+        scale=LetterboxTransform(
+            source_width=width,
+            source_height=height,
+            input_size=960,
+            scale=1.0,
+            pad_x=0,
+            pad_y=0,
+        ),
+        evidence_regions=evidence_regions or [],
+    )
+
+
+def test_adaptive_threshold_captures_soft_contrast_text() -> None:
+    # Stylised colored text often peaks around 0.15-0.30 in the detector
+    # probability map, below the legacy 0.35 cut, so the seed used to come
+    # out nearly empty. The adaptive cut must capture the glyph mass.
+    probability = np.full((60, 120), 0.03, np.float32)
+    probability[20:40, 10:50] = 0.28
+    probability[20:40, 60:100] = 0.28
+    blocks = [DetectedBlock(rect=PixelRect(x=0, y=0, width=120, height=60), confidence=0.9)]
+    result = refine_mask(_image(60, 120), _detection(probability, blocks=blocks))
+    caught = int(np.count_nonzero(result.mask[20:40, 10:50] > 0))
+    assert caught > 0.5 * (20 * 40)
+
+
+def test_adaptive_threshold_preserves_strong_contrast_mask() -> None:
+    # Strong text mass (>= legacy cut) must keep the exact legacy mask.
+    probability = np.full((60, 120), 0.03, np.float32)
+    probability[20:40, 10:50] = 0.90
+    probability[20:40, 60:100] = 0.90
+    blocks = [DetectedBlock(rect=PixelRect(x=0, y=0, width=120, height=60), confidence=0.9)]
+    detection = _detection(probability, blocks=blocks)
+    image = _image(60, 120)
+    adaptive = refine_mask(image, detection)
+    legacy = refine_mask(image, detection, MaskRefinementConfig(threshold=0.35))
+    np.testing.assert_array_equal(adaptive.mask, legacy.mask)
+
+
+def test_text_supported_region_with_empty_seed_gets_full_rect_rescue() -> None:
+    # Flat probability map (adaptive cannot split) but the detector asserted
+    # text: the mask must not come out empty — the region gets a constrained
+    # full-rect fill.
+    probability = np.full((60, 120), 0.05, np.float32)
+    evidence = [
+        TextEvidenceRegion(
+            id="ev1",
+            rect=PixelRect(x=20, y=15, width=80, height=30),
+            confidence=0.9,
+            text_supported=True,
+        ),
+    ]
+    result = refine_mask(_image(60, 120), _detection(probability, evidence_regions=evidence))
+    rect_area = 80 * 30
+    caught = int(np.count_nonzero(result.mask[15:45, 20:100] > 0))
+    assert caught >= 0.8 * rect_area
 
 
 

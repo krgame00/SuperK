@@ -7,9 +7,13 @@ import numpy as np
 from numpy.typing import NDArray
 
 from app.detector import DetectionResult, RgbImage
-from app.schemas import PixelRect
+from app.schemas import PixelRect, TextEvidenceRegion
 
 BinaryMask = NDArray[np.uint8]
+
+ADAPTIVE_FLOOR = 0.15
+ADAPTIVE_MIN_SEPARATION = 0.08
+LOW_COVERAGE_RESCUE = 0.01
 
 
 @dataclass(frozen=True)
@@ -307,11 +311,18 @@ def refine_mask(
         seed_raw = (detection.mask_probability >= active.threshold).astype(np.uint8) * 255
         envelope = cv2.dilate(seed_raw, cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9)))
 
+    given_zone = bool(detection.evidence_regions or detection.blocks)
+    effective_threshold = _adaptive_seed_threshold(
+        detection.mask_probability,
+        envelope if given_zone else None,
+        active.threshold,
+    )
+
     if np.any(envelope):
         envelope = cv2.dilate(envelope, cv2.getStructuringElement(cv2.MORPH_RECT, (17, 17)))
         envelope[protected_edges > 0] = 0
 
-    seed = (detection.mask_probability >= active.threshold).astype(np.uint8) * 255
+    seed = (detection.mask_probability >= effective_threshold).astype(np.uint8) * 255
     completed_seed = complete_glyph_mask(image_rgb, seed, envelope, protected_edges)
 
     refined = _refine_seed_mask(
@@ -330,6 +341,14 @@ def refine_mask(
             else:
                 r = evidence.rect
                 trusted[r.y : r.y + r.height, r.x : r.x + r.width] = 255
+        rescued = _rescue_low_coverage_regions(
+            refined.mask,
+            detection.evidence_regions,
+            trusted,
+            envelope,
+            protected_edges,
+        )
+        refined = replace(refined, mask=rescued)
         regions = []
         for region in refined.regions:
             r = region.rect
@@ -350,6 +369,105 @@ def refine_mask(
     )
     return replace(refined, mask=smoothed_mask)
 
+
+
+def _adaptive_seed_threshold(
+    probability: NDArray[np.float32],
+    zone: BinaryMask | None,
+    default_threshold: float,
+    floor: float = ADAPTIVE_FLOOR,
+    minimum_separation: float = ADAPTIVE_MIN_SEPARATION,
+) -> float:
+    """Lower the fixed seed cut when the text mass peaks below it.
+
+    Soft-contrast stylised text (colored glyphs on dark bubble fills) peaks
+    around 0.15-0.30 in the detector probability map, so the legacy 0.35 cut
+    leaves a nearly empty seed and the inpainter erases almost nothing. Otsu
+    over the envelope's probabilities finds the text/bubble valley; the cut
+    only ever moves DOWN (clamped to ``floor``) and only when the
+    high-probability class itself sits below the default, so strong-contrast
+    crops keep the exact legacy mask. Degenerate (unimodal) maps return the
+    default.
+    """
+    if zone is not None and np.any(zone):
+        values = probability[zone > 0].astype(np.float64)
+    else:
+        values = probability.astype(np.float64).ravel()
+    if values.size < 2:
+        return default_threshold
+    hist, edges = np.histogram(values, bins=100, range=(0.0, 1.0))
+    centers = (edges[:-1] + edges[1:]) / 2
+    weights = hist.astype(np.float64)
+    total = weights.sum()
+    if total == 0:
+        return default_threshold
+    sum_all = float((weights * centers).sum())
+    w_low = 0.0
+    sum_low = 0.0
+    best_var = -1.0
+    best: tuple[float, float, float] | None = None  # (cut, mean_low, mean_high)
+    for i in range(len(weights) - 1):
+        w_low += weights[i]
+        if w_low == 0:
+            continue
+        w_high = total - w_low
+        if w_high == 0:
+            break
+        sum_low += weights[i] * centers[i]
+        mean_low = sum_low / w_low
+        mean_high = (sum_all - sum_low) / w_high
+        gap = mean_low - mean_high
+        var = w_low * w_high * gap * gap
+        if var > best_var:
+            best_var = var
+            best = (float(centers[i]), mean_low, mean_high)
+    if best is None:
+        return default_threshold
+    cut, mean_low, mean_high = best
+    if mean_high - mean_low < minimum_separation:
+        return default_threshold
+    if mean_high >= default_threshold:
+        return default_threshold
+    return min(default_threshold, max(floor, cut))
+
+
+def _rescue_low_coverage_regions(
+    mask: BinaryMask,
+    evidence_regions: list[TextEvidenceRegion],
+    trusted: BinaryMask,
+    envelope: BinaryMask,
+    protected_edges: BinaryMask,
+    coverage_floor: float = LOW_COVERAGE_RESCUE,
+) -> BinaryMask:
+    """Text-supported regions whose refined mask is nearly empty get a
+    constrained full-region fill.
+
+    The detector asserted text lives in the region, so an (almost) empty
+    mask means the seed could not see the glyph mass — not that the region
+    is blank. The fill is clipped to the detection envelope and skips
+    protected artwork edges, so nothing outside the region is touched.
+    """
+    out = mask.copy()
+    for evidence in evidence_regions:
+        if not evidence.text_supported:
+            continue
+        zone = np.zeros_like(mask)
+        if evidence.polygon and len(evidence.polygon) >= 3:
+            pts = np.asarray(evidence.polygon, dtype=np.int32).reshape((-1, 1, 2))
+            cv2.fillPoly(zone, [pts], 255)
+        else:
+            r = evidence.rect
+            zone[r.y : r.y + r.height, r.x : r.x + r.width] = 255
+        area = int(np.count_nonzero((zone > 0) & (trusted > 0)))
+        if area == 0:
+            continue
+        covered = int(np.count_nonzero((out > 0) & (zone > 0)))
+        if covered / area >= coverage_floor:
+            continue
+        fill = zone.copy()
+        fill[(envelope == 0) | (protected_edges > 0)] = 0
+        out[fill > 0] = 255
+    return out
 
 
 def _estimate_stroke_radius(component: BinaryMask) -> int:
