@@ -1,5 +1,5 @@
 import type { PageExportSource } from "@/lib/export/pageSource";
-import { withinTranslationScope, type TranslationScope } from "@/lib/cleaning/textAuthorization";
+import { outsideProtectedAreas, withinTranslationScope, type TranslationScope } from "@/lib/cleaning/textAuthorization";
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   getTranslationRetryDelay,
@@ -1376,8 +1376,10 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           if (activePageRef.current === pageUrl) setTranslationResult("กำลังตรวจและเติมคำแปลที่ตกหล่น…");
           const response = await fetch("/api/translate", {
             method:"POST", headers:{"Content-Type":"application/json"}, signal,
+            // isRetry: the full-page pass already missed this region, so the
+            // crop gets the high-precision retry prompt and model rotation.
             body:JSON.stringify({imageBase64:cropBase64,mimeType:"image/png",
-              targetLang,sourceLang,modelPreference,apiKey:userApiKey,allowPreview:allowPreviewModels,glossary,policy:{sfx:sfxModeRef.current}}),
+              targetLang,sourceLang,modelPreference,apiKey:userApiKey,allowPreview:allowPreviewModels,glossary,isRetry:true,policy:{sfx:sfxModeRef.current}}),
           });
           const data = await readTranslationResponse<{text:string}>(response);
           const parsed = parseLLMJSON(data.text) as {bubbles?:TranslatedBubble[]} | null;
@@ -1554,7 +1556,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           throw new Error("Translation failed: no valid NSFW slice responses.");
         }
 
-        allBubbles = applySfxPolicyToBubbles(deduplicateBubbleSFX(allBubbles, 3)).filter(b => withinTranslationScope(b.box, textScope));
+        allBubbles = applySfxPolicyToBubbles(deduplicateBubbleSFX(allBubbles, 3)).filter(b =>
+          withinTranslationScope(b.box, textScope) || outsideProtectedAreas(b.box, textScope));
         const completeness = await recoverDetectedOmissions(allBubbles);
         console.info("[Translation Coverage]", {page:pageIndex+1, detected:textScope?.allowed.length ?? null,
           retained:allBubbles.length, recovered:completeness.bubbles.length-allBubbles.length, missing:completeness.missing.length});
@@ -1755,7 +1758,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       const dedupedBubbles = deduplicateBubbleSFX(pageBubbles, 3);
       const withPolicy = applySfxPolicyToBubbles(dedupedBubbles);
       const filteredParsed = withPolicy.filter(
-        (b) => isSfxBubble(b) || withinTranslationScope(b.box, textScope),
+        (b) => isSfxBubble(b) || withinTranslationScope(b.box, textScope) ||
+          outsideProtectedAreas(b.box, textScope),
       );
       const completeness = await recoverDetectedOmissions(filteredParsed);
       console.info("[Translation Coverage]", {page:pageIndex+1, detected:textScope?.allowed.length ?? null,

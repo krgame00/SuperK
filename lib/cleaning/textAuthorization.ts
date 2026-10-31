@@ -38,6 +38,16 @@ export function translationScope(
   return scope;
 }
 
+/** Bubbles the vision model found outside the detector's confirmed scope are
+ *  trusted (the translation prompt demands ALL visible text), as long as they
+ *  stay clear of protected/withheld regions (preserve, SFX-ignore). */
+export function outsideProtectedAreas(box: number[] | undefined, scope?: TranslationScope): boolean {
+  if (!box || box.length !== 4 || !box.every(Number.isFinite)) return false;
+  const area = (box[2] - box[0]) * (box[3] - box[1]);
+  if (area <= 0) return false;
+  return !scope?.excluded.some(r => intersection(box, r) > 0);
+}
+
 function intersection(a: number[], b: number[]): number {
   return Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0])) *
     Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
