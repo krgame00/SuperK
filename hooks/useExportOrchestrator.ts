@@ -200,6 +200,7 @@ export function useExportOrchestrator({
   const [pendingReadabilityAck, setPendingReadabilityAck] = useState<string | null>(null);
   const acknowledgedReadabilityRef = useRef(new Set<string>());
   const [exportScanProgress, setExportScanProgress] = useState<{ completed: number; total: number } | null>(null);
+  const [exportRenderProgress, setExportRenderProgress] = useState<{ completed: number; total: number } | null>(null);
   const reportScanGenerationRef = useRef(0);
   const [pendingReadabilityTarget, setPendingReadabilityTarget] = useState<ReadabilityFinding | null>(null);
 
@@ -711,6 +712,8 @@ export function useExportOrchestrator({
       const exportErrors: string[] = [];
       const excludedCount = activePages.filter((page) => page.exportExcluded).length;
       const excludedNote = excludedCount > 0 ? ` — ตัด ${excludedCount} หน้าออกตามที่เลือก` : "";
+      const exportableTotal = activePages.filter((page) => !page.exportExcluded).length;
+      let exportProcessedCount = 0;
       const reportRenderFailures = () => {
         setTranslationResult(
           `❌ Export ไม่สำเร็จที่หน้า ${failedExportPages.join(", ")} ${exportErrors.join("; ")} — ลองใหม่อีกครั้ง`,
@@ -764,6 +767,8 @@ export function useExportOrchestrator({
               generatePhotoshopBuildScript(i + 1, origName, cleanName, bubbles),
             );
             layeredCount++;
+            exportProcessedCount++;
+            setExportRenderProgress({ completed: exportProcessedCount, total: exportableTotal });
           }
           const content = await layeredZip.generateAsync({ type: "blob", compression: "DEFLATE" });
           await saveBlob(content, "SuperK_Layered_Photoshop_Pack.zip", destDir);
@@ -810,6 +815,8 @@ export function useExportOrchestrator({
               });
               if (img.naturalWidth && img.naturalHeight) {
                 loadedImages.push(img);
+                exportProcessedCount++;
+                setExportRenderProgress({ completed: exportProcessedCount, total: exportableTotal });
               } else {
                 failedExportPages.push(i + 1);
               }
@@ -973,6 +980,8 @@ export function useExportOrchestrator({
               canvas.width = 0;
               canvas.height = 0;
               addedCount++;
+              exportProcessedCount++;
+              setExportRenderProgress({ completed: exportProcessedCount, total: exportableTotal });
             } catch (err) {
               console.warn(`Error processing PDF page ${i + 1}`, err);
               failedExportPages.push(i + 1);
@@ -1047,6 +1056,8 @@ export function useExportOrchestrator({
           });
           zip.file(filename, bytes);
           zipAddedCount++;
+          exportProcessedCount++;
+          setExportRenderProgress({ completed: exportProcessedCount, total: exportableTotal });
         } catch (err) {
           console.warn(`Error processing ZIP page ${i + 1}`, err);
           failedExportPages.push(i + 1);
@@ -1436,6 +1447,7 @@ export function useExportOrchestrator({
     isExportReportOpen,
     exportReportRows,
     exportScanProgress,
+    exportRenderProgress,
     pendingReadabilityExport,
     handleOpenExportReport,
     closeExportReport,

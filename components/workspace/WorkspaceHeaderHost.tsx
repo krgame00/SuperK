@@ -120,6 +120,7 @@ export interface WorkspaceHeaderHostProps {
   onCancelPrimaryAction: () => void;
   exportTriggerRef?: React.RefObject<HTMLButtonElement | null>;
   isZipping: boolean;
+  exportRenderProgress?: { completed: number; total: number } | null;
   isChoosingExport: boolean;
   activeBubbles: TranslatedBubble[];
   onRequestSinglePageExport: () => void | Promise<void>;
@@ -193,6 +194,7 @@ export function WorkspaceHeaderHost({
   onCancelPrimaryAction,
   exportTriggerRef,
   isZipping,
+  exportRenderProgress,
   isChoosingExport,
   activeBubbles,
   onRequestSinglePageExport,
@@ -501,6 +503,17 @@ export function WorkspaceHeaderHost({
                   }
                 }}
               />
+
+              {/* ── Batch export render progress ── */}
+              {isZipping && exportRenderProgress && exportRenderProgress.total > 1 && (
+                <span
+                  className="text-[11px] font-medium text-sky-300 whitespace-nowrap tabular-nums"
+                  role="status"
+                  aria-live="polite"
+                >
+                  กำลังสร้างภาพหน้า {exportRenderProgress.completed}/{exportRenderProgress.total}…
+                </span>
+              )}
 
               {/* Send Back to Reading View (if page came from extension) */}
               {pages[currentPage]?.originUrl && (
