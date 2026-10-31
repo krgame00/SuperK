@@ -23,7 +23,80 @@
 - **แก้ client:** Otsu threshold ต่อ crop + border rule (คลาสที่ครอบขอบ crop = พื้น) + chroma fallback (ต่างสีแต่ luma ใกล้กัน) — TDD: เทสแดง 3 ตัวก่อน (ม่วงบนเข้ม / สีต่าง-luma / dense 67%) แล้วแก้, พบและแก้บั๊ก **Otsu plateau** (variance คงที่ตลอดช่วงระหว่างคลาส → threshold ตกบนค่าคลาสเอง + `<` เข้ม → คลาสว่าง; แก้เป็น `<=`) — vitest maskUtils 13/13, tsc 0, eslint 0, **full vitest 2,023+1skip**
 - **สาเหตุ server** (`ocr-service/app/mask_refiner.py`): seed จาก probability map ตัดที่ 0.35 ตายตัว — ข้อความสไตล์ soft-contrast มักพีค 0.15–0.30 → seed โหรงเหรง → LaMa ลบน้อย
 - **แก้ server (user เลือก Otsu + full-rect fallback):** (1) `_adaptive_seed_threshold` — Otsu บน probability ใน envelope, ใช้เมื่อมวลข้อความพีคต่ำกว่า 0.35 เท่านั้น (floor 0.15, separation ≥0.08, strong-contrast ได้ mask เดิมเป๊ะ — assert array equal) (2) `_rescue_low_coverage_regions` — evidence region ที่ text_supported แต่ mask ครอบคลุม <1% → fill ทั้ง rect โดย clip ด้วย envelope + protected edges — TDD เทสแดง 2 ตัวก่อน → pytest **256+3skip** (ไม่มี regression ทั้ง suite), ruff clean
-- **สถานะ:** OCR backend รีสตาร์ทด้วยโค้ดใหม่ (/health 200) — งาน uncommitted ตอนนี้ 3 ชุด: extractGlyphInk + outsideProtectedAreas + mask-smartness (รอผู้ใช้ทดสอบ → commit ตามอนุมัติ)
+- **สถานะ:** OCR backend รีสตาร์ทด้วยโค้ดใหม่ (/health 200) — งาน uncommitted ตอนนี้ 3 ชุด: extractGlyphInk + outsideProtectedAreas + mask-smartness (รอผู้ใช้ทดสอบ → commit ตามอนุมัติ) — **อัปเดตท้ายวัน: ทั้ง 3 ชุดถูก commit (c180dc8 / e120a70 / 3812366) และ push ครบ (origin/main 13 commits)**
+
+### ต่อ: ย้ายโปรเจกอื่นออกจาก Drive scope — 2026-10-31 (user เลือกย้ายทั้งหมดผ่าน AskUserQuestion)
+
+- **PCSpec** (Downloads, git+npm): ย้ายแล้วพบว่า `F:\Projects\PCSpec` **มีสำเนาเก่าจาก 2026-08-29 อยู่แล้ว** → robocopy กลายเป็น merge: copied 15,103 ไฟล์/357 MB (ต่างกัน — ฝั่ง Downloads ใหม่กว่าชนะ), skipped 71,646 ไฟล์/1.86 GB (identical — ค้างที่ต้นทาง ไม่ถูกลบ เพราะ robocopy /MOVE ไม่ลบไฟล์ที่ skip), Extras 12,313 ไฟล์/57 MB ฝั่ง F: ไม่โดนแตะ (รวม PCSpec.zip) — ยืนยันด้วย robocopy /L รอบสอง: **Copied=0 / Mismatch=0 / FAILED=0** = ต้นทางซ้ำซ้อนเต็ม → ลบต้นทาง (รวม node_modules) ปลอดภัย; git state ปลายทางตรงก่อนย้ายเป๊ะ (3 M chatbot files + ?? เดิม, HEAD bba9cc1a, ahead 2/behind 16); npm ci + node-backend postinstall รันปลายทาง
+- **Codex** (Documents, git+npm เล็ก): ย้ายสำเร็จ 43 ไฟล์, ต้นทางหาย
+- **EP1_AutoRender** (Downloads, 425 MB เครื่องมือ render นิยาย): ย้ายสำเร็จ 98 ไฟล์, ต้นทางหาย
+- **กลุ่มอ้างอิง** → `F:\Projects\_reference\`: Study_Frontend_Projects, GPT API, skill-ai (632 MB) — ย้ายสำเร็จทั้งหมด ต้นทางหาย (บทเรียน: robocopy loop ครั้งแรกล้มเหลวเงียบๆ เพราะ grep กลืน error — รันซ้ำด้วย output เต็มจึงเห็น)
+- **desktop.ini กวาดเพิ่ม 3,741 ไฟล์** จากต้นไม้ที่ย้ายมา (เหลือ 0 ทุกที่) — สแกนรอบสอง (Desktop/home root/ดิสก์อื่น/ลึก 3 ชั้น) เจอ **video-translator-app** (Downloads — Next.js, git synced กับ origin, งาน uncommitted 5 ไฟล์: page.tsx/audioExtractor/geminiClient/geminiVideoService/translationPipeline) — ย้ายสำเร็จ 459 ไฟล์/1.97 MB + npm ci + git ตรงเดิม + ลบต้นทาง (เหลือแค่ node_modules/.next ที่ตั้งใจไม่ขน) — desktop.ini กวาดเพิ่ม, ต้นทางหายสนิท
+- **โปรเจกที่เหลืออยู่นอก scope โดยเลือกไม่ย้าย** (user ตอบเลือกเฉพาะ video-translator-app): C:\Users\PC\Developer\video-use, Desktop\Acheron, D:\Open Design, D:\Vibe Video, E:\dmde — ทั้งหมดอยู่**นอก** Drive backup scope — ผู้ใช้ทราบและเลือกไว้แล้ว — **ต่อมา user ขอย้าย Downloads\OpenCode เพิ่ม → F:\Projects\OpenCode** (206 ไฟล์, ไม่มี git/deps, desktop.ini กวาด, ต้นทางหาย) — **และ Documents\antigravity → F:\Projects\antigravity** (30 ไฟล์, git local-only 2 ตัว: goofy-faraday/modest-lavoisier — ตัวสุดท้ายใน scope Drive, ต้นทางหาย, desktop.ini = 0) — **สรุป: ไม่มีโปรเจก dev เหลือใน scope ของ Google Drive backup แล้วทั้งเครื่อง**
+
+### ต่อ: จัดโฮมรูท C:\Users\PC — 2026-10-31 (user เลือก 3 อย่างผ่าน AskUserQuestion)
+
+- **สำรวจโฮมรูททั้งหมด:** dot-dirs ~40 ตัว = tool configs ล้วน (สแกน .git ซ่อน — ไม่มี repo); โฮมรูทไม่อยู่ใน scope Drive backup → ไม่เร่งด่วน
+- **ย้าย vtranslate** (โปรเจก Python — OpenCode มีแค่สำเนา) → F:\Projects\vtranslate (33 ไฟล์, ต้นทางหาย)
+- **ย้าย win-ocr-temp** (เวิร์กสเปนทดลอง Windows OCR) → F:\Projects\_reference\win-ocr-temp (38 ไฟล์, ต้นทางหาย)
+- **รวมข้อมูล PCSpec** → F:\Projects\PCSpec-data (19 ไฟล์: Advice_Scraper.py, catalog_instructions.md, CSV ทั้ง `_all`/`_50` ทุกหมวด): ย้ายเนื้อหา C:\Users\PC\PCSpec ทั้งโฟลเดอร์ (10 ไฟล์ — dir หาย) + โฮมรูท: ย้าย `_50`/`cpu_list` 9 ไฟล์ + **ลบซ้ำ `_all.csv` 8 ไฟล์ (cmp ยืนยัน identical กับที่ย้ายไปแล้วทุกตัว)** — โฮมรูทเหลือ 0 csv
+- **ไม่แตะ** (user ไม่ได้เลือก): `.git_user_backup\` (สำเนา .git ของโปรเจก Streamlit ไม่ระบุชื่อ — มี index.lock ค้าง), สคริปต์ระบบที่โฮมรูท (scan_c.ps1, install.ps1, quality-gate.sh, yt_fetch.py, yt_slice.py, map_chunks.py, sub*.srt, transcript_full.json, rclone logs, ไฟล์ `nul`, `.tmp.driveupload` ใน Downloads)
+
+### ต่อ: จัดไฟล์หลวมที่โฮมรูท — 2026-10-31 (user เลือกครบ 4 กลุ่มผ่าน AskUserQuestion)
+
+- **สคริปต์บำรุงรักษา 22 ไฟล์** (check_*.ps1 ×15, delete_*.ps1 ×2, find_processes, scan_c, install, quality-gate.sh, extract_part1.py) → F:\Projects\_reference\maintenance-scripts
+- **งานซับ/YT 8 ไฟล์:** sub.srt, sub2.srt, transcript_full.json, chunk3.txt, yt_fetch.py, yt_slice.py, map_chunks.py → F:\Projects\OpenCode; computer-100-articles.html ("คอม 100 เรื่อง") → F:\Projects\Docs\Content
+- **scratch เว็บ 2 ไฟล์** (Untitled-1.html, css.css) → F:\Projects\_reference\scratch
+- **ลบ junk 8 ไฟล์:** mumu_boot.txt, rclone_*.log ×3, drive_names_report.json, -1.14/-1.18-windows.xml (ลบต้องใช้ `rm -f -- "./-1.14..."` เพราะ rm ตีเป็น option), nul (Windows reserved name)
+- **ไม่แตะ:** NTUSER.DAT*, .gitconfig, .boto, .claude.json, .node_repl_history, skills-lock.json, .git_user_backup
+- **ค้าง:** compact_log.txt (log ตัวเดียวที่ไม่ได้อยู่ในลิสต์อนุมัติ — ลบได้เมื่อ user ยืนยัน) — โฮมรูทเหลือแค่ config/ระบบล้วน
+
+### ต่อ: จัดระเบียบ Documents — 2026-10-31 (user เลือก "จัดกลุ่มใน Documents")
+
+- **หลักการ:** app-data ทุกตัวไม่แตะ (Rockstar/Adobe/My Games/เกมทุกตัว/My Pictures-Videos-Music/MuMu/Steam Cloud/RPGXP/XuanZhi9/Arduino sketchbook/WindowsPowerShell/Zoom/Notes)
+- **สร้าง `Documents\Docs\`:** `SuperK-Plans\` (14 ไฟล์ — superk-*.md + SuperK-OneOCR/PaddleOCR Plan+Summary + Plans\superk-improvement-plan, Plans\ โฟลเดอร์หาย), `Study\` (English_Practice + AI-Agent-Academy-Tips + Database-Design-Course + GeniusHub-Resources + บทที่ 3.docx + แบบฝึกหัด บทที่ 1.docx/.pdf), `Content\` (YT-Shorts 2 ไฟล์ + transcript.xlsx), `Misc\` (free-tier-tools, แผนงาน_Hermes)
+- **ย้ายข้ามไป F:\Projects\PCSpec-data:** forgelabs-pc-builder.drawio + .bkp (diagram ของโปรเจก PCSpec)
+- **ลบโฟลเดอร์ว่าง:** New OpenCode Project, temp
+- **ค้างที่ root ให้ผู้ใช้เลือกเอง:** ~~Orange.blend/.blend1, Roblox_*.mp4, .RData/.Rhistory~~ **ย้าย/ลบครบแล้วตามที่ user สั่ง "ย้ายไปทั้งหมด"**: Roblox mp4 ×2 → My Videos, Orange.blend/.blend1 → My Videos\3D, .RData/.Rhistory ลบ — **root ของ Documents ตอนนี้เหลือแค่ app-data folders ล้วน** — **ต่อมา user สั่งย้าย Docs ทั้งก้อน → F:\Projects\Docs** (27 ไฟล์ 4 หมวด ย้ายสำเร็จ ต้นทางหาย) — Documents เหลือเฉพาะ app-data ล้วน
+
+### ต่อ: รีวิวข้อเสนอ 4 ข้อ (จาก session อื่น) + Export progress bar + เคลียร์ C — 2026-10-31
+
+- **รีวิว (user ส่งลิสต์มาจาก session อื่น):** (1) ❌ ลด ADAPTIVE_MIN_SEPARATION 0.08→0.006 — วิเคราะห์ผิดตัวแปร: โค้ดเทียบ mean gap (mean_high - mean_low) ไม่ใช่ Otsu variance (gap 0.25 ผ่าน 0.08 สบาย ไม่มีการดีดกลับ); 0.006 = รับ noise; เคส contrast ต่ำมี _rescue_low_coverage_regions รองร้อยแล้ว (2) ✅ ฟีเจอร์ RTL reading + export progress = ของจริง น่าทำ (3) ❌ lint "eslint"→"eslint ." — ทดสอบแล้ว bare npm run lint ทำงานสมบูรณ์ (ESLint 9 flat config lint cwd เอง), 0 errors/72 warnings ตรง baseline (4) ❌ NEXT_TURBOPACK_PERSISTENCE **ไม่มีอยู่จริง** ใน Next 16.3.6 (grep ทั้ง docs+dist) — knob จริงคือ config `turbopackFileSystemCacheForDev: false` (อยู่ใน config-schema.js) ใช้ได้ผ่าน `nextFactory({dev:true, dir, conf})` ใน nextServerChild.mjs — แต่ suite เขียวหมดบน Node 26.0.0 ไม่มีอาการ จดไว้ไม่แก้
+- **Export progress bar (user เลือกทำตัวนี้ก่อน) — UNCOMMITTED:** state `exportRenderProgress {completed,total}` ใน useExportOrchestrator + นับในลูป batch ทั้ง 4 (zip/cbz :1049, pdf :975, strip :797, layered :766 — นับเฉพาะหน้า non-excluded) → ส่งผ่าน useWorkspaceController → WorkspaceHeaderHost แสดง "กำลังสร้างภาพหน้า X/Y…" ข้างปุ่ม export เมื่อ isZipping && total>1 (aria-live) — ไม่แตะ 7 จุด finally (UI gate ด้วย isZipping พร้อมกัน) — tsc 0 / eslint 0 / เทสเป้าหมาย 10/10 — RTL reading ยังค้างเป็น feature ถัดไป (ควรมี spec ก่อน)
+- **ทดสอบ progress bar แบบ live ผ่าน IAB (สำเร็จ):** สำรองงานจริงของผู้ใช้ (1 หน้า "storage_view_test.png") ลง IndexedDB key `zcode_test_backup_latest_session` ก่อน → ฉีดเซสชันสังเคราะห์ 12 หน้า → export ZIP → **จับข้อความ "กำลังสร้างภาพหน้า 7/12…" กลางไฟล์** = นับต่อหน้าจริงไม่ค้าง; export จบสมบูรณ์; export รอบสองเร็วมากจาก render cache (ข้อความแฟลชสั้น — จุดแข็งของ progress bar อยู่ที่ first export ของเล่มใหม่) — **คืนค่างานเดิมผู้ใช้เรียบร้อย ยืนยันจาก IndexedDB (1 หน้า, backup key ลบ)** — บทเรียน automation: menuitem "ZIP" ซ้ำ 3 ตัวใน DOM (desktop+mobile) → ต้อง dom_cua.get_visible_dom เอา node ที่ inViewport; exporter รอบสองใช้ render cache ทำให้ progress แฟลชเร็ว
+
+### ต่อ: บั๊ก "กดใช้ไม่ได้" (Inspector) — 2026-10-31 ดึก (UNCOMMITTED)
+
+- **อาการ:** กดปุ่ม T+ (เพิ่มข้อความ) → bubble เข้า state (เลเยอร์สลับ Translated) แต่**ไม่แสดงบนผืนผ้าใบ** → Inspector แก้อะไรก็ไม่เห็นผล
+- **สาเหตุ:** effect วาด overlay ใน useTranslation.ts (~:695) ใช้ `applyTranslationOverlay` แต่ **deps ไม่มี `activeBubbles`** → เพิ่ม bubble แล้ว effect ไม่ re-run; bubble โผล่เฉพาะตอนสลับหน้า (currentPage เปลี่ยน = effect ยิงใหม่) — พิสูจน์ด้วย automation: ก่อนสลับหน้า `[data-bubble-id]`=0, หลังสลับกลับ=1
+- **แก้:** เพิ่ม `activeBubbles` ลง deps ของ effect นั้น (บรรทัดเดียว) — bubble แสดงทันทีที่กด T+, Inspector แก้ขนาดแล้วกล่องโตจริง (ทดสอบ live ผ่าน IAB ครบ: สร้าง → เลือก → ขยาด 24→26 เห็นผล)
+- **ผลข้างเคียงที่ต้องรู้:** session เดิมของผู้ใช้ (1 หน้า "storage_view_test.png") รูปต้นฉบับหายจาก asset store อยู่แล้วก่อนการทดสอบ (asset ref ตาย — session นั้นมีแค่รูป ไม่มีข้อมูลแปล 375 bytes) — ตอนนี้ session ใน IAB = เซสชัน QA 4 หน้า + bubble ทดสอบ 2 ตัว (user กด Clear เองได้)
+- **Gates:** tsc 0 / eslint 0 errors (4 warnings เดิม) / tests/translation ผ่าน — full suite รอยืนยัน — **UNCOMMITTED รวมกับ export progress bar**
+
+### ต่อ: งานจริงของผู้ใช้ = มังงะจีน → Gemini echo จีนกลับมา — 2026-11-01 เช้า (UNCOMMITTED: prompt fix)
+
+- **อาการจริง:** งานจริง 7 หน้าเป็น**มังงะจีน** (原來如此 ฯลฯ) — แปลทั้งเล่มแล้ว Gemini ตอบ**จีนตัวย่อกลับมา** (ไม่ได้แปล) → G01 script guard flag 6 จุด (จุดค้าง, ปุ่มยืนยันถูกบล็อกตามดีไซน์) — "แปลไม่ได้ ปุ่มใช้ไม่ได้"
+- **สาเหตุ:** `buildTranslationPrompt` (src/app/api/translate/handler.ts:100) ห้าม kana/kanji/Cyrillic/Hangul/Latin แต่**ไม่ได้ห้ามตัวจีน explicitly** + ไม่มีคำสั่ง "ต้นฉบับอาจเป็นจีนก็ต้องแปลเป็นไทย ห้าม echo" — Gemini จึง echo ต้นฉบับจีน
+- **แก้:** เพิ่มใน thaiTargetDirective: ห้ามตัวจีน (simplified/traditional พร้อมตัวอย่าง 原来/這是/行為/這裡) + "The source page may itself be written in Chinese — never copy, echo, or transliterate it back as Chinese"
+- **การ validate:** ฉีดหน้า canvas ตัวจีนจำลอง → PaddleOCR **ไม่จับ**ตัวจีนที่วาด (bubble ว่าง t="") = ข้อจำกัดของหน้าปลอม ไม่ใช่บั๊ก — validation ที่แท้จริง = ผู้ใช้กด "แปลหน้านี้ใหม่"/แปลทั้งเล่ม ในงานจริงหลัง refresh (prompt ใหม่ถูกใช้ทันที ไม่ต้อง restart เซิร์ฟเวอร์)
+- **ทดสอบ live อื่นๆ รอบนี้ (ผ่านหมด):** translate-all จริง 4 หน้า QA — progress ใหม่เดินครบ ("กำลังคลีนหน้า 2/4 (33%)" → "กำลังแปลหน้า 3/4 (67%)" + ⏱ ต่อหน้า/รวม + เตรียมล่วงหน้า), Gemini ช้า 58s = latency ผู้ให้บริการไม่ใช่ค้าง, Auto-Retry ตอน OCR ไม่เจอข้อความทำงานเอง
+- **ตรวจ API ตรงๆ (เผิญจริง):** เรียก /api/translate ตรงด้วยหน้าจีน + prompt ใหม่ → model = **gemini-3.5-flash-lite** (Auto routing เลือกตัวเบา) ตอบ **bubbles ว่าง** (validateSuccess เก่าผ่านเพราะเช็คแค่ Array.isArray) → **แก้ validateSuccess (handler.ts:420):** (1) bubble ทั้งหมดมี t ว่าง → reject → rotate โมเดลถัดไป (2) target ไทย + คำแปล CJK > Thai (echo จีน) → reject → rotate — "ไม่พบข้อความ" (bubbles=[]) ยังผ่านตามเดิม — รอบทดสอบหลังแก้: 504 เพราะหน้าจีนจำลอง (ตัวอักษรแนวตั้งวาดเอง) ไม่ผ่านโมเดลไหนเลย = ข้อจำกัดหน้าปลอม ไม่ใช่ regression — validation ใหม่ต้อง validate ด้วยหน้าจริงของผู้ใช้
+- **สถานะ uncommitted สะสม:** export progress bar + inspector fix (activeBubbles deps) + prompt fix จีน + validateSuccess echo/empty guard — รอผู้ใช้ทดสอบงานจริง (refresh แล้วแปลหน้าที่ flag ใหม่) → commit; ถ้ายัง echo → ขั้นถัดไป: text-mode two-pass fallback ฝั่ง server
+
+### ต่อ: บั๊ก "เครื่องมือแก้ไขข้อความใช้ไม่ได้" — ตัวการตัวจริง — 2026-11-01 (UNCOMMITTED)
+
+- **Reproduce สำเร็จด้วย automation:** กดปุ่ม "ตัวหนา" ใน Inspector → `Timeout: covered by <div data-testid="remnant-review-findings" class="fixed right-3 z-40 max-w-[420px]">` — **RemnantReviewPanel (แผงตรวจจุดค้าง fixed ขวา z-40) ทับปุ่ม Inspector ทั้งแผง** = กดอะไรก็โดนแผงตรวจกินคลิก (ตรงกับ finding เดิม "RemnantReviewPanel overlaps ยืนยัน button")
+- **แก้:** RemnantReviewPanel เพิ่ม effect ฟัง event `superk:bubble-selected` (มีอยู่แล้วในระบบ — CanvasHost ฟังอยู่แล้ว) → มี detail (เลือกกล่อง) → `setIsCollapsed(true)` อัตโนมัติ — แผงย่อเป็น pill "จุดรอตรวจ N จุด" กดกลับเพื่อกางได้
+- **ยืนยัน live:** เลือกกล่อง → แผงย่อเอง (เหลือ pill) → ปุ่ม Inspector คลิกผ่าน (ไม่มี covered-by timeout อีก)
+- **หมายเหตุ:** ผู้ใช้ใช้งานผ่าน IAB ที่โค้ดใหม่ — อาการ "ใช้ไม่ได้" ที่เหลือหลัง fix นี้ให้เก็บ click-sequence แนบมาด้วย (automation ตรวจ bold ได้ยากเพราะ style อยู่ใน overlay canvas)
+- **Gates:** tsc 0 / eslint 0 errors / tests workspace+cleaning ผ่าน — full suite รอยืนยัน — **UNCOMMITTED สะสม: progress bar + inspector deps fix + prompt จีน + echo/empty guard + auto-collapse**
+- **สถานะ uncommitted สะสม:** export progress bar + inspector fix (activeBubbles deps) + prompt fix จีน — รอผู้ใช้ทดสอบงานจริง → commit
+- **เคลียร์ C (user เลือกเฉพาะ updater caches):** ลบ installer/pending ใน 9 โฟลเดอร์ *-updater ใน AppData\Local (+2.4 GB → ว่าง 33.3 GB) — uv cache 3.1 GB user เลือก**ไม่**ลบ (เผื่อ rebuild venv), CapCut/Brave/electron/Discord ใหญ่แต่เป็น app data ให้จัดผ่านแอปเอง
+
+### ต่อ: ย้าย C:\Users\PC\ZCodeProject — 2026-10-31
+
+- ผู้ใช้ชี้ path มา → ตรวจ: เป็น**โปรเจกจริง** (37 MB, git) = **Google-Drive-File-Viewer** (origin github.com/krgame00/Google-Drive-File-Viewer-, synced กับ origin, untracked เฉพาะ gui-test-screenshots 8 ไฟล์) — ชื่อ ZCodeProject ซ้ำกับโฟลเดอร์ติดตั้งแอป ZCode ที่ F:\Projects\ZCodeProject (ZCode.exe — คนละอย่างกันโดยสิ้นเชิง) → user เลือกชื่อใหม่ **Google-Drive-File-Viewer**
+- ย้ายสำเร็จ 1,568 ไฟล์/33 MB (0 FAILED, /L verify สะอาด) → `F:\Projects\Google-Drive-File-Viewer`, git state ตรงเดิม, ลบต้นทางแล้ว, desktop.ini = 0 — เหลือโปรเจกใน scope Drive เท่าเดิม (Documents\antigravity ตัวเดียว)
 
 ---
 
