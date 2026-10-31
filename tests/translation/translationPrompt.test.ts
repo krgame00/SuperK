@@ -6,7 +6,10 @@ describe("buildTranslationPrompt script directive", () => {
   it("forbids foreign-script leakage for Thai targets", () => {
     const prompt = buildTranslationPrompt({ targetLang: "Thai" });
     expect(prompt).toContain("ENTIRELY in Thai script");
-    expect(prompt).toContain("Do NOT leave any Japanese kana/kanji");
+    expect(prompt).toContain("Do NOT leave any Chinese characters (simplified or traditional");
+    expect(prompt).toContain("Japanese kana/kanji");
+    // Chinese-source echo guard: the model must never copy the source back.
+    expect(prompt).toContain("never copy, echo, or transliterate it back as Chinese");
   });
 
   it("defaults to the Thai directive when no target language is given", () => {

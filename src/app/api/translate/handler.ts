@@ -97,7 +97,7 @@ export function buildTranslationPrompt({
     /thai|ไทย/i.test(targetLang);
   const targetLanguageLabel = isThaiTarget ? "Thai" : (targetLang || "Thai");
   const thaiTargetDirective = isThaiTarget
-    ? `- Write 't' ENTIRELY in Thai script. Do NOT leave any Japanese kana/kanji, Cyrillic, Hangul, Latin/English letters (A-Z, a-z), or other foreign-script characters in 't' — translate or transliterate every word, proper name, interjection (e.g., SHH -> ชู่ว), and sound effect into pure Thai script.\n`
+    ? `- Write 't' ENTIRELY in Thai script. Do NOT leave any Chinese characters (simplified or traditional, e.g. 原来/這是/行為/這裡), Japanese kana/kanji, Cyrillic, Hangul, Latin/English letters (A-Z, a-z), or other foreign-script characters in 't'. The source page may itself be written in Chinese — never copy, echo, or transliterate it back as Chinese; translate EVERY word, proper name, interjection (e.g., SHH -> ชู่ว), and sound effect into pure Thai script.\n`
     : "";
 
   return (
@@ -428,7 +428,23 @@ async function handleTranslationRequest(
           if (!text) return false;
           try {
             const parsed = JSON.parse(text.replace(/```json/gi, "").replace(/```/g, "").trim());
-            return Array.isArray(parsed?.bubbles);
+            if (!Array.isArray(parsed?.bubbles)) return false;
+            // "No text found" is a legitimate answer for a blank page.
+            if (parsed.bubbles.length === 0) return true;
+            // Bubbles with no text at all are placeholders, not a translation —
+            // rotate to the next model instead of accepting them.
+            const joined = parsed.bubbles.map((b: { t?: unknown }) => String(b?.t ?? "")).join(" ");
+            if (!joined.trim()) return false;
+            // Thai-target echo guard: Gemini sometimes copies the Chinese
+            // source back instead of translating — treat it as a failure so
+            // the model rotation tries a different model.
+            const isThai = !targetLang || /^(th(?:-[a-z0-9]+)?|thai|ไทย)$/i.test(String(targetLang).trim()) || /thai|ไทย/i.test(String(targetLang));
+            if (isThai) {
+              const cjk = (joined.match(/[\u3400-\u9FFF\uF900-\uFAFF]/g) ?? []).length;
+              const thai = (joined.match(/[\u0E00-\u0E7F]/g) ?? []).length;
+              if (cjk > thai) return false;
+            }
+            return true;
           } catch {
             return false;
           }
