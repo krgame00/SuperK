@@ -81,7 +81,7 @@
 - **การ validate:** ฉีดหน้า canvas ตัวจีนจำลอง → PaddleOCR **ไม่จับ**ตัวจีนที่วาด (bubble ว่าง t="") = ข้อจำกัดของหน้าปลอม ไม่ใช่บั๊ก — validation ที่แท้จริง = ผู้ใช้กด "แปลหน้านี้ใหม่"/แปลทั้งเล่ม ในงานจริงหลัง refresh (prompt ใหม่ถูกใช้ทันที ไม่ต้อง restart เซิร์ฟเวอร์)
 - **ทดสอบ live อื่นๆ รอบนี้ (ผ่านหมด):** translate-all จริง 4 หน้า QA — progress ใหม่เดินครบ ("กำลังคลีนหน้า 2/4 (33%)" → "กำลังแปลหน้า 3/4 (67%)" + ⏱ ต่อหน้า/รวม + เตรียมล่วงหน้า), Gemini ช้า 58s = latency ผู้ให้บริการไม่ใช่ค้าง, Auto-Retry ตอน OCR ไม่เจอข้อความทำงานเอง
 - **ตรวจ API ตรงๆ (เผิญจริง):** เรียก /api/translate ตรงด้วยหน้าจีน + prompt ใหม่ → model = **gemini-3.5-flash-lite** (Auto routing เลือกตัวเบา) ตอบ **bubbles ว่าง** (validateSuccess เก่าผ่านเพราะเช็คแค่ Array.isArray) → **แก้ validateSuccess (handler.ts:420):** (1) bubble ทั้งหมดมี t ว่าง → reject → rotate โมเดลถัดไป (2) target ไทย + คำแปล CJK > Thai (echo จีน) → reject → rotate — "ไม่พบข้อความ" (bubbles=[]) ยังผ่านตามเดิม — รอบทดสอบหลังแก้: 504 เพราะหน้าจีนจำลอง (ตัวอักษรแนวตั้งวาดเอง) ไม่ผ่านโมเดลไหนเลย = ข้อจำกัดหน้าปลอม ไม่ใช่ regression — validation ใหม่ต้อง validate ด้วยหน้าจริงของผู้ใช้
-- **สถานะ uncommitted สะสม:** export progress bar + inspector fix (activeBubbles deps) + prompt fix จีน + validateSuccess echo/empty guard — รอผู้ใช้ทดสอบงานจริง (refresh แล้วแปลหน้าที่ flag ใหม่) → commit; ถ้ายัง echo → ขั้นถัดไป: text-mode two-pass fallback ฝั่ง server
+- **สถานะ uncommitted สะสม:** export progress bar + inspector fix (activeBubbles deps) + prompt fix จีน + validateSuccess echo/empty guard — **COMMITTED+PUSHED แล้ว (7a633a8 รวม prompt+echo guard)**; ถ้ายัง echo → ขั้นถัดไป: text-mode two-pass fallback ฝั่ง server
 
 ### ต่อ: บั๊ก "เครื่องมือแก้ไขข้อความใช้ไม่ได้" — ตัวการตัวจริง — 2026-11-01 (UNCOMMITTED)
 
@@ -89,8 +89,8 @@
 - **แก้:** RemnantReviewPanel เพิ่ม effect ฟัง event `superk:bubble-selected` (มีอยู่แล้วในระบบ — CanvasHost ฟังอยู่แล้ว) → มี detail (เลือกกล่อง) → `setIsCollapsed(true)` อัตโนมัติ — แผงย่อเป็น pill "จุดรอตรวจ N จุด" กดกลับเพื่อกางได้
 - **ยืนยัน live:** เลือกกล่อง → แผงย่อเอง (เหลือ pill) → ปุ่ม Inspector คลิกผ่าน (ไม่มี covered-by timeout อีก)
 - **หมายเหตุ:** ผู้ใช้ใช้งานผ่าน IAB ที่โค้ดใหม่ — อาการ "ใช้ไม่ได้" ที่เหลือหลัง fix นี้ให้เก็บ click-sequence แนบมาด้วย (automation ตรวจ bold ได้ยากเพราะ style อยู่ใน overlay canvas)
-- **Gates:** tsc 0 / eslint 0 errors / tests workspace+cleaning ผ่าน — full suite รอยืนยัน — **UNCOMMITTED สะสม: progress bar + inspector deps fix + prompt จีน + echo/empty guard + auto-collapse**
-- **สถานะ uncommitted สะสม:** export progress bar + inspector fix (activeBubbles deps) + prompt fix จีน — รอผู้ใช้ทดสอบงานจริง → commit
+- **Gates:** tsc 0 / eslint 0 errors / tests workspace+cleaning ผ่าน — **COMMITTED+PUSHED (5d42447/eb9ed6a/7a633a8/fb5dfee)** — flaky note: translationOverlayCornerDrag + WorkspacePage stopwatch fail ได้ตอน suite โหลด (pass ตอนรันเดี่ยว) — uncommitted เหลือ 0
+- **สถานะ uncommitted สะสม:** export progress bar + inspector fix (activeBubbles deps) + prompt fix จีน — **COMMITTED แล้ว (รวมอยู่ใน 4 commits ด้านบน)** รอผู้ใช้ทดสอบงานจริงต่อ
 - **เคลียร์ C (user เลือกเฉพาะ updater caches):** ลบ installer/pending ใน 9 โฟลเดอร์ *-updater ใน AppData\Local (+2.4 GB → ว่าง 33.3 GB) — uv cache 3.1 GB user เลือก**ไม่**ลบ (เผื่อ rebuild venv), CapCut/Brave/electron/Discord ใหญ่แต่เป็น app data ให้จัดผ่านแอปเอง
 
 ### ต่อ: ย้าย C:\Users\PC\ZCodeProject — 2026-10-31
