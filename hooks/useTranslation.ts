@@ -726,6 +726,7 @@ export function useTranslation({
     currentPage,
     pages,
     viewMode,
+    activeBubbles,
     markPageDirty,
     getPageTargetLanguage,
     isTranslating,

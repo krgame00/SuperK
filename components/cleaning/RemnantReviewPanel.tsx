@@ -89,6 +89,19 @@ export function RemnantReviewPanel({
   const [side, setSide] = useState<"right" | "left">("right");
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [busyCandidateId, setBusyCandidateId] = useState<string | null>(null);
+
+  // Auto-collapse when the user selects a text bubble: the inspector takes
+  // over this edge of the screen and this panel would otherwise cover its
+  // buttons (they stay clickable through the collapsed pill).
+  useEffect(() => {
+    const handleBubbleSelected = (e: Event) => {
+      const custom = e as CustomEvent;
+      if (custom.detail) setIsCollapsed(true);
+    };
+    window.addEventListener("superk:bubble-selected", handleBubbleSelected);
+    return () => window.removeEventListener("superk:bubble-selected", handleBubbleSelected);
+  }, []);
+
   const [busyAction, setBusyAction] = useState<"restore" | "clean" | null>(null);
   const [comparison, setComparison] = useState<{ candidate: RemnantCandidate; revisionKey: string; sourceUrl: string; cleanUrl: string }>();
   const [wholeComparison, setWholeComparison] = useState<{ revisionKey: string; sourceUrl: string; cleanUrl: string; loaded: number }>();
