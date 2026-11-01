@@ -1680,8 +1680,31 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       if (!current?.cleanBlob || boxes.length === 0) return undefined;
       let width = 0;
       let height = 0;
-      let luma: Uint8ClampedArray;
+      let cleanLuma: Uint8ClampedArray;
+      let sourceLuma: Uint8ClampedArray;
       try {
+        const toLuma = async (blob: Blob): Promise<Uint8ClampedArray> => {
+          const bitmap = await createImageBitmap(blob);
+          const canvas = document.createElement("canvas");
+          canvas.width = bitmap.width;
+          canvas.height = bitmap.height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) throw new Error("2d context unavailable");
+          ctx.drawImage(bitmap, 0, 0);
+          const size = { w: bitmap.width, h: bitmap.height };
+          bitmap.close?.();
+          const data = ctx.getImageData(0, 0, size.w, size.h).data;
+          const luma = new Uint8ClampedArray(size.w * size.h);
+          for (let i = 0; i < luma.length; i++) {
+            luma[i] =
+              (data[i * 4] * 0.299 + data[i * 4 + 1] * 0.587 + data[i * 4 + 2] * 0.114) | 0;
+          }
+          return luma;
+        };
+        const sourceResponse = await fetch(pageUrl, { cache: "no-store" });
+        if (!sourceResponse.ok) return undefined;
+        sourceLuma = await toLuma(await sourceResponse.blob());
+        // Dimensions come from the cleaned blob (same page geometry).
         const bitmap = await createImageBitmap(current.cleanBlob);
         width = bitmap.width;
         height = bitmap.height;
@@ -1693,15 +1716,15 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
         ctx.drawImage(bitmap, 0, 0);
         bitmap.close?.();
         const data = ctx.getImageData(0, 0, width, height).data;
-        luma = new Uint8ClampedArray(width * height);
-        for (let i = 0; i < luma.length; i++) {
-          luma[i] =
+        cleanLuma = new Uint8ClampedArray(width * height);
+        for (let i = 0; i < cleanLuma.length; i++) {
+          cleanLuma[i] =
             (data[i * 4] * 0.299 + data[i * 4 + 1] * 0.587 + data[i * 4 + 2] * 0.114) | 0;
         }
       } catch {
         return undefined;
       }
-      const { ink, pixels } = buildResidueMask(luma, width, height, boxes);
+      const { mask, pixels } = buildResidueMask(cleanLuma, sourceLuma, width, height, boxes);
       if (pixels < 200) return undefined; // nothing meaningful to sweep
       const maskCanvas = document.createElement("canvas");
       maskCanvas.width = width;
@@ -1709,11 +1732,11 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       const maskCtx = maskCanvas.getContext("2d");
       if (!maskCtx) return undefined;
       const frame = maskCtx.createImageData(width, height);
-      for (let i = 0; i < ink.length; i++) {
+      for (let i = 0; i < mask.length; i++) {
         frame.data[i * 4] = 255;
         frame.data[i * 4 + 1] = 255;
         frame.data[i * 4 + 2] = 255;
-        frame.data[i * 4 + 3] = ink[i];
+        frame.data[i * 4 + 3] = mask[i];
       }
       maskCtx.putImageData(frame, 0, 0);
       const maskBlob = await new Promise<Blob | null>((resolve) =>

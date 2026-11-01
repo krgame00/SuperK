@@ -78,6 +78,17 @@
 - **ผลคาดหวัง:** แปล 3 หน้าพร้อมกัน = throughput ช่วง upstream อืดเพิ่มจาก 2× → 3×; ตอน Gemini ปกติ = เดิม (10-15 นาที/เล่ม); คิวคลีน 8 = สำรองหน้าคลีนแล้วไว้เยอะ ไม่กระทบเวลา
 - **Commit status:** รวมทุกงานค้าง — **ยังไม่ commit รอ com push**
 
+### ต่อ: sweep v2 (diff-based) — ผู้ใช้ส่งภาพ "คลีนไม่หมด" แล้ววัดจริง — 2026-11-02
+
+- **ผู้ใช้ถูกตลอด:** วัดด้วย diff-based metric (unchanged ∧ dark ∧ component ≥40px ในกล่อง Gemini) → หน้า 2 มีเศษจริง **40 ก้อน / 20,051 px** — ข้อความจริงหลุดจริง ตามที่ผู้ใช้เห็น
+- **ต้นตอแท้ (แทนที่ทฤษฎีเดิม):** detector YOLO เห็นครบ (21/23 regions) แต่ **CTD segmentation head แทบตันกับตัวหนังสืออังกฤษ** → mask_refiner ได้ mask เล็กเกิน → LaMa ลบได้แค่เสี้ยว → 20k px ค้าง และ residual probe (ตาเดียวกัน) ก็ตัน → รายงาน "repaired" ทั้งที่เหลือ; ส่วน "19/23" ที่ผมวัดก่อนหน้าด้วย edge-density = **ปน screentone false positive** (จุด halftone นับเป็นข้อความ) — เครื่องมือวัดเก่าโกหกสองทาง
+- **ระหว่างทางเจอ 2 จุดที่ต้องแก้:** (1) sweep รุ่น Otsu-on-clean มองไม่เห็นเศษ (blocks บนภาพคลีน conf ต่ำ + mask head ตัน) → เปลี่ยนเป็น **diff-based**: (|clean−source|≤6) ∧ (source<120) ∧ component≥40px ∧ ~protected ∧ ใน region rect(+pad 24) — ไม่พึ่งโมเดลเลย (2) `LetterboxTransform` ไม่ได้ import → NameError กลืนเงียบอีกครั้ง
+- **⚠️ เวอร์ชัน client เดิม (raw extractGlyphInk mask) ทำลายภาพ:** ตัวอย่าง b3 — mask ไปคลุม**พื้นในลูกโป่งสะอาด** แล้ว LaMa เติม tone ใส่ (ยืนยันด้วย crop before/mask/after) — **ผู้ใช้ควร re-clean/re-translate หน้าที่เคยรันผ่านเวอร์ชันนั้น** เพื่อสร้างใหม่จากต้นฉบับ; ตัววัด edge-density ก็เลิกใช้ (โกหกทั้งสองทาง) — เหลือ diff-based metric อย่างเดียว
+- **ผลหลัง sweep v2 (หน้า 2):** 40 ก้อน/20,051 px → **18 ก้อน/2,999 px (−85%)**, job รวม 8.2 วิ; เหลือ 3k px = เคส LaMa-hard (ประเภท B — งานต่อยอด)
+- **ต่อยอด:** client second-pass ยังมีค่าสำหรับข้อความนอก region rects (ที่ server sweep ไม่คลุม) — เปลี่ยน mask เป็น diff-based แล้ว (buildResidueMask v2: clean vs source luma + component filter) + cleanupResidues ดึง source luma จาก pageUrl เอง
+- **สภาพ deploy:** OCR sweep v2 + web client v2 rebuild/restart แล้ว; ตรวจ restart ผ่าน service-ownership (บทเรียน $pid read-only ของ PowerShell — ใช้ $procId)
+- **Commit status:** งาน v2 ทั้งหมด **ยังไม่ commit รอ com push** (รวมของค้างเดิมทุกชุด)
+
 ## สลับ launcher เป็น production mode + แก้ venv พังจากการย้าย + Defender exclusion — 2026-11-01
 
 - **ที่มา:** user รายงาน "ใช้งานแล้วช้ามาก" หลังรีบูตเครื่อง (uptime แค่ 3 นาทีตอนเช็ก) — วินิจฉัยซ้อน 3 ชั้น: (1) `SuperK-Launcher.vbs` รัน `npm run dev` = Turbopack compile สดทีละ route (2) หลังรีบูต Defender สแกน node_modules ใหม่ทั้งกอง (3) **ไม่เคยมี production build เลย** (.next มีแค่โฟลเดอร์ dev)
