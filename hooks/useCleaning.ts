@@ -6,6 +6,7 @@ import {
   createCleaningJob,
   getCleaningJob,
   getCleaningResult,
+  inpaintCrop,
   restoreCleaningJob,
   retryCleaningRegion,
 } from "@/lib/cleaning/client";
@@ -26,6 +27,7 @@ import {
 } from "@/lib/projectStore";
 import { assertMatchingImageDimensions } from "@/lib/translationPipeline";
 import { authorizationIdentity } from "@/lib/cleaning/textAuthorization";
+import { buildResidueMask, type PromilleBox } from "@/lib/cleaning/residueMask";
 import { undoManager } from "@/lib/undoManager";
 import { LRUMap } from "@/lib/lruMap";
 import {
@@ -1663,10 +1665,85 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       ? progressState.value
       : undefined;
 
+  /**
+   * Second-pass cleanup driven by translated-bubble boxes: detect glyph ink
+   * the detector-based pass left inside each box and inpaint it via
+   * /v1/clean/crop. Returns the new clean URL, or undefined when nothing
+   * meaningful was found (or the pass could not run).
+   */
+  const cleanupResidues = useCallback(
+    async (
+      pageUrl: string,
+      boxes: ReadonlyArray<PromilleBox>,
+    ): Promise<string | undefined> => {
+      const current = resultsRef.current.get(pageUrl);
+      if (!current?.cleanBlob || boxes.length === 0) return undefined;
+      let width = 0;
+      let height = 0;
+      let luma: Uint8ClampedArray;
+      try {
+        const bitmap = await createImageBitmap(current.cleanBlob);
+        width = bitmap.width;
+        height = bitmap.height;
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return undefined;
+        ctx.drawImage(bitmap, 0, 0);
+        bitmap.close?.();
+        const data = ctx.getImageData(0, 0, width, height).data;
+        luma = new Uint8ClampedArray(width * height);
+        for (let i = 0; i < luma.length; i++) {
+          luma[i] =
+            (data[i * 4] * 0.299 + data[i * 4 + 1] * 0.587 + data[i * 4 + 2] * 0.114) | 0;
+        }
+      } catch {
+        return undefined;
+      }
+      const { ink, pixels } = buildResidueMask(luma, width, height, boxes);
+      if (pixels < 200) return undefined; // nothing meaningful to sweep
+      const maskCanvas = document.createElement("canvas");
+      maskCanvas.width = width;
+      maskCanvas.height = height;
+      const maskCtx = maskCanvas.getContext("2d");
+      if (!maskCtx) return undefined;
+      const frame = maskCtx.createImageData(width, height);
+      for (let i = 0; i < ink.length; i++) {
+        frame.data[i * 4] = 255;
+        frame.data[i * 4 + 1] = 255;
+        frame.data[i * 4 + 2] = 255;
+        frame.data[i * 4 + 3] = ink[i];
+      }
+      maskCtx.putImageData(frame, 0, 0);
+      const maskBlob = await new Promise<Blob | null>((resolve) =>
+        maskCanvas.toBlob(resolve, "image/png"),
+      );
+      if (!maskBlob) return undefined;
+      try {
+        const cleaned = await inpaintCrop(current.cleanBlob, maskBlob, {
+          featherBlend: true,
+        });
+        const cleanUrl = URL.createObjectURL(cleaned);
+        resultsRef.current.set(pageUrl, {
+          ...current,
+          cleanBlob: cleaned,
+          cleanUrl,
+        });
+        return cleanUrl;
+      } catch {
+        // Inpainting failures must never break the translation flow.
+        return undefined;
+      }
+    },
+    [],
+  );
+
   return {
     cleanPage,
     cleanCurrentPage,
     retryRegion,
+    cleanupResidues,
     resolveMaskRegion,
     cancelPolling,
     currentResult,

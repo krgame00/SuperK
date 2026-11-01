@@ -160,6 +160,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     recheckPageRemnants,
     handleCleanCurrentPage,
     handleRetryRegion,
+    handleCleanupResidues,
     resolveMaskRegion,
     refreshMaskProposal,
     preparePageForTranslation,
@@ -256,6 +257,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     preparePageForTranslation,
     syncCleaningEvidence,
     translationBridgeRef,
+    onTranslationResidueCleanup: handleCleanupResidues,
   });
 
   const {

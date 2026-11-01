@@ -18,6 +18,7 @@ import type {
   ManualRegionAction,
 } from "@/lib/cleaning/types";
 import { translationScope } from "@/lib/cleaning/textAuthorization";
+import type { PromilleBox } from "@/lib/cleaning/residueMask";
 import { workspaceResourceManager } from "@/lib/lifecycle/workspaceResourceManager";
 
 function resolveImageMimeType(blob: Blob, filename?: string): string {
@@ -76,6 +77,10 @@ export type UseCleaningOrchestratorReturn = ReturnType<typeof useCleaning> & {
     cleaner: CleanerOverride,
     action: ManualRegionAction,
   ) => Promise<PageCleaningResult | undefined>;
+  handleCleanupResidues: (
+    pageUrl: string,
+    boxes: readonly (readonly [number, number, number, number])[],
+  ) => Promise<string | undefined>;
   refreshMaskProposal: (
     region: CleaningRegion,
   ) => Promise<{ region: CleaningRegion; maskUrl: string } | undefined>;
@@ -120,6 +125,7 @@ export function useCleaningOrchestrator(
     cleanPage,
     cleanCurrentPage,
     retryRegion,
+    cleanupResidues,
     resolveMaskRegion,
     currentResult: currentCleaningResult,
     progress: cleaningProgress,
@@ -332,6 +338,30 @@ export function useCleaningOrchestrator(
     [retryRegion, pages, currentPage, syncTranslationAfterClean],
   );
 
+  /**
+   * Translation-driven second-pass cleanup: inpaint glyph ink the detector
+   * pass left inside translated-bubble boxes, then re-render the overlay on
+   * the fresh background.
+   */
+  const handleCleanupResidues = useCallback(
+    async (
+      pageUrl: string,
+      boxes: readonly PromilleBox[],
+    ): Promise<string | undefined> => {
+      const cleanUrl = await cleanupResidues(pageUrl, boxes);
+      if (!cleanUrl) return undefined;
+      const pageIndex = pages.findIndex((p) => p.url === pageUrl);
+      const page = pages[pageIndex];
+      if (page) {
+        const pageId = page.id || `page_${pageIndex}`;
+        workspaceResourceManager.registerResource(pageId, "clean", cleanUrl, 1024 * 1024);
+      }
+      syncTranslationAfterClean(pageUrl, cleanUrl, false);
+      return cleanUrl;
+    },
+    [cleanupResidues, pages, syncTranslationAfterClean],
+  );
+
   const [evidenceSyncTrigger, setEvidenceSyncTrigger] = useState(0);
   const syncCleaningEvidence = useCallback(() => {
     setEvidenceSyncTrigger((prev) => prev + 1);
@@ -436,6 +466,7 @@ export function useCleaningOrchestrator(
     cleaningCacheRevision,
     handleCleanCurrentPage,
     handleRetryRegion,
+    handleCleanupResidues,
     refreshMaskProposal,
     preparePageForTranslation,
     getExpectedRemnantEvidence,

@@ -39,6 +39,10 @@ export interface UseTranslationOrchestratorOptions {
   ) => Promise<PreparedTranslationPage>;
   syncCleaningEvidence: () => void;
   translationBridgeRef: { current: TranslationBridge };
+  onTranslationResidueCleanup?: (
+    pageUrl: string,
+    boxes: readonly (readonly [number, number, number, number])[],
+  ) => Promise<unknown> | void;
 }
 
 export function useTranslationOrchestrator({
@@ -55,6 +59,7 @@ export function useTranslationOrchestrator({
   preparePageForTranslation,
   syncCleaningEvidence,
   translationBridgeRef,
+  onTranslationResidueCleanup,
 }: UseTranslationOrchestratorOptions) {
   const pageUrls = useMemo(() => pages.map((p) => p.url), [pages]);
   const pageIds = useMemo(
@@ -117,6 +122,8 @@ export function useTranslationOrchestrator({
     preparePageForTranslation,
     getCleanedPageUrl,
     onPageDirtied,
+    onTranslationResidueCleanup,
+    parallelPages: 3,
   });
 
   const {

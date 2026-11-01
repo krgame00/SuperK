@@ -218,7 +218,7 @@ test("all malformed NSFW slice responses fail without caching Clean", async () =
   });
 
   expect(await translation).toBe(false);
-  expect(translateRequest).toHaveBeenCalledTimes(6);
+  expect(translateRequest).toHaveBeenCalledTimes(7); // 1 full-page pre-pass + 6 slices
   expect(result.current.translatedImageCacheRef.current.has("blob:nsfw")).toBe(false);
 });
 
@@ -299,6 +299,6 @@ test("malformed NSFW bubble elements fail without caching Clean", async () => {
   });
 
   expect(await translation).toBe(false);
-  expect(translateRequest).toHaveBeenCalledTimes(6);
+  expect(translateRequest).toHaveBeenCalledTimes(7); // 1 full-page pre-pass + 6 slices
   expect(result.current.translatedImageCacheRef.current.has("blob:nsfw")).toBe(false);
 });

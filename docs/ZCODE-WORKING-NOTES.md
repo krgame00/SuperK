@@ -6,6 +6,78 @@
 
 ---
 
+## เล่ม 638800 (อังกฤษ→ไทย 36 หน้า, ฟอนต์ Itim) + ต้นตอความช้าของการคลีน + สลับ onnxruntime — 2026-11-01
+
+- **งาน:** ผู้ใช้ให้ ZIP 638800 (Arimura Daikon, ต้นฉบับอังกฤษ, 36 หน้า) พร้อมสั่งฟอนต์ Itim — ตรวจแล้ว Itim เป็นค่าเริ่มต้นของแอปอยู่แล้ว (`lib/customFonts.ts`) — แปลครบ 36/36 หน้า: **373 bubbles, t-field ไทยล้วน (latin=0, cjk=0 — คำสั่งห้ามละตินใน t ผ่านทั้งที่ต้นฉบับอังกฤษ), flash-lite attempt=1 ทุกหน้า, เฉลี่ย 5.6 วิ/หน้า**
+- **ต้นตอความช้า (ผู้ใช้ถาม "ทำไมช้าขนาดนี้ ควรจะเร็วกว่านี้ไม่ใช่หรอ"):** อ่าน `timings_ms` จาก GET /v1/jobs/{id}/result → detect 1.0s / refine 0.2s / **clean 162s (lama_inference_count=1 = forward pass เดียว full-page!)** / verify 1.4s → ไล่โค้ดพบว่า **Big LaMa รันผ่าน ONNX Runtime (`models/anime-manga-big-lama.onnx` 206 MB) ไม่ใช่ torch** (`cleaners/lama_large.py`: "the shipped Windows runtime intentionally does not require PyTorch") และ **onnxruntime 1.28.0 ที่ลงอยู่เป็นตัว CPU-only** (providers = [Azure, CPU]) ทั้งที่ `ort_utils.py` เตรียมระบบ GPU ไว้ครบ (preferred_providers, เติม CUDA DLL จาก torch/lib, CPU fallback) — สรุป: torch+cu130 ที่สลับก่อนหน้าไม่ใช่ชิ้นส่วนที่ขาด (red herring — torch ไม่ใช่เครื่องยนต์คลีน)
+- **สลับ onnxruntime (ผู้ใช้อนุมัติ DirectML ผ่าน AskUserQuestion):** `pip uninstall onnxruntime` + `uv pip install onnxruntime-directml` (1.24.4 — ต้อง uninstall ก่อนเพราะ import name เดียวกัน) → providers มี DmlExecutionProvider → **คลีน 167–330 วิ/หน้า → 3.1–8.6 วิ/หน้า (~45×) — 35 หน้าที่เหลือจบใน ~2 นาที** (หน้า 1–4 โดนคลีนไปก่อนสลับ — โมเดลเดียวกัน ผลลัพธ์เท่ากัน)
+- **คำเตือนสภาพแวดล้อม:** lock file จะดึงกลับเป็นตัว CPU ทั้ง torch (+cpu) และ onnxruntime (1.28) เมื่อ rebuild venv — ต้องสลับซ้ำทั้งสอง (บันทึกใน memory แล้ว); ตรวจ provider ด้วย `onnxruntime.get_available_providers()`; กฎ: อ่าน `timings_ms` ก่อนตั้งทฤษฎี
+- **รายงาน Itim:** `C:\Users\PC\.zcode\v2\visualizations\8d94d...\manga-translate-638800.html` (1006 KB — ต่ำกว่าลิมิต 1 MB แบบเฉียด) — 36 tabs + overlay กล่องไทยฟอนต์ Itim (Google Fonts link — CSP อนุญาต) + ตารางต้นฉบับ↔ไทย; บทเรียนขนาด fragment: 36 หน้า×373 bubbles ต้องย่อภาพ 260px/q32 (559 KB) + ตัด data-tooltip/sr-only ที่ซ้ำกับตาราง
+- **Commit status:** ไม่มีการแก้โค้ด repo รอบนี้ (แก้แค่สภาพแวดล้อม venv: torch cu130 + onnxruntime-directml); ส่วนขยายอนาคต: onnxruntime-gpu + CUDA 12 DLL เร็วกว่า DirectML ได้ แต่เสี่ยง DLL hell
+
+### ต่อ: ผู้ใช้ทดลองในแอปจริงแล้วช้า (~2-3 นาที/หน้า) — ต้นตอ NSFW bypass slicing — 2026-11-01
+
+- ผู้ใช้กดแปลเล่ม 638800 ในแอป → progress bar 6 นาทีแล้วผ่านแค่ 3/36 (6%) + banner "พบปัญหาบางอย่าง" — log ฝั่ง OCR เร็วปกติ (job จบในไม่กี่ poll) = คอขวดอยู่ฝั่ง translate ในแอป
+- **ต้นตอ (hooks/useTranslation.ts):** โหมด NSFW bypass ซอยหน้าเป็น 6 ชิ้น (3×2) แล้ว**แปลเรียงลำดับ** = 6 Gemini calls/หน้า + หน่วง 1 วิระหว่างชิ้น; ขั้นเติมคำแปลที่ตกหล่น (recovery) ตัด crop ราย bubble ด้วย **PNG เต็มคุณภาพ** (payload หนัก 1-3 MB) + isRetry rotation ต่อชิ้น
+- **แก้ 2 จุด (minimal):** (1) 6 slices ยิง **Promise.all พร้อมกัน** — เก็บผลแล้วรวมตามลำดับชิ้นเดิม (dedupe priority คงเดิม), semantics การ abort (cancel / retryable 429) คงเดิม, ตัด sleep ระหว่างชิ้น (2) recovery crop เปลี่ยน PNG → **JPEG 0.9** (payload -70% สอดคล้อง slice หลักที่ใช้ JPEG 0.8) — tsc 0 / eslint 0 errors / vitest tests/translation+api **541 passed** / build ใหม่ + restart แล้ว (frontend 200 @ 5 ms)
+- **ผู้ใช้ต้องทำ:** หยุด run เดิมในแอป → Ctrl+Shift+R → เริ่มแปลใหม่ (โค้ดเก่ายังอยู่ในแท็บเดิม) — คาดหวัง stage ซอย 6 ชิ้นลดจาก ~40-70 วิ → ~8-12 วิ/หน้า
+- **Commit status:** hooks/useTranslation.ts แก้แล้ว **ยังไม่ commit** (รอ com push ถัดไป)
+
+### ต่อ: ทำให้ NSFW bypass ไม่กินโทเคน — full-page pre-pass — 2026-11-01 (user ถาม "มีวิธีไหม")
+
+- **ดีไซน์ใหม่:** เปิด bypass แล้วจะ**ลองส่งทั้งหน้า 1 call ก่อน** (ปุ่มสถานะ "กำลังแปลทั้งหน้าก่อน (ประหยัดโทเคน)") — ได้ bubbles > 0 = จบ ใช้ 1 call; ตอบว่าง/parse พัง (soft refusal / miss) เท่านั้นที่ตกไปซอย 6 ชิ้น (parallel แล้ว) — เหตุผล: ทดสอบจริงเล่ม 638800 ผ่านทั้งหน้า 36/36 โดยไม่ต้องซอย
+- **ผล token:** เดิม bypass = 6 calls/หน้าทุกหน้า (~6× prompt ใหญ่); ใหม่ = ~1 call/หน้าสำหรับหน้าที่ผ่าน, จ่าย 6 calls เฉพาะหน้าที่โมเดลปฏิเสธ → ประหยัด ~80% ในเล่มทั่วไป; หน้าเปล่าจริง ๆ จะยังซอย (6 calls เปล่า) — ยอมรับได้เพราะไม่รู้ว่าเปล่าก่อนลอง
+- **เทส:** 4 เทสเดิมแดงเพราะ assert `toHaveBeenCalledTimes(6)` (สัญญาเดิม bypass = 6 calls) — พฤติกรรมอื่น (malformed → fail โดยไม่ cache) ยังถูกต้อง → อัปเดต assertion เป็น 7 (1 pre-pass + 6 slices, มี comment) ทั้ง imageLateEdges/imageLatency → **541/541 ผ่าน**, tsc 0, build + restart แล้ว
+- **start-production.ps1 (WIP) แก้เพิ่ม:** เปิด browser เฉพาะ cold launch (web ไม่ได้รันตอนเริ่ม) — รีสตาร์ทซ้ำไม่เด้งแท็บกองอีก; ยืนยันแล้วว่า restart รอบนี้ไม่มีแท็บใหม่
+- **Commit status:** hooks/useTranslation.ts + เทส 2 ไฟล์ + start-production.ps1 (WIP) — รอ com push
+
+### ต่อ: เทส token saver กับภาพจริง (ผู้ใช้สั่ง "ไปทดสอบกับภาพจริงเลย") — 2026-11-01
+
+- เทสด้วยสคริปต์ที่เลียน flow ใหม่เป๊ะ (pre-pass ทั้งหน้า → ซอยเฉพาะเมื่อว่าง; slice geometry 3×2 overlap 15% JPEG 0.8 ตามแอป) บน 4 หน้าจริง: **638800 หน้า 20 = 1 call / 9 bubbles (3.5s), หน้า 36 = 1 call / 10 bubbles (4.1s)** — token saver ทำงาน; **638800 หน้า 2 = pre-pass ตอบว่าง (flash-lite variance — หน้าเดิมเคยให้ 23 bubbles เมื่อ ~1.5 ชม.ก่อน!) → fallback ซอย 6 ชิ้นเก็บได้ 11 bubbles** = ระบบจัดการ soft-miss ได้สวย (พลาดทั้งหน้าไม่ใช่ความล้มเหลวอีกต่อไป); **680284 หน้า 9 (ไม่มีข้อความ) = 7 calls จบเป็น 0 bubbles** (trade-off ที่รับไว้)
+- รวม 16 calls เทียบแบบเก่า 24 (4 หน้า×6); บนเล่มเต็ม 36 หน้าที่ผ่านหมด = 36 เทียบ 216 (~83% ประหยัด)
+- สคริปต์ `F:\manga-cache\temp\superk-bypass-realtest.mjs` + slices ที่ `bypasstest/{p20,p36}` — บทเรียน: สคริปต์รอบแรกลืมสร้าง slice ให้เล่ม 638800 (ENOENT) — แก้แล้ว rerun
+
+### ต่อ: diagnostic report ของผู้ใช้ เฉลยปริศนา bypass + บทเรียนการรีสตาร์ท — 2026-11-01
+
+- ผู้ใช้ส่ง System Diagnostic Report (50 entries, 44 errors) — ถอดรหัสได้: **มวล "Failed to fetch" (การคลีน) + หน้า 5/36, 6/36, 7/36 Network error ช่วง 22:47 เกิดจากผมหยุด/รีสตาร์ท web+OCR กลางการแปลของผู้ใช้** (ช่วงสลับ DirectML และตอน build หลังแก้ parallel slices) → หน้าที่ตกในช่วงนั้นรวมเป็น failure groups → banner "พบปัญหาบางอย่าง" → หน้าต่าง diagnostic เสนอปุ่ม "เปิด NSFW bypass แล้วลองใหม่" → ผู้ใช้กด → **bypass เปิดค้างทั้ง session = ปริศนาที่ช้าทั้งเล่มเฉลยแล้ว (ไม่ใช่ผู้ใช้ตั้งใจเปิดจาก Settings)**
+- **Gemini upstream ก็แสบจริงช่วงนั้น**: 502 "Gemini rejected" / 504 timeout / GEMINI_ROUTE_COOLDOWN (12s) — server จัดการครบ (retryable → หมุนคีย์/โมเดล → งานผ่านหมด) และบางส่วนมาจาก burst เทสของผมเอง (24 calls/5 นาที ตอน 23:08-23:11 ก็โดน 502/504 แต่ retry รอด)
+- **สถานะ ณ 23:28+: เขียวหมด** — smoke translate ล่าสุด 23 bubbles / attempt=1 / 6.8s; error สุดท้ายใน log = 23:11 (เทสของผม) เงียบต่อเนื่อง
+- **บทเรียนสำคัญ (จำเข้า memory): อย่ารีสตาร์ท service ตอนผู้ใช้กำลังรันงาน — เตือน/ขอให้หยุดก่อนเสมอ** มิฉะนั้นงานผู้ใช้พังกลางทางแล้วผู้ใช้ต้องเดาเองว่าทำไม
+
+### ต่อ: ไล่ mask refinement (ผู้ใช้สั่ง) → residual sweep — 2026-11-02
+
+- **วัดหลักฐานก่อนแก้ (ไม่เปิดดูภาพ):** ยิง detector ใส่ภาพหลังคลีน → เจอ 3-7 regions/หน้า; edge-density ต่อ region = **5/7 เป็นข้อความจริง** (อีก 2 = ลูกโป่งเปล่า false positive) — เศษมีจริง
+- **จุดที่ผิดพลาดระหว่างทำ (จำไว้):** (1) confidence 0.93-0.97 ที่เห็นใน result regions คือ **eligibility/route confidence ไม่ใช่ confidence ของ detector blocks** — blocks จริงบนภาพคลีนต่ำกว่า 0.5 ทั้งหมด → gate 0.5 บล็อกหมด (ลดเหลือ 0.35 = พื้นของ detector) (2) CTD **mask head** ให้ prob ต่ำบนภาพคลีนบางส่วน แม้ YOLO จะเจอ → sweep ต้องสร้าง synthetic glyph prob ด้วย **Otsu ต่อ block + polarity ตามขอบ** (เหมือน extractGlyphInk ฝั่ง client) แล้วค่อยส่งเข้า self.refiner (3) `LetterboxTransform` ไม่ได้ import → NameError โดน best-effort catch กลืนเงียบ (จับได้จาก full.calls==1 ในเทส)
+- **ของที่ส่งมอบ (TDD, 258 pytest + ruff ผ่าน):** `SUPERK_RESIDUAL_SWEEP=1` (ใน start-production.ps1 แล้ว) → หลัง region loop: detect(clean) → blocks conf≥0.35 → Otsu glyph candidates ต่อ block (ข้าม flat: std<6) → self.refiner ขัดเกลา → residual mask = glyphs & ~(eligible|refined.mask) & ~protected → LaMa 1 call → metrics `residual_sweep_runs/pixels` ใน timings; พร้อม WARNING diagnostics ลง ocr-error.log
+- **ผลจริงแบบตรงไปตรงมา:** sweep ยิงได้ (319 px หน้า 20) แต่เศษรวมลดไม่ชัด — เพราะเศษแบ่งเป็น 4 ประเภท (จากการ match rects กับ main-pass records): **(A) detector miss ตั้งแต่ต้น** (overlap 0.00 — blocks ไม่ยอมเกิดบนภาพคลีน แม้ gate 0.35 → sweep มองไม่เห็น) **(B) LaMa ลบไม่หมด** (region-7 residual=0.37 หลัง escalate 3 ครั้ง — คนละศึกกับ sweep) **(C) SFX-policy ปกป้อง** (region-4 — ผู้ใช้สลับ SFX=แปล แก้ได้) **(D) needs_review ตามดีไซน์ safe** (SFX=แปล ก็จัดการ)
+- **สรุปให้ผู้ใช้:** ตัวหลักที่แก้ความชอกของผู้ใช้ = สลับ SFX → แปล (all-text) + sweep เป็นเซฟตี้เน็ตชั้นท้าย; (A) แก้ได้ด้วยการลด `confidence_threshold` ของ detector (0.35 → ~0.25) แต่เสี่ยง false positive บนงานศิลป์ — ทำเป็น opt-in ภายหลัง; (B) ต้องปรับคุณภาพ inpainting (เช่น ทำ LaMa ซ้ำเฉพาะ region ที่ residual สูง) — งานหน้า
+- **Commit status:** pipeline.py + tests/test_pipeline.py แก้แล้ว **ยังไม่ commit** (รวมกับ useTranslation.ts + เทส + launcher + start-production.ps1 WIP รอ com push)
+
+### ต่อ: คลีนรอบสองจากกล่อง Gemini (ผู้ใช้อนุมัติ "สร้างเลย") — 2026-11-02
+
+- **หลักฐานปิดเคส:** วัดด้วยกล่อง bubble จาก Gemini เทียบภาพหลังคลีน (edge-density ต่อกล่อง) → **19/23 bubbles บนหน้า 2 ยังมีตัวหนังสือค้าง** — CTD detector มองเห็นแค่ ~4-6 จาก 23 = รากของ "คลีนไม่หมด" ที่ detector-based sweep ช่วยไม่ได้
+- **ดีไซน์ (ใช้ของเดิมทั้งหมด):** หลังแปลแต่ละหน้าเสร็จ → `runResidueCleanup(pageUrl, coloredBubbles)` (useTranslation) → ผ่าน `onTranslationResidueCleanup` (wiring: controller → useTranslationOrchestrator → useCleaningOrchestrator.handleCleanupResidues) → `useCleaning.cleanupResidues`: luma จาก cleanBlob (createImageBitmap+canvas) → `buildResidueMask` (lib/cleaning/residueMask.ts — extractGlyphInk ต่อ box, รวม ink, ข้าม box ที่ ink < minInkPixels 120) → ถ้า pixels ≥ 200 → mask PNG → **`inpaintCrop()` → POST /v1/clean/crop (endpoint ที่มีอยู่แล้ว — sync inpaint + featherBlend)** → อัปเดต resultsRef (cleanBlob/cleanUrl) → `syncTranslationAfterClean` เรนเดอร์ทับ
+- **ทดสอบ:** residueMask.test.ts 4/4 (ink ตรง box, ข้าม noise < minInk, ภาพสะอาด = 0, malformed boxes ไม่ throw) — รวม **tsc 0 / eslint 0 errors / 545 vitest ผ่าน** / build + restart (ไม่เด้งแท็บ ✓)
+- **พฤติกรรม:** best-effort — ล้มเหลวกลางทางไม่กระทบการแปล (try/catch ครบ); หน้าที่ไม่มีเศษ (pixels < 200) ข้ามทันทีไม่เปลือง API; งาน LaMa ~1 call ต่อหน้าเฉพาะหน้าที่มีเศษ
+- **Commit status:** เพิ่ม lib/cleaning/residueMask.ts + tests/cleaning/residueMask.test.ts (ไฟล์ใหม่) + แก้ 5 hooks — **ยังไม่ commit ทั้งหมด รอ com push**
+
+### ต่อ: parallel page translation (ผู้ใช้เลือกทางเลือก 3) — 2026-11-02
+
+- **ที่มา:** ผู้ใช้รายงาน "30 นาทีได้ 10 หน้า" — พิสูจน์แล้วว่า OCR/คลีนเร็ว (0.5-5.9 วิ/job จาก 50 jobs) คอขวดคือ **Gemini upstream อืด/ปฏิเสธเป็นระลอก** (probe สด: หน้า 2 = 49.7s attempt=2; ปกติ 5.6s attempt=1) — ผู้ใช้เลือกแก้ด้วยการแปลหลายหน้าพร้อมกัน
+- **ดีไซน์:** handleTranslateAll รื้อ consumer loop เป็น **worker pool** — `processOnePage(i)` มีเนื้อ per-page เดิมเกือบเป๊ะ (prep gates + performTranslation + retry ≤2 + failure groups + quota abort) — `processWorker` ดึง position ถัดไปจาก indicesToProcess; **PARALLEL_PAGES = parallelPages ?? 1** (default sequential = สัญญาเดิมของเทส) และ **useTranslationOrchestrator ส่ง 2 ให้ production**; ตัด cooldown ระหว่างหน้า; progress แบบรวม (`กำลังแปล N หน้าพร้อมกัน · เสร็จ X/Y`); quota → batchController.abort + quotaAborted flag หยุดทุก worker; cancel/signal เช็คทุกจุดเดิม
+- **บั๊กที่จับได้จากเทส (สำคัญ!):** worker แรกของผมใช้ `nextCursor` เป็น page index ตรง ๆ — แต่มันคือ **position ใน indicesToProcess** — full-book (position==index) ไม่เห็นพัง แต่ **targeted retry (indicesToProcess=[1]) ชี้หน้าผิด** — เทส "restores cached edits after cancellation" จับได้ → แก้เป็น `const i = indicesToProcess[position]`
+- **ผลตรวจ:** tsc 0 / eslint 0 errors / **542 tests translation+api ผ่านหมด (เพิ่มเทส parallel: 2 หน้า blocked → maxInFlight=2 → ทั้งคู่ cache)** / build + restart แล้ว
+- **ผลลัพธ์ที่คาดหวัง:** ตอน upstream อืด — 2 หน้ายิงพร้อมกัน → wall time/เล่มลด ~ครึ่ง; ตอน upstream ปกติ — 10-15 นาที/เล่มเท่าเดิม (คู่แข่งคือ 12-key pool รองรับไหว)
+- **Commit status:** hooks/useTranslation.ts (worker pool + parallelPages option) + useTranslationOrchestrator.ts (ส่ง 2) + ไฟล์อื่น ๆ ที่ค้าง — **ยังไม่ commit รอ com push**
+
+### ต่อ: parallelPages 3 + คิวคลีนล่วงหน้า 8 (ผู้ใช้เลือก "ทั้งคู่") — 2026-11-02
+
+- **อธิบายคณิตก่อน:** คลีนล่วงหน้าเพิ่ม ≠ เร็วขึ้น — คลีน (2-5 วิ) วิ่งนำหน้าแปล (20-50 วิ) อยู่แล้วและจอดที่ cap เสมอ; wall time รวม = max(คลีนรวม ~2 นาที, แปลรวม ~15-25 นาที) — ผู้ใช้เลือก "ทั้งคู่" ตามที่เสนอ
+- **แก้ 2 ค่า:** `parallelPages: 3` (useTranslationOrchestrator ส่งให้ production) + pump cap `preparationQueue.size < 8` — เช็ก ResourceBudgetManager ก่อน: budget = 6% RAM cap 128MB-1GB (เครื่อง 32GB → ~1GB) — 8-11 หน้าล่วงหน้า ≈ 50-110MB ปลอดภัย ไม่ trigger eviction
+- **เทสอัปเดต:** "cleans three future pages serially" → prefetch-cap contract ใหม่ (cleaned [0..5] บนเล่ม 6 หน้า, secondaryMessage มี "5") — **546/546 ผ่าน**, tsc 0, build + restart (ไม่เด้งแท็บ ✓)
+- **ผลคาดหวัง:** แปล 3 หน้าพร้อมกัน = throughput ช่วง upstream อืดเพิ่มจาก 2× → 3×; ตอน Gemini ปกติ = เดิม (10-15 นาที/เล่ม); คิวคลีน 8 = สำรองหน้าคลีนแล้วไว้เยอะ ไม่กระทบเวลา
+- **Commit status:** รวมทุกงานค้าง — **ยังไม่ commit รอ com push**
+
 ## สลับ launcher เป็น production mode + แก้ venv พังจากการย้าย + Defender exclusion — 2026-11-01
 
 - **ที่มา:** user รายงาน "ใช้งานแล้วช้ามาก" หลังรีบูตเครื่อง (uptime แค่ 3 นาทีตอนเช็ก) — วินิจฉัยซ้อน 3 ชั้น: (1) `SuperK-Launcher.vbs` รัน `npm run dev` = Turbopack compile สดทีละ route (2) หลังรีบูต Defender สแกน node_modules ใหม่ทั้งกอง (3) **ไม่เคยมี production build เลย** (.next มีแค่โฟลเดอร์ dev)

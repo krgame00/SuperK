@@ -149,6 +149,13 @@ interface UseTranslationProps {
   ) => Promise<PreparedTranslationPage>;
   getCleanedPageUrl?: (pageUrl: string) => string | undefined;
   onPageDirtied?: (pageUrl: string) => void;
+  /** Translation-driven second-pass cleanup: inpaint leftover ink inside these bubble boxes. */
+  onTranslationResidueCleanup?: (
+    pageUrl: string,
+    boxes: readonly (readonly [number, number, number, number])[],
+  ) => Promise<unknown> | void;
+  /** Batch workers translating pages concurrently. Default 1 (sequential). */
+  parallelPages?: number;
 }
 
 const TRANSLATED_IMAGE_CACHE_LIMIT = 8;
@@ -313,9 +320,36 @@ export function useTranslation({
   preparePageForTranslation,
   getCleanedPageUrl,
   onPageDirtied,
+  onTranslationResidueCleanup,
+  parallelPages,
 }: UseTranslationProps) {
   const getCleanedPageUrlRef = useRef(getCleanedPageUrl);
   getCleanedPageUrlRef.current = getCleanedPageUrl;
+  const onTranslationResidueCleanupRef = useRef(onTranslationResidueCleanup);
+  onTranslationResidueCleanupRef.current = onTranslationResidueCleanup;
+  const runResidueCleanup = async (
+    pageUrl: string,
+    bubbles: ReadonlyArray<{ box?: unknown }>,
+  ) => {
+    const cleanup = onTranslationResidueCleanupRef.current;
+    if (!cleanup) return;
+    const boxes = bubbles
+      .map((b) =>
+        Array.isArray(b?.box) && b.box.length === 4
+          ? ([...b.box] as [number, number, number, number])
+          : undefined,
+      )
+      .filter(
+        (b): b is [number, number, number, number] =>
+          b !== undefined && b.every((v) => Number.isFinite(v)),
+      );
+    if (boxes.length === 0) return;
+    try {
+      await cleanup(pageUrl, boxes);
+    } catch (err) {
+      console.warn("[Translation] residue cleanup failed:", err);
+    }
+  };
   const preparedSourceFingerprintsRef = useRef(new Map<string,string>());
   const suppliedSourceFingerprintsRef = useRef(pageSourceFingerprints);
   suppliedSourceFingerprintsRef.current = pageSourceFingerprints;
@@ -1369,7 +1403,9 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           const cropH = crop.height;
           let cropBase64 = "";
           try {
-            cropBase64 = crop.toDataURL("image/png").split(",")[1];
+            // JPEG 0.9 keeps the crop visually lossless for the retry prompt
+            // while cutting the upload payload ~70% vs PNG (slices use JPEG 0.8).
+            cropBase64 = crop.toDataURL("image/jpeg", 0.9).split(",")[1];
           } finally {
             crop.width = 0;
             crop.height = 0;
@@ -1379,7 +1415,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             method:"POST", headers:{"Content-Type":"application/json"}, signal,
             // isRetry: the full-page pass already missed this region, so the
             // crop gets the high-precision retry prompt and model rotation.
-            body:JSON.stringify({imageBase64:cropBase64,mimeType:"image/png",
+            body:JSON.stringify({imageBase64:cropBase64,mimeType:"image/jpeg",
               targetLang,sourceLang,modelPreference,apiKey:userApiKey,allowPreview:allowPreviewModels,glossary,isRetry:true,policy:{sfx:sfxModeRef.current}}),
           });
           const data = await readTranslationResponse<{text:string}>(response);
@@ -1397,6 +1433,51 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       };
 
       if (nsfwBypassMode || forceNsfwBypass) {
+        let allBubbles: TranslatedBubble[] = [];
+        let successCount = 0;
+        let validPayloadCount = 0;
+        let fullPageUsed = false;
+        // Token saver: one full-page attempt first. Only when it comes back
+        // empty (soft refusal / recognition miss) do we pay the 6-slice cost —
+        // most pages pass full-page, cutting bypass from ~6x to ~1x usage.
+        try {
+          if (activePageRef.current === pageUrl) {
+            setTranslationResult("กำลังแปลทั้งหน้าก่อน (ประหยัดโทเคน) — จะซอยเฉพาะเมื่อโมเดลปฏิเสธ…");
+          }
+          const fullRes = await fetch("/api/translate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              imageBase64: base64,
+              mimeType: actualMimeType,
+              targetLang,
+              sourceLang,
+              modelPreference,
+              apiKey: userApiKey,
+              allowPreview: allowPreviewModels,
+              glossary,
+              policy: { sfx: sfxModeRef.current },
+            }),
+            signal,
+          });
+          const fullData = await readTranslationResponse<{ text: string }>(fullRes);
+          const fullParsed = (fullData.text ? parseLLMJSON(fullData.text) : null) as
+            | { bubbles?: TranslatedBubble[] }
+            | null;
+          const fullBubbles = fullParsed && Array.isArray(fullParsed.bubbles)
+            ? normalizeTargetTranslationPayload(fullParsed, targetLang).bubbles ?? []
+            : [];
+          if (fullBubbles.length > 0) {
+            allBubbles = fullBubbles.filter((b) => b.box?.length === 4 && b.box.every(Number.isFinite));
+            successCount = 1;
+            validPayloadCount = 1;
+            fullPageUsed = true;
+          }
+        } catch (err: unknown) {
+          console.warn("Full-page pre-pass failed; falling back to NSFW slicing:", err);
+          if (isUserCancelledError(err)) throw err;
+        }
+        if (!fullPageUsed) {
         const imgEl = await waitForImageReady(recognitionUrl);
 
         const slices = [];
@@ -1431,13 +1512,11 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           }
         }
 
-        let allBubbles: TranslatedBubble[] = [];
-        let successCount = 0;
-        let validPayloadCount = 0;
-
-        for (let i = 0; i < slices.length; i++) {
-          const slice = slices[i];
-          setTranslationResult(`กำลังแปลชิ้นส่วนที่ ${i + 1}/6 ...`);
+        // All slices fire concurrently — they are independent regions, and the
+        // server round-robins its key pool per request. Results are merged in
+        // slice order below so dedupe priority matches the old sequential pass.
+        setTranslationResult(`กำลังแปลชิ้นส่วนทั้งหมด ${slices.length} ชิ้นพร้อมกัน...`);
+        const sliceResults = await Promise.all(slices.map(async (slice) => {
           try {
             const res = await fetch("/api/translate", {
               method: "POST",
@@ -1464,97 +1543,104 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
               throw new Error("Translation response malformed: bubbles array missing.");
             }
             parsed = normalizeTargetTranslationPayload(parsed, targetLang);
-            const sliceBubbles = parsed.bubbles ?? [];
-            if (sliceBubbles.length > 0) {
-              const { sx, sy, sWidth, sHeight } = slice;
-
-              for (const b of sliceBubbles) {
-                if (!b.box || b.box.length !== 4) {
-                  b.box = [0, 0, 1000, 1000];
-                  b.isInvalidBox = true;
-                } else if ((b.box[3] - b.box[1] >= 950 && b.box[2] - b.box[0] >= 950) || (b.box[3] === b.box[1] && b.box[2] === b.box[0])) {
-                  // Invalid box: shrink to a centered 20% patch so it can't
-                  // white-out the whole page; the invalid marker still shows.
-                  const cx = (b.box[1] + b.box[3]) / 2;
-                  const cy = (b.box[0] + b.box[2]) / 2;
-                  b.box = [cy - 100, cx - 100, cy + 100, cx + 100];
-                  b.isInvalidBox = true;
-                }
-
-                const ymin_px = (b.box[0] / 1000) * sHeight;
-                const xmin_px = (b.box[1] / 1000) * sWidth;
-                const ymax_px = (b.box[2] / 1000) * sHeight;
-                const xmax_px = (b.box[3] / 1000) * sWidth;
-
-                const global_ymin_px = ymin_px + sy;
-                const global_xmin_px = xmin_px + sx;
-                const global_ymax_px = ymax_px + sy;
-                const global_xmax_px = xmax_px + sx;
-
-                b.box[0] = Math.round((global_ymin_px / imgEl.naturalHeight) * 1000);
-                b.box[1] = Math.round((global_xmin_px / imgEl.naturalWidth) * 1000);
-                b.box[2] = Math.round((global_ymax_px / imgEl.naturalHeight) * 1000);
-                b.box[3] = Math.round((global_xmax_px / imgEl.naturalWidth) * 1000);
-
-                let isDuplicate = false;
-                // Dedupe against ALL bubbles (invalid boxes too) to stop
-                // overlapping white patches stacking on the same spot.
-                for (const existing of allBubbles) {
-                  if (!existing.box || existing.box.length < 4) continue;
-                  const xA = Math.max(b.box[1], existing.box[1]);
-                  const yA = Math.max(b.box[0], existing.box[0]);
-                  const xB = Math.min(b.box[3], existing.box[3]);
-                  const yB = Math.min(b.box[2], existing.box[2]);
-                  const interWidth = Math.max(0, xB - xA);
-                  const interHeight = Math.max(0, yB - yA);
-                  const interArea = interWidth * interHeight;
-                  const boxAArea = (b.box[3] - b.box[1]) * (b.box[2] - b.box[0]);
-                  const boxBArea = (existing.box[3] - existing.box[1]) * (existing.box[2] - existing.box[0]);
-                  const iou = interArea / (boxAArea + boxBArea - interArea);
-
-                  // Containment: if either box covers ≥80% of the other, they
-                  // are the same bubble. 60% was too aggressive — adjacent
-                  // speech balloons that touch each other were wrongly merged.
-                  const bInExisting = boxBArea > 0 && interArea / boxBArea >= 0.8;
-                  const existingInB = boxAArea > 0 && interArea / boxAArea >= 0.8;
-
-                  // Centroid distance: only merge when centers are very close
-                  // (≤5% of the page). 120/1000 merged distinct adjacent
-                  // bubbles that sit side by side.
-                  const bCx = (b.box[1] + b.box[3]) / 2;
-                  const bCy = (b.box[0] + b.box[2]) / 2;
-                  const eCx = (existing.box[1] + existing.box[3]) / 2;
-                  const eCy = (existing.box[0] + existing.box[2]) / 2;
-                  const dist = Math.hypot(bCx - eCx, bCy - eCy);
-
-                  if (iou > 0.7 || bInExisting || existingInB || dist < 50) {
-                    isDuplicate = true;
-                    break;
-                  }
-                }
-
-                if (!isDuplicate) {
-                  allBubbles.push(b);
-                }
-              }
-            }
-            validPayloadCount++;
-            successCount++;
+            return { ok: true as const, slice, sliceBubbles: parsed.bubbles ?? [] };
           } catch (err: unknown) {
-            console.warn(`Slice ${i + 1} failed:`, err);
+            console.warn(`Slice failed:`, err);
+            return { ok: false as const, err };
+          }
+        }));
+
+        for (const result of sliceResults) {
+          if (!result.ok) {
+            const err = result.err;
             if (isUserCancelledError(err)) throw err;
             if (getTranslationRetryDelay(err) !== null) {
               throw err;
             }
+            continue;
           }
+          const slice = result.slice;
+          const sliceBubbles = result.sliceBubbles;
+          if (sliceBubbles.length > 0) {
+            const { sx, sy, sWidth, sHeight } = slice;
 
-          if (i < slices.length - 1) {
-            await new Promise(r => setTimeout(r, 1000));
+            for (const b of sliceBubbles) {
+              if (!b.box || b.box.length !== 4) {
+                b.box = [0, 0, 1000, 1000];
+                b.isInvalidBox = true;
+              } else if ((b.box[3] - b.box[1] >= 950 && b.box[2] - b.box[0] >= 950) || (b.box[3] === b.box[1] && b.box[2] === b.box[0])) {
+                // Invalid box: shrink to a centered 20% patch so it can't
+                // white-out the whole page; the invalid marker still shows.
+                const cx = (b.box[1] + b.box[3]) / 2;
+                const cy = (b.box[0] + b.box[2]) / 2;
+                b.box = [cy - 100, cx - 100, cy + 100, cx + 100];
+                b.isInvalidBox = true;
+              }
+
+              const ymin_px = (b.box[0] / 1000) * sHeight;
+              const xmin_px = (b.box[1] / 1000) * sWidth;
+              const ymax_px = (b.box[2] / 1000) * sHeight;
+              const xmax_px = (b.box[3] / 1000) * sWidth;
+
+              const global_ymin_px = ymin_px + sy;
+              const global_xmin_px = xmin_px + sx;
+              const global_ymax_px = ymax_px + sy;
+              const global_xmax_px = xmax_px + sx;
+
+              b.box[0] = Math.round((global_ymin_px / imgEl.naturalHeight) * 1000);
+              b.box[1] = Math.round((global_xmin_px / imgEl.naturalWidth) * 1000);
+              b.box[2] = Math.round((global_ymax_px / imgEl.naturalHeight) * 1000);
+              b.box[3] = Math.round((global_xmax_px / imgEl.naturalWidth) * 1000);
+
+              let isDuplicate = false;
+              // Dedupe against ALL bubbles (invalid boxes too) to stop
+              // overlapping white patches stacking on the same spot.
+              for (const existing of allBubbles) {
+                if (!existing.box || existing.box.length < 4) continue;
+                const xA = Math.max(b.box[1], existing.box[1]);
+                const yA = Math.max(b.box[0], existing.box[0]);
+                const xB = Math.min(b.box[3], existing.box[3]);
+                const yB = Math.min(b.box[2], existing.box[2]);
+                const interWidth = Math.max(0, xB - xA);
+                const interHeight = Math.max(0, yB - yA);
+                const interArea = interWidth * interHeight;
+                const boxAArea = (b.box[3] - b.box[1]) * (b.box[2] - b.box[0]);
+                const boxBArea = (existing.box[3] - existing.box[1]) * (existing.box[2] - existing.box[0]);
+                const iou = interArea / (boxAArea + boxBArea - interArea);
+
+                // Containment: if either box covers ≥80% of the other, they
+                // are the same bubble. 60% was too aggressive — adjacent
+                // speech balloons that touch each other were wrongly merged.
+                const bInExisting = boxBArea > 0 && interArea / boxBArea >= 0.8;
+                const existingInB = boxAArea > 0 && interArea / boxAArea >= 0.8;
+
+                // Centroid distance: only merge when centers are very close
+                // (≤5% of the page). 120/1000 merged distinct adjacent
+                // bubbles that sit side by side.
+                const bCx = (b.box[1] + b.box[3]) / 2;
+                const bCy = (b.box[0] + b.box[2]) / 2;
+                const eCx = (existing.box[1] + existing.box[3]) / 2;
+                const eCy = (existing.box[0] + existing.box[2]) / 2;
+                const dist = Math.hypot(bCx - eCx, bCy - eCy);
+
+                if (iou > 0.7 || bInExisting || existingInB || dist < 50) {
+                  isDuplicate = true;
+                  break;
+                }
+              }
+
+              if (!isDuplicate) {
+                allBubbles.push(b);
+              }
+            }
           }
+          validPayloadCount++;
+          successCount++;
         }
 
         if (validPayloadCount === 0) {
           throw new Error("Translation failed: no valid NSFW slice responses.");
+        }
         }
 
         allBubbles = applySfxPolicyToBubbles(deduplicateBubbleSFX(allBubbles, 3)).filter(b =>
@@ -1596,6 +1682,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         pageTargetCacheRef.current.set(pageUrl, jobTargetIdentity);
         completedPagesRef.current.add(pageUrl);
         markPageDirty(pageUrl, false);
+        void runResidueCleanup(pageUrl, coloredBubbles);
 
         if (activePageRef.current === pageUrl) {
           const scriptWarning = unresolvedScriptWarning(coloredBubbles);
@@ -1603,7 +1690,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             ? `⚠️ ยังขาดคำแปล ${completeness.missing.length} จุด กรุณาตรวจหน้านี้ก่อนส่งออก`
             : coloredBubbles.some(needsQualityReview)
               ? "⚠️ แปลสำเร็จ แต่มีคำแปลที่ต้องตรวจ เปิดแก้ไขข้อความเพื่อเทียบต้นฉบับและดูคำแนะนำ"
-              : `✅ แปลสำเร็จ! (ได้ ${successCount}/6 ส่วน)`));
+              : `✅ แปลสำเร็จ!${fullPageUsed ? " (ทั้งหน้า — ไม่ต้องซอย)" : ` (ได้ ${successCount}/6 ส่วน)`}`));
           setShowTranslate(false);
         }
         return true;
@@ -1800,6 +1887,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       pageTargetCacheRef.current.set(pageUrl, jobTargetIdentity);
       completedPagesRef.current.add(pageUrl);
       markPageDirty(pageUrl, false);
+      void runResidueCleanup(pageUrl, coloredBubbles);
 
       if (activePageRef.current === pageUrl) {
         const scriptWarning = unresolvedScriptWarning(coloredBubbles);
@@ -2073,7 +2161,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         try {
           // Outcomes (including the in-flight job) occupy a slot until consumed.
           // The currently translating page has already left this queue.
-          while (!signal.aborted && preparationQueue.size < 3 && producerStep < indicesToProcess.length) {
+          while (!signal.aborted && preparationQueue.size < 8 && producerStep < indicesToProcess.length) {
             const pageIndex = indicesToProcess[producerStep++];
             if (!isTargetedRetry && completedPagesRef.current.has(pages[pageIndex])) continue;
             producerPage = pageIndex;
@@ -2097,33 +2185,45 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         return firstUnready === -1 ? indicesToProcess.length : firstUnready + 1;
       };
 
-      for (let step = 0; step < indicesToProcess.length; step++) {
-        if (cancelTranslateAllRef.current || signal.aborted) break;
-        const i = indicesToProcess[step];
+      // Parallel page workers: each worker pulls the next index and runs the
+      // full per-page flow (preparation gates + performTranslation + retries).
+      // Concurrency stays small — the server round-robins its key pool, so
+      // two workers restore throughput when Gemini latency spikes without
+      // multiplying rate pressure.
+      const PARALLEL_PAGES = Math.max(1, parallelPages ?? 1);
+      let nextCursor = 0;
+      let quotaAborted = false;
+      const busyPages = new Set<number>();
+      const publishParallelProgress = (status: "cleaning" | "translating" | "waiting") => {
+        if (signal.aborted) return;
+        setTranslateAllProgress({
+          current: Math.min(indicesToProcess.length, batchReadyPages.size + busyPages.size),
+          total: indicesToProcess.length,
+          status,
+          message: busyPages.size > 0
+            ? `กำลังแปล ${busyPages.size} หน้าพร้อมกัน · เสร็จ ${batchReadyPages.size}/${indicesToProcess.length}`
+            : cleaningProgress() ?? `เตรียมหน้าถัดไป…`,
+          startTime: batchStartTime,
+          elapsedMs: Math.max(0, Date.now() - batchStartTime),
+          pageElapsedMs: Math.max(0, Date.now() - batchStartTime),
+          secondaryMessage: cleaningProgress(),
+        });
+      };
+
+      const processOnePage = async (i: number): Promise<void> => {
         const pageUrl = pages[i];
 
         const pageStartedAt = Date.now();
         let excludedWaitMs = 0;
-        translationStopwatchRef.current.pageStartedAt = pageStartedAt;
-        translationStopwatchRef.current.pageExcludedMs = 0;
-        translationStopwatchRef.current.pagePausedAt = null;
-        translationStopwatchRef.current.lastPageDurationMs = undefined;
 
-        setTranslateAllProgress({
-          current: batchProgressFrontier(),
-          total: indicesToProcess.length,
-          status: "cleaning",
-          message: `กำลังคลีนหน้า ${i + 1}/${pages.length}`,
-          startTime: batchStartTime,
-          elapsedMs: Math.max(0, pageStartedAt - batchStartTime),
-          pageElapsedMs: 0,
-        });
+        busyPages.add(i);
+        publishParallelProgress("cleaning");
 
         let preparedPage: PreparedTranslationPage;
         try {
           const preparation = await (preparationQueue.get(i) ?? prepareSafely(i));
           preparationQueue.delete(i);
-          if (signal.aborted) break;
+          if (signal.aborted) return;
           void pumpPreparationQueue();
           if (!preparation.ok) throw preparation.error;
           preparedPage = preparation.value;
@@ -2139,7 +2239,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             setReviewFlaggedPages((prev) => new Set(prev).add(pageUrl));
           }
         } catch (error) {
-          if (signal.aborted || isUserCancelledError(error)) break;
+          busyPages.delete(i);
+          if (signal.aborted || isUserCancelledError(error)) return;
           const explicitCleaningCode = error instanceof CleaningClientError
             ? (error.status === 0 || error.status === 502 || error.status === 503 ||
               /timeout|sidecar|8765|เซิร์ฟเวอร์/i.test(error.message))
@@ -2166,21 +2267,12 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             const next = prev.filter((f) => f.pageIndex !== i);
             return [...next, failureItem];
           });
-          continue;
+          return;
         }
-        if (cancelTranslateAllRef.current) break;
+        if (cancelTranslateAllRef.current) return;
         clearVisibleTranslation(pageUrl, i);
 
-        setTranslateAllProgress({
-          current: batchProgressFrontier(),
-          total: indicesToProcess.length,
-          status: "translating",
-          message: `กำลังแปลหน้า ${i + 1}/${pages.length}`,
-          startTime: batchStartTime,
-          elapsedMs: Math.max(0, Date.now() - batchStartTime),
-          pageElapsedMs: Math.max(0, Date.now() - pageStartedAt - excludedWaitMs),
-          secondaryMessage: cleaningProgress(),
-        });
+        publishParallelProgress("translating");
 
         let success = false;
         let retries = 0;
@@ -2358,24 +2450,34 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         ) {
           quotaFailureMessage =
             "❌ โควต้า API เต็ม กรุณารอให้โควต้ารีเซ็ตแล้วลองใหม่";
-          break;
+          quotaAborted = true;
+          return;
         }
 
-        if (success && step < indicesToProcess.length - 1 && !cancelTranslateAllRef.current) {
-          setTranslateAllProgress({
-            current: batchProgressFrontier(),
-            total: indicesToProcess.length,
-            status: "cooldown",
-            message: `พักโหลด 2 วิ... หน้า ${i + 1}/${pages.length}`,
-            startTime: batchStartTime,
-            elapsedMs: Math.max(0, Date.now() - batchStartTime),
-            pageElapsedMs: translationStopwatchRef.current.lastPageDurationMs ?? 0,
-            lastPageDurationMs: translationStopwatchRef.current.lastPageDurationMs,
-            secondaryMessage: cleaningProgress(),
-          });
-          await interruptibleDelay(2000);
+        busyPages.delete(i);
+      };
+
+      const processWorker = async (): Promise<void> => {
+        while (true) {
+          if (cancelTranslateAllRef.current || signal.aborted || quotaAborted) return;
+          const position = nextCursor;
+          if (position >= indicesToProcess.length) return;
+          nextCursor += 1;
+          const i = indicesToProcess[position];
+          try {
+            await processOnePage(i);
+          } finally {
+            busyPages.delete(i);
+          }
         }
-      }
+      };
+
+      await Promise.all(
+        Array.from(
+          { length: Math.min(PARALLEL_PAGES, Math.max(1, indicesToProcess.length)) },
+          () => processWorker(),
+        ),
+      );
 
       if (cancelTranslateAllRef.current) {
         recordBatchMetrics(true);

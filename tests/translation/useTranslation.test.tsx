@@ -620,7 +620,7 @@ test("cancellation during preparation prevents the next page", async () => {
   expect(result.current.bubbleCacheRef.current.has("blob:two")).toBe(false);
 });
 
-test("cleans three future pages serially while the first translation is blocked", async () => {
+test("cleans future pages serially up to the prefetch cap while the first translation is blocked", async () => {
   const pages = Array.from({ length: 6 }, (_, index) => `blob:page-${index}`);
   let releaseTranslation!: (response: Response) => void;
   const blockedTranslation = new Promise<Response>((resolve) => { releaseTranslation = resolve; });
@@ -654,9 +654,9 @@ test("cleans three future pages serially while the first translation is blocked"
   act(() => { batch = result.current.handleTranslateAll(); });
   await act(async () => { for (let tick = 0; tick < 50; tick++) await Promise.resolve(); });
   expect(translated).toEqual([pages[0]]);
-  expect(cleaned).toEqual([0, 1, 2, 3]);
+  expect(cleaned).toEqual([0, 1, 2, 3, 4, 5]); // prefetch cap 8 covers the whole book
   expect(peakCleaners).toBe(1);
-  expect(result.current.translateAllProgress?.secondaryMessage).toContain("3");
+  expect(result.current.translateAllProgress?.secondaryMessage).toContain("5");
   releaseTranslation(successResponse());
   await act(async () => { await batch; });
   expect(cleaned).toEqual([0, 1, 2, 3, 4, 5]);
@@ -1598,4 +1598,58 @@ test("allows retrying a review failure group concurrently while batch translatio
 
   expect(apiCalls).toBe(2);
   expect(result.current.batchFailures).toHaveLength(0);
+});
+
+test("parallelPages 2 translates two blocked pages concurrently", async () => {
+  vi.useFakeTimers();
+  const pages = ["blob:one", "blob:two"];
+  const preparePageForTranslation = vi.fn(async (url: string) => ({
+    recognitionUrl: url,
+    backgroundUrl: `blob:clean-${url.split(":")[1]}`,
+  }));
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const release: Array<() => void> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (pages.includes(url)) return imageResponse();
+    if (url === "/api/translate") {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise<void>((resolve) => release.push(resolve));
+      inFlight -= 1;
+      return successResponse();
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  const { result } = renderHook(() =>
+    useTranslation({
+      currentPage: 0,
+      pages,
+      viewMode: "single",
+      preparePageForTranslation,
+      parallelPages: 2,
+    }),
+  );
+
+  let batch!: Promise<void>;
+  act(() => {
+    batch = result.current.handleTranslateAll();
+  });
+  await act(async () => {
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(maxInFlight).toBe(2); // both pages were in flight simultaneously
+
+  await act(async () => {
+    release.forEach((releaseOne) => releaseOne());
+    await vi.runAllTimersAsync();
+    await batch;
+  });
+  expect(result.current.batchFailures).toEqual([]);
+  expect(result.current.bubbleCacheRef.current.has("blob:one")).toBe(true);
+  expect(result.current.bubbleCacheRef.current.has("blob:two")).toBe(true);
 });
