@@ -6,6 +6,49 @@
 
 ---
 
+## สลับ launcher เป็น production mode + แก้ venv พังจากการย้าย + Defender exclusion — 2026-11-01
+
+- **ที่มา:** user รายงาน "ใช้งานแล้วช้ามาก" หลังรีบูตเครื่อง (uptime แค่ 3 นาทีตอนเช็ก) — วินิจฉัยซ้อน 3 ชั้น: (1) `SuperK-Launcher.vbs` รัน `npm run dev` = Turbopack compile สดทีละ route (2) หลังรีบูต Defender สแกน node_modules ใหม่ทั้งกอง (3) **ไม่เคยมี production build เลย** (.next มีแค่โฟลเดอร์ dev)
+- **แก้ทั้ง 4 จุด (ผู้ใช้เลือกผ่าน AskUserQuestion):** (1) `npm run build` สำเร็จ — compile 19.9s + TS check ผ่าน + sync standalone 182 MB (2) **เขียน `SuperK-Launcher.vbs` ใหม่ให้ delegate ไป `scripts/start-production.ps1`** (build-if-stale เอง + รอ health + เปิด browser; dev mode ยังสั่ง `npm run dev` เองได้ตามเดิม) (3) **แก้ `start-production.ps1` (user WIP) จุดเดียว: สลับลำดับให้ใช้ `.venv` ก่อน `venv`** — สาเหตุ: venv เก่า (Python 3.11.15) ถูกสร้างบน path C:\Users\PC\Downloads\... เดิมแล้วถูก robocopy ย้ายมา F: → venv ไม่รองรับการย้าย (exe shim ฝัง absolute path เก่าซึ่งโฟลเดอร์ถูกลบไปแล้ว) → uvicorn ตายทันทีแบบเงียบ (ocr-error.log ว่างเปล่า), ส่วน `.venv` = Python 3.12.14 สร้างที่ F: โดยตรง deps ครบ (uvicorn 0.51.0 / numpy 2.5.1 / torch 2.13.0+cpu — ทดสอบ import ผ่าน) (4) **Defender exclusion** `F:\Projects\manga-translator` + `F:\manga-cache` (ผู้ใช้อนุมัติ + กด UAC เอง — ตรวจผ่าน Get-MpPreference)
+- **ผลวัดจริงหลังแก้:** หน้าเว็บ `/` HTTP 200 ที่ **~3 ms** (ครั้งแรก cold ก็ 3.9 ms), OCR `/health` 200 ที่ ~3 ms `{"status":"ok"}` — services รันค้างไว้ให้ผู้ใช้ทดสอบต่อ
+- **ค้าง/เสนอต่อ:** (1) ลบ `ocr-service/venv` เก่าที่พัง (Python 3.11 + shim เสีย — เสนอผู้ใช้แล้ว ยังไม่ลบ) (2) โฟลเดอร์เปล่า `C:\Users\PC\Downloads\manga-translator` ยังลบไม่ได้เพราะ session ถือ cwd — ลบได้หลัง session จบ (3) Fast Startup reduced ยังไม่ได้ทำ
+- **Commit status:** `SuperK-Launcher.vbs` (tracked) แก้แล้วยังไม่ commit; `start-production.ps1` = user WIP (ห้าม stage ตามกฎเดิม) — ไม่มีการ push ใด ๆ
+
+### ต่อ: popup "A SuperK service exited during startup" ที่ผู้ใช้ถ่ายส่ง — 2026-11-01
+
+- ข้อความใน popup ตรงกับ **throw ของรอบแรก 18:42 (venv เก่าพัง)** เป๊ะ — popup ค้างรอกด OK บนจอ; ผู้ใช้กดปิดแล้วทั้งหมด
+- run ที่ 18:49:50 (PID 2920) สร้างซ้ำไม่ได้ด้วยสถานะปัจจุบัน — ทดสอบ launcher จริง 2 รอบ (ดักทุก 1 วิ นาน 25 วิ): ผ่านหมด, service แข็งแรงต่อเนื่อง (frontend 200 @ 2.4 ms, OCR ok) — สรุปเบื้องต้น = เหตุชั่วคราวช่วงเครื่องเพิ่งบูต หรือคลิกชนกันเอง; **คำแนะนำผู้ใช้: เจอ popup → กด OK → ดับเบิลคลิก launcher ใหม่ได้ปลอดภัย (idempotent)**
+- **บทเรียนวินิจฉัย:** การเช็ก process ด้วย `CommandLine -like "*start-production*"` **self-match กับคำสั่งเช็กเอง** → ต้องประกอบ marker ตอน runtime (`'start-produ'+'ction'`) หรือ filter ด้วย -File จริง ๆ — PID "2920" รอบแรกที่รายงานไปมาจากการเช็กถูกต้อง (CreationDate 18:49:50 ไม่ใช่ self-match) แต่รอบทดสอบแรกของผม (PID 11140/16904) เป็น self-match หลอก
+- สาเหตุต้นทางของทั้งหมด: venv เก่า `ocr-service\venv` (Python 3.11, สร้างบน C: เดิม) — **ผู้ใช้อนุมัติลบ 2026-11-01: ตรวจแล้วไม่มี executable ใดรันจากโฟลเดอร์นี้ → ลบแล้ว (+295 MB), `.venv` (3.12.14) คงเดิมใช้งานปกติ, service ทั้งคู่ยังแข็งแรง**
+
+### ต่อ: ทดสอบงานจริง — ZIP 680284 (Blue Archive, ต้นฉบับจีน) — 2026-11-01 ✅ ผ่าน
+
+- ไฟล์: `Downloads\nhentai-680284 - [Ajimu Satori] Muremure Rinsen Rio (Blue Archive) [Chinese].zip` (17 หน้า) — แตก 3 หน้าทดสอบ (1.webp/8.jpg/15.webp) ที่ `F:\manga-cache\temp\realtest-680284`, สคริปต์ที่ `F:\manga-cache\temp\superk-realtest{,2,3}.mjs`
+- **OCR 3/3 สำเร็จ:** หน้า 1 = 16 regions (cold 111.1s รวมโหลดโมเดลครั้งแรกหลังรีบูต), หน้า 8 = 1 region (route artwork, page_role ui), หน้า 15 = 4 regions (โดน protect/preserve) — หลังโมเดลโหลดแล้ว 2.9–12.1 วิ/หน้า
+- **แปลจริงผ่าน /api/translate (production server, server key pool):** หน้า 1 = **16 bubbles, t-field 279 ตัวอักษรไทยล้วน cjk=0 kana=0 latin=0, attempt=1, 3.9 วิ** — **Chinese echo guard ผ่านงานจริงแล้ว** (original_text จีนถูกอ่านครบ `只是打開一點點的話…` → `t` ไทยสมบูรณ์ `ถ้าเปิดแค่หน่อยเดียว…`, はぁ… → ฮ่า...); หน้า 8/15 = 0 bubbles — สอดคล้องกับ OCR ฝั่งตัวเอง (artwork/protected) = น่าจะหน้าภาพ/SFX, ให้ผู้ใช้ตาตรวจเอง
+- **โมเดลที่รับงาน = gemini-3.5-flash-lite ผ่าน attempt แรก** — ก่อนหน้านี้ flash-lite เคย echo จีนจนโดน rotate; หลัง prompt + validateSuccess ใหม่ผ่านสวยและเร็ว 1.8–3.9 วิ/หน้า
+- หมายเหตุรูปแบบตอบ: `/api/translate` คืน `{text, meta}` โดย `text` = JSON string ของ `{bubbles:[…]}` (frontend parse เอง) — สคริปต์ทดสอบต้อง JSON.parse ชั้นในก่อนนับ; `meta.model/attemptCount/elapsedMs` ใช้ตรวจได้
+- ค้าง: ผู้ใช้ import ZIP เต็มใน UI แล้วตรวจหน้า 8/15 ตา + ทดลอง export; ยังไม่ commit อะไรเพิ่มในรอบนี้ (แก้แค่ SuperK-Launcher.vbs รอ com push)
+
+### ต่อ: แปลทั้งเล่ม 17 หน้า + รายงานภาพ — 2026-11-01
+
+- ผู้ใช้ขอ "แปลทุกหน้า + ดูผลลัพธ์" — แตก ZIP ครบ 17 หน้า (`F:\manga-cache\temp\realtest-680284`) + PIL ทำ preview JPEG 400px/q55, แปลครบผ่าน `/api/translate` (production, flash-lite, เฉลี่ย ~10 วิ/หน้า)
+- **ผล: หน้า 1–7 = บทสนทนาจริง ได้ 46 bubbles รวม, t-field ไม่มีจีน/คานะเลย (echo guard ผ่านทั้งเล่ม); หน้า 8–17 = `{"bubbles":[]}` ทั้งหมด**
+- **พิสูจน์ว่าไม่ใช่บั๊ก:** probe หน้า 9/12 ด้วย `modelPreference=gemini-3.8-flash` → attemptCount=4 fallbackCount=3, 78–108 วิ, ยังตอบว่าง = **Gemini ปฏิเสธทั้ง model chain (content policy) — soft-refuse ผ่าน HTTP 200 ซึ่ง validateSuccess รับเป็น "หน้าไม่มีข้อความ"**; หน้า 16 มีแต่ลายน้ำโฆษณา (tag "extraneous ads" ของเล่ม) ซึ่ง probe แยกจับได้ 2 bubbles แบบไม่คงเส้นคงวา
+- ทางเลือกที่แอปออกแบบไว้ = **9router path** (`SUPERK_TRANSLATE_BASE_URL` + `SUPERK_TRANSLATE_API_KEY` ใน .env.local — comment ใน handler บอกเอง "no NSFW block") ยังไม่ได้ตั้งค่าให้ผู้ใช้; ไม่มีการแก้โค้ดรอบนี้
+- **รายงานภาพผู้ใช้:** `C:\Users\PC\.zcode\v2\visualizations\8d94d...\manga-translate-results.html` (669 KB, fragment ใต้ลิมิต 1 MB) — tabs 17 หน้า, overlay กล่อง bubble จริง (box=[ymin,xmin,ymax,xmax] สเกล 0–1000 → %), tooltip ข้อความเต็ม, ตารางต้นฉบับ↔ไทยใต้ภาพ, สถานะต่อหน้า (แปลแล้ว/ถูก block/ลายน้ำ) — ตัวสร้าง `F:\manga-cache\temp\superk-report-gen.mjs`
+- **แก้ไขหลังผู้ใช้ยืนยัน (ground truth):** หน้า 8–17 **ไม่มีข้อความจริง** → `{"bubbles":[]}` คือคำตอบที่ถูกต้องเป๊ะ ไม่ใช่การถูก block — ข้อสรุป "Gemini content policy" ของผมผิด ถอนแล้วทั้ง memory (nsfw-image-vision-limit) และป้ายในรายงาน (regenerate แล้วเป็น "ยืนยันโดยเจ้าของงาน: หน้านี้ไม่มีข้อความ") — สรุปสุดท้าย: **ระบบตอบถูก 17/17 หน้า** (46 bubbles + ว่างตรง 10 หน้า), echo guard ผ่านทั้งเล่ม
+- ข้อสังเกตที่ยังใช้ได้: หน้าเปล่า + flash-lite = 1 attempt ~8 วิ; หน้าเปล่า + 3.8-flash = เสีย 4 attempts/78–108 วิ (empties โดน validation ปัด → หมุนโมเดลเปล่าประโยชน์) — เลือก flash-lite สำหรับเล่มแนวนี้; 9router path ไม่จำเป็นสำหรับเล่มนี้
+- **รายงานรอบ 2 (ภาพคลีน):** ผู้ใช้ถาม "ทำไมไม่คลีนข้อความให้" — รอบแรกโชว์แต่ต้นฉบับเพราะทดสอบเฉพาะขั้นแปล; รอบนี้รัน OCR clean จริงหน้า 1–7 (LaMa บน CPU): **ต้นทุนแปรผันตามพื้นที่ข้อความ — 24s (เบา) ถึง 330s (หน้า 4 หนักสุด), หน้า 1 รวมโหลดโมเดล 121.7s** — บทเรียนการทำงาน: poll cap 144s ของ batch แรกสั้นไป → ตัดงานกลางคัน (server ทำต่อเองจนจบ) → แก้ด้วย rescue ด้วย jobId จาก log + cap 15 นาที; CPU delta วัดได้ 13.25s/5s = ทำงานจริงไม่ใช่ deadlock; หน้า 8–17 ใช้ภาพเดิมแทน (ไม่มีข้อความ = คลีนแล้วเหมือนเดิม) — fragment ใหม่ 649 KB
+### ต่อ: GPU torch + all-text re-clean — 2026-11-01
+
+- ผู้ใช้ถาม "ทำไมไม่ใช้ GPU / ทำไมยังมีข้อความหลุด" → สองคำตอบ: (1) เครื่องมี **RTX 5050 8GB** แต่ lock resolve torch จาก PyPI = wheel +cpu เสมอ (2) ข้อความหลุด = โหมด `safe` จงใจเว้น region ที่ needs_review ไว้รอ RemnantReviewPanel (หน้า 1: 16 regions = 10 repaired / 3 needs_review / 3 preserved) — โค้ดรองรับ CUDA อยู่แล้ว (jobs.py torch.cuda.is_available)
+- **สลับ torch สำเร็จ (ผู้ใช้อนุมัติ):** `uv pip install "torch==2.13.0+cu130" --index-url .../whl/cu130` (cu128 ไม่มีสำหรับ 2.13.0; dry-run ต้องใส่ local version +cu130 ไม่งั้น uv ถือว่า +cpu ที่ลงอยู่ satisfiable) — เห็น RTX 5050, ใช้งานจริง 60-69% util / 4.6-5.3GB VRAM; ต้องหยุด OCR ก่อนสลับ (file lock) แล้ว start-production ใหม่
+- **ผลจริงแบบตรงไปตรงมา:** all-text หน้า 1–7 บน GPU = 130–225 วิ/หน้า — เร็วขึ้นจริงเฉพาะหน้าหนัก (330→222s) แต่หน้าเบายัง ~130s = ต้นทุนจมกับ **overhead ต่อ job** (น่าสงสัยว่า reload โมเดลระหว่าง job + ขั้น CPU ฝั่ง mask refine/PNG) — โปรไฟล์ต่อ = opt-in งานหน้า
+- **ทางเลือกงาน:** jobs-gpu พัง 2 จุด (p1 fetch failed ตอน server restart พอดี, p2 โดน poll cap 300s) → เก็บตกด้วยการหา jobId จาก `F:\manga-cache\ocr-jobs\jobs\` แล้วยืนยันด้วย **source_hash** match กับ job เดิมของหน้านั้น (b75d6802 ที่เดาแรกผิด — ตัวจริงคือ 4354c0bd)
+- รายงานรอบ 3: ภาพคลีน GPU all-text หน้า 1–7 + ไทยวางทับ (635 KB) — regen preview-clean จาก clean-alltext
+- ค้างจำ: **reinstall lock จะดัน torch กลับเป็น +cpu** — ต้องรันสลับ cu130 ซ้ำหลัง rebuild venv (บันทึกใน memory แล้ว)
+
 ## ย้าย repo Downloads → F:\Projects + ตัดตอนที่มา desktop.ini + เคลียร์ startup — 2026-10-31
 
 - **ที่มา:** สืบอาการ "เปิดโปรแกรมช้าตอนเปิดเครื่องใหม่" → ตัวการคือ (1) ~18 startup apps (game launchers/emulator/3 cloud syncs) (2) **Google Drive File Stream mirror โฟลเดอร์ Downloads** ที่ repo เคยอยู่ — พิสูจน์จาก mirror_sqlite.db + screenshot Preferences (backup 7 โฟลเดอร์ รวม Downloads/J:\) — เขียน desktop.ini ทิ้งทั้ง repo (รอบนี้ 11,399 ไฟล์ + รอบก่อน 1,656 ไฟล์ใน .next/.git) และเคยทำ `npm run dev` พัง (เคส Turbopack RocksDB)
