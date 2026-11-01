@@ -863,7 +863,7 @@ def test_residual_sweep_recleans_text_found_on_cleaned_image(monkeypatch):
     monkeypatch.setenv("SUPERK_RESIDUAL_SWEEP", "1")
     source = np.full((32, 32, 3), 100, np.uint8)
     source[10:13, 10:13] = [200, 10, 40]  # region-A text (cleaned by main pass)
-    source[20:23, 20:23] = 30  # leftover dark text the source pass never detected
+    source[20:27, 20:27] = 30  # leftover dark text the source pass never detected
     full = CountingFullCleaner(240)
     pipeline = _sweep_pipeline(full)
 
@@ -871,7 +871,7 @@ def test_residual_sweep_recleans_text_found_on_cleaned_image(monkeypatch):
 
     assert full.calls == 2  # main full-page pass + one residual sweep
     leftover = np.zeros((32, 32), bool)
-    leftover[20:23, 20:23] = source[20:23, 20:23, 0] == 30
+    leftover[20:27, 20:27] = source[20:27, 20:27, 0] == 30
     assert np.all(output.clean_image[leftover] == 240)  # swept
     assert np.all(output.clean_image[10:13, 10:13] == 240)  # main region untouched
     assert output.timings_ms["residual_sweep_runs"] == 1
@@ -882,7 +882,7 @@ def test_residual_sweep_disabled_by_default(monkeypatch):
     monkeypatch.delenv("SUPERK_RESIDUAL_SWEEP", raising=False)
     source = np.full((32, 32, 3), 100, np.uint8)
     source[10:13, 10:13] = [200, 10, 40]
-    source[20:23, 20:23] = 30
+    source[20:27, 20:27] = 30
     full = CountingFullCleaner(240)
     pipeline = _sweep_pipeline(full)
 
@@ -890,6 +890,6 @@ def test_residual_sweep_disabled_by_default(monkeypatch):
 
     assert full.calls == 1  # main pass only
     leftover = np.zeros((32, 32), bool)
-    leftover[20:23, 20:23] = source[20:23, 20:23, 0] == 30
+    leftover[20:27, 20:27] = source[20:27, 20:27, 0] == 30
     assert np.all(output.clean_image[leftover] == 30)  # untouched
     assert output.timings_ms["residual_sweep_runs"] == 0
