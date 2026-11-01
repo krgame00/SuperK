@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from app.api import RETRY_CLEANERS
-from app.detector import DetectionResult, LetterboxTransform
+from app.detector import DetectedBlock, DetectionResult, LetterboxTransform
 from app.mask_refiner import MaskRegion, RefinedMask
 from app.page_context import PageContext, PageFeatures
 from app.pipeline import RETRY_CLEANER_ALIASES, CleaningPipeline, PipelineOutput
@@ -783,3 +783,113 @@ def test_force_clean_over_stale_mask_restored_region_re_erases_text() -> None:
         fixed.clean_image[root_text_mask == 0],
         output.clean_image[root_text_mask == 0],
     )
+
+
+class SweepDetector:
+    """Call 1 (source) finds region-A text; call 2 (cleaned image) finds a
+    leftover block at B that the source pass never saw."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def detect(self, image: np.ndarray) -> DetectionResult:
+        self.calls += 1
+        height, width = image.shape[:2]
+        prob = np.zeros((height, width), np.float32)
+        blocks = []
+        if self.calls == 1:
+            prob[10:13, 10:13] = 0.9
+            blocks.append(DetectedBlock(PixelRect(x=8, y=8, width=12, height=12), 0.9))
+        else:
+            prob[20:23, 20:23] = 0.95
+            blocks.append(DetectedBlock(PixelRect(x=18, y=18, width=9, height=9), 0.95))
+        return DetectionResult(
+            prob,
+            blocks,
+            LetterboxTransform(width, height, max(width, height), 1, 0, 0),
+        )
+
+
+def _prob_refiner(image_rgb, detection):
+    mask = (np.asarray(detection.mask_probability, dtype=np.float32) >= 0.5).astype(np.uint8) * 255
+    if not np.any(mask):
+        return RefinedMask(mask, [], np.zeros_like(mask))
+    ys, xs = np.nonzero(mask)
+    rect = PixelRect(
+        x=int(xs.min()), y=int(ys.min()),
+        width=int(xs.max() - xs.min() + 1), height=int(ys.max() - ys.min() + 1),
+    )
+    region = MaskRegion(f"refined-{rect.y}-{rect.x}", rect, (1,), 2, text_supported=True)
+    return RefinedMask(mask, [region], np.zeros_like(mask))
+
+
+class CountingFullCleaner:
+    def __init__(self, value: int) -> None:
+        self.value = value
+        self.calls = 0
+
+    def clean_full_image(self, image, active_mask):
+        self.calls += 1
+        result = image.copy()
+        result[active_mask > 0] = self.value
+        return result
+
+
+class _ZeroBatchProbe:
+    def score(self, *_args) -> float:
+        return 0.0
+
+    def score_many(self, _image, items):
+        return {item.id: 0.0 for item, _mask in items}
+
+
+def _sweep_pipeline(full: CountingFullCleaner) -> CleaningPipeline:
+    return CleaningPipeline(
+        detector=SweepDetector(),
+        refiner=_prob_refiner,
+        cleaners={
+            route: SolidCleaner(220) for route in ("flat", "gradient", "artwork")
+        } | {"lama-large": full},
+        page_classifier=_comic_page,
+        protection_detector=lambda *_args: ProtectionResult(
+            np.zeros((32, 32), np.uint8), np.zeros((32, 32), np.uint8), [],
+        ),
+        eligibility_classifier=lambda *_args: _clean_decision(),
+        residual_probe=_ZeroBatchProbe(),
+    )
+
+
+def test_residual_sweep_recleans_text_found_on_cleaned_image(monkeypatch):
+    monkeypatch.setenv("SUPERK_RESIDUAL_SWEEP", "1")
+    source = np.full((32, 32, 3), 100, np.uint8)
+    source[10:13, 10:13] = [200, 10, 40]  # region-A text (cleaned by main pass)
+    source[20:23, 20:23] = 30  # leftover dark text the source pass never detected
+    full = CountingFullCleaner(240)
+    pipeline = _sweep_pipeline(full)
+
+    output = pipeline.run(source, cleaning_mode="all-text")
+
+    assert full.calls == 2  # main full-page pass + one residual sweep
+    leftover = np.zeros((32, 32), bool)
+    leftover[20:23, 20:23] = source[20:23, 20:23, 0] == 30
+    assert np.all(output.clean_image[leftover] == 240)  # swept
+    assert np.all(output.clean_image[10:13, 10:13] == 240)  # main region untouched
+    assert output.timings_ms["residual_sweep_runs"] == 1
+    assert output.timings_ms["residual_sweep_pixels"] > 0
+
+
+def test_residual_sweep_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("SUPERK_RESIDUAL_SWEEP", raising=False)
+    source = np.full((32, 32, 3), 100, np.uint8)
+    source[10:13, 10:13] = [200, 10, 40]
+    source[20:23, 20:23] = 30
+    full = CountingFullCleaner(240)
+    pipeline = _sweep_pipeline(full)
+
+    output = pipeline.run(source, cleaning_mode="all-text")
+
+    assert full.calls == 1  # main pass only
+    leftover = np.zeros((32, 32), bool)
+    leftover[20:23, 20:23] = source[20:23, 20:23, 0] == 30
+    assert np.all(output.clean_image[leftover] == 30)  # untouched
+    assert output.timings_ms["residual_sweep_runs"] == 0

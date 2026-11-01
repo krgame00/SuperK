@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
@@ -13,7 +14,7 @@ import numpy as np
 from app.adaptive_scope import cluster_mask, decide_adaptive_scope, expanded_cluster
 from app.cleaners.base import Cleaner
 from app.compositor import compose
-from app.detector import DetectionResult, RgbImage
+from app.detector import DetectionResult, LetterboxTransform, RgbImage
 from app.mask_refiner import (
     BinaryMask,
     MaskRegion,
@@ -105,6 +106,9 @@ class _BatchItem:
     damage_score: float
     damage_accepted: bool
     eligibility: EligibilityDecision
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class _ZeroResidualProbe:
@@ -733,6 +737,105 @@ class CleaningPipeline:
                     decisions[region.id],
                 ),
             )
+        # Residual sweep: run the detector over the cleaned image and inpaint
+        # any text it still finds (e.g. blocks the source pass never detected).
+        # Release-gated like adaptive ROI; best-effort, never fails the job.
+        sweep_runs = 0
+        sweep_pixels = 0
+        if (
+            os.getenv("SUPERK_RESIDUAL_SWEEP") == "1"
+            and full_lama is not None
+            and hasattr(full_lama, "clean_full_image")
+        ):
+            stage_started = perf_counter()
+            try:
+                sweep_detection = self.detector.detect(clean_image)
+                # 0.35 = the detector's own NMS floor; raw block confidence on
+                # partially cleaned pages runs lower than on fresh sources.
+                confident_blocks = [
+                    b for b in sweep_detection.blocks if b.confidence >= 0.35
+                ]
+                LOGGER.warning(
+                    "Residual sweep: blocks=%d confident=%d",
+                    len(sweep_detection.blocks), len(confident_blocks),
+                )
+                if confident_blocks:
+                    # The CTD mask head under-segments partially cleaned pages,
+                    # so rebuild glyph candidates with per-block Otsu (same
+                    # polarity rule as the client's extractGlyphInk) and let
+                    # the refiner polish them.
+                    gray = cv2.cvtColor(clean_image, cv2.COLOR_RGB2GRAY)
+                    sweep_prob = np.zeros(gray.shape, np.float32)
+                    height, width = gray.shape
+                    for block in confident_blocks:
+                        x0 = max(0, block.rect.x)
+                        y0 = max(0, block.rect.y)
+                        x1 = min(width, block.rect.x + block.rect.width)
+                        y1 = min(height, block.rect.y + block.rect.height)
+                        if x1 <= x0 or y1 <= y0:
+                            continue
+                        crop = gray[y0:y1, x0:x1]
+                        if float(crop.std()) < 6.0:
+                            continue  # flat area — nothing text-like
+                        thr, binary = cv2.threshold(
+                            crop, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU,
+                        )
+                        border = np.concatenate(
+                            [crop[0, :], crop[-1, :], crop[:, 0], crop[:, -1]]
+                        )
+                        if float(border.mean()) > float(thr):
+                            glyphs = binary > 0  # bright border → dark glyphs
+                        else:
+                            glyphs = binary == 0  # dark border → bright glyphs
+                        sweep_prob[y0:y1, x0:x1][glyphs] = 1.0
+                    LOGGER.warning(
+                        "Residual sweep: glyph_candidates=%d",
+                        int(np.count_nonzero(sweep_prob)),
+                    )
+                if confident_blocks and np.any(sweep_prob > 0):
+                    sweep_refined = self.refiner(clean_image, DetectionResult(
+                        sweep_prob,
+                        confident_blocks,
+                        LetterboxTransform(width, height, max(width, height), 1, 0, 0),
+                    ))
+                    used = np.zeros(clean_image.shape[:2], dtype=np.uint8)
+                    used[eligible > 0] = 255
+                    used[refined.mask > 0] = 255
+                    residual_mask = np.where(
+                        (sweep_refined.mask > 0) & (used == 0)
+                        & (protection.protected_mask == 0),
+                        np.uint8(255),
+                        np.uint8(0),
+                    )
+                    LOGGER.warning(
+                        "Residual sweep: refined=%d used=%d residual=%d",
+                        int(np.count_nonzero(sweep_refined.mask)),
+                        int(np.count_nonzero(used)),
+                        int(np.count_nonzero(residual_mask)),
+                    )
+                    if np.any(residual_mask):
+                        sweep_runs = 1
+                        sweep_pixels = int(np.count_nonzero(residual_mask))
+                        lama_inference_count += 1
+                        sweep_repaired = full_lama.clean_full_image(clean_image, residual_mask)
+                        feather = 0 if cleaning_mode is CleaningMode.ALL_TEXT else 2
+                        candidate, sweep_support = compose(
+                            clean_image,
+                            sweep_repaired,
+                            residual_mask,
+                            feather_radius=feather,
+                        )
+                        _restore_protected(
+                            image_rgb,
+                            candidate,
+                            sweep_support,
+                            protection.protected_mask,
+                        )
+                        clean_image = candidate
+            except Exception as exc:  # sweep is best-effort; never fail the job
+                LOGGER.warning("Residual sweep skipped: %s", exc)
+            clean_ms += _elapsed_ms(stage_started)
+
         record_order = {
             region.id: index for index, region in enumerate(refined.regions)
         }
@@ -759,6 +862,8 @@ class CleaningPipeline:
                 "roi_cluster_count": adaptive_scope.cluster_count if adaptive_scope is not None else 0,
                 "lama_inference_count": lama_inference_count,
                 "escalation_attempts": escalation_attempts,
+                "residual_sweep_runs": sweep_runs,
+                "residual_sweep_pixels": sweep_pixels,
                 "total": _elapsed_ms(started),
                 },
                 image_rgb,
