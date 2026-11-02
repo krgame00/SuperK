@@ -36,6 +36,7 @@ export interface RemnantReviewPanelProps {
   toolbarPosition?: "top" | "bottom";
   /** Whether the active page requires review before export (displays PageReviewNotice below toolbar). */
   isPageReviewRequired?: boolean;
+  isInspectorOpen?: boolean;
 }
 
 const UNVERIFIED_LABELS: Record<BackgroundInspectionUnverifiedReason, string> = {
@@ -85,6 +86,7 @@ export function RemnantReviewPanel({
   onRecheck,
   toolbarPosition = "top",
   isPageReviewRequired = false,
+  isInspectorOpen = false,
 }: RemnantReviewPanelProps) {
   const [side, setSide] = useState<"right" | "left">("right");
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -139,6 +141,10 @@ export function RemnantReviewPanel({
     };
     window.addEventListener("superk:bubble-selected", handleBubbleSelected);
     window.addEventListener("superk:inspector-toggle", handleInspectorToggle);
+    if (isInspectorOpen) {
+      setIsCollapsed(true);
+      setSide("left");
+    }
     return () => {
       observer?.disconnect();
       window.removeEventListener("superk:bubble-selected", handleBubbleSelected);
@@ -332,7 +338,16 @@ export function RemnantReviewPanel({
           </span>
           <button
             type="button"
-            onClick={() => setIsCollapsed(false)}
+            onClick={() => {
+              // Claim the side panel: the canvas host hides the inspector
+              // while this panel is expanded, and restores it on collapse.
+              window.dispatchEvent(
+                new CustomEvent("superk:remnant-toggle", {
+                  detail: { open: true },
+                }),
+              );
+              setIsCollapsed(false);
+            }}
             className="inline-flex items-center gap-1 rounded-xl bg-primary/15 hover:bg-primary/25 active:scale-95 text-primary px-2.5 py-0.5 font-semibold text-xs transition-all cursor-pointer ml-1"
             aria-label="ขยายพาเนล"
           >

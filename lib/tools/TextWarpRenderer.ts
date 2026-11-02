@@ -90,9 +90,11 @@ export function renderWarpedText(
     let scaleY = 1.0;
 
     switch (config.type) {
-      case "arch":
-        offsetY = -config.bend * (1 - u * u) * (h * 0.6);
+      case "arch": {
+        const archSpan = config.bend * (h * 0.45);
+        offsetY = -archSpan * (1 - u * u) + (archSpan * 0.35);
         break;
+      }
       case "wave":
         offsetY = Math.sin(u * Math.PI * freq) * config.bend * (h * 0.35);
         break;

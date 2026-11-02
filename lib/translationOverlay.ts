@@ -229,6 +229,18 @@ export interface OverlayAdjustment {
   styleProfile?: TextStyleProfile;
   /** Persisted non-linear SFX text warp deformation (arch, wave, bulge, squeeze) */
   warp?: WarpConfig;
+  /** Persisted custom font family override */
+  fontFamily?: string;
+  /** Persisted text alignment */
+  align?: "left" | "center" | "right";
+  /** Persisted bold font weight override */
+  isBold?: boolean;
+  /** Persisted stroke outline width */
+  strokeWidth?: number;
+  /** Persisted box background fill color */
+  boxFill?: string;
+  /** Persisted text layer opacity */
+  opacity?: number;
 }
 
 /**
@@ -1427,6 +1439,27 @@ export const applyTranslationOverlay = async (
       if (adj?.targetFontSize !== undefined && b.targetFontSize === undefined) {
         b.targetFontSize = adj.targetFontSize;
       }
+      if (adj?.fontFamily !== undefined && (b as { fontFamily?: string }).fontFamily === undefined) {
+        (b as { fontFamily?: string }).fontFamily = adj.fontFamily;
+      }
+      if (adj?.align !== undefined && (b as { align?: string }).align === undefined) {
+        (b as { align?: string }).align = adj.align;
+      }
+      if (adj?.isBold !== undefined && (b as { isBold?: boolean }).isBold === undefined) {
+        (b as { isBold?: boolean }).isBold = adj.isBold;
+      }
+      if (adj?.strokeWidth !== undefined && (b as { strokeWidth?: number }).strokeWidth === undefined) {
+        (b as { strokeWidth?: number }).strokeWidth = adj.strokeWidth;
+      }
+      if (adj?.boxFill !== undefined && (b as { boxFill?: string }).boxFill === undefined) {
+        (b as { boxFill?: string }).boxFill = adj.boxFill;
+      }
+      if (adj?.opacity !== undefined && (b as { opacity?: number }).opacity === undefined) {
+        (b as { opacity?: number }).opacity = adj.opacity;
+      }
+      if (adj?.warp !== undefined && b.warp === undefined) {
+        b.warp = { ...adj.warp };
+      }
       const persistedStyleProfile = adj?.styleProfile ?? legacyAdj?.styleProfile;
       if (
         persistedStyleProfile &&
@@ -1484,6 +1517,12 @@ export const applyTranslationOverlay = async (
           rotation: currentRotation,
           isItalic: currentIsItalic,
           userModified: true,
+          ...(typeof (b as { fontFamily?: string }).fontFamily === "string" ? { fontFamily: (b as { fontFamily?: string }).fontFamily } : {}),
+          ...(typeof (b as { align?: "left" | "center" | "right" }).align === "string" ? { align: (b as { align?: "left" | "center" | "right" }).align } : {}),
+          ...(typeof (b as { isBold?: boolean }).isBold === "boolean" ? { isBold: (b as { isBold?: boolean }).isBold } : {}),
+          ...(typeof (b as { strokeWidth?: number }).strokeWidth === "number" ? { strokeWidth: (b as { strokeWidth?: number }).strokeWidth } : {}),
+          ...(typeof (b as { boxFill?: string }).boxFill === "string" ? { boxFill: (b as { boxFill?: string }).boxFill } : {}),
+          ...(typeof (b as { opacity?: number }).opacity === "number" ? { opacity: (b as { opacity?: number }).opacity } : {}),
           ...(typeof b.fontSizeMultiplier === "number" ? { fontSizeMultiplier: b.fontSizeMultiplier } : {}),
           ...(typeof b.targetFontSize === "number" ? { targetFontSize: b.targetFontSize } : {}),
           ...(typeof manualMinHeightPx === "number" ? { manualMinHeightPx } : {}),
@@ -4152,7 +4191,20 @@ export const applyTranslationOverlay = async (
     const handleViewportChange = () => scheduleChromeSync(2);
     const handleDocumentPointerDown = (e: PointerEvent) => {
       const target = e.target as HTMLElement | null;
-      if (target && !target.closest('.translation-bubble-wrapper') && !target.closest('.action-handle') && !target.closest('[data-translation-editor]')) {
+      if (
+        target &&
+        !target.closest('.translation-bubble-wrapper') &&
+        !target.closest('.action-handle') &&
+        !target.closest('[data-translation-editor]') &&
+        !target.closest('[data-inspector-panel="true"]') &&
+        !target.closest('[data-testid="text-properties-panel"]') &&
+        !target.closest('[data-testid="workspace-inspector-panel"]') &&
+        !target.closest('#warp-panel-section') &&
+        !target.closest('[aria-label="คุณสมบัติข้อความ"]') &&
+        !target.closest('[aria-label="แผงดัดตัวอักษรและรูปภาพ"]') &&
+        !target.closest('[aria-label="สถานะการจับคู่สี"]') &&
+        !target.closest('[data-testid="remnant-review-findings"]')
+      ) {
         setSelectedBubble(null);
       }
     };

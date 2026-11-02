@@ -116,4 +116,32 @@ describe("RemnantReviewPanel Docking & Non-Overlap", () => {
     expect(panelAfter.className).toContain("left-3");
     expect(panelAfter.className).not.toContain("right-3");
   });
+
+  test("dispatches superk:remnant-toggle when the user expands the panel", () => {
+    const events: CustomEvent[] = [];
+    const listener = (e: Event) => events.push(e as CustomEvent);
+    window.addEventListener("superk:remnant-toggle", listener);
+
+    render(
+      <RemnantReviewPanel
+        inspection={mockInspection}
+        regions={[mockRegion]}
+        toolbarPosition="top"
+        isPageReviewRequired={false}
+      />
+    );
+
+    // Collapse first (the panel renders expanded by default), then expand.
+    act(() => {
+      screen.getByRole("button", { name: "ย่อพาเนล" }).click();
+    });
+    const expand = screen.getByRole("button", { name: "ขยายพาเนล" });
+    act(() => {
+      expand.click();
+    });
+
+    expect(events.length).toBe(1);
+    expect(events[0].detail).toEqual({ open: true });
+    window.removeEventListener("superk:remnant-toggle", listener);
+  });
 });

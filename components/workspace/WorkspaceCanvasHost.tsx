@@ -272,16 +272,28 @@ export function WorkspaceCanvasHost({
   const selectedImageLayer =
     currentPageImageLayers.find((l) => l.id === selectedImageLayerId) ?? null;
 
+  const [sidePanel, setSidePanel] = useState<"none" | "inspector" | "remnants">("none");
   useEffect(() => {
     const handleBubbleSelected = (e: Event) => {
       const custom = e as CustomEvent;
       setSelectedBubbleBridge(custom.detail ?? null);
       if (custom.detail) {
         setSelectedImageLayerId(null);
+        setSidePanel("inspector");
+      }
+    };
+    const handleRemnantToggle = (e: Event) => {
+      const custom = e as CustomEvent;
+      if (custom.detail?.open) {
+        setSidePanel("remnants");
       }
     };
     window.addEventListener("superk:bubble-selected", handleBubbleSelected);
-    return () => window.removeEventListener("superk:bubble-selected", handleBubbleSelected);
+    window.addEventListener("superk:remnant-toggle", handleRemnantToggle);
+    return () => {
+      window.removeEventListener("superk:bubble-selected", handleBubbleSelected);
+      window.removeEventListener("superk:remnant-toggle", handleRemnantToggle);
+    };
   }, []);
 
   useEffect(() => {
@@ -1007,7 +1019,12 @@ export function WorkspaceCanvasHost({
             {!isFocusMode && (selectedBubbleBridge || selectedImageLayer) && (
               <div
                 data-inspector-panel="true"
+                data-testid="workspace-inspector-panel"
+                onPointerDown={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
                 aria-label="คุณสมบัติข้อความ"
+                style={{ display: sidePanel === "remnants" ? "none" : undefined }}
                 className="fixed right-3 top-20 z-50 hidden lg:flex flex-col gap-2 max-h-[calc(100dvh-9rem)] overflow-y-auto pr-0.5"
               >
                 {selectedBubbleBridge && (
