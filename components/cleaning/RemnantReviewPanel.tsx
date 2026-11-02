@@ -130,10 +130,19 @@ export function RemnantReviewPanel({
         setSide("left");
       }
     };
+    const handleInspectorToggle = (e: Event) => {
+      const custom = e as CustomEvent;
+      if (custom.detail?.isOpen) {
+        setIsCollapsed(true);
+        setSide("left");
+      }
+    };
     window.addEventListener("superk:bubble-selected", handleBubbleSelected);
+    window.addEventListener("superk:inspector-toggle", handleInspectorToggle);
     return () => {
       observer?.disconnect();
       window.removeEventListener("superk:bubble-selected", handleBubbleSelected);
+      window.removeEventListener("superk:inspector-toggle", handleInspectorToggle);
     };
   }, []);
 

@@ -285,6 +285,13 @@ export function WorkspaceCanvasHost({
   }, []);
 
   useEffect(() => {
+    const isOpen = Boolean(selectedBubbleBridge || selectedImageLayer);
+    window.dispatchEvent(
+      new CustomEvent("superk:inspector-toggle", { detail: { isOpen } })
+    );
+  }, [selectedBubbleBridge, selectedImageLayer]);
+
+  useEffect(() => {
     if (!isOrganizeMenuOpen && !isBwContrastMenuOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
       if (
@@ -428,13 +435,13 @@ export function WorkspaceCanvasHost({
             }`}
           >
             <div
-              className={`pointer-events-auto max-w-full flex ${
+              className={`pointer-events-auto w-full max-w-5xl flex ${
                 toolbarPosition === "bottom" ? "flex-col-reverse" : "flex-col"
-              } items-center gap-1.5`}
+              } items-stretch gap-1.5 px-2 sm:px-4`}
             >
               {isToolbarCollapsed ? (
                 <div
-                  className="flex items-center gap-1.5 rounded-full border border-border/80 bg-surface/90 px-3 py-1.5 shadow-xl backdrop-blur-md transition-all hover:bg-surface"
+                  className="self-center flex items-center gap-1.5 rounded-full border border-border/80 bg-surface/90 px-3 py-1.5 shadow-xl backdrop-blur-md transition-all hover:bg-surface"
                   role="region"
                   aria-label="แถบเครื่องมือแบบย่อ"
                 >
@@ -523,19 +530,13 @@ export function WorkspaceCanvasHost({
                     position={toolbarPosition}
                     onTogglePosition={onToggleToolbarPosition}
                     onCollapse={onToggleToolbarCollapsed}
-                    className="relative z-30 flex flex-wrap sm:flex-nowrap w-full max-w-5xl items-center justify-between gap-1.5 sm:gap-2 rounded-xl border border-border/80 bg-surface/90 px-2 sm:px-3 py-1.5 shadow-xl backdrop-blur-md transition-all overflow-visible"
+                    className="relative z-30 flex flex-nowrap w-full items-center justify-between gap-1.5 sm:gap-2 rounded-xl border border-border/80 bg-surface/90 px-2 sm:px-3 py-1.5 shadow-xl backdrop-blur-md transition-all overflow-x-auto sm:overflow-visible scrollbar-none"
                   >
                     {activePage && (
                       <div className="flex flex-nowrap items-center gap-1.5 sm:gap-2 text-xs shrink-0 select-none">
                         <label className="flex flex-nowrap items-center gap-1.5 sm:gap-2 text-xs shrink-0 select-none">
                           <span className="sr-only">
                             หน้า {currentPage + 1} · ส่งออกหน้านี้เป็น
-                          </span>
-                          <span
-                            aria-hidden="true"
-                            className="font-medium text-foreground/80 whitespace-nowrap hidden xl:inline text-xs"
-                          >
-                            หน้า {currentPage + 1} ·
                           </span>
                           <span
                             aria-hidden="true"
@@ -592,7 +593,7 @@ export function WorkspaceCanvasHost({
                             <ChevronDown className="pointer-events-none absolute right-1.5 h-3 w-3 text-muted" />
                           </div>
                         </label>
-                        <div className="relative inline-flex items-center shrink-0">
+                        <div className="relative items-center shrink-0 hidden 2xl:inline-flex">
                           <select
                             aria-label="สกุลไฟล์ภาพส่งออก"
                             title="กำหนดให้ไฟล์ภาพตอนส่งออก (ZIP / CBZ / รูปหน้านี้) มีนามสกุลเดียวกันทั้งหมด"
@@ -635,7 +636,7 @@ export function WorkspaceCanvasHost({
                                     className="h-3 w-3 text-primary shrink-0"
                                     aria-hidden="true"
                                   />
-                                  <span className="hidden sm:inline">
+                                  <span className="hidden xl:inline">
                                     จัดระเบียบ
                                   </span>
                                 </button>
@@ -760,7 +761,7 @@ export function WorkspaceCanvasHost({
                                     className="h-3 w-3 text-foreground shrink-0"
                                     aria-hidden="true"
                                   />
-                                  <span className="hidden sm:inline">
+                                  <span className="hidden xl:inline">
                                     ขาว-ดำ
                                   </span>
                                 </button>
