@@ -1858,15 +1858,37 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         getManualBubblesForPage(pageUrl),
       );
       if (initialOutcome.kind !== "clean-only" && initialOutcome.bubbles.length > 0) {
-        void renderAndCacheTranslation(
+        // Preserve manual style overrides from the previous generation — the
+        // optimistic cache write would otherwise clobber them before the final
+        // render's own preservation runs.
+        const previousCached = bubbleCacheRef.current.get(pageUrl) ?? [];
+        const optimisticPreserved = preserveManualStyleProfiles(
           initialOutcome.bubbles,
+          previousCached,
+        );
+        const revisionAtOptimistic = pageRevisionsRef.current.get(pageUrl) ?? 0;
+        const optimisticOwns = () =>
+          !signal?.aborted
+          && pagesRef.current.includes(pageUrl)
+          && (pageRevisionsRef.current.get(pageUrl) ?? 0) === revisionAtOptimistic;
+        void renderAndCacheTranslation(
+          optimisticPreserved,
           backgroundUrl,
           pageUrl,
           pageIndex,
           jobTargetIdentity,
-        ).catch(() => {
-          // Non-blocking optimistic preview: final renderAndCacheTranslation handles full delivery
-        });
+        )
+          .then(() => {
+            // Discard protocol: an abort / page replace / revision bump after
+            // the optimistic render must leave no cached output behind.
+            if (optimisticOwns()) return;
+            bubbleCacheRef.current.delete(pageUrl);
+            translatedImageCacheRef.current.delete(pageUrl);
+            renderedOutputEvidenceRef.current.delete(pageUrl);
+          })
+          .catch(() => {
+            // Non-blocking optimistic preview: final renderAndCacheTranslation handles full delivery
+          });
       }
 
       const completeness = await recoverDetectedOmissions(filteredParsed);

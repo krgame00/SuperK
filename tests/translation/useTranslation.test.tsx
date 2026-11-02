@@ -94,7 +94,7 @@ test("checks source-backed translation quality before drawing a page", async () 
     preparePageForTranslation:async()=>({recognitionUrl:"blob:original",backgroundUrl:"blob:clean"})}));
   await act(async()=>{expect(await result.current.handleTranslate()).toBe(true);});
   expect(order).toEqual(["review"]);
-  const rendered=vi.mocked(applyTranslationOverlay).mock.calls.find(call=>call[1]==="offscreen")?.[0] as Array<{t:string;translationReview?:{status:string}}>;
+  const rendered=vi.mocked(applyTranslationOverlay).mock.calls.filter(call=>call[1]==="offscreen").at(-1)?.[0] as Array<{t:string;translationReview?:{status:string}}>; // final render (optimistic preview draws first)
   expect(rendered[0]).toMatchObject({t:"สวัสดี",translationReview:{status:"suggested"}});
   expect(result.current.translationResult).toContain("คำแปล");
 });

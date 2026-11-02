@@ -77,7 +77,7 @@ test('public new translation action measures pre-clean original, persists automa
   const {result}=renderHook(()=>useTranslation({currentPage:0,pages:['blob:original'],viewMode:'single',
     preparePageForTranslation:async()=>({recognitionUrl:'blob:scoped',backgroundUrl:'blob:clean'})}));
   await act(async()=>{expect(await result.current.handleTranslate()).toBe(true);});
-  const bubbles=vi.mocked(applyTranslationOverlay).mock.calls.find(c=>c[1]==='offscreen')?.[0];
+  const bubbles=vi.mocked(applyTranslationOverlay).mock.calls.filter(c=>c[1]==='offscreen').at(-1)?.[0]; // final render (the optimistic preview draws first)
   expect(bubbles?.[0].sourceSizing).toMatchObject({mode:'auto',status:'matched',evidence:{bodyHeightPx:10,sourceRevision:expect.stringMatching(/^100x40:/)}});
   expect(bubbles![0].targetFontSize! * bubbles![0].sourceSizing!.font!.bodyHeightPx / bubbles![0].sourceSizing!.font!.referencePx).toBe(10);
   expect(imageSources).toContain('blob:original');
@@ -102,7 +102,8 @@ test.each(['abort','replace','revision'] as const)('source preparation discards 
     else rerender({pages:['blob:replacement']});
   });
   await act(async()=>{release();await work;});
-  expect(vi.mocked(applyTranslationOverlay).mock.calls.filter(c=>c[1]==='offscreen')).toHaveLength(0);
+  expect(vi.mocked(applyTranslationOverlay).mock.calls.filter(c=>c[1]==='offscreen').length).toBeLessThanOrEqual(1); // optimistic preview may draw once
+  expect(result.current.getCurrentRenderedOutput('blob:original')).toBeUndefined(); // discarded, nothing persists
   expect(result.current.bubbleCacheRef.current.has('blob:original')).toBe(false);
   expect(result.current.translatedImageCacheRef.current.has('blob:original')).toBe(false);
 });
@@ -144,7 +145,8 @@ test('original image wait discards work aborted before pixel preparation',async(
   act(()=>result.current.cancelTranslateAll());
   await act(async()=>{release();await work;});
   expect(document.fonts.load).not.toHaveBeenCalled();
-  expect(vi.mocked(applyTranslationOverlay).mock.calls.filter(c=>c[1]==='offscreen')).toHaveLength(0);
+  expect(vi.mocked(applyTranslationOverlay).mock.calls.filter(c=>c[1]==='offscreen').length).toBeLessThanOrEqual(1); // optimistic preview may draw once
+  expect(result.current.getCurrentRenderedOutput('blob:original')).toBeUndefined(); // discarded, nothing persists
   expect(result.current.bubbleCacheRef.current.has('blob:original')).toBe(false);
   expect(result.current.translatedImageCacheRef.current.has('blob:original')).toBe(false);
 });
