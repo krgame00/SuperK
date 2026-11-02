@@ -36,6 +36,28 @@ describe("PageViewer navigation", () => {
     expect(updater(0)).toBe(1);
   });
 
+  it("shifts the Next Page button to lg:right-[22.5rem] when hasInspectorOpen is true to prevent overlapping the inspector", () => {
+    render(
+      <PageViewer
+        pages={pages}
+        currentPage={0}
+        viewLayout="single"
+        workspaceLayer="original"
+        currentCleaningResult={null}
+        cleaningResultsByPage={new Map()}
+        brokenPages={new Set()}
+        onPageChange={vi.fn()}
+        onViewLayoutChange={vi.fn()}
+        onRemovePage={vi.fn()}
+        onImageError={vi.fn()}
+        hasInspectorOpen={true}
+      />
+    );
+
+    const nextBtn = screen.getByTitle("Next Page (Right Arrow)");
+    expect(nextBtn).toHaveClass("lg:right-[22.5rem]");
+  });
+
   it("calls onPageChange with prev - 1 when clicking the Previous Page (Left Arrow) button", () => {
     const onPageChange = vi.fn();
     render(
@@ -55,6 +77,7 @@ describe("PageViewer navigation", () => {
     );
 
     const prevBtn = screen.getByTitle("Previous Page (Left Arrow)");
+    expect(prevBtn).toHaveClass("xl:left-20");
     fireEvent.click(prevBtn);
 
     expect(onPageChange).toHaveBeenCalledTimes(1);

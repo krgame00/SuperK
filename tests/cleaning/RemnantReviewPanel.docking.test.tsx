@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { describe, expect, test } from "vitest";
 
 import { RemnantReviewPanel } from "@/components/cleaning/RemnantReviewPanel";
@@ -88,5 +88,32 @@ describe("RemnantReviewPanel Docking & Non-Overlap", () => {
     const panel = screen.getByTestId("remnant-review-findings");
     expect(panel.className).toContain("top-28");
     expect(panel.className).toContain("sm:top-32");
+  });
+
+  test("automatically docks to the left side when superk:bubble-selected event occurs", () => {
+    render(
+      <RemnantReviewPanel
+        inspection={mockInspection}
+        regions={[mockRegion]}
+        toolbarPosition="top"
+        isPageReviewRequired={false}
+      />
+    );
+
+    const panelBefore = screen.getByTestId("remnant-review-findings");
+    expect(panelBefore.className).toContain("right-3");
+
+    // Dispatch bubble selected event wrapped in act
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("superk:bubble-selected", {
+          detail: { bubbleId: "b-1" },
+        })
+      );
+    });
+
+    const panelAfter = screen.getByTestId("remnant-review-findings");
+    expect(panelAfter.className).toContain("left-3");
+    expect(panelAfter.className).not.toContain("right-3");
   });
 });

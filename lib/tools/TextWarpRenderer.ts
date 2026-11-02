@@ -1,8 +1,18 @@
-export type WarpEffectType = "none" | "arch" | "wave" | "bulge" | "squeeze";
+export type WarpEffectType =
+  | "none"
+  | "arch"
+  | "wave"
+  | "bulge"
+  | "squeeze"
+  | "perspective"
+  | "twist"
+  | "fish";
 
 export interface WarpConfig {
   type: WarpEffectType;
   bend: number; // -1.0 to 1.0 (e.g. 0.5)
+  horizontal?: number; // -1.0 to 1.0 (or -100 to 100)
+  vertical?: number; // -1.0 to 1.0 (or -100 to 100)
   frequency?: number; // For wave mode (e.g. 1.5)
 }
 
@@ -32,6 +42,12 @@ export function getWarpLabel(type: WarpEffectType): string {
       return "ป่องกลาง (Bulge)";
     case "squeeze":
       return "บีบกลาง (Squeeze)";
+    case "perspective":
+      return "เปอร์สเปกทีฟ (Perspective)";
+    case "twist":
+      return "บิดเกลียว (Twist)";
+    case "fish":
+      return "ตาปลา (Fish Eye)";
     case "none":
     default:
       return "ข้อความปกติ (None)";
@@ -39,7 +55,7 @@ export function getWarpLabel(type: WarpEffectType): string {
 }
 
 /**
- * Renders text with SFX non-linear deformation (arch, wave, bulge, squeeze)
+ * Renders text with SFX non-linear deformation (arch, wave, bulge, squeeze, perspective, twist, fish)
  * by slicing the source canvas into 2px vertical strips and applying mathematical offsets.
  */
 export function renderWarpedText(
@@ -52,12 +68,13 @@ export function renderWarpedText(
   const w = sourceCanvas.width;
   const h = sourceCanvas.height;
 
-  if (
-    config.type === "none" ||
-    Math.abs(config.bend) < 0.001 ||
-    w <= 0 ||
-    h <= 0
-  ) {
+  const vertDistort = typeof config.vertical === "number" ? config.vertical : 0;
+  const horizDistort = typeof config.horizontal === "number" ? config.horizontal : 0;
+
+  const hasBend = Math.abs(config.bend) >= 0.001 && config.type !== "none";
+  const hasDistort = Math.abs(vertDistort) >= 0.001 || Math.abs(horizDistort) >= 0.001;
+
+  if ((!hasBend && !hasDistort) || w <= 0 || h <= 0) {
     destCtx.drawImage(sourceCanvas, destX, destY);
     return;
   }
@@ -87,7 +104,25 @@ export function renderWarpedText(
         scaleY = Math.max(0.2, 1 - config.bend * (1 - u * u) * 0.6);
         offsetY = (1 - scaleY) * h * 0.5;
         break;
+      case "perspective":
+        scaleY = Math.max(0.2, 1 + config.bend * u * 0.7);
+        offsetY = (1 - scaleY) * h * 0.5;
+        break;
+      case "twist":
+        offsetY = Math.sin(u * Math.PI) * config.bend * (h * 0.45);
+        scaleY = Math.max(0.2, 1 - Math.abs(u) * Math.abs(config.bend) * 0.3);
+        break;
+      case "fish":
+        scaleY = Math.max(0.2, 1 + config.bend * Math.cos((u * Math.PI) / 2) * 0.8);
+        offsetY = (1 - scaleY) * h * 0.5;
+        break;
     }
+
+    if (vertDistort !== 0) {
+      offsetY += u * vertDistort * (h * 0.3);
+    }
+
+    const offsetX = horizDistort !== 0 ? u * horizDistort * (w * 0.15) : 0;
 
     destCtx.drawImage(
       sourceCanvas,
@@ -95,7 +130,7 @@ export function renderWarpedText(
       0,
       sliceW,
       h,
-      destX + sx,
+      destX + sx + offsetX,
       destY + offsetY,
       sliceW,
       h * scaleY

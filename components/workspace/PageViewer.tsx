@@ -26,6 +26,7 @@ export interface PageViewerProps {
   isFocusMode?: boolean;
   onToggleFocusMode?: () => void;
   isFilmstripVisible?: boolean;
+  hasInspectorOpen?: boolean;
 }
 
 function VirtualPageItem({
@@ -118,6 +119,7 @@ export function PageViewer({
   isFocusMode = false,
   onToggleFocusMode,
   isFilmstripVisible = false,
+  hasInspectorOpen = false,
 }: PageViewerProps): ReactElement | null {
   const touchStartXRef = useRef<number | null>(null);
   const touchStartYRef = useRef<number | null>(null);
@@ -360,7 +362,9 @@ export function PageViewer({
               type="button"
               onClick={() => onPageChange((prev) => prev - 1)}
               aria-label={`หน้าที่แล้ว (หน้า ${currentPage} จาก ${pages.length})`}
-              className="absolute left-3 sm:left-6 top-1/2 -translate-y-1/2 flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-full border border-border/80 bg-background/80 text-foreground/90 shadow-xl backdrop-blur-md transition-all duration-150 hover:bg-surface hover:text-white hover:scale-110 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background z-30"
+              className={`absolute top-1/2 -translate-y-1/2 flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-full border border-border/80 bg-background/80 text-foreground/90 shadow-xl backdrop-blur-md transition-all duration-150 hover:bg-surface hover:text-white hover:scale-110 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background z-30 ${
+                isFocusMode ? "left-3 sm:left-6" : "left-3 sm:left-6 xl:left-20"
+              }`}
               title="Previous Page (Left Arrow)"
             >
               <ChevronLeft className="w-5 h-5" aria-hidden="true" />
@@ -493,7 +497,9 @@ export function PageViewer({
               type="button"
               onClick={() => onPageChange((prev) => prev + 1)}
               aria-label={`หน้าถัดไป (หน้า ${currentPage + 2} จาก ${pages.length})`}
-              className="absolute right-3 sm:right-6 top-1/2 -translate-y-1/2 flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-full border border-border/80 bg-background/80 text-foreground/90 shadow-xl backdrop-blur-md transition-all duration-150 hover:bg-surface hover:text-white hover:scale-110 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background z-30"
+              className={`absolute top-1/2 -translate-y-1/2 flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-full border border-border/80 bg-background/80 text-foreground/90 shadow-xl backdrop-blur-md transition-all duration-150 hover:bg-surface hover:text-white hover:scale-110 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background z-30 ${
+                hasInspectorOpen ? "right-3 sm:right-6 lg:right-[22.5rem]" : "right-3 sm:right-6"
+              }`}
               title="Next Page (Right Arrow)"
             >
               <ChevronRight className="w-5 h-5" aria-hidden="true" />

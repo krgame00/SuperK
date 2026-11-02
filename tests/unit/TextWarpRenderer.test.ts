@@ -22,6 +22,9 @@ describe("TextWarpRenderer", () => {
     expect(getWarpLabel("wave")).toContain("คลื่น");
     expect(getWarpLabel("bulge")).toContain("ป่องกลาง");
     expect(getWarpLabel("squeeze")).toContain("บีบกลาง");
+    expect(getWarpLabel("perspective")).toContain("เปอร์สเปกทีฟ");
+    expect(getWarpLabel("twist")).toContain("บิดเกลียว");
+    expect(getWarpLabel("fish")).toContain("ตาปลา");
   });
 
   it("renders without error for each warp type", () => {
@@ -63,5 +66,30 @@ describe("TextWarpRenderer", () => {
     expect(draws.length).toBeGreaterThan(1);
     const middleBulge = draws[Math.floor(draws.length / 2)];
     expect(middleBulge.scaleY).toBeGreaterThan(40); // 40 * (1 + bulge) > 40
+
+    // perspective: trapezoidal scaling across width
+    draws.length = 0;
+    renderWarpedText(mockDestCtx, mockSource, 0, 0, { type: "perspective", bend: 0.5 });
+    expect(draws.length).toBeGreaterThan(1);
+    expect(draws[draws.length - 1].scaleY).toBeGreaterThan(draws[0].scaleY);
+
+    // twist: S-curve deformation
+    draws.length = 0;
+    renderWarpedText(mockDestCtx, mockSource, 0, 0, { type: "twist", bend: 0.5 });
+    expect(draws.length).toBeGreaterThan(1);
+
+    // fish: center expansion
+    draws.length = 0;
+    renderWarpedText(mockDestCtx, mockSource, 0, 0, { type: "fish", bend: 0.5 });
+    expect(draws.length).toBeGreaterThan(1);
+    const centerFish = draws[Math.floor(draws.length / 2)];
+    expect(centerFish.scaleY).toBeGreaterThan(40);
+
+    // horizontal and vertical distortion
+    draws.length = 0;
+    renderWarpedText(mockDestCtx, mockSource, 0, 0, { type: "none", bend: 0, horizontal: 0.4, vertical: 0.3 });
+    expect(draws.length).toBeGreaterThan(1);
+    expect(draws[draws.length - 1].destY).not.toBe(draws[0].destY);
+    expect(draws[draws.length - 1].destX).not.toBe(draws[0].destX);
   });
 });

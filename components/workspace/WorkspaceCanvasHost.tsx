@@ -233,6 +233,24 @@ export function WorkspaceCanvasHost({
   const [isBwContrastMenuOpen, setIsBwContrastMenuOpen] = useState(false);
   const bwContrastMenuRef = useRef<HTMLDivElement>(null);
   const [activeStudioTool, setActiveStudioTool] = useState<StudioTool>("select");
+  const [warpFlash, setWarpFlash] = useState(false);
+  const [warpHint, setWarpHint] = useState<string | null>(null);
+  const warpFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleWarpClick = () => {
+    if (!selectedBubbleBridge) {
+      setWarpHint("คลิกเลือกบับเบิลก่อน แล้วกดดัดรูปทรงอีกครั้ง");
+      if (warpFlashTimerRef.current) clearTimeout(warpFlashTimerRef.current);
+      warpFlashTimerRef.current = setTimeout(() => setWarpHint(null), 2600);
+      return;
+    }
+    const section = document.getElementById("warp-panel-section");
+    if (section) {
+      section.scrollIntoView({ behavior: "smooth", block: "center" });
+      setWarpFlash(true);
+      if (warpFlashTimerRef.current) clearTimeout(warpFlashTimerRef.current);
+      warpFlashTimerRef.current = setTimeout(() => setWarpFlash(false), 1600);
+    }
+  };
   const [isTranscriptModalOpen, setIsTranscriptModalOpen] = useState(false);
   const [isGlossaryModalOpen, setIsGlossaryModalOpen] = useState(false);
   const [inspectorScope, setInspectorScope] = useState<"this-page" | "all-pages">("this-page");
@@ -938,8 +956,17 @@ export function WorkspaceCanvasHost({
                   onOpenTranscript={transcriptPagesData ? () => setIsTranscriptModalOpen(true) : undefined}
                   onOpenGlossary={onGlossaryChange ? () => setIsGlossaryModalOpen(true) : undefined}
                   onEditMask={onEditMask}
+                  onWarpClick={handleWarpClick}
                   disabled={operationBusy}
                 />
+                {warpHint && (
+                  <div
+                    role="status"
+                    className="fixed left-3 top-1/2 -translate-y-1/2 z-40 mt-14 rounded-lg bg-surface border border-border px-3 py-2 text-sm text-foreground shadow-sm"
+                  >
+                    {warpHint}
+                  </div>
+                )}
                 <input
                   ref={imageLayerInputRef}
                   type="file"
@@ -977,7 +1004,11 @@ export function WorkspaceCanvasHost({
               </div>
             )}
             {!isFocusMode && (selectedBubbleBridge || selectedImageLayer) && (
-              <div className="fixed right-3 top-20 z-30 hidden lg:flex flex-col gap-2 max-h-[calc(100dvh-9rem)] overflow-y-auto pr-0.5">
+              <div
+                data-inspector-panel="true"
+                aria-label="คุณสมบัติข้อความ"
+                className="fixed right-3 top-20 z-50 hidden lg:flex flex-col gap-2 max-h-[calc(100dvh-9rem)] overflow-y-auto pr-0.5"
+              >
                 {selectedBubbleBridge && (
                   <>
                     <ColorMatchStatus
@@ -1030,33 +1061,48 @@ export function WorkspaceCanvasHost({
                         setSelectedBubbleBridge(null);
                       }}
                     />
+                    <div
+                      id="warp-panel-section"
+                      className={`rounded-xl transition-shadow ${warpFlash ? "ring-2 ring-primary" : ""}`}
+                    >
                     <WarpPanel
                       warp={{
                         effect: (selectedBubbleBridge.bubble.warp?.type ?? "none") as WarpEffect,
                         bend: Math.round((selectedBubbleBridge.bubble.warp?.bend ?? 0) * 100),
-                        horizontal: 0,
-                        vertical: 0,
+                        horizontal: Math.round((selectedBubbleBridge.bubble.warp?.horizontal ?? 0) * 100),
+                        vertical: Math.round((selectedBubbleBridge.bubble.warp?.vertical ?? 0) * 100),
                       }}
                       onChange={(warpUpdates) => {
-                        const prevType = selectedBubbleBridge.bubble.warp?.type ?? "none";
-                        const nextEffect = (warpUpdates.effect ?? prevType) as
-                          | "none"
-                          | "arch"
-                          | "wave"
-                          | "bulge"
-                          | "squeeze";
-                        const rawBend =
-                          typeof warpUpdates.bend === "number"
-                            ? warpUpdates.bend / 100
-                            : (selectedBubbleBridge.bubble.warp?.bend ?? 0.45);
+                        const prevWarp = selectedBubbleBridge.bubble.warp;
+                        const prevType = prevWarp?.type ?? "none";
+                        const nextEffect = (warpUpdates.effect ?? prevType) as WarpEffect;
+
+                        let rawBend = prevWarp?.bend ?? 0.45;
+                        if (typeof warpUpdates.bend === "number") {
+                          rawBend = warpUpdates.bend / 100;
+                        } else if (prevType === "none" && nextEffect !== "none") {
+                          rawBend = 0.45;
+                        }
+
+                        const rawH =
+                          typeof warpUpdates.horizontal === "number"
+                            ? warpUpdates.horizontal / 100
+                            : (prevWarp?.horizontal ?? 0);
+                        const rawV =
+                          typeof warpUpdates.vertical === "number"
+                            ? warpUpdates.vertical / 100
+                            : (prevWarp?.vertical ?? 0);
+
                         selectedBubbleBridge.applyUpdates({
                           warp:
-                            nextEffect === "none"
+                            nextEffect === "none" && rawH === 0 && rawV === 0
                               ? undefined
                               : {
                                   type: nextEffect,
                                   bend: rawBend,
-                                  frequency: selectedBubbleBridge.bubble.warp?.frequency ?? 1.5,
+                                  horizontal: rawH,
+                                  vertical: rawV,
+                                  frequency: prevWarp?.frequency ?? 1.5,
                                 },
                         });
                         setInspectorTick((t) => t + 1);
@@ -1066,6 +1112,7 @@ export function WorkspaceCanvasHost({
                         setInspectorTick((t) => t + 1);
                       }}
                     />
+                    </div>
                   </>
                 )}
                 {selectedImageLayer && activePage && (
@@ -1187,6 +1234,7 @@ export function WorkspaceCanvasHost({
               onViewLayoutChange={onViewLayoutChange}
               onRemovePage={onRemovePage}
               onImageError={onImageError}
+              hasInspectorOpen={Boolean(selectedBubbleBridge || selectedImageLayer)}
             />
           </div>
 

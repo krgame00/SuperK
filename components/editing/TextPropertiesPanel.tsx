@@ -23,11 +23,13 @@ export interface TextPropertiesPanelProps {
 }
 
 const FONT_OPTIONS = [
-  { id: "var(--font-manga)", label: "Manga (Noto Sans Thai)" },
-  { id: "Prompt, sans-serif", label: "Prompt" },
-  { id: "Kanit, sans-serif", label: "Kanit" },
-  { id: "Sarabun, sans-serif", label: "Sarabun" },
-  { id: "Chakra Petch, sans-serif", label: "Chakra Petch" },
+  { id: "Itim, sans-serif", label: "Manga (Itim) — ค่าเริ่มต้น" },
+  { id: "Prompt, sans-serif", label: "Prompt (คมชัด/โมเดิร์น)" },
+  { id: "Kanit, sans-serif", label: "Kanit (มาตรฐานซับ)" },
+  { id: "Sarabun, sans-serif", label: "Sarabun (ทางการ)" },
+  { id: "Chakra Petch, sans-serif", label: "Chakra Petch (ไซไฟ/เหลี่ยม)" },
+  { id: "Mali, sans-serif", label: "Mali (ลายมือใสๆ)" },
+  { id: "Sriracha, sans-serif", label: "Sriracha (พู่กันโชเน็น)" },
 ];
 
 export function TextPropertiesPanel({
@@ -45,6 +47,8 @@ export function TextPropertiesPanel({
   return (
     <aside
       aria-label="คุณสมบัติข้อความ"
+      data-testid="text-properties-panel"
+      data-inspector-panel="true"
       className="flex flex-col gap-3 bg-surface/90 backdrop-blur-md border border-surface-hover rounded-xl p-3 shadow-xl w-64 sm:w-72 text-foreground select-none text-xs"
     >
       {/* Header & Quick Action Buttons */}
@@ -126,7 +130,11 @@ export function TextPropertiesPanel({
             </label>
             <select
               id="text-font-family"
-              value={layer.fontFamily || "var(--font-manga)"}
+              value={
+                !layer.fontFamily || layer.fontFamily === "var(--font-manga)"
+                  ? "Itim, sans-serif"
+                  : layer.fontFamily
+              }
               onChange={(e) => onChange({ fontFamily: e.target.value })}
               className="bg-background border border-surface-hover rounded-md px-2 py-1 text-xs focus:border-primary outline-none"
             >

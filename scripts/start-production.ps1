@@ -35,15 +35,20 @@ function Start-SuperKProduction {
     $nodeExe = (Get-Command node.exe -ErrorAction Stop).Source
     $serverPath = Join-Path $rootPath '.next\standalone\server.js'
     $cleanerDirectory = Join-Path $rootPath 'ocr-service'
-    $uvicornExe = Join-Path $cleanerDirectory 'venv\Scripts\uvicorn.exe'
+    # Prefer the Python 3.12 uv venv (.venv); the legacy `venv` was created on the old C: path
+    # and its exe shims broke when the repo moved to F:.
+    $uvicornExe = Join-Path $cleanerDirectory '.venv\Scripts\uvicorn.exe'
     if (-not (Test-Path -LiteralPath $uvicornExe)) {
-        $uvicornExe = Join-Path $cleanerDirectory '.venv\Scripts\uvicorn.exe'
+        $uvicornExe = Join-Path $cleanerDirectory 'venv\Scripts\uvicorn.exe'
     }
     if (-not (Test-Path -LiteralPath $uvicornExe)) { throw 'OCR virtual environment is missing.' }
 
     # Verify both occupied ports before starting or rebuilding anything.
     $webOwner = Get-SuperKPortOwner -Port 3000
     $ocrOwner = Get-SuperKPortOwner -Port 8765
+    # Only auto-open the browser on a genuine cold launch; re-invocations while
+    # the app is already running (restarts, rebuilds) would just pile up tabs.
+    $webWasRunning = [bool]$webOwner
     foreach ($owner in @($webOwner, $ocrOwner)) {
         if ($owner -and -not (Test-SuperKServiceProcess -ProcessInfo $owner -ProjectRoot $rootPath)) {
             throw 'Port 3000 or 8765 belongs to another application. It was left running.'
@@ -113,6 +118,7 @@ function Start-SuperKProduction {
     $ocrProcess = $null
     $webProcess = $null
     $env:SUPERK_ENABLE_ADAPTIVE_ROI_V2 = '1'
+    $env:SUPERK_RESIDUAL_SWEEP = '1'
     if (-not $ocrOwner) {
         $ocrProcess = Start-Process -FilePath $uvicornExe -ArgumentList @('app.api:app', '--host', '127.0.0.1', '--port', '8765') -WorkingDirectory $cleanerDirectory -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $logDirectory 'ocr.log') -RedirectStandardError (Join-Path $logDirectory 'ocr-error.log')
     }
@@ -131,7 +137,9 @@ function Start-SuperKProduction {
         $webReady = Test-SuperKHealth -Url 'http://127.0.0.1:3000'
         $ocrReady = Test-SuperKHealth -Url 'http://127.0.0.1:8765/health'
         if ($webReady -and $ocrReady) {
-            Open-SuperKBrowser -Url 'http://127.0.0.1:3000'
+            if (-not $webWasRunning) {
+                Open-SuperKBrowser -Url 'http://127.0.0.1:3000'
+            }
             return
         }
         Start-Sleep -Milliseconds 500

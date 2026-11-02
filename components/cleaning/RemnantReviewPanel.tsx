@@ -90,16 +90,51 @@ export function RemnantReviewPanel({
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [busyCandidateId, setBusyCandidateId] = useState<string | null>(null);
 
-  // Auto-collapse when the user selects a text bubble: the inspector takes
-  // over this edge of the screen and this panel would otherwise cover its
-  // buttons (they stay clickable through the collapsed pill).
+  // Auto-collapse and move to the left when the user selects a text bubble or when
+  // the inspector is open: the inspector takes over the right edge of the screen,
+  // so docking to the left ensures it never covers the inspector tabs and typography controls.
   useEffect(() => {
+    const checkInspector = () => {
+      if (typeof document === "undefined") return;
+      const hasInspector = Boolean(
+        document.querySelector('[data-inspector-panel="true"]') ||
+        document.querySelector('[data-selected="true"]') ||
+        document.querySelector('[aria-label="คุณสมบัติข้อความ"]') ||
+        document.querySelector('[data-testid="text-properties-panel"]')
+      );
+      if (hasInspector) {
+        setIsCollapsed(true);
+        setSide("left");
+      }
+    };
+
+    checkInspector();
+
+    const observer =
+      typeof MutationObserver !== "undefined"
+        ? new MutationObserver(() => checkInspector())
+        : null;
+    if (observer && typeof document !== "undefined") {
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["data-selected", "data-inspector-panel", "aria-label"],
+      });
+    }
+
     const handleBubbleSelected = (e: Event) => {
       const custom = e as CustomEvent;
-      if (custom.detail) setIsCollapsed(true);
+      if (custom.detail) {
+        setIsCollapsed(true);
+        setSide("left");
+      }
     };
     window.addEventListener("superk:bubble-selected", handleBubbleSelected);
-    return () => window.removeEventListener("superk:bubble-selected", handleBubbleSelected);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("superk:bubble-selected", handleBubbleSelected);
+    };
   }, []);
 
   const [busyAction, setBusyAction] = useState<"restore" | "clean" | null>(null);
@@ -260,13 +295,14 @@ export function RemnantReviewPanel({
       role="region"
       aria-label="รายการจุดตรวจข้อความที่เหลือ"
       className={`fixed ${topPositionClass} z-40 flex flex-col overflow-hidden rounded-2xl transition-all duration-250 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-        side === "right" ? "right-3 sm:right-4 origin-top-right" : "left-3 sm:left-4 origin-top-left"
+        side === "right" ? "right-3 sm:right-4 origin-top-right" : "left-3 sm:left-4 xl:left-20 origin-top-left"
       } ${
         isCollapsed
           ? "w-auto max-w-[280px] border border-[#e61972]/50 bg-surface/95 px-3 py-1.5 shadow-lg backdrop-blur-md"
           : `w-[calc(100%-2rem)] max-w-sm sm:max-w-md md:max-w-[420px] ${maxHeightClass} border border-border/80 bg-surface/95 p-3 text-xs shadow-2xl backdrop-blur-md`
       }`}
       data-testid="remnant-review-findings"
+      data-remnant-side={side}
     >
       {isCollapsed ? (
         <div className="flex items-center gap-2 animate-in fade-in zoom-in-95 duration-200 select-none">

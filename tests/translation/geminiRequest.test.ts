@@ -776,3 +776,34 @@ test("a mid-flight abort stops requestOpenAICompatible with REQUEST_ABORTED", as
   // Only the first attempt ran — the abort stopped the retry loop.
   expect(hungFetch).toHaveBeenCalledTimes(1);
 });
+
+test("immediately fast-falls back to next model on 429 daily quota without looping through all keys", async () => {
+  const fetchImpl = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(
+      jsonResponse(
+        {
+          error: {
+            message:
+              "Generate content requests per day limit exceeded on Free Tier (limit: 20).",
+            status: "RESOURCE_EXHAUSTED",
+          },
+        },
+        429,
+      ),
+    )
+    .mockResolvedValueOnce(jsonResponse(successBody));
+
+  const result = await requestGemini({
+    apiKeys: ["key-1", "key-2", "key-3", "key-4", "key-5"],
+    models: ["gemini-3.8-flash", "gemini-3.5-flash-lite"],
+    payload: { contents: [] },
+    fetchImpl,
+  });
+
+  expect(result.model).toBe("gemini-3.5-flash-lite");
+  expect(result.meta.attemptCount).toBe(2);
+  expect(fetchImpl).toHaveBeenCalledTimes(2);
+  expect(String(fetchImpl.mock.calls[0][0])).toContain("/models/gemini-3.8-flash:");
+  expect(String(fetchImpl.mock.calls[1][0])).toContain("/models/gemini-3.5-flash-lite:");
+});

@@ -86,8 +86,26 @@ export const resolveCanvasFontFamily = (fontFamily?: string): string => {
     return fallback;
   }
   try {
-    const parts = fallback.split(",").map((p) => p.trim()).filter(Boolean);
+    let cleanFont = fallback.trim();
+    if (cleanFont.startsWith("var(")) {
+      const match = cleanFont.match(/var\(\s*(--[\w-]+)\s*\)/);
+      if (match) {
+        const varName = match[1];
+        if (varName === "--font-manga") {
+          return "Itim, sans-serif";
+        }
+        const resolved = getComputedStyle(document.documentElement)
+          .getPropertyValue(varName)
+          .trim();
+        if (resolved) return resolved;
+        return "Itim, sans-serif";
+      }
+    }
+    const parts = cleanFont.split(",").map((p) => p.trim()).filter(Boolean);
     const rawPrimary = (parts[0] || "Itim").replace(/^["']|["']$/g, "").trim();
+    if (rawPrimary.toLowerCase() === "manga" || rawPrimary.toLowerCase() === "--font-manga") {
+      return "Itim, sans-serif";
+    }
     const varName = CANVAS_FONT_VARS[rawPrimary.toLowerCase()];
     if (varName) {
       const resolved = getComputedStyle(document.documentElement)
@@ -99,7 +117,7 @@ export const resolveCanvasFontFamily = (fontFamily?: string): string => {
       const rest = parts.slice(1).join(", ") || "sans-serif";
       return `"${rawPrimary}", ${rest}`;
     }
-    return fallback;
+    return cleanFont;
   } catch {
     return fallback;
   }
@@ -2007,7 +2025,12 @@ export const applyTranslationOverlay = async (
         const leftPad = Math.max(6, Math.round(currentBw * 0.04));
         const indentPad = leftPad + Math.round(fontSize * 0.85);
 
-        const isWarped = Boolean(b.warp && b.warp.type !== "none");
+        const isWarped = Boolean(
+          b.warp &&
+          (b.warp.type !== "none" ||
+            (typeof b.warp.horizontal === "number" && Math.abs(b.warp.horizontal) >= 0.001) ||
+            (typeof b.warp.vertical === "number" && Math.abs(b.warp.vertical) >= 0.001))
+        );
         let activeCtx: CanvasRenderingContext2D = ctx;
         let warpCanvas: HTMLCanvasElement | OffscreenCanvas | null = null;
         if (isWarped) {

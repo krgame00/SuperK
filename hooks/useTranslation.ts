@@ -1849,6 +1849,26 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         (b) => isSfxBubble(b) || withinTranslationScope(b.box, textScope) ||
           outsideProtectedAreas(b.box, textScope),
       );
+
+      // Fast optimistic render: display the primary translated bubbles on the canvas
+      // immediately (~3.5s) so the user never sees a bare English page while omission
+      // checks or style enrichments finish.
+      const initialOutcome = resolveTranslationOutcome(
+        filteredParsed,
+        getManualBubblesForPage(pageUrl),
+      );
+      if (initialOutcome.kind !== "clean-only" && initialOutcome.bubbles.length > 0) {
+        void renderAndCacheTranslation(
+          initialOutcome.bubbles,
+          backgroundUrl,
+          pageUrl,
+          pageIndex,
+          jobTargetIdentity,
+        ).catch(() => {
+          // Non-blocking optimistic preview: final renderAndCacheTranslation handles full delivery
+        });
+      }
+
       const completeness = await recoverDetectedOmissions(filteredParsed);
       console.info("[Translation Coverage]", {page:pageIndex+1, detected:textScope?.allowed.length ?? null,
         received:pageBubbles.length, retained:filteredParsed.length, recovered:completeness.bubbles.length-filteredParsed.length,

@@ -303,6 +303,21 @@ function retryAfterMsFromHeaders(
   return parseRetryAfter(value, nowMs);
 }
 
+export const defaultModelCooldowns = new Map<string, number>();
+
+export function isDailyQuotaExhausted(status: number, message: string): boolean {
+  if (status !== 429) return false;
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("per day") ||
+    normalized.includes("daily") ||
+    normalized.includes("per_day") ||
+    normalized.includes("free_tier_requests") ||
+    normalized.includes("quota exceeded for metric") ||
+    normalized.includes("limit: 20")
+  );
+}
+
 function isHighDemandError(status: number, message: string): boolean {
   if (status !== 503) return false;
   const normalized = message.toLowerCase();
@@ -312,6 +327,19 @@ function isHighDemandError(status: number, message: string): boolean {
     normalized.includes("overload") ||
     normalized.includes("temporarily unavailable")
   );
+}
+
+export function shouldFastFallbackModel(
+  status: number,
+  message: string,
+  modelIdx: number,
+  totalModels: number,
+): boolean {
+  if (modelIdx >= totalModels - 1) return false;
+  if (status === 404) return true;
+  if (isHighDemandError(status, message)) return true;
+  if (isDailyQuotaExhausted(status, message)) return true;
+  return false;
 }
 
 export async function requestGemini<T = unknown>(
@@ -342,6 +370,17 @@ export async function requestGemini<T = unknown>(
 
   for (let modelIdx = 0; modelIdx < models.length; modelIdx++) {
     const model = models[modelIdx];
+    const modelCooldownExpiry = defaultModelCooldowns.get(model);
+    if (modelCooldownExpiry && now() < modelCooldownExpiry) {
+      const hasOtherModels = models.slice(modelIdx + 1).some((m) => {
+        const exp = defaultModelCooldowns.get(m);
+        return !exp || now() >= exp;
+      });
+      if (hasOtherModels) {
+        fallbackCount++;
+        continue;
+      }
+    }
     let keyOffset = 0;
 
     keyLoop: while (keyOffset < apiKeys.length) {
@@ -426,7 +465,11 @@ export async function requestGemini<T = unknown>(
         firstHttpError ??= error;
 
         const rawMsg = upstreamMessage(data, response.status);
-        if (isHighDemandError(response.status, rawMsg) && modelIdx < models.length - 1) {
+        if (isDailyQuotaExhausted(response.status, rawMsg)) {
+          defaultModelCooldowns.set(model, now() + 30 * 60_000);
+        }
+
+        if (shouldFastFallbackModel(response.status, rawMsg, modelIdx, models.length)) {
           fallbackCount++;
           break keyLoop;
         }
