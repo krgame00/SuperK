@@ -3173,3 +3173,43 @@ Verification evidence:
   - `npx tsc --noEmit`: 0 errors.
   - Vitest: `inpaintOcr.test.tsx` and `StudioToolbar.test.tsx` (4/4 passed).
   - Standalone server: 127.0.0.1:3000 returning 200 OK.
+
+
+## Upgrade Image & Sticker Layer: Interactive Canvas Drag/Resize, Persistence & Export Baking — 2026-11-04
+
+### Status: VERIFIED WORKING (ImageLayerCanvas unit tests passed, tsc 0 errors, production build deployed on port 3000)
+
+- **User Context & Symptom**:
+  - User requested audit of fake/stubbed buttons and selected Option 1 under `/Poteto Mode` to complete the Image/Sticker layer capability.
+  - Previously, `ImageLayer` in `StudioToolbar` allowed uploading an image and editing properties in `ImageLayerPanel`, but it was rendered outside the canvas viewport without pointer dragging or corner resize handles, was not persisted across reloads or page changes, and was not baked into exported files (`downloadTranslatedImage` and offscreen batch exports).
+  - UI visual overlaps were identified: `ColorMatchStatus` had a semi-transparent background allowing top-bar buttons to show through, and `OcrAreaTool` overlapped the bottom strip.
+
+- **Changes Landed**:
+  1. `lib/editing/imageLayerStore.ts`:
+     - Implemented `readAllImageLayers`, `readPageImageLayers`, `savePageImageLayers`, and `clearAllImageLayers` backed by localStorage (`superk:image-layers`).
+  2. `components/editing/ImageLayerCanvas.tsx`:
+     - Mounted directly into `#pageContainer` via React Portal (`createPortal`) so sticker layers zoom and pan 1:1 with manga artwork.
+     - Implemented pointer drag-to-move with natural canvas scale compensation.
+     - Implemented 4 corner resize handles (`nw`, `ne`, `sw`, `se`) with minimum dimension clamping (30×30px).
+     - Added keyboard deletion support (`Delete` / `Backspace`).
+     - Added `data-image-layer="true"` and flip attributes for seamless export capture.
+  3. `lib/translationOverlay.ts`:
+     - In `downloadTranslatedImage`: queries `[data-image-layer="true"]` and bakes image layers onto `exportCanvas` before text bubbles, preserving position, size, opacity, and horizontal/vertical flips.
+     - In `applyTranslationOverlay` for offscreen rendering: loads `readPageImageLayers(pageKey)` and creates offscreen DOM elements so batch exports (ZIP, CBZ, PDF, Webtoon strip) automatically include all stickers and stamps.
+  4. `components/workspace/WorkspaceCanvasHost.tsx`:
+     - Initialized `imageLayersByPage` with `readAllImageLayers()`.
+     - Persists all additions, moves, resizes, panel tweaks, and deletions via `savePageImageLayers`.
+     - Integrated `ImageLayerCanvas` into canvas host.
+     - Fixed top offset for the right inspector panel (`top-48` / `top-56`) to prevent overlap with the 3-row review toolbar.
+  5. `components/colorMatching/ColorMatchStatus.tsx` & `components/editing/OcrAreaTool.tsx`:
+     - Set opaque `bg-surface/95 backdrop-blur-md` on `ColorMatchStatus` to eliminate see-through ghosting.
+     - Adjusted `OcrAreaTool` bottom position to `bottom-28` to prevent collision with the bottom strip.
+  6. `tests/editing/ImageLayerCanvas.test.tsx`:
+     - Added comprehensive unit tests covering store persistence and canvas handle/drag behavior (all passed).
+
+- **Verification Evidence**:
+  - `npx tsc --noEmit`: 0 errors.
+  - Vitest: `tests/editing/ImageLayerCanvas.test.tsx` and `tests/editing/WarpAndImageLayer.test.tsx` (4/4 passed).
+  - Full Vitest suite: 250 test files passed (2,064 tests passed).
+  - Next.js Turbopack production build: compiled in 8.2s, 0 errors.
+  - Standalone server: 127.0.0.1:3000 returning HTTP 200 OK.

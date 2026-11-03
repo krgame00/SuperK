@@ -248,7 +248,7 @@ export function OcrAreaTool({
       <div
         role="dialog"
         aria-label="เครื่องมือเลือกพื้นที่ OCR"
-        className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-surface/95 backdrop-blur-md border border-primary/40 rounded-2xl px-4 py-2.5 shadow-2xl flex items-center gap-3 text-xs text-foreground select-none motion-reduce:transition-none"
+        className="fixed bottom-28 left-1/2 -translate-x-1/2 z-50 bg-surface border border-primary/40 rounded-2xl px-4 py-2.5 shadow-2xl flex items-center gap-3 text-xs text-foreground select-none motion-reduce:transition-none"
       >
         <div className="flex items-center gap-2.5 font-medium">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/15 text-primary">

@@ -44,6 +44,7 @@ import {
   getWarpLabel,
 } from "./tools/TextWarpRenderer";
 import { fitTextToBubbleContour } from "./typeset/BubbleTypesetEngine";
+import { readPageImageLayers } from "./editing/imageLayerStore";
 
 const ADJ_KEY = "superk:overlay-adjustments";
 const WORD_WRAP_LOCALES: Record<string, string> = {
@@ -592,6 +593,32 @@ export const downloadTranslatedImage = (
   if (!ctx) return null;
 
   ctx.drawImage(img, 0, 0, iw, ih);
+
+  const imageLayerEls = container.querySelectorAll("[data-image-layer='true']");
+  imageLayerEls.forEach((layerEl) => {
+    const el = layerEl as HTMLElement;
+    if (el.style.display === "none") return;
+    const imgEl = el.querySelector("img");
+    if (!imgEl) return;
+    const lx = parseFloat(el.style.left) || 0;
+    const ly = parseFloat(el.style.top) || 0;
+    const lw = parseFloat(el.style.width) || imgEl.naturalWidth || 100;
+    const lh = parseFloat(el.style.height) || imgEl.naturalHeight || 100;
+    const opacity = parseFloat(el.style.opacity) || 1;
+    const flipX = el.dataset.flipx === "true";
+    const flipY = el.dataset.flipy === "true";
+
+    ctx.save();
+    ctx.globalAlpha = opacity;
+    if (flipX || flipY) {
+      ctx.translate(lx + lw / 2, ly + lh / 2);
+      ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
+      ctx.drawImage(imgEl, -lw / 2, -lh / 2, lw, lh);
+    } else {
+      ctx.drawImage(imgEl, lx, ly, lw, lh);
+    }
+    ctx.restore();
+  });
 
   const wrappers = container.querySelectorAll(".tl-canvas > div");
   wrappers.forEach((wrapperEl) => {
@@ -1226,6 +1253,22 @@ export const applyTranslationOverlay = async (
     tlContainer.className = "tl-canvas";
     tlContainer.style.cssText = `position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:10;`;
     container.appendChild(tlContainer);
+
+    if (viewMode === "offscreen") {
+      const pageImageLayers = readPageImageLayers(pageKey);
+      for (const layer of pageImageLayers) {
+        const layerEl = document.createElement("div");
+        layerEl.dataset.imageLayer = "true";
+        if (layer.flipX) layerEl.dataset.flipx = "true";
+        if (layer.flipY) layerEl.dataset.flipy = "true";
+        layerEl.style.cssText = `position:absolute; left:${layer.x}px; top:${layer.y}px; width:${layer.width}px; height:${layer.height}px; opacity:${layer.opacity ?? 1}; pointer-events:none;`;
+        const layerImg = document.createElement("img");
+        layerImg.src = layer.src;
+        layerImg.style.cssText = "width:100%; height:100%; object-fit:contain;";
+        layerEl.appendChild(layerImg);
+        tlContainer.appendChild(layerEl);
+      }
+    }
 
     const chromeRoot =
       viewMode === "single"

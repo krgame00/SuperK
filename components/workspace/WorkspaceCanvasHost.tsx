@@ -34,6 +34,8 @@ import { TranscriptModal, type TranscriptPageData } from "@/components/editing/T
 import { GlossaryModal } from "@/components/editing/GlossaryModal";
 import { WarpPanel } from "@/components/editing/WarpPanel";
 import { ImageLayerPanel } from "@/components/editing/ImageLayerPanel";
+import { ImageLayerCanvas } from "@/components/editing/ImageLayerCanvas";
+import { readAllImageLayers, savePageImageLayers } from "@/lib/editing/imageLayerStore";
 import { TextPropertiesPanel } from "@/components/editing/TextPropertiesPanel";
 import { TextLayerCanvas } from "@/components/editing/TextLayerCanvas";
 import { ColorMatchStatus } from "@/components/colorMatching/ColorMatchStatus";
@@ -268,9 +270,22 @@ export function WorkspaceCanvasHost({
     reanalyzeColor: () => void;
   } | null>(null);
   const imageLayerInputRef = useRef<HTMLInputElement>(null);
-  const [imageLayersByPage, setImageLayersByPage] = useState<Record<string, ImageLayer[]>>({});
+  const [imageLayersByPage, setImageLayersByPage] = useState<Record<string, ImageLayer[]>>(() => {
+    if (typeof window !== "undefined") {
+      return readAllImageLayers();
+    }
+    return {};
+  });
   const [selectedImageLayerId, setSelectedImageLayerId] = useState<string | null>(null);
   const activePageUrlKey = pages[currentPage]?.url ?? "page_0";
+
+  const handleUpdatePageImageLayers = (pageKey: string, nextLayers: ImageLayer[]) => {
+    setImageLayersByPage((prev) => {
+      const updated = { ...prev, [pageKey]: nextLayers };
+      savePageImageLayers(pageKey, nextLayers);
+      return updated;
+    });
+  };
   const textLayersManager = useTextLayers({ pageId: activePageUrlKey });
   const currentPageImageLayers = imageLayersByPage[activePageUrlKey] ?? [];
   const selectedImageLayer =
@@ -1010,11 +1025,11 @@ export function WorkspaceCanvasHost({
                         flipX: false,
                         flipY: false,
                       };
-                      setImageLayersByPage((prev) => ({
-                        ...prev,
-                        [activePage.url]: [...(prev[activePage.url] ?? []), newLayer],
-                      }));
+                      const nextLayers = [...(imageLayersByPage[activePage.url] ?? []), newLayer];
+                      handleUpdatePageImageLayers(activePage.url, nextLayers);
                       setSelectedImageLayerId(newLayer.id);
+                      setSelectedBubbleBridge(null);
+                      setSidePanel("inspector");
                     };
                     reader.readAsDataURL(file);
                   }}
@@ -1033,10 +1048,10 @@ export function WorkspaceCanvasHost({
                 className={`fixed right-3 z-50 hidden lg:flex flex-col gap-2 overflow-y-auto pr-0.5 transition-all duration-200 ${
                   toolbarPosition === "top" && !isToolbarCollapsed
                     ? isPageReviewRequired && batchFailures.length > 0
-                      ? "top-52 max-h-[calc(100dvh-14.5rem)]"
+                      ? "top-56 max-h-[calc(100dvh-15.5rem)]"
                       : isPageReviewRequired || batchFailures.length > 0
-                        ? "top-44 max-h-[calc(100dvh-12.5rem)]"
-                        : "top-[7.5rem] max-h-[calc(100dvh-9rem)]"
+                        ? "top-48 max-h-[calc(100dvh-13.5rem)]"
+                        : "top-32 max-h-[calc(100dvh-9.5rem)]"
                     : "top-16 max-h-[calc(100dvh-5.5rem)]"
                 }`}
               >
@@ -1151,18 +1166,14 @@ export function WorkspaceCanvasHost({
                   <ImageLayerPanel
                     layer={selectedImageLayer}
                     onChange={(updates) => {
-                      setImageLayersByPage((prev) => ({
-                        ...prev,
-                        [activePage.url]: (prev[activePage.url] ?? []).map((item) =>
-                          item.id === selectedImageLayer.id ? { ...item, ...updates } : item,
-                        ),
-                      }));
+                      const updated = (imageLayersByPage[activePage.url] ?? []).map((item) =>
+                        item.id === selectedImageLayer.id ? { ...item, ...updates } : item,
+                      );
+                      handleUpdatePageImageLayers(activePage.url, updated);
                     }}
                     onDelete={(id) => {
-                      setImageLayersByPage((prev) => ({
-                        ...prev,
-                        [activePage.url]: (prev[activePage.url] ?? []).filter((item) => item.id !== id),
-                      }));
+                      const updated = (imageLayersByPage[activePage.url] ?? []).filter((item) => item.id !== id);
+                      handleUpdatePageImageLayers(activePage.url, updated);
                       setSelectedImageLayerId(null);
                     }}
                   />
@@ -1180,39 +1191,30 @@ export function WorkspaceCanvasHost({
               />
             )}
             {currentPageImageLayers.length > 0 && activePage && (
-              <div className="pointer-events-none absolute inset-0 z-25 overflow-hidden">
-                {currentPageImageLayers.map((imgLayer) => (
-                  <div
-                    key={imgLayer.id}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedImageLayerId(imgLayer.id);
-                    }}
-                    style={{
-                      position: "absolute",
-                      left: imgLayer.x,
-                      top: imgLayer.y,
-                      width: imgLayer.width,
-                      height: imgLayer.height,
-                      opacity: imgLayer.opacity ?? 1,
-                      transform: `scaleX(${imgLayer.flipX ? -1 : 1}) scaleY(${imgLayer.flipY ? -1 : 1})`,
-                    }}
-                    className={`pointer-events-auto cursor-move select-none ${
-                      selectedImageLayerId === imgLayer.id
-                        ? "ring-2 ring-primary shadow-lg"
-                        : "hover:ring-1 hover:ring-primary/50"
-                    }`}
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={imgLayer.src}
-                      alt="Image Layer"
-                      draggable={false}
-                      className="w-full h-full object-contain pointer-events-none"
-                    />
-                  </div>
-                ))}
-              </div>
+              <ImageLayerCanvas
+                layers={currentPageImageLayers}
+                selectedId={selectedImageLayerId}
+                onSelect={(id) => {
+                  setSelectedImageLayerId(id);
+                  if (id) {
+                    setSelectedBubbleBridge(null);
+                    setSidePanel("inspector");
+                  }
+                }}
+                onChange={(id, updates) => {
+                  const updated = currentPageImageLayers.map((layer) =>
+                    layer.id === id ? { ...layer, ...updates } : layer
+                  );
+                  handleUpdatePageImageLayers(activePageUrlKey, updated);
+                }}
+                onDelete={(id) => {
+                  const updated = currentPageImageLayers.filter((layer) => layer.id !== id);
+                  handleUpdatePageImageLayers(activePageUrlKey, updated);
+                  if (selectedImageLayerId === id) {
+                    setSelectedImageLayerId(null);
+                  }
+                }}
+              />
             )}
             {onQuickExport && isFocusMode && isFocusToolbarVisible && (
               <div className="fixed bottom-4 right-4 z-40">

@@ -60,7 +60,7 @@ export function ColorMatchStatus({
     <div
       role="status"
       aria-label="สถานะการจับคู่สี"
-      className="flex items-center justify-between gap-2 bg-background/50 border border-surface-hover/60 rounded-lg px-2.5 py-1.5 text-xs text-foreground"
+      className="flex items-center justify-between gap-2 bg-surface/95 backdrop-blur-md border border-surface-hover rounded-lg px-2.5 py-1.5 text-xs text-foreground shadow-sm"
     >
       <div className="flex items-center gap-2">
         <div
