@@ -38,7 +38,8 @@ export interface WorkspaceBottomStripHostProps {
     candidate: RemnantCandidate,
     region: CleaningRegion | undefined,
   ) => Promise<void> | void;
-  onConfirmArtworkCandidate: (candidateId: string) => void;
+  onConfirmArtworkCandidate: (candidateId: string, rect?: PixelRect) => void;
+  onUnconfirmArtworkCandidate?: (candidate: RemnantCandidate) => void;
   onConfirmAllPageRemnants: () => void;
   onConfirmHumanInspection: (
     revisionKey: string,
@@ -70,6 +71,7 @@ export function WorkspaceBottomStripHost({
   onRestoreOriginalRemnant,
   onCleanRemnantCandidate,
   onConfirmArtworkCandidate,
+  onUnconfirmArtworkCandidate,
   onConfirmAllPageRemnants,
   onConfirmHumanInspection,
   onRecheckPageRemnants,
@@ -113,8 +115,9 @@ export function WorkspaceBottomStripHost({
         onRestoreOriginal={onRestoreOriginalRemnant}
         onCleanCandidate={onCleanRemnantCandidate}
         onConfirmArtwork={(candidate) => {
-          if (currentPageUrl) onConfirmArtworkCandidate(candidate.id);
+          if (currentPageUrl) onConfirmArtworkCandidate(candidate.id, candidate.rect);
         }}
+        onUnconfirmArtwork={onUnconfirmArtworkCandidate}
         onConfirmAllArtwork={() => {
           if (currentPageUrl) {
             onConfirmAllPageRemnants();

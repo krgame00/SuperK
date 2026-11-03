@@ -28,6 +28,8 @@ export interface RemnantReviewPanelProps {
   onCleanCandidate?: (candidate: RemnantCandidate, region: CleaningRegion | undefined) => Promise<void> | void;
   /** Confirm this exact candidate (this revision) is artwork. */
   onConfirmArtwork?: (candidate: RemnantCandidate) => void;
+  /** Unconfirm / revert artwork confirmation for a candidate spot. */
+  onUnconfirmArtwork?: (candidate: RemnantCandidate) => void;
   /** Confirm all open candidates / background on the current page. */
   onConfirmAllArtwork?: () => void;
   /** Re-run local inspection for unverified evidence. */
@@ -82,6 +84,7 @@ export function RemnantReviewPanel({
   onRestoreOriginal,
   onCleanCandidate,
   onConfirmArtwork,
+  onUnconfirmArtwork,
   onConfirmAllArtwork,
   onRecheck,
   toolbarPosition = "top",
@@ -635,6 +638,7 @@ export function RemnantReviewPanel({
                           disabled={!region || Boolean(busyCandidateId)}
                           onClick={async () => {
                             if (!region || busyCandidateId) return;
+                            onUnconfirmArtwork?.(candidate);
                             setBusyCandidateId(candidate.id);
                             setBusyAction("clean");
                             try {

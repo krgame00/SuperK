@@ -1258,6 +1258,9 @@ export const applyTranslationOverlay = async (
     let selectedBubbleWrapper: HTMLElement | null = null;
     const setSelectedBubble = (wrapper: HTMLElement | null) => {
       if (selectedBubbleWrapper === wrapper && wrapper !== null) {
+        const controls = chromeControlsByWrapper.get(wrapper);
+        controls?.position();
+        controls?.setVisible(true);
         return;
       }
       (chromeRoot ?? tlContainer).querySelectorAll<HTMLElement>("[data-bubble-more-menu]").forEach((menu) => {

@@ -2979,3 +2979,57 @@ Verification evidence:
   - Vitest test suite:
     - `npm test -- tests/unit/pageViewer.test.tsx tests/cleaning/RemnantReviewPanel.docking.test.tsx tests/cleaning/RemnantReviewPanel.test.tsx tests/workspace/WorkspaceBottomStripHost.test.tsx tests/workspace/WorkspaceCanvasHost.test.tsx tests/workspace/useExportOrchestrator.test.tsx`
     - **6 passed (6 files) | 43 passed (43 tests)** in 3.72s.
+
+
+## Remnant Candidate Persistence & Respawn Loop Elimination — 2026-11-03
+
+### Status: VERIFIED WORKING (64/64 test files, 581 tests in cleaning/workspace passed; 55/55 translation test files, 532 tests passed; 260 pytest in ocr-service passed; tsc 0 errors)
+
+- **User Context & Symptom**:
+  - User reported: "พอผมกดไป 3-4 จุด ก็จะมีอันเดิมมาให้กดอีกรอบ เราพอจะแก้ได้ไหม" with screenshot showing RemnantReviewPanel ("พบจุดสงสัยว่ามีข้อความต้นฉบับหลงเหลือบนภาพคลีน 13 จุด").
+  - After user resolved several spots (clicking "ยืนยันเป็นลายภาพ", "กู้คืนภาพเดิม", or "คลีนจุดนี้"), previously confirmed spots reappeared as open candidates requiring re-review.
+
+- **Root Cause Analysis (Debug Mantra)**:
+  1. **Transient Revision Invalidation Loop**:
+     - Candidate IDs are computed as `rem-${fnv1a(`${revisionKey}|${state}|${detail}|${rect.x},${rect.y},${rect.width},${rect.height}`)}`.
+     - `applyArtworkConfirmations` verified confirmations using `c.candidateId === candidate.id && c.revisionKey === result.revisionKey`.
+     - When user clicked "คลีนจุดนี้" or "กู้คืนภาพเดิม" on spot 4, `retryRegion` generated a new `cleanBlob` and updated `backgroundRevision` for the whole page.
+     - The page's `revisionKey` changed from `rev-A` to `rev-B`.
+     - When `inspectCleanedPage` ran for `rev-B`, candidate IDs changed and previous confirmations recorded under `rev-A` were rejected because `entry.revisionKey === result.revisionKey` was false.
+     - Spots 1, 2, 3 reverted from `human-confirmed-artwork` to `needs-review` ("ยังไม่ถูกลบเลย · 60%"), bouncing back into the review panel.
+  2. **Missing Spatial Memory**:
+     - `RemnantConfirmationStore` indexed confirmations purely by revision string and transient candidate ID without spatial bounding box coordinates.
+  3. **Missing Clean/Restore Coordination**:
+     - `handleCleanCandidate` inpainted the candidate but did not unconfirm or coordinate spatial state, leaving minor pixel residues to re-spawn.
+     - `handleRestoreCandidate` only confirmed after inpainting, risking race conditions with the asynchronous background inspector.
+
+- **Changes Landed**:
+  1. `lib/cleaning/remnantReview.ts`:
+     - Added spatial coordinate tracking (`confirmedRects`) to `RemnantConfirmationStore`.
+     - Added `isRectMatchingConfirmed(rect, confirmedRects)` supporting exact matches and >= 60% overlap or IoU.
+     - Enhanced `confirm(pageUrl, confirmation, rect?: PixelRect)` to store spatial coordinates.
+     - Added `unconfirmRect(pageUrl, rect: PixelRect)`, `isRectConfirmed(pageUrl, rect: PixelRect)`, and `getConfirmedRects(pageUrl)`.
+     - Updated `invalidatePage(pageUrl)` to clear both revision and spatial stores.
+  2. `hooks/useCleaning.ts`:
+     - In `triggerBackgroundInspection`: after `inspectCleanedPage` completes, look up `confirmedRects` for the page. Automatically map candidates matching confirmed rects to `state: "human-confirmed-artwork"`, register the confirmation for the new `revisionKey`, and preserve confirmed artwork.
+     - In `confirmArtworkCandidate`: accept optional `rect` and register spatial coordinates with `confirmationsRef`.
+     - In `confirmAllPageRemnants`: register candidate rects with `confirmationsRef`.
+     - Added `unconfirmArtworkCandidate(pageUrl, candidate)` for when a user explicitly clicks "เปลี่ยนใจคลีนจุดนี้".
+     - In `setPageRemnantTextEvidence`: invalidate page confirmations only when OCR/text evidence identity changes.
+  3. `hooks/useWorkspaceController.ts`:
+     - In `handleRestoreCandidate`: register candidate as confirmed artwork both before and after `handleRetryRegion(..., "protect")`.
+     - In `handleCleanCandidate`: call `unconfirmArtworkCandidate` before inpainting to allow re-cleaning.
+     - Forwarded `onConfirmArtworkCandidate(candidateId, rect)` and `onUnconfirmArtworkCandidate(candidate)`.
+  4. `components/cleaning/RemnantReviewPanel.tsx` & `components/workspace/WorkspaceBottomStripHost.tsx`:
+     - Added `onUnconfirmArtwork` prop and hooked it to "เปลี่ยนใจคลีนจุดนี้".
+     - Forwarded `candidate.rect` to `onConfirmArtworkCandidate`.
+  5. `lib/translationOverlay.ts`:
+     - In `setSelectedBubble`: when focusing an already-selected bubble, re-sync `controls?.position()` and `controls?.setVisible(true)` without unmounting controls.
+  6. `tests/cleaning/remnantReview.test.ts`:
+     - Added unit test `tracks and retains confirmed spatial rects across background revision changes`.
+
+- **Verification Evidence**:
+  - `npx tsc --noEmit`: **0 errors**.
+  - Vitest cleaning & workspace tests: **64 test files passed | 581 tests passed**.
+  - Vitest translation tests: **55 test files passed | 532 tests passed**.
+  - Pytest ocr-service: **260 passed, 3 skipped, 0 failures**.

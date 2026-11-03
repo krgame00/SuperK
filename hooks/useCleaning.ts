@@ -18,6 +18,7 @@ import type {
   CleaningRegion,
   ManualRegionAction,
   CleaningMode,
+  PixelRect,
 } from "@/lib/cleaning/types";
 import {
   loadCleaningResultAssets,
@@ -38,10 +39,13 @@ import {
   textEvidenceIdentity,
   type RemnantTextEvidence,
   type BackgroundInspectionResult,
+  type BackgroundArtworkConfirmation,
+  type RemnantCandidate,
 } from "@/lib/cleaning/backgroundRemnantInspection";
 import {
   blobFingerprint,
   inspectCleanedPage,
+  isRectMatchingConfirmed,
   RemnantConfirmationStore,
 } from "@/lib/cleaning/remnantReview";
 import type { BackgroundEligibilityState } from "@/lib/translation/pageEligibility";
@@ -397,6 +401,25 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
         sourceContext: evidence?.sourceContext,
         confirmations: confirmationsRef.current.allForPage(pageUrl),
       });
+      const confirmedRects = confirmationsRef.current.getConfirmedRects(pageUrl);
+      if (confirmedRects.length > 0 && inspection.status === "inspected") {
+        inspection.candidates = inspection.candidates.map((cand) => {
+          if (cand.state === "human-confirmed-artwork") return cand;
+          if (isRectMatchingConfirmed(cand.rect, confirmedRects)) {
+            const conf: BackgroundArtworkConfirmation = {
+              candidateId: cand.id,
+              revisionKey: inspection.revisionKey,
+            };
+            confirmationsRef.current.confirm(pageUrl, conf, cand.rect);
+            return {
+              ...cand,
+              state: "human-confirmed-artwork" as const,
+              artworkConfirmation: conf,
+            };
+          }
+          return cand;
+        });
+      }
       // A newer result superseded this run; it schedules its own inspection.
       if (inspectionTokensRef.current.get(pageUrl) !== token || resultsRef.current.get(pageUrl) !== result ||
           textEvidenceIdentity(textEvidenceRef.current.get(pageUrl)?.textEvidence, textEvidenceRef.current.get(pageUrl)?.sourceContext) !== binding.evidenceIdentity ||
@@ -418,6 +441,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
   const setPageRemnantTextEvidence = useCallback((pageUrl: string, evidence?: PageRemnantTextEvidence) => {
     const previous = textEvidenceRef.current.get(pageUrl);
     if (textEvidenceIdentity(previous?.textEvidence, previous?.sourceContext) === textEvidenceIdentity(evidence?.textEvidence, evidence?.sourceContext)) return;
+    confirmationsRef.current.invalidatePage(pageUrl);
     if (evidence) textEvidenceRef.current.set(pageUrl, { sourceContext: evidence.sourceContext, textEvidence: evidence.textEvidence.map(e => ({ id: e.id, box: [...e.box] })) });
     else textEvidenceRef.current.delete(pageUrl);
     if (explicitlyApprovedRemnantPagesRef.current.has(pageUrl) && remnantReviewsRef.current.has(pageUrl)) {
@@ -473,18 +497,45 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
    * broad or future approval. Unverified pages cannot be confirmed away.
    */
   const confirmArtworkCandidate = useCallback(
-    (pageUrl: string, candidateId: string): boolean => {
+    (pageUrl: string, candidateId: string, rect?: PixelRect): boolean => {
       const review = getCurrentRemnantReview(pageUrl);
       if (!review || review.inspection.status !== "inspected") return false;
-      const confirmation = confirmCandidateArtwork(review.inspection, candidateId);
+      const targetCandidate = review.inspection.candidates.find((c) => c.id === candidateId);
+      const targetRect = rect ?? targetCandidate?.rect;
+      const confirmation =
+        confirmCandidateArtwork(review.inspection, candidateId) ??
+        (targetCandidate
+          ? {
+              candidateId,
+              revisionKey: review.inspection.revisionKey,
+            }
+          : undefined);
       if (!confirmation) return false;
-      confirmationsRef.current.confirm(pageUrl, confirmation);
+      confirmationsRef.current.confirm(pageUrl, confirmation, targetRect);
       publishRemnantReview(pageUrl, applyArtworkConfirmations(review.inspection, [confirmation]));
       const result = resultsRef.current.get(pageUrl);
       if (result) void persistCleaningResult(pageUrl, result, pageTokensRef.current.get(pageUrl) ?? 0);
       return true;
     },
     [getCurrentRemnantReview, persistCleaningResult, publishRemnantReview],
+  );
+
+  const unconfirmArtworkCandidate = useCallback(
+    (pageUrl: string, candidate: RemnantCandidate): void => {
+      confirmationsRef.current.unconfirmRect(pageUrl, candidate.rect);
+      const review = getCurrentRemnantReview(pageUrl);
+      if (!review || review.inspection.status !== "inspected") return;
+      const updatedInspection: BackgroundInspectionResult = {
+        ...review.inspection,
+        candidates: review.inspection.candidates.map((c) =>
+          c.id === candidate.id || isRectMatchingConfirmed(c.rect, [candidate.rect])
+            ? { ...c, state: "unchanged-candidate" as const, artworkConfirmation: undefined }
+            : c,
+        ),
+      };
+      publishRemnantReview(pageUrl, updatedInspection);
+    },
+    [getCurrentRemnantReview, publishRemnantReview],
   );
 
   const confirmHumanImageInspection = useCallback((pageUrl: string, revisionKey: string, sourceUrl: string, cleanUrl: string): boolean => {
@@ -604,7 +655,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
             candidateId: candidate.id,
             revisionKey: inspection.revisionKey,
           };
-          confirmationsRef.current.confirm(pageUrl, conf);
+          confirmationsRef.current.confirm(pageUrl, conf, candidate.rect);
           newConfirmations.push(conf);
         }
       }
@@ -1779,6 +1830,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     },
     remnantReviews,
     confirmArtworkCandidate,
+    unconfirmArtworkCandidate,
     confirmHumanImageInspection,
     confirmAllPageRemnants,
     progress,

@@ -347,6 +347,29 @@ describe("RemnantConfirmationStore", () => {
     expect(store.allForPage("p")).toEqual([]);
     expect(store.confirmationsForRevision("p", "rev-A")).toEqual([]);
   });
+
+  it("tracks and retains confirmed spatial rects across background revision changes", () => {
+    const store = new RemnantConfirmationStore();
+    const rect = { x: 20, y: 24, width: 20, height: 10 };
+    store.confirm("p", { candidateId: "rem-1", revisionKey: "rev-A" }, rect);
+
+    // Exact match
+    expect(store.isRectConfirmed("p", rect)).toBe(true);
+    // Overlapping match (e.g. 95% overlap)
+    expect(store.isRectConfirmed("p", { x: 21, y: 24, width: 20, height: 10 })).toBe(true);
+    // Non-overlapping rect is false
+    expect(store.isRectConfirmed("p", { x: 100, y: 100, width: 20, height: 10 })).toBe(false);
+
+    // Rect unconfirm
+    store.unconfirmRect("p", rect);
+    expect(store.isRectConfirmed("p", rect)).toBe(false);
+
+    // Invalidation clears rects
+    store.confirm("p", { candidateId: "rem-1", revisionKey: "rev-A" }, rect);
+    expect(store.isRectConfirmed("p", rect)).toBe(true);
+    store.invalidatePage("p");
+    expect(store.isRectConfirmed("p", rect)).toBe(false);
+  });
 });
 
 describe("findRegionForCandidate", () => {

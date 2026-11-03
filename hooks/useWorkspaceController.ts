@@ -156,6 +156,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     cleaningCacheRevision,
     getCurrentRemnantReview,
     confirmArtworkCandidate,
+    unconfirmArtworkCandidate,
     confirmHumanImageInspection,
     confirmAllPageRemnants,
     recheckPageRemnants,
@@ -818,6 +819,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     async (candidate: RemnantCandidate, region?: CleaningRegion) => {
       const pageUrl = currentPageUrl;
       if (!pageUrl || !currentCleaningResult) return;
+      confirmArtworkCandidate(pageUrl, candidate.id, candidate.rect);
       const targetRegion =
         region ??
         findRegionForCandidate(currentCleaningResult.regions, candidate.rect) ??
@@ -826,14 +828,13 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
         );
 
       if (!targetRegion) {
-        confirmArtworkCandidate(pageUrl, candidate.id);
         return;
       }
 
       const { width, height } = currentCleaningResult;
       const maskBlob = await createRegionMaskBlob(width, height, targetRegion.rect);
       await handleRetryRegion(targetRegion.id, maskBlob, "auto", "protect");
-      confirmArtworkCandidate(pageUrl, candidate.id);
+      confirmArtworkCandidate(pageUrl, candidate.id, candidate.rect);
       void import("react-hot-toast").then((m) => m.default.success("กู้คืนภาพเดิมเรียบร้อย"));
     },
     [currentPageUrl, currentCleaningResult, handleRetryRegion, confirmArtworkCandidate],
@@ -843,6 +844,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     async (candidate: RemnantCandidate, region?: CleaningRegion) => {
       const pageUrl = currentPageUrl;
       if (!pageUrl || !currentCleaningResult) return;
+      unconfirmArtworkCandidate(pageUrl, candidate);
       const targetRegion =
         region ??
         findRegionForCandidate(currentCleaningResult.regions, candidate.rect) ??
@@ -862,7 +864,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
       await handleRetryRegion(targetRegion.id, maskBlob, "auto", "force-clean");
       void import("react-hot-toast").then((m) => m.default.success("คลีนจุดนี้เรียบร้อย"));
     },
-    [currentPageUrl, currentCleaningResult, handleRetryRegion],
+    [currentPageUrl, currentCleaningResult, handleRetryRegion, unconfirmArtworkCandidate],
   );
 
   const bottomStripProps: WorkspaceBottomStripHostProps = {
@@ -893,8 +895,11 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     onOpenMaskCandidate: openMaskCandidate,
     onRestoreOriginalRemnant: handleRestoreCandidate,
     onCleanRemnantCandidate: handleCleanCandidate,
-    onConfirmArtworkCandidate: (candidateId) => {
-      if (currentPageUrl) confirmArtworkCandidate(currentPageUrl, candidateId);
+    onConfirmArtworkCandidate: (candidateId, rect) => {
+      if (currentPageUrl) confirmArtworkCandidate(currentPageUrl, candidateId, rect);
+    },
+    onUnconfirmArtworkCandidate: (candidate) => {
+      if (currentPageUrl) unconfirmArtworkCandidate(currentPageUrl, candidate);
     },
     onConfirmAllPageRemnants: () => {
       if (currentPageUrl) {

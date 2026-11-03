@@ -233,6 +233,35 @@ export async function inspectCleanedPage(params: InspectCleanedPageParams): Prom
 const MAX_REVISIONS_PER_PAGE = typeof process !== "undefined" && process.env?.NODE_ENV === "test" ? 6 : 24;
 const MAX_CONFIRMATIONS_PER_REVISION = 200;
 
+function rectOverlapArea(a: PixelRect, b: PixelRect): number {
+  const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+  return w > 0 && h > 0 ? w * h : 0;
+}
+
+export function isRectMatchingConfirmed(rect: PixelRect, confirmedRects: readonly PixelRect[]): boolean {
+  const rectArea = rect.width * rect.height;
+  if (rectArea <= 0) return false;
+  for (const confirmed of confirmedRects) {
+    if (
+      rect.x === confirmed.x &&
+      rect.y === confirmed.y &&
+      rect.width === confirmed.width &&
+      rect.height === confirmed.height
+    ) {
+      return true;
+    }
+    const overlap = rectOverlapArea(rect, confirmed);
+    if (overlap > 0) {
+      const confirmedArea = confirmed.width * confirmed.height;
+      if (overlap / rectArea >= 0.6 || (confirmedArea > 0 && overlap / confirmedArea >= 0.6)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 /**
  * Revision-bound artwork confirmations per page. Entries are never rewritten:
  * a reclean adds a new revision key while older ones stay restorable (e.g.
@@ -242,6 +271,7 @@ const MAX_CONFIRMATIONS_PER_REVISION = 200;
  */
 export class RemnantConfirmationStore {
   private readonly pages = new Map<string, LRUMap<string, BackgroundArtworkConfirmation[]>>();
+  private readonly confirmedRects = new Map<string, PixelRect[]>();
 
   private revisionsFor(pageUrl: string): LRUMap<string, BackgroundArtworkConfirmation[]> {
     let revisions = this.pages.get(pageUrl);
@@ -252,11 +282,39 @@ export class RemnantConfirmationStore {
     return revisions;
   }
 
-  confirm(pageUrl: string, confirmation: BackgroundArtworkConfirmation): void {
+  confirm(pageUrl: string, confirmation: BackgroundArtworkConfirmation, rect?: PixelRect): void {
     const revisions = this.revisionsFor(pageUrl);
     const existing = revisions.get(confirmation.revisionKey) ?? [];
     const deduped = existing.filter((entry) => entry.candidateId !== confirmation.candidateId);
     revisions.set(confirmation.revisionKey, [...deduped, confirmation].slice(-MAX_CONFIRMATIONS_PER_REVISION));
+
+    if (rect) {
+      const rects = this.confirmedRects.get(pageUrl) ?? [];
+      if (!isRectMatchingConfirmed(rect, rects)) {
+        this.confirmedRects.set(pageUrl, [...rects, { ...rect }]);
+      }
+    }
+  }
+
+  unconfirmRect(pageUrl: string, rect: PixelRect): void {
+    const rects = this.confirmedRects.get(pageUrl);
+    if (!rects || rects.length === 0) return;
+    const remaining = rects.filter((existing) => !isRectMatchingConfirmed(existing, [rect]));
+    if (remaining.length === 0) {
+      this.confirmedRects.delete(pageUrl);
+    } else {
+      this.confirmedRects.set(pageUrl, remaining);
+    }
+  }
+
+  getConfirmedRects(pageUrl: string): readonly PixelRect[] {
+    return this.confirmedRects.get(pageUrl) ?? [];
+  }
+
+  isRectConfirmed(pageUrl: string, rect: PixelRect): boolean {
+    const rects = this.confirmedRects.get(pageUrl);
+    if (!rects || rects.length === 0) return false;
+    return isRectMatchingConfirmed(rect, rects);
   }
 
   confirmationsForRevision(pageUrl: string, revisionKey: string): BackgroundArtworkConfirmation[] {
@@ -282,13 +340,8 @@ export class RemnantConfirmationStore {
   /** Source replacement or page removal: old revisions can never return. */
   invalidatePage(pageUrl: string): void {
     this.pages.delete(pageUrl);
+    this.confirmedRects.delete(pageUrl);
   }
-}
-
-function rectOverlapArea(a: PixelRect, b: PixelRect): number {
-  const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
-  const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
-  return w > 0 && h > 0 ? w * h : 0;
 }
 
 /**
