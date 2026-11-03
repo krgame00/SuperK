@@ -86,6 +86,54 @@ test('public new translation action measures pre-clean original, persists automa
   expect(result.current.getCurrentRenderedOutput('blob:original')).toBeUndefined();
 });
 
+test('optimistic preview keeps the final render output when the final render lands first',async()=>{
+  const releaseOptimistic:Array<(url:string)=>void>=[];
+  vi.mocked(applyTranslationOverlay)
+    .mockImplementationOnce(async()=>{}) // clearVisibleTranslation's empty overlay carries no done callback
+    .mockImplementationOnce(async(_b,_v,_i,_s,done)=>{releaseOptimistic.push((url)=>done?.(url));}) // optimistic preview parks
+    .mockImplementationOnce(async(_b,_v,_i,_s,done)=>done?.('data:render')); // final render completes first
+  const {result}=renderHook(()=>useTranslation({currentPage:0,pages:['blob:original'],viewMode:'single',
+    preparePageForTranslation:async()=>({recognitionUrl:'blob:scoped',backgroundUrl:'blob:clean'})}));
+  await act(async()=>{await result.current.handleTranslate();});
+  expect(releaseOptimistic).toHaveLength(1);
+  expect(result.current.getCurrentRenderedOutput('blob:original')?.url).toBe('data:render');
+  act(()=>releaseOptimistic[0]('data:render'));
+  await act(async()=>{});
+  expect(result.current.bubbleCacheRef.current.has('blob:original')).toBe(true);
+  expect(result.current.translatedImageCacheRef.current.get('blob:original')).toBe('data:render');
+  expect(result.current.getCurrentRenderedOutput('blob:original')).toBeDefined();
+});
+
+test('abort during the parked optimistic paint leaves no residue once the paint settles',async()=>{
+  let reviewReleased=false;
+  let rejectReview!:(reason:unknown)=>void;
+  const releasePaints:Array<(url:string)=>void>=[];
+  vi.mocked(applyTranslationOverlay)
+    .mockImplementationOnce(async()=>{}) // clearVisibleTranslation's empty overlay carries no done callback
+    .mockImplementationOnce(async(_b,_v,_i,_s,done)=>{releasePaints.push((url)=>done?.(url));}); // optimistic preview parks
+  vi.spyOn(globalThis,'fetch').mockImplementation(async input=>{
+    if(String(input)==='blob:scoped')return new Response(new Blob(['scope'],{type:'image/png'}));
+    if(String(input)==='/api/translate')return Response.json({text:JSON.stringify({bubbles:[{box:[0,0,1000,1000],original_text:'HELLO',t:'สวัสดี'}]})});
+    if(String(input)==='/api/translation-review')return reviewReleased?Promise.reject(new DOMException('aborted','AbortError')):new Promise((_resolve,reject)=>{rejectReview=reject;});
+    throw new Error(`Unexpected fetch ${input}`);
+  });
+  const {result}=renderHook(()=>useTranslation({currentPage:0,pages:['blob:original'],viewMode:'single',
+    preparePageForTranslation:async()=>({recognitionUrl:'blob:scoped',backgroundUrl:'blob:clean'})}));
+  let work!:Promise<boolean>;
+  await act(async()=>{work=result.current.handleTranslate();});
+  for(let i=0;i<50&&releasePaints.length===0;i++) await act(async()=>{await Promise.resolve();});
+  expect(releasePaints).toHaveLength(1);
+  act(()=>result.current.cancelTranslateAll());
+  await act(async()=>{reviewReleased=true;rejectReview(new DOMException('aborted','AbortError'));});
+  await act(async()=>{await work.catch(()=>null);});
+  expect(result.current.getCurrentRenderedOutput('blob:original')).toBeUndefined();
+  act(()=>releasePaints[0]('data:render'));
+  await act(async()=>{});
+  expect(result.current.getCurrentRenderedOutput('blob:original')).toBeUndefined();
+  expect(result.current.bubbleCacheRef.current.has('blob:original')).toBe(false);
+  expect(result.current.translatedImageCacheRef.current.has('blob:original')).toBe(false);
+});
+
 test.each(['abort','replace','revision'] as const)('source preparation discards pending work on %s',async(change)=>{
   let release!:()=>void;
   let entered!:()=>void;

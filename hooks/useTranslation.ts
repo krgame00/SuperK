@@ -1161,6 +1161,7 @@ export function useTranslation({
       pageUrl: string,
       pageIndex: number,
       targetIdentity = pageTargetCacheRef.current.get(pageUrl),
+      signal?: AbortSignal,
     ): Promise<void> => {
       if (targetIdentity) pageTargetCacheRef.current.set(pageUrl, targetIdentity);
       const startRevision = getPageRevision(pageUrl);
@@ -1207,6 +1208,7 @@ export function useTranslation({
             settled = true;
             cleanup();
             if (!pagesRef.current.includes(pageUrl) || getPageRevision(pageUrl) !== startRevision ||
+              signal?.aborted ||
               JSON.stringify(textStyleRef.current) !== startStyle ||
               bubbleRenderSnapshot(bubbles) !== startText) {
               resolve();return;
@@ -1344,6 +1346,12 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
   ): Promise<boolean> => {
     const jobTargetIdentity = createPageTargetIdentity(requestedTarget);
     if (!jobTargetIdentity) throw new Error("กรุณาเลือกภาษาปลายทางที่รองรับพร้อมรูปแบบอักษร");
+    // The optimistic preview is fire-and-forget: its render guard refuses to
+    // write once the run is aborted or the page is gone, and the finally below
+    // is the single place that deletes residue when the run settles without a
+    // final render. A revision invalidation is not residue —
+    // invalidatePageTranslation already deletes the caches itself.
+    let discardOptimisticResidue = false;
     try {
       const targetLang = jobTargetIdentity.targetId;
       const { backgroundUrl, textScope } = preparedPage;
@@ -1866,26 +1874,15 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           initialOutcome.bubbles,
           previousCached,
         );
-        const revisionAtOptimistic = pageRevisionsRef.current.get(pageUrl) ?? 0;
-        const optimisticOwns = () =>
-          !signal?.aborted
-          && pagesRef.current.includes(pageUrl)
-          && (pageRevisionsRef.current.get(pageUrl) ?? 0) === revisionAtOptimistic;
+        discardOptimisticResidue = true;
         void renderAndCacheTranslation(
           optimisticPreserved,
           backgroundUrl,
           pageUrl,
           pageIndex,
           jobTargetIdentity,
+          signal,
         )
-          .then(() => {
-            // Discard protocol: an abort / page replace / revision bump after
-            // the optimistic render must leave no cached output behind.
-            if (optimisticOwns()) return;
-            bubbleCacheRef.current.delete(pageUrl);
-            translatedImageCacheRef.current.delete(pageUrl);
-            renderedOutputEvidenceRef.current.delete(pageUrl);
-          })
           .catch(() => {
             // Non-blocking optimistic preview: final renderAndCacheTranslation handles full delivery
           });
@@ -1901,6 +1898,8 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         getManualBubblesForPage(pageUrl),
       );
       if (outcome.kind === "clean-only") {
+        // cacheBackgroundOnly owns this page's caches from here on.
+        discardOptimisticResidue = false;
         await cacheBackgroundOnly(backgroundUrl, pageUrl, jobTargetIdentity);
         if (completeness.missing.length > 0 && activePageRef.current === pageUrl) {
           setTranslationResult(`⚠️ ยังขาดคำแปล ${completeness.missing.length} จุด กรุณาตรวจหน้านี้ก่อนส่งออก`);
@@ -1925,6 +1924,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         pageIndex,
         jobTargetIdentity,
       );
+      discardOptimisticResidue = false;
       bubbleCacheRef.current.set(pageUrl, coloredBubbles);
       pageTargetCacheRef.current.set(pageUrl, jobTargetIdentity);
       completedPagesRef.current.add(pageUrl);
@@ -1962,6 +1962,12 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         setTranslationResult("❌ Error: " + (error instanceof Error ? error.message : String(error)));
       }
       throw error; // Rethrow so the caller can handle 429
+    } finally {
+      if (discardOptimisticResidue) {
+        bubbleCacheRef.current.delete(pageUrl);
+        translatedImageCacheRef.current.delete(pageUrl);
+        renderedOutputEvidenceRef.current.delete(pageUrl);
+      }
     }
   };
 
