@@ -3073,3 +3073,9 @@ Verification evidence:
   - `npx tsc --noEmit`: **0 errors**.
   - Vitest cleaning & workspace tests: **16/16 passed** (`CleaningToolbar.test.tsx`, `CleaningToolbar.layers.test.tsx`, `PageReviewNotice.test.tsx`, `WorkspaceCanvasHost.test.tsx`).
   - Vitest integration tests: **72/72 passed** (`WorkspacePage.test.tsx`, `workspaceExportEligibility.test.tsx`).
+
+
+### Build & Service Sync Verification (Production Standalone Refresh):
+- **Issue**: Production standalone server (`.next/standalone/server.js`) on port 3000 was running a stale process built at `11/3/2026 12:39 AM` before the breakpoint fix was applied, serving cached 1024px assets.
+- **Action**: Stopped stale process, updated container width to universal `w-full max-w-7xl` (accommodating up to 1280px on all wider displays), rebuilt with `next build` and Turbopack, synced standalone assets, and restarted service process.
+- **Verification**: Port 3000 online, status 200 OK, chunks verified containing `max-w-7xl`.

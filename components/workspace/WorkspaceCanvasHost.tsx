@@ -454,7 +454,7 @@ export function WorkspaceCanvasHost({
             }`}
           >
             <div
-              className={`pointer-events-auto w-full max-w-5xl xl:max-w-6xl 2xl:max-w-7xl flex ${
+              className={`pointer-events-auto w-full max-w-7xl flex ${
                 toolbarPosition === "bottom" ? "flex-col-reverse" : "flex-col"
               } items-stretch gap-1.5 px-2 sm:px-4`}
             >
