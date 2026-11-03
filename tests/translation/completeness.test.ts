@@ -81,4 +81,20 @@ describe('translation completeness', () => {
     expect(calls).toBe(1);
     await expect(recoverMissingTranslations([],scope,async()=>{throw new TranslationRequestError('cancelled',499,'cancelled');})).rejects.toMatchObject({category:'cancelled'});
   });
+  it('spends the six recovery requests on dialogue and narration targets first', async () => {
+    const boxes = Array.from({length:7},(_,i)=>[i*120+10,10,i*120+60,60]);
+    const roles = ['review','review','review','review','review','review','dialogue'];
+    const visited: number[][] = [];
+    await recoverMissingTranslations([],{allowed:boxes,allowedRoles:roles,excluded:[]},async box=>{
+      visited.push(box); return [];
+    });
+    expect(visited.length).toBe(6);
+    expect(visited[0]).toEqual(boxes[6]);
+  });
+  it('admits a recovered candidate anchored inside the cropped region without covering it', async () => {
+    const result = await recoverMissingTranslations([],{allowed:[a],excluded:[]},
+      async ()=>[text([10,10,100,60],'RECOVERED'),text([500,500,600,600],'NEIGHBOR'),text([12,12,40,60],'')]);
+    expect(result.bubbles).toEqual([text([10,10,100,60],'RECOVERED')]);
+    expect(result.missing).toEqual([]);
+  });
 });
