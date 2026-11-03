@@ -3145,3 +3145,31 @@ Verification evidence:
   - Vitest test suite: 88/88 passed (6 test files: `WorkspaceCanvasHost`, `CleaningToolbar`, `CleaningToolbar.layers`, `PageReviewNotice`, `WorkspacePage`, `workspaceExportEligibility`).
   - Production build: Turbopack compilation succeeded in 4.7s.
   - Standalone server health: 127.0.0.1:3000 returning 200 OK.
+
+
+## Implement Interactive Canvas Box for OCR Area Selection Tool — 2026-11-04
+
+### Status: VERIFIED WORKING (4/4 editing tests passed, tsc 0 errors, production build deployed)
+
+- **User Context & Symptom**:
+  - User reported: "ผมใช้ไม่ได้อะ" with screenshot (`media_1793725691104_f6a59d3f.png`).
+  - When clicking "โหมดเลือกพื้นที่ OCR" in `StudioToolbar`, a bottom bar appeared with button "ตรวจจับข้อความในกรอบ" showing a spinning loader.
+  - There was NO visual selection frame/box on the manga image, so users couldn't choose what area to scan, and clicking the button cropped a dummy fixed coordinate (50, 50, 250, 120) in the blank page margin.
+
+- **Root Cause Analysis (Debug Mantra)**:
+  1. `components/editing/OcrAreaTool.tsx` was a placeholder stub that hardcoded `defaultRect = { x: 50, y: 50, width: 250, height: 120 }`.
+  2. The underlying cropping pipeline (`onDetectOcrRegion` in `useWorkspaceController.ts` and `translateCrop` in `useTranslation.ts`) was already implemented and fully working, but lacked an interactive canvas overlay for user-driven area bounding.
+
+- **Changes Landed**:
+  1. `components/editing/OcrAreaTool.tsx`:
+     - Mounted an interactive, draggable & resizable selection box directly into `#pageContainer` using React Portal (`createPortal`).
+     - Added 4 corner resize handles (`nw`, `ne`, `sw`, `se`) and full drag-to-move support with boundary clamping.
+     - Real-time dimension badge display (`width × height px`).
+     - Integrated `Escape` shortcut to dismiss.
+     - Passed live user-adjusted `rect` to `onDetectRegion(rect)`.
+  2. Rebuilt Next.js production build (`npm run build`) and restarted daemon on port 3000.
+
+- **Verification Evidence**:
+  - `npx tsc --noEmit`: 0 errors.
+  - Vitest: `inpaintOcr.test.tsx` and `StudioToolbar.test.tsx` (4/4 passed).
+  - Standalone server: 127.0.0.1:3000 returning 200 OK.
