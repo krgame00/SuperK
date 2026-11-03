@@ -144,4 +144,20 @@ describe("RemnantReviewPanel Docking & Non-Overlap", () => {
     expect(events[0].detail).toEqual({ open: true });
     window.removeEventListener("superk:remnant-toggle", listener);
   });
+  test("docks to the left side when isInspectorOpen=true prop is provided", () => {
+    render(
+      <RemnantReviewPanel
+        inspection={mockInspection}
+        regions={[mockRegion]}
+        toolbarPosition="top"
+        isPageReviewRequired={false}
+        isInspectorOpen={true}
+      />
+    );
+
+    const panel = screen.getByTestId("remnant-review-findings");
+    expect(panel.className).toContain("left-3");
+    expect(panel.className).not.toContain("right-3");
+    expect(panel.getAttribute("data-remnant-side")).toBe("left");
+  });
 });

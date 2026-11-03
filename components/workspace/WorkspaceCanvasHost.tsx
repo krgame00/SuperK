@@ -157,6 +157,7 @@ export interface WorkspaceCanvasHostProps {
   onGlossaryChange?: (entries: GlossaryEntry[]) => void;
   onAutoExtractGlossary?: () => void;
   onQuickExport?: (kind: "image" | "pdf" | "strip" | "zip" | "cbz" | "layered") => void;
+  onInspectorOpenChange?: (isOpen: boolean) => void;
 }
 
 export function WorkspaceCanvasHost({
@@ -227,6 +228,7 @@ export function WorkspaceCanvasHost({
   onGlossaryChange,
   onAutoExtractGlossary,
   onQuickExport,
+  onInspectorOpenChange,
 }: WorkspaceCanvasHostProps): ReactElement {
   const [isOrganizeMenuOpen, setIsOrganizeMenuOpen] = useState(false);
   const organizeMenuRef = useRef<HTMLDivElement>(null);
@@ -298,10 +300,11 @@ export function WorkspaceCanvasHost({
 
   useEffect(() => {
     const isOpen = Boolean(selectedBubbleBridge || selectedImageLayer);
+    onInspectorOpenChange?.(isOpen);
     window.dispatchEvent(
       new CustomEvent("superk:inspector-toggle", { detail: { isOpen } })
     );
-  }, [selectedBubbleBridge, selectedImageLayer]);
+  }, [selectedBubbleBridge, selectedImageLayer, onInspectorOpenChange]);
 
   useEffect(() => {
     if (!isOrganizeMenuOpen && !isBwContrastMenuOpen) return;

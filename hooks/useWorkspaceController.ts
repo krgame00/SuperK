@@ -140,6 +140,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
   const uiOperationLockRef = useRef(false);
   const dirtyExportPagesRef = useRef<Set<string>>(new Set());
   const [isUiOperationBusy, setIsUiOperationBusy] = useState(false);
+  const [isInspectorOpen, setIsInspectorOpen] = useState(false);
 
   const [reviewedPageUrls, setReviewedPageUrls] = useState<Set<string>>(
     () => new Set(),
@@ -729,6 +730,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     glossary,
     onGlossaryChange: setGlossary,
     onAutoExtractGlossary: () => void handleAutoExtractGlossary(),
+    onInspectorOpenChange: setIsInspectorOpen,
     onQuickExport: (kind) => {
       if (kind === "image") {
         void requestSinglePageExport();

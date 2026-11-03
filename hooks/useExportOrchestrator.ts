@@ -741,6 +741,7 @@ export function useExportOrchestrator({
           for (let i = 0; i < activePages.length; i++) {
             const p = activePages[i];
             if (p.exportExcluded) continue;
+            setTranslationResult(`⏳ กำลังแพ็กเลเยอร์ Photoshop หน้า ${i + 1}/${activePages.length}... (${Math.round(((i + 1) / activePages.length) * 100)}%)`);
             const numStr = String(i + 1).padStart(3, "0");
             const folder = layeredZip.folder(`Page_${numStr}`);
             if (!folder) continue;
@@ -794,6 +795,7 @@ export function useExportOrchestrator({
 
           for (let i = 0; i < activePages.length; i++) {
             if (activePages[i].exportExcluded) continue;
+            setTranslationResult(`⏳ กำลังรวมภาพ Webtoon Strip หน้า ${i + 1}/${activePages.length}... (${Math.round(((i + 1) / activePages.length) * 100)}%)`);
             try {
               const dataUrl = await getExportDataUrl(activePages[i].url, i);
               if (!dataUrl) {
@@ -932,6 +934,7 @@ export function useExportOrchestrator({
 
           for (let i = 0; i < activePages.length; i++) {
             if (activePages[i].exportExcluded) continue;
+            setTranslationResult(`⏳ กำลังสร้างหน้า PDF หน้า ${i + 1}/${activePages.length}... (${Math.round(((i + 1) / activePages.length) * 100)}%)`);
             try {
               const dataUrl = await getExportDataUrl(activePages[i].url, i);
               if (!dataUrl) {
@@ -1032,6 +1035,7 @@ export function useExportOrchestrator({
 
       for (let i = 0; i < activePages.length; i++) {
         if (activePages[i].exportExcluded) continue;
+        setTranslationResult(`⏳ กำลังเตรียมรูปภาพหน้า ${i + 1}/${activePages.length}... (${Math.round(((i + 1) / activePages.length) * 100)}%)`);
         try {
           if (collectExportReviewPages(activePages, [i], allowUnreviewedExportRef.current).length) {
             throw new Error("กรุณาตรวจหลักฐานหน้านี้ใหม่ เลือกต้นฉบับ หรือข้ามหน้า");
@@ -1056,6 +1060,7 @@ export function useExportOrchestrator({
           });
           zip.file(filename, bytes);
           zipAddedCount++;
+          setTranslationResult(`📦 บีบอัดลง ${format.toUpperCase()} ${zipAddedCount}/${activePages.length} หน้า...`);
           exportProcessedCount++;
           setExportRenderProgress({ completed: exportProcessedCount, total: exportableTotal });
         } catch (err) {

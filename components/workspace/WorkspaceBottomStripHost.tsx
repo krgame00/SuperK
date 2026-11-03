@@ -48,6 +48,7 @@ export interface WorkspaceBottomStripHostProps {
   onRecheckPageRemnants: () => void;
   toolbarPosition?: "top" | "bottom";
   isPageReviewRequired?: boolean;
+  isInspectorOpen?: boolean;
 }
 
 export function WorkspaceBottomStripHost({
@@ -74,6 +75,7 @@ export function WorkspaceBottomStripHost({
   onRecheckPageRemnants,
   toolbarPosition,
   isPageReviewRequired,
+  isInspectorOpen,
 }: WorkspaceBottomStripHostProps): ReactElement {
   const activePage = pages[currentPage];
 
@@ -135,6 +137,7 @@ export function WorkspaceBottomStripHost({
         }}
         toolbarPosition={toolbarPosition}
         isPageReviewRequired={isPageReviewRequired}
+        isInspectorOpen={isInspectorOpen}
       />
     </>
   );

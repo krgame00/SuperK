@@ -180,4 +180,30 @@ describe("useExportOrchestrator", () => {
     expect(result.current.unconfirmedReviewPages).toBeNull();
     expect(result.current.pendingExportAction).toBeNull();
   });
+
+  it("emits granular progress status updates during layered pack export", async () => {
+    const setTranslationResult = vi.fn();
+    const options = createOptions({ setTranslationResult });
+    const { result } = renderHook(() => useExportOrchestrator(options));
+
+    act(() => {
+      result.current.exportSnapshotRef.current = {
+        pages: [{ url: "blob:page-0", name: "page0.jpg", exportSource: "original" }],
+        currentPage: 0,
+      };
+    });
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      blob: () => Promise.resolve(new Blob(["fake-img"], { type: "image/png" })),
+    } as unknown as Response);
+
+    await act(async () => {
+      await result.current.executeDownloadAll("layered");
+    });
+
+    expect(setTranslationResult).toHaveBeenCalledWith(
+      expect.stringContaining("กำลังแพ็กเลเยอร์ Photoshop หน้า 1/1"),
+    );
+  });
 });

@@ -90,11 +90,19 @@ export function RemnantReviewPanel({
 }: RemnantReviewPanelProps) {
   const [side, setSide] = useState<"right" | "left">("right");
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const effectiveSide = isInspectorOpen ? "left" : side;
   const [busyCandidateId, setBusyCandidateId] = useState<string | null>(null);
 
   // Auto-collapse and move to the left when the user selects a text bubble or when
   // the inspector is open: the inspector takes over the right edge of the screen,
   // so docking to the left ensures it never covers the inspector tabs and typography controls.
+  useEffect(() => {
+    if (isInspectorOpen) {
+      setIsCollapsed(true);
+      setSide("left");
+    }
+  }, [isInspectorOpen]);
+
   useEffect(() => {
     const checkInspector = () => {
       if (typeof document === "undefined") return;
@@ -310,14 +318,14 @@ export function RemnantReviewPanel({
       role="region"
       aria-label="รายการจุดตรวจข้อความที่เหลือ"
       className={`fixed ${topPositionClass} z-40 flex flex-col overflow-hidden rounded-2xl transition-all duration-250 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-        side === "right" ? "right-3 sm:right-4 origin-top-right" : "left-3 sm:left-4 xl:left-20 origin-top-left"
+        effectiveSide === "right" ? "right-3 sm:right-4 origin-top-right" : "left-3 sm:left-4 xl:left-20 origin-top-left"
       } ${
         isCollapsed
           ? "w-auto max-w-[280px] border border-[#e61972]/50 bg-surface/95 px-3 py-1.5 shadow-lg backdrop-blur-md"
           : `w-[calc(100%-2rem)] max-w-sm sm:max-w-md md:max-w-[420px] ${maxHeightClass} border border-border/80 bg-surface/95 p-3 text-xs shadow-2xl backdrop-blur-md`
       }`}
       data-testid="remnant-review-findings"
-      data-remnant-side={side}
+      data-remnant-side={effectiveSide}
     >
       {isCollapsed ? (
         <div className="flex items-center gap-2 animate-in fade-in zoom-in-95 duration-200 select-none">
@@ -405,9 +413,17 @@ export function RemnantReviewPanel({
               )}
               <button
                 type="button"
-                onClick={() => setSide((s) => (s === "right" ? "left" : "right"))}
-                title={side === "right" ? "สลับพาเนลไปฝั่งซ้าย" : "สลับพาเนลไปฝั่งขวา"}
-                aria-label={side === "right" ? "สลับพาเนลไปฝั่งซ้าย" : "สลับพาเนลไปฝั่งขวา"}
+                onClick={() => {
+                  if (isInspectorOpen) {
+                    void import("react-hot-toast").then((m) =>
+                      m.default("พาเนลตรวจจุดสงสัยต้องอยู่ฝั่งซ้ายเนื่องจากพาเนลแก้ไขข้อความเปิดอยู่", { id: "remnant-dock-hint" })
+                    );
+                    return;
+                  }
+                  setSide((s) => (s === "right" ? "left" : "right"));
+                }}
+                title={effectiveSide === "right" ? "สลับพาเนลไปฝั่งซ้าย" : "สลับพาเนลไปฝั่งขวา"}
+                aria-label={effectiveSide === "right" ? "สลับพาเนลไปฝั่งซ้าย" : "สลับพาเนลไปฝั่งขวา"}
                 className="rounded-lg p-1 text-muted hover:bg-surface-hover hover:text-foreground transition-all hover:scale-105 active:scale-95 cursor-pointer"
               >
                 <ArrowLeftRight className="h-3.5 w-3.5" />

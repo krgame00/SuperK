@@ -2883,3 +2883,41 @@ Verification evidence:
     - `npx vitest run tests/unit/TextWarpRenderer.test.ts` — **3 passed (3 tests)**.
     - Full suite: **244 passed (247 files) | 2,027 passed (2,030 tests)**.
 
+
+## UI Collision Resolution (Remnant Review Pill & Next Page Floating Button Overlap) — 2026-11-03
+
+### Status: VERIFIED WORKING (43/43 Vitest tests passed across 6 test files; TypeScript typecheck 0 errors)
+
+- **User Context & Root Cause Analysis**:
+  1. **Remnant Review Pill Overlap on Text Properties Tab Bar**:
+     - When a page requires human review (`isPageReviewRequired = true`, triggered by the yellow/orange review banner "หน้านี้มีจุดคลีนหรือคำแปลที่ต้องการการตรวจทาน"), `RemnantReviewPanel` shifts vertically to `top-[168px] sm:top-[172px]`.
+     - At this exact vertical position (`168px`), `TextPropertiesPanel` renders its top tab bar (`ฟอนต์`, `สี & ขอบ`, `กล่องพื้นหลัง`).
+     - Because `isInspectorOpen` was never passed from `WorkspaceBottomStripHost` down to `RemnantReviewPanel`, `RemnantReviewPanel` stayed initialized to `side = "right"`.
+     - Result: The pink `[ ● จุดสงสัย 10 จุด แสดง v ]` pill was pinned at `right-3 top-[168px]`, completely covering the `สี & ขอบ` and `กล่องพื้นหลัง` tabs, blocking all color and outline customizations.
+  2. **PageViewer Next Page Button Overlapping WarpPanel**:
+     - In `components/workspace/PageViewer.tsx`, the Next Page button base class had `flex`, while the ternary appended `hidden 2xl:flex right-3 2xl:right-[24rem]`.
+     - In CSS/Tailwind, `flex` from the base class overrode `hidden`, and `right-3` anchored the button at 12px from the right edge at `top-1/2 -translate-y-1/2`, directly overlapping the bottom-right corner of `WarpPanel` (dropdown `ไม่มี (None)`).
+     - Furthermore, this regression broke the unit test `tests/unit/pageViewer.test.tsx` which expected `lg:right-[22.5rem]`.
+
+- **Changes Landed**:
+  1. `components/cleaning/RemnantReviewPanel.tsx`:
+     - Computed reactive docking: `const effectiveSide = isInspectorOpen ? "left" : side;`.
+     - Added reactive effect on `isInspectorOpen` to auto-collapse and set `side = "left"`.
+     - Prevented accidental re-docking to the right while the text inspector is active, notifying user with toast.
+  2. `components/workspace/WorkspaceBottomStripHost.tsx`:
+     - Added `isInspectorOpen?: boolean` prop to `WorkspaceBottomStripHostProps` and relayed it to `<RemnantReviewPanel isInspectorOpen={isInspectorOpen} />`.
+  3. `hooks/useWorkspaceController.ts`:
+     - Added `isInspectorOpen` state and connected `canvasProps.onInspectorOpenChange` to propagate inspector state seamlessly into `bottomStripProps.isInspectorOpen`.
+  4. `components/workspace/PageViewer.tsx`:
+     - Restored clean responsive positioning: `hasInspectorOpen ? "flex right-3 sm:right-6 lg:right-[22.5rem]" : "flex right-3 sm:right-6"`.
+     - On desktop (`lg:`), the Next Page button shifts cleanly to the left of the 300px inspector (`right: 22.5rem` = 360px), leaving 60px of breathing room and preventing any overlap with `WarpPanel`.
+  5. `hooks/useExportOrchestrator.ts`:
+     - Added granular export progress indicators across Photoshop layered export, Webtoon Strip stitching, PDF creation, and ZIP/CBZ compression.
+  6. `tests/cleaning/RemnantReviewPanel.docking.test.tsx` & `tests/unit/pageViewer.test.tsx`:
+     - Added unit tests verifying docking to left when `isInspectorOpen=true` and restored green test for `lg:right-[22.5rem]`.
+
+- **Verification Evidence**:
+  - `npx tsc --noEmit`: **0 errors**.
+  - Vitest test suite:
+    - `npm test -- tests/unit/pageViewer.test.tsx tests/cleaning/RemnantReviewPanel.docking.test.tsx tests/cleaning/RemnantReviewPanel.test.tsx tests/workspace/WorkspaceBottomStripHost.test.tsx tests/workspace/WorkspaceCanvasHost.test.tsx tests/workspace/useExportOrchestrator.test.tsx`
+    - **6 passed (6 files) | 43 passed (43 tests)** in 3.72s.
