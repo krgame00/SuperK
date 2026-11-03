@@ -36,7 +36,7 @@ describe("PageViewer navigation", () => {
     expect(updater(0)).toBe(1);
   });
 
-  it("shifts the Next Page button to lg:right-[22.5rem] when hasInspectorOpen is true to prevent overlapping the inspector", () => {
+  it("safely docks the Next Page button on 2xl and hides on smaller viewports when hasInspectorOpen is true", () => {
     render(
       <PageViewer
         pages={pages}
@@ -55,7 +55,8 @@ describe("PageViewer navigation", () => {
     );
 
     const nextBtn = screen.getByTitle("Next Page (Right Arrow)");
-    expect(nextBtn).toHaveClass("lg:right-[22.5rem]");
+    expect(nextBtn).toHaveClass("hidden");
+    expect(nextBtn).toHaveClass("2xl:right-[22rem]");
   });
 
   it("calls onPageChange with prev - 1 when clicking the Previous Page (Left Arrow) button", () => {

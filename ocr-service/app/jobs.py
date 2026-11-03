@@ -380,15 +380,26 @@ class JobStore:
                 if job.status in (JobStatus.QUEUED, JobStatus.RUNNING)
             }
 
-    def sweep_completed(self, *, retention_hours: float | None = None) -> int:
+    def sweep_completed(
+        self,
+        *,
+        retention_hours: float | None = None,
+        days: float | None = None,
+        sweep_projects: bool = False,
+        sweep_temp: bool = False,
+    ) -> int:
         """Delete finished job asset dirs older than the retention window.
 
-        retention_hours=0 purges every non-active job. Returns how many dirs
-        were removed. Restored (on-disk) jobs that are still inside the window
-        are left untouched so completed work survives a service restart.
+        retention_hours=0 purges every non-active job. If days is provided,
+        it takes precedence (hours = days * 24.0).
+        sweep_projects=True also removes project-tagged jobs older than cutoff.
+        sweep_temp=True also removes stale files older than cutoff in temp directories.
         """
-        hours = self.retention_hours if retention_hours is None else retention_hours
-        if retention_hours is None and self.retention_hours <= 0.0:
+        if days is not None:
+            hours = float(days) * 24.0
+        else:
+            hours = self.retention_hours if retention_hours is None else retention_hours
+        if retention_hours is None and days is None and self.retention_hours <= 0.0:
             return 0
         if not self.cache_dir.exists():
             return 0
@@ -400,8 +411,8 @@ class JobStore:
                 continue
             if entry.name in active:
                 continue
-            # Project-tagged assets belong to the project lifetime and are not auto-expired
-            if (entry / "project_id.txt").is_file():
+            # Project-tagged assets belong to the project lifetime unless sweeping expired projects
+            if not sweep_projects and (entry / "project_id.txt").is_file():
                 continue
             marker = entry / "result.json"
             try:
@@ -416,6 +427,27 @@ class JobStore:
                 continue
             shutil.rmtree(entry, ignore_errors=True)
             removed += 1
+
+        if sweep_temp:
+            temp_candidates = [
+                self.cache_dir.parent / "temp",
+                Path(os.environ.get("TEMP", "")) if os.environ.get("TEMP") else None,
+            ]
+            for temp_dir in temp_candidates:
+                if temp_dir and temp_dir.exists() and temp_dir.is_dir() and temp_dir != Path("/"):
+                    try:
+                        for item in temp_dir.iterdir():
+                            try:
+                                if item.stat().st_mtime <= cutoff:
+                                    if item.is_dir():
+                                        shutil.rmtree(item, ignore_errors=True)
+                                    else:
+                                        item.unlink(missing_ok=True)
+                            except OSError:
+                                continue
+                    except OSError:
+                        pass
+
         self._drop_jobs_with_missing_assets()
         return removed
 

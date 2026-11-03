@@ -1,5 +1,28 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Batch Typography Scope, Auto-Purge 30-Day Cache & Desktop Collision Hardening — 2026-11-03
+
+### Status: VERIFIED WORKING (User requested two core capabilities in /Poteto Mode and uploaded 3 screenshots showing workspace UI collisions:
+1) Batch Typography Scope: Enhanced typography inspector so when "ขอบเขตการแก้ไข: ทุกหน้าทั้งเล่ม" (`scope === "all-pages"`) is selected, users can broadcast their chosen font family, bold, and italic across all bubbles in every page in the project in one click via a new dedicated button `⚡ กระจายฟอนต์นี้ไปยังทุกหน้าทั้งเล่ม` and through automatic broadcast on font select change.
+  a) `hooks/useWorkspaceController.ts`: Implemented `handleBatchApplyTypography(updates)`. Iterates all pages in `pages` that have bubbles in `bubbleCacheRef.current`, updates `fontFamily`, `isBold`, and `isItalic`, clears `layoutSnapshot` on `layoutAdjustment` to force re-measuring bounds, updates `bubbleCacheRef.current`, synchronizes active page `activeBubbles` state, marks pages in `dirtyExportPagesRef`, and provides user toast feedback with counts of updated bubbles and pages.
+  b) `components/editing/TextPropertiesPanel.tsx`: Added `onBatchApplyTypography` prop, wired font select `onChange` to auto-broadcast when `scope === "all-pages"`, and added a prominent 1-click button `⚡ กระจายฟอนต์นี้ไปยังทุกหน้าทั้งเล่ม` when scope is set to all pages.
+  c) `components/workspace/WorkspaceCanvasHost.tsx`: Passed `onBatchApplyTypography` from controller down to `TextPropertiesPanel`.
+
+2) Auto-Purge Cache Policy (30 Days for `F:\manga-cache`):
+  a) `ocr-service/app/jobs.py`: Enhanced `sweep_completed(self, *, retention_hours: float | None = None, days: float | None = None, sweep_projects: bool = False, sweep_temp: bool = False)`. When `days` is provided (e.g. `days=30`), calculates cutoff timestamp, purges unactive jobs older than 30 days including stale project-tagged asset directories (`sweep_projects=True`), and sweeps stale temporary files in `F:\manga-cache\temp` or system temp directories (`sweep_temp=True`).
+  b) `ocr-service/app/api.py`: Updated `/v1/jobs/purge` endpoint to take optional `days: int | None = None` query parameter. Defaults to 0 (purge all finished jobs for backward compatibility) or applies `days * 24` hours retention.
+  c) `components/workspace/SettingsModal.tsx`: Added `handlePurgeOldCache30Days` calling `/api/clean/v1/jobs/purge?days=30` with toast feedback, and added a dedicated amber maintenance button `🧹 ล้างแคชเก่าเกิน 30 วัน (F:\manga-cache)`.
+
+3) Desktop Workspace Collision Hardening:
+  a) `hooks/useWorkspaceController.ts`: Fixed missing `isInspectorOpen` property in `bottomStripProps`. `WorkspaceBottomStripHost` now forwards `isInspectorOpen` to `RemnantReviewPanel`, ensuring `effectiveSide` resolves to `"left"` when the inspector is open and never docks over the inspector tab bar.
+  b) `components/workspace/PageViewer.tsx`: Updated floating next-page button when inspector is open to `hidden 2xl:flex right-3 2xl:right-[22rem]`, safely hiding the floating button on smaller viewports to prevent collision with the Warp section.
+  c) `components/workspace/WorkspaceCanvasHost.tsx`: Added right padding `lg:pr-76 xl:pr-80` to top controls dock when inspector is open, keeping the toolbar and review notice from slipping behind the inspector panel.
+
+4) Verification Evidence:
+  a) Vitest Unit Tests: 41/41 passed across 6 suites (`tests/editing/TextPropertiesPanel.test.tsx`, `tests/unit/pageViewer.test.tsx`, `tests/cleaning/RemnantReviewPanel.docking.test.tsx`, `tests/cleaning/RemnantReviewPanel.test.tsx`, `tests/workspace/WorkspaceCanvasHost.test.tsx`, `tests/workspace/WorkspaceBottomStripHost.test.tsx`);
+  b) Backend Pytest Suite: 27/27 passed in `ocr-service/tests/test_api.py` including new `test_purge_endpoint_with_days_retention`;
+  c) TypeScript check: `npx tsc --noEmit` passed with 0 errors).
+
 ## Typography & Warp Inspector Unusable Root Cause Fix & State Persistence — 2026-11-03
 
 ### Status: VERIFIED WORKING (User reported that the Typography and Warp Inspector controls on the right side of the canvas were still completely unusable: clicking on font dropdown, font size +/- buttons, sliders, alignment, bold, or warp effects either did not respond, deselected the active bubble, or failed to take effect. Diagnosed via Debug Mantra and resolved root causes with 0 regressions:

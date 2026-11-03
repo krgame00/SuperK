@@ -70,4 +70,48 @@ describe("TextPropertiesPanel", () => {
     fireEvent.click(boldBtn);
     expect(onChange).toHaveBeenCalledWith({ isBold: true });
   });
+  it("renders broadcast font button when scope is all-pages and triggers onBatchApplyTypography", () => {
+    const onBatchApply = vi.fn();
+    render(
+      <TextPropertiesPanel
+        layer={sampleLayer}
+        onChange={vi.fn()}
+        onScopeChange={vi.fn()}
+        scope="all-pages"
+        onBatchApplyTypography={onBatchApply}
+      />,
+    );
+
+    const broadcastBtn = screen.getByRole("button", {
+      name: "⚡ กระจายฟอนต์นี้ไปยังทุกหน้าทั้งเล่ม",
+    });
+    expect(broadcastBtn).toBeInTheDocument();
+
+    fireEvent.click(broadcastBtn);
+    expect(onBatchApply).toHaveBeenCalledWith({
+      fontFamily: sampleLayer.fontFamily,
+      isBold: sampleLayer.isBold,
+      isItalic: sampleLayer.isItalic,
+    });
+  });
+
+  it("automatically broadcasts font change when scope is all-pages and font dropdown changes", () => {
+    const onChange = vi.fn();
+    const onBatchApply = vi.fn();
+    render(
+      <TextPropertiesPanel
+        layer={sampleLayer}
+        onChange={onChange}
+        onScopeChange={vi.fn()}
+        scope="all-pages"
+        onBatchApplyTypography={onBatchApply}
+      />,
+    );
+
+    const fontSelect = screen.getByLabelText("แบบอักษร");
+    fireEvent.change(fontSelect, { target: { value: "Prompt, sans-serif" } });
+
+    expect(onChange).toHaveBeenCalledWith({ fontFamily: "Prompt, sans-serif" });
+    expect(onBatchApply).toHaveBeenCalledWith({ fontFamily: "Prompt, sans-serif" });
+  });
 });

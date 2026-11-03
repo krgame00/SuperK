@@ -20,6 +20,7 @@ export interface TextPropertiesPanelProps {
   onDuplicate?: (id: string) => void;
   scope?: "this-page" | "all-pages";
   onScopeChange?: (scope: "this-page" | "all-pages") => void;
+  onBatchApplyTypography?: (updates: { fontFamily?: string; isBold?: boolean; isItalic?: boolean }) => void;
 }
 
 const FONT_OPTIONS = [
@@ -39,6 +40,7 @@ export function TextPropertiesPanel({
   onDuplicate,
   scope = "this-page",
   onScopeChange,
+  onBatchApplyTypography,
 }: TextPropertiesPanelProps): ReactElement | null {
   const [activeTab, setActiveTab] = useState<"typography" | "appearance" | "box">("typography");
 
@@ -135,7 +137,13 @@ export function TextPropertiesPanel({
                   ? "Itim, sans-serif"
                   : layer.fontFamily
               }
-              onChange={(e) => onChange({ fontFamily: e.target.value })}
+              onChange={(e) => {
+                const nextFont = e.target.value;
+                onChange({ fontFamily: nextFont });
+                if (scope === "all-pages" && onBatchApplyTypography) {
+                  onBatchApplyTypography({ fontFamily: nextFont });
+                }
+              }}
               className="bg-background border border-surface-hover rounded-md px-2 py-1 text-xs focus:border-primary outline-none"
             >
               {FONT_OPTIONS.map((f) => (
@@ -366,16 +374,34 @@ export function TextPropertiesPanel({
 
       {/* Scope Selector */}
       {onScopeChange && (
-        <div className="border-t border-surface-hover/60 pt-2 flex items-center justify-between text-[11px]">
-          <span className="text-muted">ขอบเขตการแก้ไข:</span>
-          <select
-            value={scope}
-            onChange={(e) => onScopeChange(e.target.value as "this-page" | "all-pages")}
-            className="bg-background border border-surface-hover rounded px-1.5 py-0.5 text-[11px]"
-          >
-            <option value="this-page">เฉพาะหน้านี้</option>
-            <option value="all-pages">ทุกหน้าทั้งเล่ม</option>
-          </select>
+        <div className="border-t border-surface-hover/60 pt-2 flex flex-col gap-2">
+          <div className="flex items-center justify-between text-[11px]">
+            <span className="text-muted">ขอบเขตการแก้ไข:</span>
+            <select
+              value={scope}
+              onChange={(e) => onScopeChange(e.target.value as "this-page" | "all-pages")}
+              className="bg-background border border-surface-hover rounded px-1.5 py-0.5 text-[11px]"
+            >
+              <option value="this-page">เฉพาะหน้านี้</option>
+              <option value="all-pages">ทุกหน้าทั้งเล่ม</option>
+            </select>
+          </div>
+          {scope === "all-pages" && onBatchApplyTypography && (
+            <button
+              type="button"
+              onClick={() =>
+                onBatchApplyTypography({
+                  fontFamily: layer.fontFamily,
+                  isBold: layer.isBold,
+                  isItalic: layer.isItalic,
+                })
+              }
+              className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-primary/20 hover:bg-primary/30 active:scale-98 text-primary border border-primary/40 font-semibold text-xs transition-all cursor-pointer shadow-xs"
+              title="กระจายแบบอักษรและสไตล์ตัวหนา/เอียงของกล่องนี้ไปยังทุกบับเบิลในทุกหน้าทั้งเล่ม"
+            >
+              <span>⚡ กระจายฟอนต์นี้ไปยังทุกหน้าทั้งเล่ม</span>
+            </button>
+          )}
         </div>
       )}
     </aside>

@@ -158,6 +158,7 @@ export interface WorkspaceCanvasHostProps {
   onAutoExtractGlossary?: () => void;
   onQuickExport?: (kind: "image" | "pdf" | "strip" | "zip" | "cbz" | "layered") => void;
   onInspectorOpenChange?: (isOpen: boolean) => void;
+  onBatchApplyTypography?: (updates: { fontFamily?: string; isBold?: boolean; isItalic?: boolean }) => void;
 }
 
 export function WorkspaceCanvasHost({
@@ -229,6 +230,7 @@ export function WorkspaceCanvasHost({
   onAutoExtractGlossary,
   onQuickExport,
   onInspectorOpenChange,
+  onBatchApplyTypography,
 }: WorkspaceCanvasHostProps): ReactElement {
   const [isOrganizeMenuOpen, setIsOrganizeMenuOpen] = useState(false);
   const organizeMenuRef = useRef<HTMLDivElement>(null);
@@ -434,6 +436,8 @@ export function WorkspaceCanvasHost({
           <div
             data-page-controls-dock={toolbarPosition}
             className={`w-full z-40 flex justify-center pointer-events-none px-2 transition-all duration-300 ease-out ${
+              Boolean(selectedBubbleBridge || selectedImageLayer) ? "lg:pr-76 xl:pr-80" : ""
+            } ${
               toolbarPosition === "top"
                 ? "relative shrink-0"
                 : `absolute ${
@@ -1073,6 +1077,7 @@ export function WorkspaceCanvasHost({
                       }}
                       scope={inspectorScope}
                       onScopeChange={setInspectorScope}
+                      onBatchApplyTypography={onBatchApplyTypography}
                       onChange={(updates: Partial<TextLayer>) => {
                         selectedBubbleBridge.applyUpdates(updates as Record<string, unknown>);
                         setInspectorTick((t) => t + 1);

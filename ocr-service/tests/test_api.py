@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import threading
 import time
 from collections.abc import Iterator
@@ -471,6 +472,47 @@ def test_purge_endpoint_removes_completed_jobs(tmp_path, png_bytes: bytes) -> No
             assert client.get(f"/v1/jobs/{job_id}/result").status_code == 404
             assert client.get(f"/v1/jobs/{job_id}").status_code == 404
 
+
+
+
+def test_purge_endpoint_with_days_retention(tmp_path, png_bytes: bytes) -> None:
+    app = create_app(
+        settings=Settings(cache_dir=tmp_path),
+        pipeline_factory=lambda: _IdentityPipeline(),
+    )
+    with TestClient(app) as client:
+        ids = [
+            client.post(
+                "/v1/jobs",
+                files={"image": (f"page-{i}.png", png_bytes, "image/png")},
+            ).json()["job_id"]
+            for i in range(2)
+        ]
+        for job_id in ids:
+            assert _wait_for_terminal(client, job_id)["status"] == "succeeded"
+
+        # Age the first job to 35 days ago
+        old_dir = tmp_path / "jobs" / ids[0]
+        stale_time = time.time() - 35 * 86400.0
+        os.utime(old_dir, (stale_time, stale_time))
+        marker = old_dir / "result.json"
+        if marker.exists():
+            os.utime(marker, (stale_time, stale_time))
+
+        # Purge older than 30 days
+        response = client.post("/v1/jobs/purge?days=30")
+        assert response.status_code == 200
+        assert response.json()["deleted"] == 1
+
+        # The 35-day-old job is gone, the fresh job remains
+        assert client.get(f"/v1/jobs/{ids[0]}/result").status_code == 404
+        assert client.get(f"/v1/jobs/{ids[1]}/result").status_code == 200
+
+        # Purge without days deletes all remaining finished jobs
+        response = client.post("/v1/jobs/purge")
+        assert response.status_code == 200
+        assert response.json()["deleted"] == 1
+        assert client.get(f"/v1/jobs/{ids[1]}/result").status_code == 404
 
 def test_delete_endpoint_removes_single_job(tmp_path, png_bytes: bytes) -> None:
     app = create_app(

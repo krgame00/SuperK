@@ -520,6 +520,77 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     onToggleNsfwBypassMode: () => setNsfwBypassMode((prev) => !prev),
   };
 
+  const handleBatchApplyTypography = useCallback(
+    async (updates: { fontFamily?: string; isBold?: boolean; isItalic?: boolean }) => {
+      if (pages.length === 0) return;
+      const targetPages = pages.filter((p) => {
+        const b = bubbleCacheRef.current.get(p.url);
+        return b && b.length > 0;
+      });
+
+      if (targetPages.length === 0) {
+        import("react-hot-toast").then((m) =>
+          m.default("ยังไม่มีหน้าที่มีคำแปลให้ปรับฟอนต์", { icon: "ℹ️" }),
+        );
+        return;
+      }
+
+      const toastModule = await import("react-hot-toast");
+      const toast = toastModule.default;
+      const toastId = toast.loading(
+        `กำลังกระจายฟอนต์ไปยังทุกหน้า (${targetPages.length} หน้า)...`,
+      );
+
+      try {
+        let totalUpdatedBubbles = 0;
+        for (const pageItem of targetPages) {
+          const pageUrl = pageItem.url;
+          const currentBubbles = bubbleCacheRef.current.get(pageUrl) ?? [];
+          if (currentBubbles.length === 0) continue;
+
+          const updated = currentBubbles.map((bubble) => {
+            const nextBubble = { ...bubble };
+            if (updates.fontFamily !== undefined) {
+              (nextBubble as Record<string, unknown>).fontFamily = updates.fontFamily;
+            }
+            if (updates.isBold !== undefined) {
+              (nextBubble as Record<string, unknown>).isBold = updates.isBold;
+            }
+            if (updates.isItalic !== undefined) {
+              (nextBubble as Record<string, unknown>).isItalic = updates.isItalic;
+              (nextBubble as Record<string, unknown>).italic = updates.isItalic;
+            }
+            if (nextBubble.layoutAdjustment) {
+              nextBubble.layoutAdjustment = {
+                ...nextBubble.layoutAdjustment,
+                fontFamily: updates.fontFamily ?? nextBubble.layoutAdjustment.fontFamily,
+                isBold: updates.isBold ?? nextBubble.layoutAdjustment.isBold,
+                isItalic: updates.isItalic ?? nextBubble.layoutAdjustment.isItalic,
+                layoutSnapshot: undefined,
+              };
+            }
+            totalUpdatedBubbles++;
+            return nextBubble;
+          });
+
+          bubbleCacheRef.current.set(pageUrl, updated);
+          if (pageUrl === currentPageUrl) {
+            setActiveBubbles(updated);
+          }
+          dirtyExportPagesRef.current.add(pageUrl);
+        }
+
+        toast.success(
+          `กระจายฟอนต์ไปยัง ${totalUpdatedBubbles} บับเบิล (${targetPages.length} หน้า) สำเร็จ`,
+          { id: toastId },
+        );
+      } catch {
+        toast.error("เกิดข้อผิดพลาดในการกระจายฟอนต์", { id: toastId });
+      }
+    },
+    [pages, currentPageUrl, dirtyExportPagesRef, setActiveBubbles],
+  );
+
   const canvasProps: WorkspaceCanvasHostProps = {
     isFocusMode,
     isFocusToolbarVisible,
@@ -731,6 +802,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     onGlossaryChange: setGlossary,
     onAutoExtractGlossary: () => void handleAutoExtractGlossary(),
     onInspectorOpenChange: setIsInspectorOpen,
+    onBatchApplyTypography: handleBatchApplyTypography,
     onQuickExport: (kind) => {
       if (kind === "image") {
         void requestSinglePageExport();
@@ -840,6 +912,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
       if (currentPageUrl) void recheckPageRemnants(currentPageUrl);
     },
     toolbarPosition,
+    isInspectorOpen,
     isPageReviewRequired: Boolean(
       currentPageUrl &&
       !confirmedPages.has(currentPageUrl) &&

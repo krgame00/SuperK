@@ -419,6 +419,32 @@ export function SettingsModal({
     }
   };
 
+  const [isPurgingOldCache, setIsPurgingOldCache] = useState(false);
+
+  const handlePurgeOldCache30Days = async () => {
+    if (isPurgingOldCache) return;
+    setIsPurgingOldCache(true);
+    const toast = (await import("react-hot-toast")).default;
+    try {
+      const res = await fetch("/api/clean/v1/jobs/purge?days=30", { method: "POST" });
+      const data = (await res.json().catch(() => ({}))) as { deleted?: number };
+      if (res.ok) {
+        const count = data.deleted ?? 0;
+        toast.success(
+          count > 0
+            ? `ล้างแคชเก่าเกิน 30 วัน (F:\\manga-cache) แล้ว ${count} งาน`
+            : "ไม่พบแคชเก่าเกิน 30 วัน — พื้นที่สะอาดอยู่แล้ว",
+        );
+      } else {
+        toast.error("ล้างแคชเก่าไม่สำเร็จ (เซิร์ฟเวอร์คลีนอาจไม่ได้เปิด)");
+      }
+    } catch {
+      toast.error("ล้างแคชเก่าไม่สำเร็จ (เซิร์ฟเวอร์คลีนอาจไม่ได้เปิด)");
+    } finally {
+      setIsPurgingOldCache(false);
+    }
+  };
+
   const [isConfirmingShutdown, setIsConfirmingShutdown] = useState(false);
   const [isShuttingDown, setIsShuttingDown] = useState(false);
   const [isShutdownComplete, setIsShutdownComplete] = useState(false);
@@ -1779,7 +1805,16 @@ export function SettingsModal({
               aria-label="ล้างภาพค้างบนเซิร์ฟเวอร์คลีน"
               className="w-full rounded-md border border-surface-hover bg-background px-3 py-2 text-xs font-medium text-foreground transition-colors hover:bg-surface-hover disabled:opacity-50"
             >
-              {isPurging ? "กำลังล้าง..." : "🧹 ล้างภาพค้างบนเซิร์ฟเวอร์"}
+              {isPurging ? "กำลังล้าง..." : "🧹 ล้างภาพค้างบนเซิร์ฟเวอร์ (ทั้งหมด)"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handlePurgeOldCache30Days()}
+              disabled={isPurgingOldCache}
+              aria-label="ล้างแคชเก่าเกิน 30 วันใน F:\manga-cache"
+              className="mt-1.5 w-full rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-300 transition-colors hover:bg-amber-500/20 disabled:opacity-50"
+            >
+              {isPurgingOldCache ? "กำลังล้างแคชเก่า..." : "🧹 ล้างแคชเก่าเกิน 30 วัน (F:\\manga-cache)"}
             </button>
             <button
               type="button"

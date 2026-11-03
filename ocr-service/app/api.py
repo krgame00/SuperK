@@ -266,9 +266,16 @@ def create_app(
         return {"project_id": project_id, "deleted_jobs": removed}
 
     @app.post("/v1/jobs/purge")
-    def purge_jobs() -> dict[str, int]:
-        """Manually sweep finished job assets (retention window = 0)."""
-        removed = store.sweep_completed(retention_hours=0.0)
+    def purge_jobs(days: int | None = None) -> dict[str, int]:
+        """Manually sweep finished job assets (retention window = 0 by default, or older than `days`)."""
+        if days is not None and days > 0:
+            removed = store.sweep_completed(
+                days=float(days),
+                sweep_projects=bool(days >= 30),
+                sweep_temp=True,
+            )
+        else:
+            removed = store.sweep_completed(retention_hours=0.0)
         return {"deleted": removed}
 
     @app.post("/v1/jobs/flush-memory")

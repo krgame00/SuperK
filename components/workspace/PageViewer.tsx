@@ -498,7 +498,7 @@ export function PageViewer({
               onClick={() => onPageChange((prev) => prev + 1)}
               aria-label={`หน้าถัดไป (หน้า ${currentPage + 2} จาก ${pages.length})`}
               className={`absolute top-1/2 -translate-y-1/2 flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-full border border-border/80 bg-background/80 text-foreground/90 shadow-xl backdrop-blur-md transition-all duration-150 hover:bg-surface hover:text-white hover:scale-110 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background z-30 ${
-                hasInspectorOpen ? "flex right-3 sm:right-6 lg:right-[22.5rem]" : "flex right-3 sm:right-6"
+                hasInspectorOpen ? "hidden 2xl:flex right-3 2xl:right-[22rem]" : "flex right-3 sm:right-6"
               }`}
               title="Next Page (Right Arrow)"
             >
