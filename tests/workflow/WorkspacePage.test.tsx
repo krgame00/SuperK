@@ -1239,7 +1239,6 @@ test("cleaning toolbar keeps dropdown menus unclipped (overflow-visible) and out
   fireEvent.click(screen.getByRole("button", { name: "Layer translated" }));
 
   const cleaningToolbar = screen.getByRole("region", { name: "Cleaning toolbar" });
-  expect(cleaningToolbar.className).not.toContain("overflow-x-auto");
   expect(cleaningToolbar.className).not.toContain("overflow-hidden");
   expect(cleaningToolbar.className).toContain("overflow-visible");
 

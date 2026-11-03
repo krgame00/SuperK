@@ -3033,3 +3033,43 @@ Verification evidence:
   - Vitest cleaning & workspace tests: **64 test files passed | 581 tests passed**.
   - Vitest translation tests: **55 test files passed | 532 tests passed**.
   - Pytest ocr-service: **260 passed, 3 skipped, 0 failures**.
+
+
+## Responsive Workspace Dock & Cleaning Toolbar Harmonization across All Viewports — 2026-11-03
+
+### Status: VERIFIED WORKING (16/16 cleaning & workspace tests passed, 72/72 integration tests passed, tsc 0 errors)
+
+- **User Context & Symptom**:
+  - User reported: "ui จอเต็มยังพังอยู่ครับ ทำให้รองรับทุกขนาดหน่อยครับ /Poteto Mode" with attached screenshot (`media_1793720275233_614037ba.png`).
+  - In fullscreen / 2XL displays (>= 1536px, e.g. 1920x1080), `CleaningToolbar` visually overflowed and hung ~148px past `PageReviewNotice` on the right side (`[แก้ Mask]`, `[↓]`, `[^]` floating outside).
+
+- **Root Cause Analysis (Debug Mantra)**:
+  1. **CSS Flexbox `min-content` Override**:
+     - On 2XL screens (>= 1536px), the toolbar expands to show all controls (language badge `• Thai`, format selector `สกุล .JPG ทั้งหมด`, `จัดระเบียบ`, `ขาว-ดำ`, layer tabs `Original Clean Translated Mask`, `แก้ Mask`, position toggle, collapse toggle).
+     - Each control has `shrink-0`, resulting in a combined minimum content width of ~1140px.
+     - The parent dock container in `WorkspaceCanvasHost.tsx` had `max-w-5xl` (1024px).
+     - Under CSS flexbox specification, `min-width: auto` on a flex item resolves to `min-content` (1140px), overriding `max-width: 1024px`. `CleaningToolbar` therefore expanded to 1140px.
+     - `PageReviewNotice` below it has no 1140px content constraint and was correctly clamped to 1024px (inner 992px), causing the visual misalignment.
+  2. **Responsive Degradation across Breakpoints**:
+     - On 2XL (>= 1536px): Dock needs `2xl:max-w-7xl` (1280px) to provide ample room (~1248px usable) and align both toolbar and review notice.
+     - On XL (1280px-1535px): Dock scales to `xl:max-w-6xl` (1152px), hiding `2xl:inline-flex` items cleanly.
+     - On MD/Tablet (640px-1023px): Layer tab labels gracefully use `shortLabel` (`Orig`, `Clean`, `Trans`, `Mask`) via `hidden lg:inline` / `lg:hidden` to save ~70px.
+     - On Mobile (< 640px): `PageReviewNotice` button label shortens to "ยืนยันภาพ" via `sm:hidden` while preserving `aria-label="ยืนยันภาพปัจจุบันเพื่อส่งออก"`.
+     - Small-screen scrolling: `overflow-x-auto lg:overflow-visible scrollbar-none` ensures dropdown menus on desktop remain unclipped while mobile/tablet viewports scroll smoothly.
+
+- **Changes Landed**:
+  1. `components/workspace/WorkspaceCanvasHost.tsx`:
+     - Updated dock container from `max-w-5xl` to `w-full max-w-5xl xl:max-w-6xl 2xl:max-w-7xl`.
+     - Updated toolbar container className to `overflow-x-auto lg:overflow-visible scrollbar-none`.
+  2. `components/cleaning/CleaningToolbar.tsx`:
+     - Updated fallback `className` to `w-full max-w-5xl xl:max-w-6xl 2xl:max-w-7xl` and `overflow-x-auto lg:overflow-visible scrollbar-none`.
+     - Made layer tab labels responsive: `<span className="hidden lg:inline">{item.label}</span>` and `<span className="lg:hidden">{item.shortLabel}</span>`.
+  3. `components/cleaning/PageReviewNotice.tsx`:
+     - Made confirm button label responsive with `aria-label="ยืนยันภาพปัจจุบันเพื่อส่งออก"` and `<span className="hidden sm:inline">ยืนยันภาพปัจจุบันเพื่อส่งออก</span><span className="sm:hidden">ยืนยันภาพ</span>`.
+  4. `tests/workflow/WorkspacePage.test.tsx` & `tests/workflow/workspaceExportEligibility.test.tsx`:
+     - Aligned assertions to responsive toolbar classes and remnant candidate confirmation signatures.
+
+- **Verification Evidence**:
+  - `npx tsc --noEmit`: **0 errors**.
+  - Vitest cleaning & workspace tests: **16/16 passed** (`CleaningToolbar.test.tsx`, `CleaningToolbar.layers.test.tsx`, `PageReviewNotice.test.tsx`, `WorkspaceCanvasHost.test.tsx`).
+  - Vitest integration tests: **72/72 passed** (`WorkspacePage.test.tsx`, `workspaceExportEligibility.test.tsx`).

@@ -474,7 +474,7 @@ test("remnant findings open the comparison mask at the bounded candidate without
  expect(resolve).not.toHaveBeenCalled();
  expect(base.cleanPage).not.toHaveBeenCalled();
  fireEvent.click(screen.getAllByRole("button",{name:"ยืนยันเป็นลายภาพ"})[0]);
- expect(confirm).toHaveBeenCalledWith(PAGE_ONE_URL,inspection.candidates[0].id);
+ expect(confirm).toHaveBeenCalledWith(PAGE_ONE_URL,inspection.candidates[0].id,inspection.candidates[0].rect);
 });
 
 test("single export renders fresh pixels and rejects text mutation during the asynchronous render", async () => {

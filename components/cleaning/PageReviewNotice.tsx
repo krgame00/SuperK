@@ -18,9 +18,11 @@ export function PageReviewNotice({ onConfirm }: { onConfirm: () => void }) {
         <button
           type="button"
           onClick={onConfirm}
+          aria-label="ยืนยันภาพปัจจุบันเพื่อส่งออก"
           className="rounded-lg bg-amber-600 hover:bg-amber-500 active:scale-95 px-3 py-1 font-semibold text-white text-[11px] sm:text-xs shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 cursor-pointer whitespace-nowrap"
         >
-          ยืนยันภาพปัจจุบันเพื่อส่งออก
+          <span className="hidden sm:inline">ยืนยันภาพปัจจุบันเพื่อส่งออก</span>
+          <span className="sm:hidden">ยืนยันภาพ</span>
         </button>
         <button
           type="button"

@@ -57,7 +57,7 @@ export function CleaningToolbar({
       aria-label="เครื่องมือคลีนข้อความ"
       className={
         className ??
-        "relative z-30 flex flex-nowrap w-full max-w-5xl items-center justify-between gap-1.5 sm:gap-2 rounded-xl border border-border/70 bg-surface/90 px-2 sm:px-3 py-1.5 shadow-md backdrop-blur-md transition-all overflow-x-auto sm:overflow-visible scrollbar-none"
+        "relative z-30 flex flex-nowrap w-full max-w-5xl xl:max-w-6xl 2xl:max-w-7xl items-center justify-between gap-1.5 sm:gap-2 rounded-xl border border-border/70 bg-surface/90 px-2 sm:px-3 py-1.5 shadow-md backdrop-blur-md transition-all overflow-x-auto lg:overflow-visible scrollbar-none"
       }
     >
       <div className="flex flex-nowrap min-w-0 items-center gap-1.5 sm:gap-2 shrink-0">
@@ -126,8 +126,8 @@ export function CleaningToolbar({
                     : "text-muted hover:text-foreground hover:bg-surface-hover/80"
                 }`}
               >
-                <span className="hidden sm:inline">{item.label}</span>
-                <span className="sm:hidden">{item.shortLabel}</span>
+                <span className="hidden lg:inline">{item.label}</span>
+                <span className="lg:hidden">{item.shortLabel}</span>
               </button>
             );
           })}

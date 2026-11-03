@@ -454,7 +454,7 @@ export function WorkspaceCanvasHost({
             }`}
           >
             <div
-              className={`pointer-events-auto w-full max-w-5xl flex ${
+              className={`pointer-events-auto w-full max-w-5xl xl:max-w-6xl 2xl:max-w-7xl flex ${
                 toolbarPosition === "bottom" ? "flex-col-reverse" : "flex-col"
               } items-stretch gap-1.5 px-2 sm:px-4`}
             >
@@ -549,7 +549,7 @@ export function WorkspaceCanvasHost({
                     position={toolbarPosition}
                     onTogglePosition={onToggleToolbarPosition}
                     onCollapse={onToggleToolbarCollapsed}
-                    className="relative z-30 flex flex-nowrap w-full items-center justify-between gap-1.5 sm:gap-2 rounded-xl border border-border/80 bg-surface/90 px-2 sm:px-3 py-1.5 shadow-xl backdrop-blur-md transition-all overflow-x-auto sm:overflow-visible scrollbar-none"
+                    className="relative z-30 flex flex-nowrap w-full items-center justify-between gap-1.5 sm:gap-2 rounded-xl border border-border/80 bg-surface/90 px-2 sm:px-3 py-1.5 shadow-xl backdrop-blur-md transition-all overflow-x-auto lg:overflow-visible scrollbar-none"
                   >
                     {activePage && (
                       <div className="flex flex-nowrap items-center gap-1.5 sm:gap-2 text-xs shrink-0 select-none">
