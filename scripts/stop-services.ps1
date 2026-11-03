@@ -5,6 +5,10 @@ $ErrorActionPreference = 'Stop'
 $skipped = 0
 $stopped = 0
 try {
+    # The watchdog would restart whatever we kill; ask it to stand down first.
+    $runtimeDirectory = Join-Path $ProjectRoot '.superk-runtime'
+    New-Item -Path $runtimeDirectory -ItemType Directory -Force | Out-Null
+    New-Item -Path (Join-Path $runtimeDirectory 'watchdog.stop') -ItemType File -Force | Out-Null
     $listeners = @(Get-NetTCPConnection -LocalPort 8765,3000 -State Listen -ErrorAction SilentlyContinue |
         Select-Object -ExpandProperty OwningProcess -Unique)
     foreach ($serviceProcessId in $listeners) {

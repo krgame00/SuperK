@@ -1,3 +1,14 @@
+function Get-SuperKPortOwner {
+    param([int]$Port)
+    $ids = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty OwningProcess -Unique)
+    if ($ids.Count -gt 1) { throw "Multiple listeners occupy port $Port." }
+    if ($ids.Count -eq 1) {
+        return Get-CimInstance Win32_Process -Filter "ProcessId = $($ids[0])" -ErrorAction Stop
+    }
+    return $null
+}
+
 function Test-SuperKServiceProcess {
     param([object]$ProcessInfo, [string]$ProjectRoot)
 
