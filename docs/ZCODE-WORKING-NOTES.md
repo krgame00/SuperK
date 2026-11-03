@@ -6,6 +6,17 @@
 
 ---
 
+## Forensics: Next prod ตายเงียบคืนเดียว 2-3 ครั้ง (web-error.log ว่าง) — 2026-11-04
+
+- **หลักฐานที่เก็บได้ (Event Log + WER + processes สด):** node ไม่มี Application Error 1000 / WER report เลย = ไม่ hard-crash, ไม่มี Resource-Exhaustion 2004, Defender ไม่มี detection, ไม่มีเทสต์/สคริปต์ใน repo ที่ kill บริการจริง (launcher tests mock หมด, nextServerHarness reuse prod ถ้าตอบ, stop-services.ps1 ไม่มีใครเรียก) เครื่องโดนแรงกดดัน memory ทั้งคืน: RADAR_PRE_LEAK_64 ชี้ ZenlessZoneZero.exe 00:04 + Kernel live dump 1a8/1b8 ซ้ำ 19:26→23:14 (RAM 31.9GB เหลือว่าง 10.5GB ตอนตรวจ)
+- **รูทคอสต์เชิงระบบที่ยืนยันได้: สคริปต์ทำลายหลักฐานเอง** — `Start-Process -RedirectStandardError` truncate ไฟล์ทุกครั้งที่ start ใหม่ ดังนั้น "web-error.log ว่าง" ไม่ใช่หลักฐานว่าตายเงียบ แต่เป็นหลักฐานว่า stderr ของ run ที่ตายถูกลบทิ้งด้วยการ restart และหลัง start จบไม่มี supervisor เฝ้า (อีก session มี red test ระบุ contract แล้วแต่ไม่มี restart-on-death)
+- **ตายที่เห็นสดรอบหนึ่ง:** web ที่สคริปต์ปล่อย 00:16:28 หายไปภายใน ~51 วิ (stderr 0 ไบต์) ตัวที่รันอยู่ตอนนี้คือ manual launch 00:17:19 ของอีก session (cmdline relative path) — ตายเองหรือโดนสลับเพื่อ debug แยกไม่ออก
+- **สรุป:** ตัว killer ระบุตัวไม่ได้จากหลักฐานที่เหลือ (ถูก truncate ทำลาย) ตัวเลือกที่เหลือคือ node จบเองแบบเงียบ (v8 OOM จาก commit pressure เป็นตัวเชื่อหลักเชิงบริบท — พิมพ์ stderr แล้วโดนลบ) หรือโดน TerminateProcess ภายนอก
+- **แก้แล้ว (start-production.ps1 ของผู้ใช้ — WIP ไม่ commit):** หมุน log ต่อ run เป็น `web-<stamp>.log` ฯลฯ ครบ 8 stream (build/assets/ocr/web + error) เก็บ 15 ไฟล์ล่าสุดต่อ stream → การตายครั้งหน้าจะเหลือ stderr ให้อ่าน PARSE_OK + launcher tests เท่าเดิม (แดงเฉพาะ 2 ตัวเดิม)
+- **ตัดสินใจค้างให้ผู้ใช้:** (1) จะเอา watchdog restart-on-death ไหม — แนะนำให้อีก session ใส่ใน launcher redesign ที่กำลังทำ (red test มีอยู่แล้ว) จะได้ไม่ชนกัน (2) contract ขัดกันเอง: เทสต์ของอีก session ต้องการ browser เปิดทุกครั้งที่ start สำเร็จ (รวม reuse) แต่ guard `$webWasRunning` ในสคริปต์ผู้ใช้ตั้งใจกัน tab ซ้อน — ต้องเลือกฝ่ายใดฝ่ายหนึ่ง
+
+---
+
 ## รีวิว fresh-eyes ทั้งระบบ + แก้ P1 ทั้งสามจุด — 2026-11-04
 
 - **รีวิว (ห้ามใช้ความจำ ตามสั่ง):** explorer 3 ตัว sequential (โควตา agent ขนานได้ 1) — frontend / Python service / tests+ops ที่ HEAD ขณะนั้น `9873ea0`→`691886b` (อีก session commit คู่ขนานตลอด) ผล: P1 ×3, P2/P3 รวม ~20, suite จริง 2065 tests / 2 fail deterministic (launcher tests), tsc 0, eslint 1 error committed (`lib/translationOverlay.ts:89:9`), `vitest.config.ts` untracked เงาทับ `.mts` ทุก run ใช้ config ที่ไม่ได้ commit
