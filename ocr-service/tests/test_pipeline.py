@@ -893,3 +893,117 @@ def test_residual_sweep_disabled_by_default(monkeypatch):
     leftover[20:27, 20:27] = source[20:27, 20:27, 0] == 30
     assert np.all(output.clean_image[leftover] == 30)  # untouched
     assert output.timings_ms["residual_sweep_runs"] == 0
+
+
+class TwoRegionDetector:
+
+    def detect(self, image: np.ndarray) -> DetectionResult:
+        height, width = image.shape[:2]
+        prob = np.zeros((height, width), np.float32)
+        prob[10:18, 10:18] = 0.9
+        prob[48:56, 48:56] = 0.9
+        blocks = [
+            DetectedBlock(PixelRect(x=10, y=10, width=8, height=8), 0.9),
+            DetectedBlock(PixelRect(x=48, y=48, width=8, height=8), 0.9),
+        ]
+        return DetectionResult(
+            prob,
+            blocks,
+            LetterboxTransform(width, height, max(width, height), 1, 0, 0),
+        )
+
+
+def _two_region_refiner(_image_rgb, detection):
+    mask = (np.asarray(detection.mask_probability, dtype=np.float32) >= 0.5).astype(np.uint8) * 255
+    regions = [
+        MaskRegion("region-a", PixelRect(x=10, y=10, width=8, height=8), (1,), 2),
+        MaskRegion("region-b", PixelRect(x=48, y=48, width=8, height=8), (1,), 2),
+    ]
+    return RefinedMask(mask, regions, np.zeros_like(mask))
+
+
+def _region_a_clean_b_preserved(_image_rgb, _mask, region, _page, _protection):
+    if region.id == "region-b":
+        return _clean_decision().model_copy(update={
+            "text_role": TextRole.SFX,
+            "action": AutomaticAction.PRESERVE,
+        })
+    return _clean_decision()
+
+
+class _FailingBatchProbe:
+    def score(self, *_args) -> float:
+        return 0.9
+
+    def score_many(self, _image, items):
+        return {item.id: 0.9 for item, _mask in items}
+
+
+class SweepFullCleaner(CountingFullCleaner):
+    """Adds the per-region clean the verification retry ladder calls."""
+
+    def clean(self, image, active_mask, _region):
+        self.calls += 1
+        result = image.copy()
+        result[active_mask > 0] = self.value
+        return result
+
+
+def _two_region_pipeline(full: SweepFullCleaner, residual_probe=_ZeroBatchProbe()) -> CleaningPipeline:
+    return CleaningPipeline(
+        detector=TwoRegionDetector(),
+        refiner=_two_region_refiner,
+        cleaners={
+            route: SolidCleaner(220) for route in ("flat", "gradient", "artwork")
+        } | {"lama-large": full},
+        page_classifier=_comic_page,
+        protection_detector=lambda *_args: ProtectionResult(
+            np.zeros((80, 80), np.uint8), np.zeros((80, 80), np.uint8), [],
+        ),
+        eligibility_classifier=_region_a_clean_b_preserved,
+        residual_probe=residual_probe,
+    )
+
+
+def _sweep_source() -> np.ndarray:
+    # Two-tone bright backing: keeps region A off the flat route, whose zero
+    # feather radius fails damage verification on dark text.
+    yy, xx = np.mgrid[0:80, 0:80]
+    backing = (((yy // 4 + xx // 4) % 2) * 60 + 175).astype(np.uint8)
+    source = np.repeat(backing[:, :, None], 3, axis=2)
+    source[10:18, 10:18] = [200, 10, 40]
+    source[48:56, 48:56] = 30
+    return source
+
+
+def test_residual_sweep_spares_preserved_region(monkeypatch):
+    monkeypatch.setenv("SUPERK_RESIDUAL_SWEEP", "1")
+    source = _sweep_source()
+    full = SweepFullCleaner(240)
+    pipeline = _two_region_pipeline(full)
+
+    output = pipeline.run(source)
+
+    assert np.array_equal(output.clean_image[48:56, 48:56], source[48:56, 48:56])
+    assert np.all(output.clean_image[10:18, 10:18] == 240)
+    statuses = {record.id: record.status for record in output.regions}
+    assert statuses["region-a"] is RegionStatus.REPAIRED
+    assert statuses["region-b"] is RegionStatus.PRESERVED
+    assert full.calls == 1  # main full-page pass only; nothing left to sweep
+    assert output.timings_ms["residual_sweep_runs"] == 0
+
+
+def test_residual_sweep_spares_restored_needs_review_region(monkeypatch):
+    monkeypatch.setenv("SUPERK_RESIDUAL_SWEEP", "1")
+    source = _sweep_source()  # region-A verification fails; safe mode restores its pixels
+    full = SweepFullCleaner(240)
+    pipeline = _two_region_pipeline(full, _FailingBatchProbe())
+
+    output = pipeline.run(source)
+
+    statuses = {record.id: record.status for record in output.regions}
+    assert statuses["region-a"] is RegionStatus.NEEDS_REVIEW
+    assert statuses["region-b"] is RegionStatus.PRESERVED
+    assert np.array_equal(output.clean_image[10:18, 10:18], source[10:18, 10:18])
+    assert np.array_equal(output.clean_image[48:56, 48:56], source[48:56, 48:56])
+    assert output.timings_ms["residual_sweep_runs"] == 0

@@ -760,12 +760,21 @@ class CleaningPipeline:
                 source_gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY).astype(np.int16)
                 unchanged = np.abs(clean_gray - source_gray) <= 6
                 region_cover = np.zeros(clean_image.shape[:2], dtype=np.uint8)
-                for region in refined.regions:
+                # Only regions the main pass actually changed may authorize
+                # sweep pixels. Safe mode restores NEEDS_REVIEW pixels to the
+                # source, while all-text mode keeps the cleaned candidate.
+                for record in records:
+                    cleaned = record.status is RegionStatus.REPAIRED or (
+                        cleaning_mode is CleaningMode.ALL_TEXT
+                        and record.status is RegionStatus.NEEDS_REVIEW
+                    )
+                    if not cleaned:
+                        continue
                     pad = 24
-                    x0 = max(0, region.rect.x - pad)
-                    y0 = max(0, region.rect.y - pad)
-                    x1 = min(clean_image.shape[1], region.rect.x + region.rect.width + pad)
-                    y1 = min(clean_image.shape[0], region.rect.y + region.rect.height + pad)
+                    x0 = max(0, record.rect.x - pad)
+                    y0 = max(0, record.rect.y - pad)
+                    x1 = min(clean_image.shape[1], record.rect.x + record.rect.width + pad)
+                    y1 = min(clean_image.shape[0], record.rect.y + record.rect.height + pad)
                     region_cover[y0:y1, x0:x1] = 255
                 sweep_candidate = np.where(
                     unchanged
