@@ -1,6 +1,54 @@
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { useWorkspaceController } from "@/hooks/useWorkspaceController";
+import { useTranslation } from "@/hooks/useTranslation";
+
+const docManagerState = vi.hoisted(() => ({ pages: [] as Array<{ url: string; name: string }> }));
+const translationRefs = vi.hoisted(() => ({
+  bubbleCacheRef: { current: new Map<string, unknown>() },
+  translatedImageCacheRef: { current: new Map<string, string>() },
+  pageTargetCacheRef: { current: new Map<string, unknown>() },
+  textStyleRef: { current: {} },
+}));
+
+vi.mock("@/hooks/useWorkspaceDocumentManager", () => ({
+  useWorkspaceDocumentManager: vi.fn(() => ({
+    pages: docManagerState.pages,
+    setPages: vi.fn(),
+    currentPage: 0,
+    setCurrentPage: vi.fn(),
+    currentPageRef: { current: 0 },
+    pagesRef: { current: docManagerState.pages },
+    confirmedPages: new Set<string>(),
+    setConfirmedPages: vi.fn(),
+    confirmedPagesRef: { current: new Set<string>() },
+    confirmedMissingTranslationsRef: { current: new Map<string, string>() },
+    brokenPages: new Set<string>(),
+    setBrokenPages: vi.fn(),
+    pageUrls: docManagerState.pages.map((p) => p.url),
+    pageIds: docManagerState.pages.map((p, i) => `page_${i}`),
+    pageNames: docManagerState.pages.map((p) => p.name),
+    isDragging: false,
+    isImporting: false,
+    importStatusMessage: null,
+    savedSessionData: null,
+    setSavedSessionData: vi.fn(),
+    handleImageUpload: vi.fn(),
+    handleDragOver: vi.fn(),
+    handleDragLeave: vi.fn(),
+    handleDrop: vi.fn(),
+    handleDeletePage: vi.fn(),
+    handleRemovePage: vi.fn(),
+    handleReorderPages: vi.fn(),
+    handleClearAllPages: vi.fn(),
+    handleImageError: vi.fn(),
+    handlePageExportSourceChange: vi.fn(),
+    handleRestoreSavedSession: vi.fn(),
+    handleClearSavedSession: vi.fn(),
+    handleExportProjectFile: vi.fn(),
+    handleImportProjectFile: vi.fn(),
+  })),
+}));
 
 vi.mock("@/hooks/useCleaning", () => ({
   useCleaning: vi.fn(() => ({
@@ -40,9 +88,9 @@ vi.mock("@/hooks/useTranslation", () => ({
     nsfwBypassMode: false,
     setNsfwBypassMode: vi.fn(),
     translatedImages: new Map(),
-    translatedImageCacheRef: { current: new Map() },
-    bubbleCacheRef: { current: new Map() },
-    textStyleRef: { current: {} },
+    translatedImageCacheRef: translationRefs.translatedImageCacheRef,
+    bubbleCacheRef: translationRefs.bubbleCacheRef,
+    textStyleRef: translationRefs.textStyleRef,
     userApiKey: "",
     setUserApiKey: vi.fn(),
     glossary: [],
@@ -53,7 +101,7 @@ vi.mock("@/hooks/useTranslation", () => ({
     setAllowPreviewModels: vi.fn(),
     targetLang: "th",
     setTargetLang: vi.fn(),
-    pageTargetCacheRef: { current: new Map() },
+    pageTargetCacheRef: translationRefs.pageTargetCacheRef,
     getPageTargetLanguage: vi.fn(() => "th"),
     sourceLang: "ja",
     setSourceLang: vi.fn(),
@@ -112,6 +160,10 @@ vi.mock("@/lib/translationOverlay", () => ({
 describe("useWorkspaceController", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    docManagerState.pages.length = 0;
+    translationRefs.bubbleCacheRef.current.clear();
+    translationRefs.translatedImageCacheRef.current.clear();
+    translationRefs.pageTargetCacheRef.current.clear();
   });
 
   it("assembles domain orchestrators and provides structured host props", () => {
@@ -132,5 +184,38 @@ describe("useWorkspaceController", () => {
     expect(result.current.modalsProps.isSettingsOpen).toBe(false);
     expect(result.current.bottomStripProps.onRestoreOriginalRemnant).toBeTypeOf("function");
     expect(result.current.bottomStripProps.onCleanRemnantCandidate).toBeTypeOf("function");
+  });
+
+  it("batch typography dirties each cached page so the baked render re-renders", async () => {
+    docManagerState.pages.push({ url: "blob:p1", name: "Page 1" });
+    const { result } = renderHook(() => useWorkspaceController());
+    const translation = vi.mocked(useTranslation).mock.results.at(-1)!.value;
+    translation.bubbleCacheRef.current.set("blob:p1", [
+      { box: [0, 0, 100, 100], original_text: "HELLO", t: "สวัสดี" },
+    ]);
+
+    await act(async () => {
+      await result.current.canvasProps.onBatchApplyTypography?.({
+        fontFamily: "Prompt, sans-serif",
+      });
+    });
+
+    expect(translation.bubbleCacheRef.current.get("blob:p1")?.[0].fontFamily).toBe(
+      "Prompt, sans-serif",
+    );
+    expect(translation.markPageDirty).toHaveBeenCalledWith("blob:p1");
+  });
+
+  it("adding a manual text bubble dirties its page so the baked render re-renders", () => {
+    docManagerState.pages.push({ url: "blob:p1", name: "Page 1" });
+    const { result } = renderHook(() => useWorkspaceController());
+    const translation = vi.mocked(useTranslation).mock.results.at(-1)!.value;
+
+    act(() => {
+      result.current.canvasProps.onAddManualTextBubble?.();
+    });
+
+    expect(translation.bubbleCacheRef.current.get("blob:p1")).toHaveLength(1);
+    expect(translation.markPageDirty).toHaveBeenCalledWith("blob:p1");
   });
 });

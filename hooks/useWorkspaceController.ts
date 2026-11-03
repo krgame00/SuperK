@@ -240,6 +240,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     getPageSignature,
     getPageSourceRevision,
     resizeSavedText,
+    markPageDirty,
     translationCacheRevision,
     handleAutoOrganizeCurrentPage,
     handleAutoOrganizeAllPages,
@@ -579,6 +580,10 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
             setActiveBubbles(updated);
           }
           dirtyExportPagesRef.current.add(pageUrl);
+          // Same dirtying path setTextStyle uses: without the revision bump
+          // and rendered-cache eviction the baked translated render keeps the
+          // old font until something else re-renders the page.
+          markPageDirty(pageUrl);
         }
 
         toast.success(
@@ -589,7 +594,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
         toast.error("เกิดข้อผิดพลาดในการกระจายฟอนต์", { id: toastId });
       }
     },
-    [pages, currentPageUrl, dirtyExportPagesRef, setActiveBubbles],
+    [pages, currentPageUrl, dirtyExportPagesRef, setActiveBubbles, markPageDirty],
   );
 
   const canvasProps: WorkspaceCanvasHostProps = {
@@ -679,6 +684,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
       };
       const next = [...activeBubbles, newBubble];
       bubbleCacheRef?.current?.set(currentPageUrl, next);
+      markPageDirty(currentPageUrl);
       setActiveBubbles(next);
       setWorkspaceLayer("translated");
     },
