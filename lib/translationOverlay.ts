@@ -1257,6 +1257,9 @@ export const applyTranslationOverlay = async (
 
     let selectedBubbleWrapper: HTMLElement | null = null;
     const setSelectedBubble = (wrapper: HTMLElement | null) => {
+      if (selectedBubbleWrapper === wrapper && wrapper !== null) {
+        return;
+      }
       (chromeRoot ?? tlContainer).querySelectorAll<HTMLElement>("[data-bubble-more-menu]").forEach((menu) => {
         menu.style.display = "none";
       });
@@ -2333,6 +2336,13 @@ export const applyTranslationOverlay = async (
           currentBh = initialBh;
           renderBubble();
           saveAdjustment();
+        }
+      });
+
+      wrapper.addEventListener('lostpointercapture', () => {
+        if (isDragging) {
+          isDragging = false;
+          cancelMovePreview();
         }
       });
 

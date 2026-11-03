@@ -347,6 +347,8 @@ def refine_mask(
             trusted,
             envelope,
             protected_edges,
+            image_rgb=image_rgb,
+            probability=detection.mask_probability,
         )
         refined = replace(refined, mask=rescued)
         regions = []
@@ -431,6 +433,29 @@ def _adaptive_seed_threshold(
     return min(default_threshold, max(floor, cut))
 
 
+def _extract_local_glyph_mask(image_crop: np.ndarray) -> np.ndarray:
+    """Extract local text glyphs when detector seed is weak to avoid solid block fills."""
+    if image_crop.size == 0:
+        return np.zeros((0, 0), dtype=np.uint8)
+    if len(image_crop.shape) == 3:
+        gray = cv2.cvtColor(image_crop, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = image_crop.copy()
+
+    if float(np.std(gray)) < 5.0:
+        return np.zeros_like(gray, dtype=np.uint8)
+
+    mean_val = float(np.mean(gray))
+    thresh_type = (
+        cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+        if mean_val >= 127
+        else cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+    _, binary = cv2.threshold(gray, 0, 255, thresh_type)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    return cv2.dilate(binary, kernel, iterations=1)
+
+
 def _rescue_low_coverage_regions(
     mask: BinaryMask,
     evidence_regions: list[TextEvidenceRegion],
@@ -438,16 +463,18 @@ def _rescue_low_coverage_regions(
     envelope: BinaryMask,
     protected_edges: BinaryMask,
     coverage_floor: float = LOW_COVERAGE_RESCUE,
+    image_rgb: RgbImage | None = None,
+    probability: NDArray[np.float32] | None = None,
 ) -> BinaryMask:
     """Text-supported regions whose refined mask is nearly empty get a
-    constrained full-region fill.
+    safe adaptive rescue instead of destroying background artwork.
 
-    The detector asserted text lives in the region, so an (almost) empty
-    mask means the seed could not see the glyph mass — not that the region
-    is blank. The fill is clipped to the detection envelope and skips
-    protected artwork edges, so nothing outside the region is touched.
+    First tries lower probability floor; if that yields insufficient glyphs,
+    runs local adaptive contrast on the image crop. If both fail, falls back
+    to the constrained envelope fill.
     """
     out = mask.copy()
+    h, w = out.shape[:2]
     for evidence in evidence_regions:
         if not evidence.text_supported:
             continue
@@ -464,9 +491,36 @@ def _rescue_low_coverage_regions(
         covered = int(np.count_nonzero((out > 0) & (zone > 0)))
         if covered / area >= coverage_floor:
             continue
+
         fill = zone.copy()
         fill[(envelope == 0) | (protected_edges > 0)] = 0
-        out[fill > 0] = 255
+
+        r = evidence.rect
+        rx1, ry1 = max(0, min(r.x, w)), max(0, min(r.y, h))
+        rx2, ry2 = max(0, min(r.x + r.width, w)), max(0, min(r.y + r.height, h))
+        crop_area = (rx2 - rx1) * (ry2 - ry1)
+
+        recovered = False
+        if probability is not None and crop_area > 0:
+            crop_prob = probability[ry1:ry2, rx1:rx2]
+            low_thresh = ADAPTIVE_FLOOR * 0.5
+            rescuable = (crop_prob >= low_thresh).astype(np.uint8) * 255
+            rescuable_masked = rescuable & fill[ry1:ry2, rx1:rx2]
+            if np.count_nonzero(rescuable_masked) >= 0.15 * crop_area:
+                out[ry1:ry2, rx1:rx2] = np.maximum(out[ry1:ry2, rx1:rx2], rescuable_masked)
+                recovered = True
+
+        if not recovered and image_rgb is not None and crop_area > 0:
+            crop_img = image_rgb[ry1:ry2, rx1:rx2]
+            local_glyphs = _extract_local_glyph_mask(crop_img)
+            local_fill = local_glyphs & fill[ry1:ry2, rx1:rx2]
+            if np.count_nonzero(local_fill) >= 0.05 * crop_area:
+                out[ry1:ry2, rx1:rx2] = np.maximum(out[ry1:ry2, rx1:rx2], local_fill)
+                recovered = True
+
+        if not recovered:
+            out[fill > 0] = 255
+
     return out
 
 

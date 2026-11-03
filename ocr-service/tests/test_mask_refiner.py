@@ -293,6 +293,26 @@ def test_text_supported_region_with_empty_seed_gets_full_rect_rescue() -> None:
     caught = int(np.count_nonzero(result.mask[15:45, 20:100] > 0))
     assert caught >= 0.8 * rect_area
 
+def test_text_supported_region_with_glyphs_extracts_adaptive_contour_not_full_rect() -> None:
+    # Flat probability map but image contains black text strokes on white.
+    # Safe rescue must extract glyph contours rather than filling the entire rect block.
+    probability = np.full((60, 120), 0.05, np.float32)
+    evidence = [
+        TextEvidenceRegion(
+            id="ev2",
+            rect=PixelRect(x=20, y=15, width=80, height=30),
+            confidence=0.9,
+            text_supported=True,
+        ),
+    ]
+    image = _image(60, 120)
+    # Draw dark strokes in the middle of the box (10x40 px stroke)
+    image[25:35, 40:80] = 0
 
-
+    result = refine_mask(image, _detection(probability, evidence_regions=evidence))
+    rect_area = 80 * 30
+    caught = int(np.count_nonzero(result.mask[15:45, 20:100] > 0))
+    # It must rescue glyph strokes without blasting the entire 80x30 bounding box
+    assert caught >= 400
+    assert caught < 0.6 * rect_area
 

@@ -23,6 +23,7 @@ import { FIXED_IMAGE_MODELS } from "@/lib/translation/imageModelChoices";
 import { getSyncedExtensionSettings } from "@/src/app/api/extension/settings/handler";
 import { requireLocalRequest } from "@/lib/server/localRequest";
 import { writeServerLog } from "@/lib/logger/serverLogger";
+import { sanitizeTranslationPayloadJson } from "@/lib/translation/sanitizer";
 
 export const MAX_TRANSLATION_BODY_BYTES = 30 * 1024 * 1024;
 export const MAX_TRANSLATION_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -558,7 +559,8 @@ async function handleTranslationRequest(
     }
 
     const cleanText = text.replace(/```json/gi, "").replace(/```/g, "").trim();
-    return NextResponse.json({ text: cleanText, meta: translationMeta });
+    const sanitizedText = sanitizeTranslationPayloadJson(cleanText, targetLang);
+    return NextResponse.json({ text: sanitizedText, meta: translationMeta });
   } catch (error) {
     console.error("Translation Error:", error);
     writeServerLog({
@@ -682,7 +684,8 @@ async function handleOpenAICompatible({
       .replace(/```json/gi, "")
       .replace(/```/g, "")
       .trim();
-    return NextResponse.json({ text: cleanText });
+    const sanitizedText = sanitizeTranslationPayloadJson(cleanText, targetLang);
+    return NextResponse.json({ text: sanitizedText });
   } catch (error) {
     if (error instanceof GeminiRequestError) {
       writeServerLog({

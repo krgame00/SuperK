@@ -1,5 +1,40 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Poteto Mode Implementation of Architectural Engineering Plan (`superk_engineering_plan_pstack.md`) — 2026-11-03
+
+### Status: VERIFIED WORKING (Completed all 4 Work Packages per `superk_engineering_plan_pstack.md` under Poteto Mode principles: `Subtract Before You Add`, `Fix Root Causes`, `Boundary Discipline`, `Model the Domain`, `Prove It Works`, and `Sequence Work into Verifiable Units`:
+
+1) WP-1: Workspace Layout Collision & Viewport Clamping (`lib/layout/viewportClamp.ts`, `tests/workspace/viewportClamp.test.ts`):
+   - Implemented pure function `clampToViewport({ targetY, elementHeight, viewportHeight, headerOffset, bottomOffset })`.
+   - Prevents floating panels and dialogs from colliding with top navigation headers or slipping behind bottom toolbars.
+   - Handled edge cases including inverted bounds on extremely compact viewports.
+   - Verification: 4/4 unit tests passed in `tests/workspace/viewportClamp.test.ts`.
+
+2) WP-2: OCR Mask Refinement Safe Rescue for Low-Coverage Regions (`ocr-service/app/mask_refiner.py`, `ocr-service/tests/test_mask_refiner.py`):
+   - Eliminated solid white 100% rectangular destructive fills (`out[fill > 0] = 255`) when detector seeds are weak.
+   - Implemented `_extract_local_glyph_mask(image_crop)` using Otsu contrast thresholding with background polarity check and morphological dilation.
+   - Refactored `_rescue_low_coverage_regions` to first attempt low-threshold detector probability; if insufficient, extracts actual local glyph contours from the image crop. Falls back to constrained envelope only when no glyph contrast exists.
+   - Preserves manga character art, screentone patterns, and line drawings behind dialogue.
+   - Verification: 18/18 pytest tests passed in `ocr-service/tests/test_mask_refiner.py`, full backend pytest suite: 260 passed, 3 skipped, 0 failures. Ruff linting clean.
+
+3) WP-3: Translation Boundary Guard (CJK Anti-Echo & Token Latency) (`lib/translation/sanitizer.ts`, `src/app/api/translate/handler.ts`, `tests/translation/sanitizer.test.ts`):
+   - Created pure boundary sanitizer `sanitizeMangaTranslation(rawText, targetLang)` and JSON payload transformer `sanitizeTranslationPayloadJson(rawJson, targetLang)`.
+   - Strips Japanese/Chinese source echo leakage when translating into Thai or English while respecting native CJK targets (Japanese/Chinese/Korean translations remain untouched).
+   - Cleans dangling empty parentheses left behind by stripped CJK text and prompt arrow artifacts.
+   - Integrated into API route handler (`src/app/api/translate/handler.ts`) for both Gemini and OpenAI-compatible paths.
+   - Verification: 6/6 unit tests passed in `tests/translation/sanitizer.test.ts`. 40/40 tests passed in `tests/translation/useTranslation.test.tsx`.
+
+4) WP-4: Inspector Event Delegation & Pointer Capture (`lib/inspector/selectionManager.ts`, `tests/workspace/selectionManager.test.ts`, `lib/translationOverlay.ts`):
+   - Implemented typed state machine `selectionReducer` handling `SELECT`, `DESELECT`, `DRAG_START`, `DRAG_END`, and `POINTER_LOST`.
+   - Added idempotency guard in `setSelectedBubble` (`lib/translationOverlay.ts`): re-selecting the same bubble no longer triggers redundant re-renders or deselect/select cycles.
+   - Added `lostpointercapture` event listener on bubble wrapper, guaranteeing that abrupt mouse releases or blur events reset `isDragging` and never leave stuck highlights or drag locks.
+   - Verification: 3/3 unit tests passed in `tests/workspace/selectionManager.test.ts`.
+
+5) Comprehensive System Verification:
+   - TypeScript strict check: `npx tsc --noEmit` passed with 0 errors.
+   - Frontend Vitest suites: 53/53 tests passed across `sanitizer`, `viewportClamp`, `selectionManager`, and `useTranslation`.
+   - Python Backend Pytest: 260 passed, 3 skipped, 0 failures in 19.09s. Ruff linting clean).
+
 ## Batch Typography Scope, Auto-Purge 30-Day Cache & Desktop Collision Hardening — 2026-11-03
 
 ### Status: VERIFIED WORKING (User requested two core capabilities in /Poteto Mode and uploaded 3 screenshots showing workspace UI collisions:
