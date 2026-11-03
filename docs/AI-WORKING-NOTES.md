@@ -3116,3 +3116,32 @@ Verification evidence:
   - Vitest test suite: 88 passed (88 tests across 6 files).
   - Production build: Turbopack compilation succeeded in 4.0s.
   - Server health: 127.0.0.1:3000 returning 200 OK.
+
+
+## Fix Toolbar Jumping/Shifting on Speech Bubble Selection — 2026-11-04
+
+### Status: VERIFIED WORKING (88/88 vitest passed, tsc 0 errors, production build deployed)
+
+- **User Context & Symptom**:
+  - User reported: "dfc]h; ui ,yofyo,kfh;p8iy[ gikrv0tvcdhwfhws," (Decoded Kedmanee: "กดแล้ว ui มันดันมาด้วยครับ เราพอจะแก้ได้ไหม") with screenshot (`media_1793724532182_1af7f011.png`).
+  - When selecting any speech bubble to edit typography or warp, the top cleaning toolbar (`CleaningToolbar`) and review notices jumped ~160px to the left, away from the screen center.
+
+- **Root Cause Analysis (Debug Mantra)**:
+  1. **Dynamic Padding Injection on Centered Flex**:
+     - Line 439 of `WorkspaceCanvasHost.tsx` contained `${Boolean(selectedBubbleBridge || selectedImageLayer) ? "lg:pr-72 xl:pr-80" : ""}` on `data-page-controls-dock`.
+     - Because `data-page-controls-dock` uses `flex justify-center`, applying `pr-80` (320px right padding) shifted the horizontal center of the toolbar 160px to the left.
+  2. **Redundancy with Vertical Stacking**:
+     - The Inspector Panel (`TextPropertiesPanel`, `ColorMatchStatus`) is now positioned strictly below the toolbar row vertically (`top-[7.5rem]`, `top-44`, `top-52`).
+     - Because toolbar and inspector never share vertical coordinates, horizontal padding compensation is completely redundant and causes visual instability.
+
+- **Changes Landed**:
+  1. `components/workspace/WorkspaceCanvasHost.tsx`:
+     - Removed `Boolean(selectedBubbleBridge || selectedImageLayer) ? "lg:pr-72 xl:pr-80" : ""` from `data-page-controls-dock`. Toolbar now stays stably centered when selecting bubbles.
+     - Refined inspector panel top offsets with comfortable clearance: `top-[7.5rem] max-h-[calc(100dvh-9rem)]` (default), `top-44 max-h-[calc(100dvh-12.5rem)]` (with 1 notice), and `top-52 max-h-[calc(100dvh-14.5rem)]` (with 2 notices).
+  2. Rebuilt Next.js production build (`npm run build`) and restarted daemon on port 3000.
+
+- **Verification Evidence**:
+  - `npx tsc --noEmit`: 0 errors.
+  - Vitest test suite: 88/88 passed (6 test files: `WorkspaceCanvasHost`, `CleaningToolbar`, `CleaningToolbar.layers`, `PageReviewNotice`, `WorkspacePage`, `workspaceExportEligibility`).
+  - Production build: Turbopack compilation succeeded in 4.7s.
+  - Standalone server health: 127.0.0.1:3000 returning 200 OK.
