@@ -74,7 +74,7 @@ describe("local API request protection", () => {
       }));
       const models = requestGeminiMock.mock.calls[0][0].models;
       expect(models.slice(0, 5)).toEqual([
-        "gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3-flash",
+        "gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash",
       ]);
 
       requestGeminiMock.mockClear();

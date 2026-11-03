@@ -136,7 +136,7 @@ describe("translation routes use shared Gemini routing for image workflow", () =
       models: expect.arrayContaining(["gemini-3.5-flash-lite", "gemini-3.8-flash"]),
     }));
     expect(requestGeminiMock.mock.calls[0][0].models.slice(0, 5)).toEqual([
-      "gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3-flash",
+      "gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash",
     ]);
     expect(executeMock).not.toHaveBeenCalled();
   });
