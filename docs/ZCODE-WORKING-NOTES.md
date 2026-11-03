@@ -6,6 +6,17 @@
 
 ---
 
+## Production watchdog ตามสั่ง (restart-on-death) — 2026-11-04
+
+- **ที่มา:** ผู้ใช้เลือกให้ทำ watchdog เอง (ต่อจาก forensics รอบก่อน) — ดีไซน์: watchdog วงจรสั้น emit action จากชุดปิด {restart-web, restart-ocr, skip-pause, skip-foreign, stand-down, give-up, no-op}, crash-loop = ≥5 restart/10 นาที → marker + popup เดียวแล้วเลิกเฝ้า, ประสานงานผ่านไฟล์ 3 ตัวใน .superk-runtime (pause ระหว่าง launcher stop/build, stop จาก stop-services, log ต่อ lifetime) + mutex Global กัน watchdog ซ้อน
+- **โครง:** `scripts/service-start.ps1` (extract primitive เริ่มบริการจาก start-production.ps1 — env เหมือนกันทุก path, restart ไม่ rebuild ไม่เปิด browser) + `scripts/production-watchdog.ps1` + vbs ปล่อย watchdog คู่กับ pipeline + stop-services เขียน watchdog.stop ก่อน kill + pause wiring ใน start-production.ps1 (WIP ของผู้ใช้ — ไม่ commit)
+- **จับ P0 ตอนรีวิวตัวเอง:** delegate ลบ `Get-SuperKPortOwner`/`Test-SuperKHealth`/`Open-SuperKBrowser` ทิ้งโดยไม่ย้าย (เทสต์ผ่านเพราะ mock ชื่อให้ = mock-masking) — แก้โดยย้าย Get-SuperKPortOwner ไป service-ownership.ps1, คืนสองตัวที่เหลือใน start-production.ps1 และ **encode บทเรียนเป็นเทสต์**: dot-source สคริปต์จริงไร้ mock แล้ว assert command surface 13 ตัวครบ
+- **Live smoke จับบั๊กที่สอง:** param block ประกาศแค่ $ProjectRoot → -IntervalSeconds/-MaxCycles เป็น null (เทสต์ integration ผ่านเพราะ path stop-marker break ก่อน Start-Sleep) — แก้ param block ครบ 5 ตัว สุดท้าย smoke จริงกับบริการที่รันอยู่: 3 วงจร no-op, exit 0, PID บริการก่อน/หลังเท่ากัน (ไม่แตะ)
+- **comment-sicko:** รับ KILL ทั้ง venv-fallback ที่ชี้ไปเก่าที่ไม่มีแล้ว (+branch), pid file ไร้ผู้อ่าน (ลบทั้งกลไก), `name` key ตายใน serviceState, parity comments ครึ่งเท็จ (env extraction ร่วมกับ run.ps1 = ค้าง hand-off) และ pin-mutex comment อธิบายบทบาท GC
+- **ตัวเลข:** เทสต์ใหม่ 9/9 (รวม live-process stand-down + parse + command surface), suite เต็ม 2076 tests / **2073 pass / 2 fail = launcher reds ตัวเดิมของอีก session** / 1 skip, tsc 0 error, commit `01275b6` (start-production.ps1 ยัง WIP ไม่ commit — ผู้ใช้ commit/push เอง)
+
+---
+
 ## Forensics: Next prod ตายเงียบคืนเดียว 2-3 ครั้ง (web-error.log ว่าง) — 2026-11-04
 
 - **หลักฐานที่เก็บได้ (Event Log + WER + processes สด):** node ไม่มี Application Error 1000 / WER report เลย = ไม่ hard-crash, ไม่มี Resource-Exhaustion 2004, Defender ไม่มี detection, ไม่มีเทสต์/สคริปต์ใน repo ที่ kill บริการจริง (launcher tests mock หมด, nextServerHarness reuse prod ถ้าตอบ, stop-services.ps1 ไม่มีใครเรียก) เครื่องโดนแรงกดดัน memory ทั้งคืน: RADAR_PRE_LEAK_64 ชี้ ZenlessZoneZero.exe 00:04 + Kernel live dump 1a8/1b8 ซ้ำ 19:26→23:14 (RAM 31.9GB เหลือว่าง 10.5GB ตอนตรวจ)
