@@ -3079,3 +3079,40 @@ Verification evidence:
 - **Issue**: Production standalone server (`.next/standalone/server.js`) on port 3000 was running a stale process built at `11/3/2026 12:39 AM` before the breakpoint fix was applied, serving cached 1024px assets.
 - **Action**: Stopped stale process, updated container width to universal `w-full max-w-7xl` (accommodating up to 1280px on all wider displays), rebuilt with `next build` and Turbopack, synced standalone assets, and restarted service process.
 - **Verification**: Port 3000 online, status 200 OK, chunks verified containing `max-w-7xl`.
+
+
+## Fix Inspector Panel & Top Dock Overlap on Bubble Selection — 2026-11-03
+
+### Status: VERIFIED WORKING (88/88 vitest passed, tsc 0 errors, production build deployed)
+
+- **User Context & Symptom**:
+  - User reported: "ตรงนี้ยังซ้อนอยู่ครับ" with screenshot (`media_1793723217570_4abf32af.png`).
+  - When clicking a speech bubble to edit text/typography, the Inspector Panel (`ColorMatchStatus`, `TextPropertiesPanel`) popped up on the top-right.
+  - The top header of the Inspector Panel (`ColorMatchStatus` showing `ปรับแต่งเอง (Manual)` and `[คืนค่า Auto]`) overlapped directly underneath the right end of `CleaningToolbar` (`Mask`, `[↓]`, `[^]`), making both rows illegible and unclickable.
+
+- **Root Cause Analysis (Debug Mantra)**:
+  1. **Vertical Range Collision**:
+     - `CleaningToolbar` sits at the top of `WorkspaceCanvasHost` (y: 66px to 106px, or down to 148px if review notice is active).
+     - The inspector panel in `WorkspaceCanvasHost.tsx` had hardcoded `fixed right-3 top-20` (y: 80px).
+     - `top-20` (80px) placed the top of the inspector panel directly inside the vertical span of the toolbar!
+  2. **Invalid Padding Utility**:
+     - Line 439 had `Boolean(selectedBubbleBridge || selectedImageLayer) ? "lg:pr-76 xl:pr-80" : ""`.
+     - `pr-76` is not a valid Tailwind CSS spacing utility, resulting in zero right-padding on `lg` screens (1024px-1279px).
+
+- **Changes Landed**:
+  1. `components/workspace/WorkspaceCanvasHost.tsx`:
+     - Dynamic responsive vertical offset for inspector panel:
+       - When `toolbarPosition === "top" && !isToolbarCollapsed`:
+         - If review notice and batch failures both active: `top-48 max-h-[calc(100dvh-13.5rem)]`
+         - If review notice or batch failures active: `top-40 max-h-[calc(100dvh-11.5rem)]`
+         - Otherwise: `top-[7.25rem] max-h-[calc(100dvh-8.5rem)]` (cleanly below toolbar bottom at 112px).
+       - When `toolbarPosition === "bottom" || isToolbarCollapsed`:
+         - `top-16 max-h-[calc(100dvh-5.5rem)]` (cleanly below the 56px top header).
+     - Fixed invalid class `lg:pr-76` to valid `lg:pr-72`.
+  2. Rebuilt Next.js production build (`npm run build`) and restarted daemon on port 3000.
+
+- **Verification Evidence**:
+  - `npx tsc --noEmit`: 0 errors.
+  - Vitest test suite: 88 passed (88 tests across 6 files).
+  - Production build: Turbopack compilation succeeded in 4.0s.
+  - Server health: 127.0.0.1:3000 returning 200 OK.

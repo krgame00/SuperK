@@ -436,7 +436,7 @@ export function WorkspaceCanvasHost({
           <div
             data-page-controls-dock={toolbarPosition}
             className={`w-full z-40 flex justify-center pointer-events-none px-2 transition-all duration-300 ease-out ${
-              Boolean(selectedBubbleBridge || selectedImageLayer) ? "lg:pr-76 xl:pr-80" : ""
+              Boolean(selectedBubbleBridge || selectedImageLayer) ? "lg:pr-72 xl:pr-80" : ""
             } ${
               toolbarPosition === "top"
                 ? "relative shrink-0"
@@ -1032,7 +1032,15 @@ export function WorkspaceCanvasHost({
                 onClick={(e) => e.stopPropagation()}
                 aria-label="คุณสมบัติข้อความ"
                 style={{ display: sidePanel === "remnants" ? "none" : undefined }}
-                className="fixed right-3 top-20 z-50 hidden lg:flex flex-col gap-2 max-h-[calc(100dvh-9rem)] overflow-y-auto pr-0.5"
+                className={`fixed right-3 z-50 hidden lg:flex flex-col gap-2 overflow-y-auto pr-0.5 transition-all duration-200 ${
+                  toolbarPosition === "top" && !isToolbarCollapsed
+                    ? isPageReviewRequired && batchFailures.length > 0
+                      ? "top-48 max-h-[calc(100dvh-13.5rem)]"
+                      : isPageReviewRequired || batchFailures.length > 0
+                        ? "top-40 max-h-[calc(100dvh-11.5rem)]"
+                        : "top-[7.25rem] max-h-[calc(100dvh-8.5rem)]"
+                    : "top-16 max-h-[calc(100dvh-5.5rem)]"
+                }`}
               >
                 {selectedBubbleBridge && (
                   <>
