@@ -8,7 +8,14 @@ export function authorizationIdentity(regions: CleaningResult["regions"]): strin
 export interface TranslationScope {
   /** Page-normalized [top, left, bottom, right], in thousandths. */
   allowed: number[][];
+  /** Parallel to allowed: the detector's per-region text role, when known. */
+  allowedRoles?: string[];
   excluded: number[][];
+  /** SFX-policy regions under "ignore" mode. Their pixels stay preserved on
+   *  the canvas, but they must not veto dialogue bubbles the vision model
+   *  found inside them — SFX-lettered artwork regularly contains ordinary
+   *  speech balloons, and vetoing those erased the dialogue entirely. */
+  sfxExcluded?: number[][];
 }
 
 export function translationScope(
@@ -29,10 +36,13 @@ export function translationScope(
       (Array.isArray(region.protectionReasons) &&
         region.protectionReasons.includes("sfx-policy"));
 
-    if (region.textRole === "protected" || (sfxMode === "ignore" && isSfxRegion)) {
+    if (region.textRole === "protected") {
       scope.excluded.push(box);
+    } else if (sfxMode === "ignore" && isSfxRegion) {
+      (scope.sfxExcluded ??= []).push(box);
     } else {
       scope.allowed.push(box);
+      (scope.allowedRoles ??= []).push(region.textRole);
     }
   }
   return scope;

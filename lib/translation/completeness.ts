@@ -42,18 +42,43 @@ function covers(bubble: TranslatedBubble, target: number[]): boolean {
   return large/small <= 8 && overlap(bubble.box,target)/area(target) >= .6;
 }
 
+/** Detector regions are looser than text boxes, so a recovered candidate only
+ *  needs to sit substantially inside the region it was cropped for. */
+function anchorsToTarget(box: number[] | undefined, target: number[]): boolean {
+  if (!validBox(box)) return false;
+  const targetArea = area(target);
+  const small = Math.min(area(box!),targetArea);
+  const large = Math.max(area(box!),targetArea);
+  return large/small <= 8 && overlap(box!,target)/targetArea >= .35;
+}
+
+function anchored(bubble: TranslatedBubble, target: number[]): boolean {
+  return !bubble.isInvalidBox && !bubble.deleted && !!textOf(bubble) && anchorsToTarget(bubble.box,target);
+}
+
 /** Tombstones from user edits also suppress replacement provider results. */
 export function excludeDeletedTranslations(bubbles: TranslatedBubble[], tombstones: TranslatedBubble[]): TranslatedBubble[] {
   return bubbles.filter(b => b.deleted || !validBox(b.box) ||
     !tombstones.some(deleted => deleted.deleted && covers(deleted,b.box!)));
 }
 
+/** Dialogue and narration regions get the limited recovery budget first;
+ *  uncertain "review" regions would otherwise eat every slot. */
+const RECOVERY_ROLE_PRIORITY: Record<string, number> = { dialogue: 0, narration: 0 };
+
 /** Coverage is geometric and limited to regions the detector actually found. */
 export function findMissingTranslationRegions(bubbles: TranslatedBubble[], scope?: TranslationScope): number[][] {
   if (!scope) return [];
-  return scope.allowed.filter(box => validBox(box) &&
+  const missing = scope.allowed.filter(box => validBox(box) &&
     !scope.excluded.some(protectedBox => validBox(protectedBox) && overlap(box,protectedBox)>0) &&
-    !bubbles.some(b => covers(b,box)));
+    !bubbles.some(b => covers(b,box) || anchored(b,box)));
+  const roles = scope.allowedRoles;
+  if (!roles) return missing;
+  const rank = (box: number[]): number => {
+    const index = scope.allowed.indexOf(box);
+    return RECOVERY_ROLE_PRIORITY[roles[index] ?? ''] ?? 1;
+  };
+  return [...missing].sort((x,y) => rank(x) - rank(y));
 }
 
 /** A recovered target was not adequately translated before, so the fresh result
@@ -80,7 +105,7 @@ export async function recoverMissingTranslations(
       const candidates = await recover(target);
       abort();
       const admitted = excludeDeletedTranslations(candidates.filter(b =>
-        !b.deleted && covers(b,target) && withinTranslationScope(b.box,scope)),combined.filter(b=>b.deleted));
+        !b.deleted && !!textOf(b) && anchorsToTarget(b.box,target) && withinTranslationScope(b.box,scope)),combined.filter(b=>b.deleted));
       combined = deduplicateTranslations([
         ...combined.filter(existing => !admitted.some(candidate => supersedes(candidate,existing))),
         ...admitted,
