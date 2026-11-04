@@ -39,7 +39,7 @@ test("explains how to recover when the local cleaner is offline", () => {
       }}
     />,
   );
-  expect(screen.getByText(/ocr-service\\run\.ps1/)).toBeTruthy();
+  expect(screen.getByText(/SuperK-Launcher\.vbs/)).toBeTruthy();
 });
 
 test("triggers position toggle and collapse callbacks", () => {
