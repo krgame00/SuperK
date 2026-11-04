@@ -85,7 +85,7 @@ export function CleaningToolbar({
         )}
         {error?.recovery === "start-local-service" && (
           <p className="max-w-[46ch] text-xs font-medium text-red-400 bg-red-500/10 border border-red-500/20 px-2.5 py-1 rounded-md" role="alert">
-            เปิด <code>ocr-service\run.ps1</code> แล้วลองอีกครั้ง
+            เปิด <code>SuperK-Launcher.vbs</code> แล้วลองอีกครั้ง (watchdog จะเฝ้าบริการให้เอง)
           </p>
         )}
         {error && error.recovery !== "start-local-service" && (
