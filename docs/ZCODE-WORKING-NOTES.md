@@ -6,6 +6,17 @@
 
 ---
 
+## DEFECT เปิด: mask โลโก้หน้าปก (white-on-dark) คลุมตัวถังเข้มทั้งก้อน — 2026-11-05
+
+- **อาการ (ผู้ใช้รายงาน):** หน้า 1 ของ 638800 region-12 = บล็อกโลโก้ชื่อเรื่อง 3 อัน (パパのこと/好きになるとか/ありえない — ตัวอักษรขาวบนถังโลโก้สีเข้ม) — re-clean แล้ว mask คลุม**ตัวถังเข้มทั้งก้อน** ไม่ใช่ตัวอักษร → ถ้าคลีนจะลบงานศิลป์ทิ้ง ผู้ใช้แก้ด้วยปุ่ม **Protect** ได้ทันที (คืน pixel + ปกป้องถาวร)
+- **หลักฐานที่วัด (job สด 5effecf6 หน้า 1):** region-12 (494,1133,457×342) = **dialogue/clean conf 0.90**, mask density 53%; overlay (scratch/logo-block-overlay.png) แสดง mask เกาะตัวถังเข้ม ตัวอักษรขาวไม่ถูก mask
+- **สมมติฐานที่ทดแล้วหักทั้งหมด (อย่าเริ่มใหม่):** (1) light-inside-mask ไม่แยก — dialogue ปกติ 0.62 สูงกว่าโลโก้ 0.27 เพราะ mask บับเบิล dialogue คลุม interior สว่างถูกต้องตามการคลีนบับเบิล (2) เกาะสว่างที่ถูก mask ล้อม — glyph ต่อถึงขอบ region ไม่เป็นเกาะ (share 44%+42% แตะขอบ) (3) ตัวเลข dark=0.31 กับ dialogue 0.18 ใกล้กันเกินตัด
+- **รากที่ชี้ได้:** CTD seed เองชี้ตัวถังเข้ม (seed polarity ผิดบนตัวอักษรขาวบนพื้นเข้ม) — แก้ต้อง re-evaluate polarity/seed ใน refine stage ซึ่งกระทบ mask ทุกหน้า (43 jobs baseline ทำงานดี) → **จัด session เฉพาะ ไม่เอา heuristic กึ่งกลางคืน**
+- **แก้รอบนี้แล้ว:** guidance ของ confirm-text gate เสนอ Protect เป็นทางเลือกสำหรับโลโก้/ปก (`899d55d`) + ทางแก้ปลวกก่อนหน้า `374c185` (ชี้ปุ่มยืนยัน)
+- **ทางแก้ตัวจริงที่เสนอ (session หน้า):** ใน refine stage — เมื่อ seed ชี้ solid blob เข้มและมี stroke-like inverse ข้างใน ให้ทดสอบ hypothesis สลับ polarity เฉพาะจุด (เทียบ text-likeness ของ component ทั้งสองฝั่ง) พร้อม fixture สังเคราะห์ white-on-dark + regression 43-job
+
+---
+
 ## "confirm text before approving its removal mask" — บันไดสิทธิ์ทำงานถูกแต่ข้อความไม่บอกทาง — 2026-11-05
 
 - **เหตุการณ์:** ผู้ใช้แก้ mask จุด #2 (หน้า 2/638800 — หน้า credit) แล้วบันทึก → client ยิง FORCE_CLEAN → service ปฏิเสธ (`pipeline.py:917-918`) เพราะ region ยังไม่เคยยืนยันข้อความ — raw ValueError ลอยขึ้น toast ตรง ๆ
