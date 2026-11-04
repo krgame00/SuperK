@@ -6,6 +6,18 @@
 
 ---
 
+## "ยังจับไม่หมด" รอบใหม่ (page 35) — root cause 2 ชั้น + recovery ชั้นที่สอง — 2026-11-05
+
+- **ระบุจุดจาก crop ผู้ใช้:** template match (fine scale ถึง 3.0) ระบุหน้า 35 loc (386,45) score 0.812 — ข้อความที่หายคือ **"I'm cum-ming!"** (อ่านเป็น "sorry man" ครั้งแรกผิด — บับเบิลลายมือเหมือนกันสองอัน ตัวที่ match ผิดคือ "I'm cum-ming!" ที่ (388,48) ตัวจริงยืนยันด้วย full-crop 0.812)
+- **ชั้นที่ 1 (ผู้ใช้เจอ):** Gemini **ส่ง bubble นี้มาแล้ว** (gem-35 raw bubble #1) แต่ถูก sfx-veto ตัด — region-1 = (0,0,553x794) role=sfx preserve ครองทั้งควอดรันต์ — บั๊กที่ `67dcc1e` แก้แล้ว แต่ export ของผู้ใช้ (1 พ.ย. 01:04) เก่ากว่า fix (4 พ.ย. 00:15) และแอป rebuild 18:32/restart 18:33 คืนนี้ถึงจะมี fix ใน bundle → **ผู้ใช้ต้อง re-translate หน้า 35 ในแอป** (แปลเก่าถูกแคชไว้)
+- **ชั้นที่ 2 (แก้ใหม่ `93fd0f0`):** ถ้า Gemini พลาดที่ page-level เอง จะไม่มีทางกู้เลยเพราะ recovery target มาจาก allowed roles เท่านั้น (gap ที่อีก session เขียนไว้) — แก้: region ใน `sfxExcluded` กลายเป็น recovery target **หลัง allowed ทั้งหมด** แบบ tile 1/4 หน้า (equal-division กัน sliver) + admission สองทาง: tile ใช้ candidate-relative containment (`mostlyInsideCrop` overlap/bubbleArea ≥.35) + `outsideProtectedAreas`, allowed ยังใช้ `anchorsToTarget` เดิม, dedupe กันซ้อน, **missing report ยังนับ allowed-only** (preserve ตั้งใจไม่นับเป็นขาด)
+- **พิสูจน์ปลายทาง (live API):** fresh full-page 35 → 5 raw → 5 kept ("I'm cumming!" → "ฉันจะแตกแล้ว!" ผ่าน chain จริง) + tile crop `[0,265,265,530]` → Gemini คืน "I'm cum-ming!" → admitted ผ่าน recoverMissingTranslations จริง, หน้า 35 final 5 bubbles / missing 3
+- **comment-sicko จับ 4 MUST KILL:** magic 265 ไม่มีที่มา (เหลือ why บรรทัดเดียว), sliver tile ที่ 531 promille ทิ้ง slot, anchorsInsideTile comment เลี่ยงไม่ได้ให้ rename `mostlyInsideCrop`, findMissingTranslationRegions คัดลอก predicate (derive จาก recoveryTargets แทน) — แก้ครบ
+- **ตัวเลข:** completeness 19/19, suite 2092 tests / 2089 pass / 1 fail = `routes.test.ts` model rotation ของอีก session (ส่งต่อ) / tsc 0 — launcher tests ของอีก session เขียวหมดแล้ว (เขาแก้เองในช่วงคืนนี้)
+- **เครื่องมือที่เพิ่มใน scratch/repro-638800/:** `match_crop.py`/`match_recent.py` (หา page จาก crop ผู้ใช้), `find_page.py` (Paddle ยังไม่ติดตั้งใน venv — service รัน CTD-only อยู่แล้ว เป็นข้อสังเกตแยก), `verify-35.mts` + `crop_targets.py` (replay recovery จริง)
+
+---
+
 ## Production watchdog ตามสั่ง (restart-on-death) — 2026-11-04
 
 - **ที่มา:** ผู้ใช้เลือกให้ทำ watchdog เอง (ต่อจาก forensics รอบก่อน) — ดีไซน์: watchdog วงจรสั้น emit action จากชุดปิด {restart-web, restart-ocr, skip-pause, skip-foreign, stand-down, give-up, no-op}, crash-loop = ≥5 restart/10 นาที → marker + popup เดียวแล้วเลิกเฝ้า, ประสานงานผ่านไฟล์ 3 ตัวใน .superk-runtime (pause ระหว่าง launcher stop/build, stop จาก stop-services, log ต่อ lifetime) + mutex Global กัน watchdog ซ้อน
