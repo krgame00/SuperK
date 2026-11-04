@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deduplicateTranslations, findMissingTranslationRegions, recoverMissingTranslations } from '@/lib/translation/completeness';
+import { deduplicateTranslations, findMissingTranslationRegions, recoveryTargets, recoverMissingTranslations } from '@/lib/translation/completeness';
 import type { TranslatedBubble } from '@/lib/translationOverlay';
 import { TranslationRequestError } from '@/lib/translation/requestError';
 
@@ -96,5 +96,46 @@ describe('translation completeness', () => {
       async ()=>[text([10,10,100,60],'RECOVERED'),text([500,500,600,600],'NEIGHBOR'),text([12,12,40,60],'')]);
     expect(result.bubbles).toEqual([text([10,10,100,60],'RECOVERED')]);
     expect(result.missing).toEqual([]);
+  });
+  it('tiles sfx-excluded artwork regions into recovery targets after every allowed region', () => {
+    const giant = [0,0,530,530];
+    const review = [717,0,790,71];
+    const targets = recoveryTargets([],{allowed:[review],excluded:[],sfxExcluded:[giant]});
+    expect(targets[0]).toEqual({box:review,fromSfx:false});
+    const sfx = targets.slice(1);
+    expect(sfx.length).toBeGreaterThan(0);
+    expect(sfx.every(t=>t.fromSfx)).toBe(true);
+    expect(sfx.some(t=>t.box[0]===0 && t.box[1]===265 && t.box[2]===265 && t.box[3]===530)).toBe(true);
+    for (const t of sfx) expect(t.box[2]-t.box[0]).toBeLessThanOrEqual(265);
+  });
+  it('a small bubble inside an sfx tile does not suppress the tile, a covering bubble does', () => {
+    const giant = [0,0,530,530];
+    const bubbleTile = [0,265,265,530];
+    const smallInside = text([32,372,133,539],'X');
+    const covering = text(bubbleTile,'X');
+    expect(recoveryTargets([smallInside],{allowed:[],excluded:[],sfxExcluded:[giant]}).some(t=>t.fromSfx && t.box[0]===0 && t.box[1]===265)).toBe(true);
+    expect(recoveryTargets([covering],{allowed:[],excluded:[],sfxExcluded:[giant]}).some(t=>t.fromSfx && t.box[0]===0 && t.box[1]===265)).toBe(false);
+  });
+  it('admits a recovered candidate from an sfx tile even though no allowed region anchors it', async () => {
+    const covered = text(a,'GOOD');
+    const giant = [0,0,530,530];
+    const candidate = text([32,372,133,539],'SORRY MAN');
+    const visited: Array<{box:number[];fromSfx:boolean}> = [];
+    const result = await recoverMissingTranslations([covered],
+      {allowed:[a],excluded:[],sfxExcluded:[giant]},
+      async box=>{
+        const fromSfx = box[1] >= 265 || box[2] > 265;
+        visited.push({box,fromSfx});
+        return fromSfx ? [candidate] : [];
+      });
+    expect(visited.some(v=>v.fromSfx)).toBe(true);
+    expect(result.bubbles).toContainEqual(candidate);
+  });
+  it('never admits an sfx-tile candidate that overlaps a protected region', async () => {
+    const protectedZone = [32,372,133,539];
+    const result = await recoverMissingTranslations([],
+      {allowed:[],excluded:[protectedZone],sfxExcluded:[[0,0,530,530]]},
+      async ()=>[text(protectedZone,'HIDDEN')]);
+    expect(result.bubbles).toEqual([]);
   });
 });

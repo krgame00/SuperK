@@ -1,5 +1,5 @@
 import type { TranslatedBubble } from '@/lib/translationOverlay';
-import { withinTranslationScope, type TranslationScope } from '@/lib/cleaning/textAuthorization';
+import { outsideProtectedAreas, withinTranslationScope, type TranslationScope } from '@/lib/cleaning/textAuthorization';
 import { isUserCancelledError, normalizeTranslationErrorCode } from './requestError';
 
 function validBox(box?: number[]): box is number[] {
@@ -56,6 +56,13 @@ function anchored(bubble: TranslatedBubble, target: number[]): boolean {
   return !bubble.isInvalidBox && !bubble.deleted && !!textOf(bubble) && anchorsToTarget(bubble.box,target);
 }
 
+/** Candidate-relative containment: a tile is a crop the model re-read, so the
+ *  candidate needs to sit mostly inside the tile it was found in. */
+function mostlyInsideCrop(box: number[] | undefined, tile: number[]): boolean {
+  if (!validBox(box)) return false;
+  return overlap(box!,tile)/area(box!) >= .35;
+}
+
 /** Tombstones from user edits also suppress replacement provider results. */
 export function excludeDeletedTranslations(bubbles: TranslatedBubble[], tombstones: TranslatedBubble[]): TranslatedBubble[] {
   return bubbles.filter(b => b.deleted || !validBox(b.box) ||
@@ -66,19 +73,57 @@ export function excludeDeletedTranslations(bubbles: TranslatedBubble[], tombston
  *  uncertain "review" regions would otherwise eat every slot. */
 const RECOVERY_ROLE_PRIORITY: Record<string, number> = { dialogue: 0, narration: 0 };
 
-/** Coverage is geometric and limited to regions the detector actually found. */
-export function findMissingTranslationRegions(bubbles: TranslatedBubble[], scope?: TranslationScope): number[][] {
+// A quarter-page crop keeps hand-lettered bubbles readable without spending
+// the ratio-8 admission on mostly-empty canvas.
+const SFX_TILE_SIDE_PROMILLE = 265;
+
+export interface RecoveryTarget { box: number[]; fromSfx: boolean; }
+
+function sfxTiles(box: number[]): number[][] {
+  const [ymin, xmin, ymax, xmax] = box;
+  if (ymax - ymin <= SFX_TILE_SIDE_PROMILLE && xmax - xmin <= SFX_TILE_SIDE_PROMILLE) return [box];
+  const rows = Math.ceil((ymax - ymin) / SFX_TILE_SIDE_PROMILLE);
+  const cols = Math.ceil((xmax - xmin) / SFX_TILE_SIDE_PROMILLE);
+  const h = (ymax - ymin) / rows, w = (xmax - xmin) / cols;
+  const tiles: number[][] = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      tiles.push([ymin + r*h, xmin + c*w, ymin + (r+1)*h, xmin + (c+1)*w]);
+    }
+  }
+  return tiles;
+}
+
+/** A tile is stale only when a bubble already covers most of it; a small
+ *  bubble anchored inside does not suppress the search for its neighbors. */
+export function recoveryTargets(bubbles: TranslatedBubble[], scope?: TranslationScope): RecoveryTarget[] {
   if (!scope) return [];
   const missing = scope.allowed.filter(box => validBox(box) &&
     !scope.excluded.some(protectedBox => validBox(protectedBox) && overlap(box,protectedBox)>0) &&
     !bubbles.some(b => covers(b,box) || anchored(b,box)));
   const roles = scope.allowedRoles;
-  if (!roles) return missing;
-  const rank = (box: number[]): number => {
-    const index = scope.allowed.indexOf(box);
-    return RECOVERY_ROLE_PRIORITY[roles[index] ?? ''] ?? 1;
-  };
-  return [...missing].sort((x,y) => rank(x) - rank(y));
+  let allowed: number[][] = missing;
+  if (roles) {
+    const rank = (box: number[]): number => {
+      const index = scope.allowed.indexOf(box);
+      return RECOVERY_ROLE_PRIORITY[roles[index] ?? ''] ?? 1;
+    };
+    allowed = [...missing].sort((x,y) => rank(x) - rank(y));
+  }
+  const targets: RecoveryTarget[] = allowed.map(box => ({box, fromSfx: false}));
+  for (const box of scope.sfxExcluded ?? []) {
+    if (!validBox(box)) continue;
+    for (const tile of sfxTiles(box)) {
+      if (!bubbles.some(b => covers(b,tile))) targets.push({box: tile, fromSfx: true});
+    }
+  }
+  return targets;
+}
+
+/** Coverage is geometric and limited to regions the detector actually found.
+ *  Deliberately preserved sfx tiles are recovery targets, not reported gaps. */
+export function findMissingTranslationRegions(bubbles: TranslatedBubble[], scope?: TranslationScope): number[][] {
+  return recoveryTargets(bubbles, scope).filter(target => !target.fromSfx).map(target => target.box);
 }
 
 /** A recovered target was not adequately translated before, so the fresh result
@@ -97,15 +142,19 @@ export async function recoverMissingTranslations(
   const abort = () => { if (signal?.aborted) throw new DOMException('Translation cancelled','AbortError'); };
   abort();
   let combined = [...bubbles];
-  const targets = findMissingTranslationRegions(combined,scope).slice(0,6);
+  const targets = recoveryTargets(combined,scope).slice(0,6);
+  const sameTarget = (a: RecoveryTarget, b: RecoveryTarget) => a.fromSfx === b.fromSfx && a.box.every((v,i) => v === b.box[i]);
   for (const target of targets) {
     abort();
-    if (!findMissingTranslationRegions(combined,scope).includes(target)) continue;
+    if (!recoveryTargets(combined,scope).some(t => sameTarget(t,target))) continue;
     try {
-      const candidates = await recover(target);
+      const candidates = await recover(target.box);
       abort();
       const admitted = excludeDeletedTranslations(candidates.filter(b =>
-        !b.deleted && !!textOf(b) && anchorsToTarget(b.box,target) && withinTranslationScope(b.box,scope)),combined.filter(b=>b.deleted));
+        !b.deleted && !!textOf(b) &&
+        (target.fromSfx ? mostlyInsideCrop(b.box,target.box) : anchorsToTarget(b.box,target.box)) &&
+        (withinTranslationScope(b.box,scope) ||
+          (target.fromSfx && outsideProtectedAreas(b.box,scope)))),combined.filter(b=>b.deleted));
       combined = deduplicateTranslations([
         ...combined.filter(existing => !admitted.some(candidate => supersedes(candidate,existing))),
         ...admitted,
