@@ -418,6 +418,27 @@ test("cleanPage fails when clean image dimensions cannot be validated", async ()
   );
 });
 
+test("a confirm-text rejection names the unblock path instead of the raw service error", async () => {
+  vi.mocked(createCleaningJob).mockRejectedValue(
+    new CleaningClientError(400, "confirm text before approving its removal mask", "retry"),
+  );
+  const { result } = renderHook(() =>
+    useCleaning({ pages: ["blob:one"], currentPage: 0 }),
+  );
+
+  await act(async () => {
+    await expect(
+      result.current.cleanPage(
+        "blob:one",
+        new Blob(["png"], { type: "image/png" }),
+      ),
+    ).rejects.toThrow();
+  });
+
+  expect(result.current.error?.message).toContain("ยืนยันว่าเป็นข้อความ");
+  expect(result.current.error?.message).not.toContain("confirm text before");
+});
+
 test("cleanPage rejects a clean asset whose dimensions do not match the result", async () => {
   const close = vi.fn();
   vi.stubGlobal(

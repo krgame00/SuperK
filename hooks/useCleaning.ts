@@ -944,6 +944,13 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       });
       return;
     }
+    if (caught instanceof CleaningClientError && /confirm text before/.test(caught.message)) {
+      setError({
+        message: "จุดนี้ต้องยืนยันข้อความก่อนอนุมัติ mask ลบ — กดปุ่ม 'ยืนยันว่าเป็นข้อความ' ในหน้าต่างแก้ Mask แล้วบันทึกอีกครั้ง (หรือคลีนหน้าใหม่เพื่อรับการจัดหมวดล่าสุด)",
+        recovery: "retry",
+      });
+      return;
+    }
     setError({
       message:
         caught instanceof Error ? caught.message : "Image cleaning failed.",
