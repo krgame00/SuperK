@@ -6,6 +6,16 @@
 
 ---
 
+## "confirm text before approving its removal mask" — บันไดสิทธิ์ทำงานถูกแต่ข้อความไม่บอกทาง — 2026-11-05
+
+- **เหตุการณ์:** ผู้ใช้แก้ mask จุด #2 (หน้า 2/638800 — หน้า credit) แล้วบันทึก → client ยิง FORCE_CLEAN → service ปฏิเสธ (`pipeline.py:917-918`) เพราะ region ยังไม่เคยยืนยันข้อความ — raw ValueError ลอยขึ้น toast ตรง ๆ
+- **บันไดสิทธิ์ทำงานถูก design:** อนุมัติ mask ลบได้เฉพาะเมื่อยืนยันข้อความแล้ว (กันลบข้อความที่ยังไม่รีวิว) — ปุ่มจริงคือ **"ยืนยันว่าเป็นข้อความ"** ในหน้าต่างแก้ Mask (granular authorization row)
+- **แก้ (`374c185`):** handleFailure แมป `/confirm text before/` เป็นคำแนะนำไทยที่ชี้ปุ่ม + ทางเลือก re-clean — เทสต์แดงก่อน (39/39) ปิดท้าย tsc 0
+- **โน้ต:** ข้อความ toast ใหม่จะขึ้นหลัง rebuild ถัดไป (bundle ปัจจุบัน = build 00:46) — ทางแก้ปัญหาตัวจริง (กดปุ่มยืนยัน) ใช้ได้ทันทีไม่ขึ้นกับ bundle
+- บริบทหน้า 2: fresh job พิสูจน์แล้วว่า title/tags/credits = protected/preserve, mask ใน rect นั้น 0.0%, pixel ที่ลบ 0.00% — ถ้า re-clean แล้วไม่ต้องแก้ mask ของ region นั้นเลย
+
+---
+
 ## OCR ตายเงียบอีกครั้ง + watchdog ไม่ถูกอาวุธ — 2026-11-05
 
 - **อาการ:** popup "เปิด ocr-service\run.ps1 แล้วลองอีกครั้ง" — uvicorn ตายเงียบ (stderr จบที่ sweep telemetry, ใช้งานสุดท้าย 02:23 คืนก่อน, ไม่มี traceback) **และไม่มี watchdog** เพราะ web/ocr ชุดนั้นถูก start แบบ manual (`powershell -Command node server.js`) ไม่ผ่าน vbs
