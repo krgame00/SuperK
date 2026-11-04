@@ -87,7 +87,7 @@ export const resolveCanvasFontFamily = (fontFamily?: string): string => {
     return fallback;
   }
   try {
-    let cleanFont = fallback.trim();
+    const cleanFont = fallback.trim();
     if (cleanFont.startsWith("var(")) {
       const match = cleanFont.match(/var\(\s*(--[\w-]+)\s*\)/);
       if (match) {

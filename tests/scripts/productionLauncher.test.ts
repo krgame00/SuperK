@@ -92,7 +92,8 @@ test.skipIf(process.platform !== "win32")("hidden production supervisor waits fo
   expect(result.fresh.at(-1)).toMatchObject({ kind: "browser", url: "http://127.0.0.1:3000" });
   expect(result.fresh.filter((event: { kind: string }) => event.kind === "health").length).toBeGreaterThan(2);
   expect(result.reuse.some((event: { kind: string }) => event.kind === "process")).toBe(false);
-  expect(result.reuse.at(-1).kind).toBe("browser");
+  expect(result.reuse.some((event: { kind: string }) => event.kind === "browser")).toBe(false);
+  expect(result.reuse.at(-1).kind).toBe("health");
   expect(result.foreignRejected).toBe(true);
   expect(result.foreign).toHaveLength(0);
   expect(result.exitRejected).toBe(true);
@@ -114,7 +115,8 @@ test.skipIf(process.platform !== "win32")("hidden production supervisor waits fo
   expect(staleProcesses[0].args).toContain("build");
   expect(staleProcesses[1].args).toContain("app.api:app");
   expect(staleProcesses[2].args).toContain("standalone\\server.js");
-  expect(result.stale.at(-1)).toMatchObject({ kind: "browser", url: "http://127.0.0.1:3000" });
+  expect(result.stale.some((event: { kind: string }) => event.kind === "browser")).toBe(false);
+  expect(result.stale.at(-1).kind).toBe("health");
 });
 
 test.skipIf(process.platform !== "win32")("VBScript constructs a quoted hidden supervisor command without launching services", () => {

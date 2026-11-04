@@ -11,10 +11,14 @@ describe("SuperK Smart Desktop Launcher", () => {
   it("ensures SuperK-Launcher.vbs exists, checks health, and launches in standard browser tab mode", () => {
     expect(fs.existsSync(launcherPath)).toBe(true);
     const content = fs.readFileSync(launcherPath, "utf-8");
-    expect(content).toContain("127.0.0.1:3000");
-    expect(content).toContain("127.0.0.1:8765");
-    expect(content).toContain("CheckUrl");
-    expect(content).toContain("cmd.exe /c start ");
+    expect(content).toContain("start-production.ps1");
+    expect(content).toContain("production-watchdog.ps1");
+    const supervisorPath = path.join(rootDir, "scripts", "start-production.ps1");
+    expect(fs.existsSync(supervisorPath)).toBe(true);
+    const supervisorContent = fs.readFileSync(supervisorPath, "utf-8");
+    expect(supervisorContent).toContain("127.0.0.1:3000");
+    expect(supervisorContent).toContain("127.0.0.1:8765");
+    expect(supervisorContent).toContain("Test-SuperKHealth");
   });
 
   it("ensures create-desktop-shortcut.mjs exists and targets silent launcher", () => {

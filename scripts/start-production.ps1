@@ -1,17 +1,7 @@
 param([string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot))
 
 . (Join-Path $PSScriptRoot 'service-ownership.ps1')
-
-function Get-SuperKPortOwner {
-    param([int]$Port)
-    $ids = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
-        Select-Object -ExpandProperty OwningProcess -Unique)
-    if ($ids.Count -gt 1) { throw "Multiple listeners occupy port $Port." }
-    if ($ids.Count -eq 1) {
-        return Get-CimInstance Win32_Process -Filter "ProcessId = $($ids[0])" -ErrorAction Stop
-    }
-    return $null
-}
+. (Join-Path $PSScriptRoot 'service-start.ps1')
 
 function Test-SuperKHealth {
     param([string]$Url)
@@ -32,16 +22,13 @@ function Start-SuperKProduction {
     $rootPath = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\')
     $logDirectory = Join-Path $rootPath '.superk-runtime'
     New-Item -Path $logDirectory -ItemType Directory -Force | Out-Null
-    $nodeExe = (Get-Command node.exe -ErrorAction Stop).Source
-    $serverPath = Join-Path $rootPath '.next\standalone\server.js'
-    $cleanerDirectory = Join-Path $rootPath 'ocr-service'
-    # Prefer the Python 3.12 uv venv (.venv); the legacy `venv` was created on the old C: path
-    # and its exe shims broke when the repo moved to F:.
-    $uvicornExe = Join-Path $cleanerDirectory '.venv\Scripts\uvicorn.exe'
-    if (-not (Test-Path -LiteralPath $uvicornExe)) {
-        $uvicornExe = Join-Path $cleanerDirectory 'venv\Scripts\uvicorn.exe'
-    }
-    if (-not (Test-Path -LiteralPath $uvicornExe)) { throw 'OCR virtual environment is missing.' }
+    $runStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    # A fresh run re-arms supervision: clear any stop request left by stop-services.ps1.
+    Remove-Item -LiteralPath (Join-Path $logDirectory 'watchdog.stop') -Force -ErrorAction SilentlyContinue
+    $nodeExe = Get-SuperKNodePath
+    $serverPath = Get-SuperKServerJsPath -ProjectRoot $rootPath
+    # Fail fast on a missing OCR venv before any port checks, matching the old resolution order.
+    Get-SuperKUvicornPath -ProjectRoot $rootPath | Out-Null
 
     # Verify both occupied ports before starting or rebuilding anything.
     $webOwner = Get-SuperKPortOwner -Port 3000
@@ -55,17 +42,7 @@ function Start-SuperKProduction {
         }
     }
 
-    if (Test-Path -LiteralPath 'F:\') {
-        $cacheDirectory = 'F:\manga-cache'
-        foreach ($name in @('ocr-jobs', 'paddle', 'torch', 'huggingface', 'temp')) {
-            New-Item -Path (Join-Path $cacheDirectory $name) -ItemType Directory -Force | Out-Null
-        }
-        $env:SUPERK_CACHE_DIR = Join-Path $cacheDirectory 'ocr-jobs'
-        $env:PADDLE_HOME = Join-Path $cacheDirectory 'paddle'
-        $env:TORCH_HOME = Join-Path $cacheDirectory 'torch'
-        $env:HF_HOME = Join-Path $cacheDirectory 'huggingface'
-        $env:TEMP = Join-Path $cacheDirectory 'temp'
-    }
+    Initialize-SuperKRuntimeEnvironment
 
     $needsBuild = -not (Test-Path -LiteralPath $serverPath)
     if (-not $needsBuild) {
@@ -99,52 +76,54 @@ function Start-SuperKProduction {
         }
     }
 
-    if ($needsBuild -and $webOwner) {
-        Stop-SuperKServiceProcess -ProcessInfo $webOwner -ProjectRoot $rootPath | Out-Null
-        $webOwner = $null
-    }
-
-    if (-not $webOwner) {
-        if ($needsBuild) {
-            $nextCli = Join-Path $rootPath 'node_modules\next\dist\bin\next'
-            $build = Start-Process -FilePath $nodeExe -ArgumentList @("`"$nextCli`"", 'build') -WorkingDirectory $rootPath -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput (Join-Path $logDirectory 'build.log') -RedirectStandardError (Join-Path $logDirectory 'build-error.log')
-            if ($build.ExitCode -ne 0) { throw 'Production build failed. See build-error.log.' }
+    # Hold the watchdog back until stop/build/start has fully settled (success or throw).
+    $pausePath = Join-Path $logDirectory 'watchdog.pause'
+    New-Item -Path $pausePath -ItemType File -Force | Out-Null
+    try {
+        if ($needsBuild -and $webOwner) {
+            Stop-SuperKServiceProcess -ProcessInfo $webOwner -ProjectRoot $rootPath | Out-Null
+            $webOwner = $null
         }
-        $syncPath = Join-Path $rootPath 'scripts\sync-standalone-assets.mjs'
-        $sync = Start-Process -FilePath $nodeExe -ArgumentList "`"$syncPath`"" -WorkingDirectory $rootPath -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput (Join-Path $logDirectory 'assets.log') -RedirectStandardError (Join-Path $logDirectory 'assets-error.log')
-        if ($sync.ExitCode -ne 0) { throw 'Standalone asset setup failed. See assets-error.log.' }
-    }
 
-    $ocrProcess = $null
-    $webProcess = $null
-    $env:SUPERK_ENABLE_ADAPTIVE_ROI_V2 = '1'
-    $env:SUPERK_RESIDUAL_SWEEP = '1'
-    if (-not $ocrOwner) {
-        $ocrProcess = Start-Process -FilePath $uvicornExe -ArgumentList @('app.api:app', '--host', '127.0.0.1', '--port', '8765') -WorkingDirectory $cleanerDirectory -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $logDirectory 'ocr.log') -RedirectStandardError (Join-Path $logDirectory 'ocr-error.log')
-    }
-    if (-not $webOwner) {
-        $env:PORT = '3000'
-        $env:HOSTNAME = '127.0.0.1'
-        $env:SUPERK_PROJECT_ROOT = $rootPath
-        $webProcess = Start-Process -FilePath $nodeExe -ArgumentList "`"$serverPath`"" -WorkingDirectory $rootPath -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $logDirectory 'web.log') -RedirectStandardError (Join-Path $logDirectory 'web-error.log')
-    }
-
-    $deadline = [DateTime]::UtcNow.AddSeconds(90)
-    do {
-        if (($ocrProcess -and $ocrProcess.HasExited) -or ($webProcess -and $webProcess.HasExited)) {
-            throw 'A SuperK service exited during startup. See the service error logs.'
-        }
-        $webReady = Test-SuperKHealth -Url 'http://127.0.0.1:3000'
-        $ocrReady = Test-SuperKHealth -Url 'http://127.0.0.1:8765/health'
-        if ($webReady -and $ocrReady) {
-            if (-not $webWasRunning) {
-                Open-SuperKBrowser -Url 'http://127.0.0.1:3000'
+        if (-not $webOwner) {
+            if ($needsBuild) {
+                $nextCli = Join-Path $rootPath 'node_modules\next\dist\bin\next'
+                $build = Start-Process -FilePath $nodeExe -ArgumentList @("`"$nextCli`"", 'build') -WorkingDirectory $rootPath -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput (Get-SuperKRunLog -LogDirectory $logDirectory -BaseName 'build' -RunStamp $runStamp) -RedirectStandardError (Get-SuperKRunLog -LogDirectory $logDirectory -BaseName 'build-error' -RunStamp $runStamp)
+                if ($build.ExitCode -ne 0) { throw 'Production build failed. See build-error.log.' }
             }
-            return
+            $syncPath = Join-Path $rootPath 'scripts\sync-standalone-assets.mjs'
+            $sync = Start-Process -FilePath $nodeExe -ArgumentList "`"$syncPath`"" -WorkingDirectory $rootPath -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput (Get-SuperKRunLog -LogDirectory $logDirectory -BaseName 'assets' -RunStamp $runStamp) -RedirectStandardError (Get-SuperKRunLog -LogDirectory $logDirectory -BaseName 'assets-error' -RunStamp $runStamp)
+            if ($sync.ExitCode -ne 0) { throw 'Standalone asset setup failed. See assets-error.log.' }
         }
-        Start-Sleep -Milliseconds 500
-    } while ([DateTime]::UtcNow -lt $deadline)
-    throw 'SuperK did not become ready within 90 seconds. See the service error logs.'
+
+        $ocrProcess = $null
+        $webProcess = $null
+        if (-not $ocrOwner) {
+            $ocrProcess = Start-SuperKOcrProcess -ProjectRoot $rootPath
+        }
+        if (-not $webOwner) {
+            $webProcess = Start-SuperKWebProcess -ProjectRoot $rootPath
+        }
+
+        $deadline = [DateTime]::UtcNow.AddSeconds(90)
+        do {
+            if (($ocrProcess -and $ocrProcess.HasExited) -or ($webProcess -and $webProcess.HasExited)) {
+                throw 'A SuperK service exited during startup. See the service error logs.'
+            }
+            $webReady = Test-SuperKHealth -Url 'http://127.0.0.1:3000'
+            $ocrReady = Test-SuperKHealth -Url 'http://127.0.0.1:8765/health'
+            if ($webReady -and $ocrReady) {
+                if (-not $webWasRunning) {
+                    Open-SuperKBrowser -Url 'http://127.0.0.1:3000'
+                }
+                return
+            }
+            Start-Sleep -Milliseconds 500
+        } while ([DateTime]::UtcNow -lt $deadline)
+        throw 'SuperK did not become ready within 90 seconds. See the service error logs.'
+    } finally {
+        Remove-Item -LiteralPath $pausePath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
