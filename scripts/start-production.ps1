@@ -25,61 +25,62 @@ function Start-SuperKProduction {
     $runStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     # A fresh run re-arms supervision: clear any stop request left by stop-services.ps1.
     Remove-Item -LiteralPath (Join-Path $logDirectory 'watchdog.stop') -Force -ErrorAction SilentlyContinue
-    $nodeExe = Get-SuperKNodePath
-    $serverPath = Get-SuperKServerJsPath -ProjectRoot $rootPath
-    # Fail fast on a missing OCR venv before any port checks, matching the old resolution order.
-    Get-SuperKUvicornPath -ProjectRoot $rootPath | Out-Null
-
-    # Verify both occupied ports before starting or rebuilding anything.
-    $webOwner = Get-SuperKPortOwner -Port 3000
-    $ocrOwner = Get-SuperKPortOwner -Port 8765
-    # Only auto-open the browser on a genuine cold launch; re-invocations while
-    # the app is already running (restarts, rebuilds) would just pile up tabs.
-    $webWasRunning = [bool]$webOwner
-    foreach ($owner in @($webOwner, $ocrOwner)) {
-        if ($owner -and -not (Test-SuperKServiceProcess -ProcessInfo $owner -ProjectRoot $rootPath)) {
-            throw 'Port 3000 or 8765 belongs to another application. It was left running.'
-        }
-    }
-
-    Initialize-SuperKRuntimeEnvironment
-
-    $needsBuild = -not (Test-Path -LiteralPath $serverPath)
-    if (-not $needsBuild) {
-        $serverTime = (Get-Item -LiteralPath $serverPath).LastWriteTime
-        $sourceDirs = @(
-            (Join-Path $rootPath 'src'),
-            (Join-Path $rootPath 'components'),
-            (Join-Path $rootPath 'hooks'),
-            (Join-Path $rootPath 'lib'),
-            (Join-Path $rootPath 'public')
-        )
-        $latestSource = Get-ChildItem -Path $sourceDirs -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -notmatch '\\(\.next|node_modules|\.git)\\' } |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-        $configFiles = @(
-            (Join-Path $rootPath 'next.config.ts'),
-            (Join-Path $rootPath 'package.json')
-        )
-        foreach ($cfg in $configFiles) {
-            if (Test-Path -LiteralPath $cfg) {
-                $cfgItem = Get-Item -LiteralPath $cfg
-                if ($cfgItem.LastWriteTime -gt $serverTime) {
-                    $needsBuild = $true
-                    break
-                }
-            }
-        }
-        if ($latestSource -and $latestSource.LastWriteTime -gt $serverTime) {
-            $needsBuild = $true
-        }
-    }
 
     # Hold the watchdog back until stop/build/start has fully settled (success or throw).
     $pausePath = Join-Path $logDirectory 'watchdog.pause'
     New-Item -Path $pausePath -ItemType File -Force | Out-Null
     try {
+        $nodeExe = Get-SuperKNodePath
+        $serverPath = Get-SuperKServerJsPath -ProjectRoot $rootPath
+        # Fail fast on a missing OCR venv before any port checks, matching the old resolution order.
+        Get-SuperKUvicornPath -ProjectRoot $rootPath | Out-Null
+
+        # Verify both occupied ports before starting or rebuilding anything.
+        $webOwner = Get-SuperKPortOwner -Port 3000
+        $ocrOwner = Get-SuperKPortOwner -Port 8765
+        # Only auto-open the browser on a genuine cold launch; re-invocations while
+        # the app is already running (restarts, rebuilds) would just pile up tabs.
+        $webWasRunning = [bool]$webOwner
+        foreach ($owner in @($webOwner, $ocrOwner)) {
+            if ($owner -and -not (Test-SuperKServiceProcess -ProcessInfo $owner -ProjectRoot $rootPath)) {
+                throw 'Port 3000 or 8765 belongs to another application. It was left running.'
+            }
+        }
+
+        Initialize-SuperKRuntimeEnvironment
+
+        $needsBuild = -not (Test-Path -LiteralPath $serverPath)
+        if (-not $needsBuild) {
+            $serverTime = (Get-Item -LiteralPath $serverPath).LastWriteTime
+            $sourceDirs = @(
+                (Join-Path $rootPath 'src'),
+                (Join-Path $rootPath 'components'),
+                (Join-Path $rootPath 'hooks'),
+                (Join-Path $rootPath 'lib'),
+                (Join-Path $rootPath 'public')
+            )
+            $latestSource = Get-ChildItem -Path $sourceDirs -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -notmatch '\\(\.next|node_modules|\.git)\\' } |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -First 1
+            $configFiles = @(
+                (Join-Path $rootPath 'next.config.ts'),
+                (Join-Path $rootPath 'package.json')
+            )
+            foreach ($cfg in $configFiles) {
+                if (Test-Path -LiteralPath $cfg) {
+                    $cfgItem = Get-Item -LiteralPath $cfg
+                    if ($cfgItem.LastWriteTime -gt $serverTime) {
+                        $needsBuild = $true
+                        break
+                    }
+                }
+            }
+            if ($latestSource -and $latestSource.LastWriteTime -gt $serverTime) {
+                $needsBuild = $true
+            }
+        }
+
         if ($needsBuild -and $webOwner) {
             Stop-SuperKServiceProcess -ProcessInfo $webOwner -ProjectRoot $rootPath | Out-Null
             $webOwner = $null

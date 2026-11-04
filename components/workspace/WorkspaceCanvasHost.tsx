@@ -47,6 +47,7 @@ import type { GlossaryEntry } from "@/lib/translation/glossary";
 import type { BwContrastMode } from "@/lib/colorMatching/types";
 import type { PageCleaningResult, CleaningHookError } from "@/hooks/useCleaning";
 import type { CleaningProgress } from "@/lib/cleaning/types";
+import { undoManager } from "@/lib/undoManager";
 import {
   normalizePageExportSource,
   type ExportImageFormat,
@@ -1025,11 +1026,23 @@ export function WorkspaceCanvasHost({
                         flipX: false,
                         flipY: false,
                       };
-                      const nextLayers = [...(imageLayersByPage[activePage.url] ?? []), newLayer];
+                      const prevLayers = imageLayersByPage[activePage.url] ?? [];
+                      const nextLayers = [...prevLayers, newLayer];
                       handleUpdatePageImageLayers(activePage.url, nextLayers);
                       setSelectedImageLayerId(newLayer.id);
                       setSelectedBubbleBridge(null);
                       setSidePanel("inspector");
+                      undoManager.push({
+                        label: "เพิ่มรูปภาพ",
+                        undo: () => {
+                          handleUpdatePageImageLayers(activePage.url, prevLayers);
+                          setSelectedImageLayerId(null);
+                        },
+                        redo: () => {
+                          handleUpdatePageImageLayers(activePage.url, nextLayers);
+                          setSelectedImageLayerId(newLayer.id);
+                        },
+                      });
                     };
                     reader.readAsDataURL(file);
                   }}
@@ -1166,15 +1179,37 @@ export function WorkspaceCanvasHost({
                   <ImageLayerPanel
                     layer={selectedImageLayer}
                     onChange={(updates) => {
-                      const updated = (imageLayersByPage[activePage.url] ?? []).map((item) =>
+                      const prevLayers = imageLayersByPage[activePage.url] ?? [];
+                      const updated = prevLayers.map((item) =>
                         item.id === selectedImageLayer.id ? { ...item, ...updates } : item,
                       );
                       handleUpdatePageImageLayers(activePage.url, updated);
+                      undoManager.push({
+                        label: "ปรับแต่งรูปภาพ",
+                        undo: () => {
+                          handleUpdatePageImageLayers(activePage.url, prevLayers);
+                        },
+                        redo: () => {
+                          handleUpdatePageImageLayers(activePage.url, updated);
+                        },
+                      });
                     }}
                     onDelete={(id) => {
-                      const updated = (imageLayersByPage[activePage.url] ?? []).filter((item) => item.id !== id);
+                      const prevLayers = imageLayersByPage[activePage.url] ?? [];
+                      const updated = prevLayers.filter((item) => item.id !== id);
                       handleUpdatePageImageLayers(activePage.url, updated);
                       setSelectedImageLayerId(null);
+                      undoManager.push({
+                        label: "ลบรูปภาพ",
+                        undo: () => {
+                          handleUpdatePageImageLayers(activePage.url, prevLayers);
+                          setSelectedImageLayerId(id);
+                        },
+                        redo: () => {
+                          handleUpdatePageImageLayers(activePage.url, updated);
+                          setSelectedImageLayerId(null);
+                        },
+                      });
                     }}
                   />
                 )}
@@ -1202,17 +1237,39 @@ export function WorkspaceCanvasHost({
                   }
                 }}
                 onChange={(id, updates) => {
+                  const prevLayers = currentPageImageLayers;
                   const updated = currentPageImageLayers.map((layer) =>
                     layer.id === id ? { ...layer, ...updates } : layer
                   );
                   handleUpdatePageImageLayers(activePageUrlKey, updated);
+                  undoManager.push({
+                    label: "ย้าย/ปรับขนาดรูปภาพ",
+                    undo: () => {
+                      handleUpdatePageImageLayers(activePageUrlKey, prevLayers);
+                    },
+                    redo: () => {
+                      handleUpdatePageImageLayers(activePageUrlKey, updated);
+                    },
+                  });
                 }}
                 onDelete={(id) => {
+                  const prevLayers = currentPageImageLayers;
                   const updated = currentPageImageLayers.filter((layer) => layer.id !== id);
                   handleUpdatePageImageLayers(activePageUrlKey, updated);
                   if (selectedImageLayerId === id) {
                     setSelectedImageLayerId(null);
                   }
+                  undoManager.push({
+                    label: "ลบรูปภาพ",
+                    undo: () => {
+                      handleUpdatePageImageLayers(activePageUrlKey, prevLayers);
+                      setSelectedImageLayerId(id);
+                    },
+                    redo: () => {
+                      handleUpdatePageImageLayers(activePageUrlKey, updated);
+                      setSelectedImageLayerId(null);
+                    },
+                  });
                 }}
               />
             )}

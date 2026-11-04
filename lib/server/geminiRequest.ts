@@ -313,7 +313,6 @@ export function isDailyQuotaExhausted(status: number, message: string): boolean 
     normalized.includes("daily") ||
     normalized.includes("per_day") ||
     normalized.includes("free_tier_requests") ||
-    normalized.includes("quota exceeded for metric") ||
     normalized.includes("limit: 20")
   );
 }
@@ -486,13 +485,22 @@ export async function requestGemini<T = unknown>(
 
         if (
           response.status === 400 ||
+          response.status === 401 ||
           response.status === 403 ||
           response.status === 429 ||
           response.status === 500 ||
           response.status === 503
         ) {
           if (cooldownMap) {
-            if (response.status === 429) {
+            if (response.status === 401) {
+              // 401 indicates invalid or revoked API key; mark in long cooldown so neither
+              // this nor fallback models retry it.
+              markKeyCooldown(
+                apiKey,
+                now() + 24 * 60 * 60_000,
+                cooldownMap,
+              );
+            } else if (response.status === 429) {
               markKeyCooldown(
                 apiKey,
                 now() + (error.retryAfterMs ?? 60_000),

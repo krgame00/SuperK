@@ -417,6 +417,11 @@ export const saveBlob = async (
   link.href = url;
   link.download = filename;
   link.click();
-  URL.revokeObjectURL(url);
+  // Delay revocation by 15s to ensure large CBZ/PDF streams complete before URL invalidation
+  setTimeout(() => {
+    try {
+      URL.revokeObjectURL(url);
+    } catch {}
+  }, 15_000);
   return filename;
 };

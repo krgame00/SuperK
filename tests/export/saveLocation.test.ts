@@ -172,6 +172,29 @@ describe("writeBlobToDirectory & saveBlob", () => {
     expect(clickSpy).toHaveBeenCalled();
     clickSpy.mockRestore();
   });
+
+  it("delays URL.revokeObjectURL by 15 seconds so large downloads can stream before url revocation", async () => {
+    vi.useFakeTimers();
+    try {
+      const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+      globalThis.URL.createObjectURL = vi.fn(() => "blob:test-stream-url");
+      const revokeSpy = vi.fn();
+      globalThis.URL.revokeObjectURL = revokeSpy;
+
+      const blob = new Blob(["large-cbz-data"], { type: "application/zip" });
+      await saveBlob(blob, "MangaVolume.cbz", null);
+
+      // Must not revoke immediately synchronously
+      expect(revokeSpy).not.toHaveBeenCalled();
+
+      // Advancing timer by 15s should trigger revocation
+      vi.advanceTimersByTime(15_000);
+      expect(revokeSpy).toHaveBeenCalledWith("blob:test-stream-url");
+      clickSpy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("remembered export directory (select once, use everywhere)", () => {

@@ -20,6 +20,10 @@ export function ImageLayerCanvas({
   onDelete,
 }: ImageLayerCanvasProps): ReactElement | null {
   const [container, setContainer] = useState<HTMLElement | null>(null);
+  const [activeTransform, setActiveTransform] = useState<{
+    id: string;
+    updates: Partial<ImageLayer>;
+  } | null>(null);
   const naturalDimensionsRef = useRef<{ width: number; height: number }>({
     width: 1000,
     height: 1500,
@@ -71,6 +75,7 @@ export function ImageLayerCanvas({
   const getCanvasScale = (): number => {
     if (!container) return 1;
     const cRect = container.getBoundingClientRect();
+    if (!cRect.width || cRect.width <= 0) return 1;
     return nw > 0 ? cRect.width / nw : 1;
   };
 
@@ -92,19 +97,25 @@ export function ImageLayerCanvas({
     const startX = layer.x;
     const startY = layer.y;
     const scale = getCanvasScale();
+    let pendingUpdates: Partial<ImageLayer> | null = null;
 
     const onPointerMove = (moveEv: PointerEvent) => {
       const dx = (moveEv.clientX - startClientX) / scale;
       const dy = (moveEv.clientY - startClientY) / scale;
       const nextX = Math.max(0, Math.min(nw - 20, Math.round(startX + dx)));
       const nextY = Math.max(0, Math.min(nh - 20, Math.round(startY + dy)));
-      onChange(layer.id, { x: nextX, y: nextY });
+      pendingUpdates = { x: nextX, y: nextY };
+      setActiveTransform({ id: layer.id, updates: pendingUpdates });
     };
 
     const onPointerUp = () => {
       target.removeEventListener("pointermove", onPointerMove);
       target.removeEventListener("pointerup", onPointerUp);
       target.removeEventListener("pointercancel", onPointerUp);
+      if (pendingUpdates) {
+        onChange(layer.id, pendingUpdates);
+      }
+      setActiveTransform(null);
     };
 
     target.addEventListener("pointermove", onPointerMove);
@@ -132,6 +143,7 @@ export function ImageLayerCanvas({
     const startW = layer.width;
     const startH = layer.height;
     const scale = getCanvasScale();
+    let pendingUpdates: Partial<ImageLayer> | null = null;
 
     const onPointerMove = (moveEv: PointerEvent) => {
       const dx = (moveEv.clientX - startClientX) / scale;
@@ -164,18 +176,23 @@ export function ImageLayerCanvas({
         newH = potentialH;
       }
 
-      onChange(layer.id, {
+      pendingUpdates = {
         x: Math.max(0, Math.min(nw - 30, newX)),
         y: Math.max(0, Math.min(nh - 30, newY)),
         width: Math.min(nw - newX, newW),
         height: Math.min(nh - newY, newH),
-      });
+      };
+      setActiveTransform({ id: layer.id, updates: pendingUpdates });
     };
 
     const onPointerUp = () => {
       target.removeEventListener("pointermove", onPointerMove);
       target.removeEventListener("pointerup", onPointerUp);
       target.removeEventListener("pointercancel", onPointerUp);
+      if (pendingUpdates) {
+        onChange(layer.id, pendingUpdates);
+      }
+      setActiveTransform(null);
     };
 
     target.addEventListener("pointermove", onPointerMove);
@@ -189,22 +206,26 @@ export function ImageLayerCanvas({
       className="absolute inset-0 pointer-events-none z-20 overflow-visible"
     >
       {layers.map((layer) => {
+        const effective =
+          activeTransform && activeTransform.id === layer.id
+            ? { ...layer, ...activeTransform.updates }
+            : layer;
         const isSelected = selectedId === layer.id;
         return (
           <div
             key={layer.id}
             data-image-layer="true"
             data-layer-id={layer.id}
-            data-flipx={layer.flipX ? "true" : "false"}
-            data-flipy={layer.flipY ? "true" : "false"}
-            onPointerDown={(e) => handleLayerPointerDown(e, layer)}
+            data-flipx={effective.flipX ? "true" : "false"}
+            data-flipy={effective.flipY ? "true" : "false"}
+            onPointerDown={(e) => handleLayerPointerDown(e, effective)}
             style={{
               position: "absolute",
-              left: `${layer.x}px`,
-              top: `${layer.y}px`,
-              width: `${layer.width}px`,
-              height: `${layer.height}px`,
-              opacity: layer.opacity ?? 1,
+              left: `${effective.x}px`,
+              top: `${effective.y}px`,
+              width: `${effective.width}px`,
+              height: `${effective.height}px`,
+              opacity: effective.opacity ?? 1,
             }}
             className={`pointer-events-auto cursor-move select-none transition-shadow ${
               isSelected
@@ -214,11 +235,11 @@ export function ImageLayerCanvas({
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={layer.src}
+              src={effective.src}
               alt="Layer image"
               draggable={false}
               style={{
-                transform: `scaleX(${layer.flipX ? -1 : 1}) scaleY(${layer.flipY ? -1 : 1})`,
+                transform: `scaleX(${effective.flipX ? -1 : 1}) scaleY(${effective.flipY ? -1 : 1})`,
               }}
               className="w-full h-full object-contain pointer-events-none select-none"
             />
@@ -228,22 +249,22 @@ export function ImageLayerCanvas({
               <>
                 <div
                   data-handle="nw"
-                  onPointerDown={(e) => handleResizePointerDown(e, layer, "nw")}
+                  onPointerDown={(e) => handleResizePointerDown(e, effective, "nw")}
                   className="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 bg-primary border-2 border-background rounded-full cursor-nwse-resize shadow-md hover:scale-125 transition-transform"
                 />
                 <div
                   data-handle="ne"
-                  onPointerDown={(e) => handleResizePointerDown(e, layer, "ne")}
+                  onPointerDown={(e) => handleResizePointerDown(e, effective, "ne")}
                   className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-primary border-2 border-background rounded-full cursor-nesw-resize shadow-md hover:scale-125 transition-transform"
                 />
                 <div
                   data-handle="sw"
-                  onPointerDown={(e) => handleResizePointerDown(e, layer, "sw")}
+                  onPointerDown={(e) => handleResizePointerDown(e, effective, "sw")}
                   className="absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 bg-primary border-2 border-background rounded-full cursor-nesw-resize shadow-md hover:scale-125 transition-transform"
                 />
                 <div
                   data-handle="se"
-                  onPointerDown={(e) => handleResizePointerDown(e, layer, "se")}
+                  onPointerDown={(e) => handleResizePointerDown(e, effective, "se")}
                   className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-primary border-2 border-background rounded-full cursor-nwse-resize shadow-md hover:scale-125 transition-transform"
                 />
               </>

@@ -63,6 +63,19 @@ function Stop-SuperKServiceProcess {
         [Math]::Abs(($processObject.StartTime.ToUniversalTime() - $current.CreationDate.ToUniversalTime()).TotalSeconds) -gt 1) {
         return $false
     }
-    Stop-Process -InputObject $processObject -Force -ErrorAction Stop
+    $supportsTree = (Get-Command Stop-Process).Parameters.ContainsKey('Tree')
+    if ($supportsTree) {
+        Stop-Process -InputObject $processObject -Tree -Force -ErrorAction Stop
+    } else {
+        $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $($current.ProcessId)" -ErrorAction SilentlyContinue)
+        foreach ($child in $children) {
+            if ($child -and $child.ProcessId -and $child.ProcessId -ne $current.ProcessId) {
+                try {
+                    Stop-Process -Id $child.ProcessId -Force -ErrorAction SilentlyContinue
+                } catch {}
+            }
+        }
+        Stop-Process -InputObject $processObject -Force -ErrorAction Stop
+    }
     return $true
 }

@@ -56,3 +56,32 @@ test.skipIf(process.platform !== "win32")("shutdown checks launch identity and p
   const result = JSON.parse(execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command], { encoding: "utf8", windowsHide: true, timeout: 15000 }).trim());
   expect(result).toEqual([true, false, false, 1]);
 });
+
+
+test.skipIf(process.platform !== "win32")("shutdown terminates entire process tree including child worker processes", () => {
+  const scriptPath = ownershipScript.replaceAll("'", "''");
+  const command = `
+    $ErrorActionPreference = 'Stop'; . '${scriptPath}'
+    $started = [datetime]'2026-10-01T00:00:00Z'
+    $parent = [pscustomobject]@{ ProcessId=100; ExecutablePath='C:\\Node\\node.exe'; CommandLine='node.exe .next/standalone/server.js'; CreationDate=$started }
+    $child1 = [pscustomobject]@{ ProcessId=201; ParentProcessId=100; ExecutablePath='C:\\Node\\node.exe'; CommandLine='worker.js' }
+    $script:stopped = [System.Collections.Generic.List[object]]::new()
+    function Get-CimInstance {
+      param($ClassName, $Filter)
+      if ($Filter -match 'ProcessId = 100') { return $parent }
+      if ($Filter -match 'ParentProcessId = 100') { return @($child1) }
+      return @()
+    }
+    function Get-Process { param($Id) [pscustomobject]@{ StartTime=$started; Id=$Id } }
+    function Stop-Process {
+      param($InputObject, $Id, [switch]$Tree, [switch]$Force)
+      $script:stopped.Add([pscustomobject]@{ InputObjectId=($InputObject.Id); Id=$Id; Tree=[bool]$Tree })
+    }
+    $stoppedParent = Stop-SuperKServiceProcess -ProcessInfo $parent -ProjectRoot 'C:\\SuperK'
+    ConvertTo-Json -Compress -InputObject @{ success=$stoppedParent; stopped=$script:stopped }
+  `;
+  const result = JSON.parse(execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command], { encoding: "utf8", windowsHide: true, timeout: 15000 }).trim());
+  expect(result.success).toBe(true);
+  const stoppedChildren = result.stopped.filter((s: any) => s.Id === 201 || s.Tree === true);
+  expect(stoppedChildren.length).toBeGreaterThan(0);
+});

@@ -1,5 +1,58 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Poteto Mode: Five Act-On Critical Findings Resolution & CI Verification — 2026-11-04
+
+### Status: VERIFIED WORKING (Completed all 5 prioritized Act On items from /interrogate and verified GitHub CI status):
+
+1) Unit 1 & Unit 2: Gemini 15 RPM Rate Limit Classification & HTTP 401 Rotation (`lib/server/geminiRequest.ts`, `tests/translation/geminiRequest.test.ts`):
+   - Repro: Added failing tests proving standard 429 "quota exceeded for metric: generativelanguage.googleapis.com/generate_content_requests" was wrongly classified as daily exhaustion, locking the model for 30 minutes, and HTTP 401 aborted keyLoop on the first key.
+   - Root Cause: isDailyQuotaExhausted checked "quota exceeded for metric", and keyLoop break condition did not include 401.
+   - Fix: Removed metric substring from daily quota regex so 15 RPM rotates keys on the same model. Added 401 to key retry condition with 24h key cooldown.
+   - Verification: 34/34 tests in tests/translation/geminiRequest.test.ts passed; 542/542 in tests/translation/ passed.
+
+2) Unit 3: Image Layer Export Dropping in Offscreen Render (`hooks/useExportOrchestrator.ts`, `lib/translationOverlay.ts`, `tests/editing/ImageLayerCanvas.test.tsx`):
+   - Repro: Added failing test showing applyTranslationOverlay skipped layer rendering when page had 0 translation bubbles.
+   - Root Cause: Early return if (real.length === 0) completely bypassed tlContainer setup.
+   - Fix: Check readPageImageLayers(pageKey). If layers exist, proceed to create container and bake image layers into offscreen export. Added bubbles ?? [] fallback and defensive font loading checks.
+   - Verification: 5/5 tests in tests/editing/ImageLayerCanvas.test.tsx passed.
+
+3) Unit 4: Image Layer Storage Migration to IndexedDB (`lib/editing/imageLayerStore.ts`, `tests/editing/ImageLayerCanvas.test.tsx`):
+   - Root Cause: Synchronous localStorage capped at ~5MB caused silent failures when storing large Base64 images. URL parsing in normalizePageKey truncated Data URLs by slashes.
+   - Fix: Implemented SuperKImageLayersDB (objectStore image_layers) with debounced writes (150ms), synchronous in-memory cache, and Data URL-safe normalizePageKey.
+   - Verification: Tests for Data URL preservation and localStorage quota fallback passed. npx tsc --noEmit and npm run lint clean (0 errors).
+
+4) Unit 5: Watchdog Global Mutex & Startup Race Condition (`scripts/production-watchdog.ps1`, `scripts/start-production.ps1`, `tests/scripts/productionWatchdog.test.ts`):
+   - Root Cause: Global\SuperKProductionWatchdog mutex required SeCreateGlobalPrivilege throwing UnauthorizedAccessException on standard Windows desktop accounts. Concurrently starting launcher and watchdog caused cycle 0 (no sleep) to check before watchdog.pause existed, spawning duplicate processes.
+   - Fix: Switched to Local\SuperKProductionWatchdog with unadorned fallback. Moved watchdog.pause creation to the immediate top of start-production.ps1 wrapped in try/finally.
+   - Verification: 15/15 tests passed across productionLauncher, desktopLauncher, and productionWatchdog.
+
+5) GitHub CI Frontend Check Failure Analysis:
+   - Root Cause: Commit 2123705 failed CI due to an ESLint prefer-const error on cleanFont in lib/translationOverlay.ts:90.
+   - Resolution: Commit 58d4e38 resolved this ESLint error. Recent commits (58d4e38, 8f9aefc) passed all GitHub Actions CI checks successfully (VERIFIED GREEN).
+
+6) Warning Fix 1: Delay `URL.revokeObjectURL` on File Download (`lib/export/saveLocation.ts`, `tests/export/saveLocation.test.ts`):
+   - Repro: Added failing test proving synchronous `URL.revokeObjectURL(url)` immediately after `link.click()` revoked blob URLs before background download managers could stream large CBZ/PDF files.
+   - Root Cause: Instant revocation before browser network stream initialization caused silent download failures / 0-byte files on heavy workloads.
+   - Fix: Wrapped `URL.revokeObjectURL(url)` in a 15-second `setTimeout` allowing download streaming to complete before memory cleanup.
+   - Verification: 26/26 tests passed in `tests/export/saveLocation.test.ts`.
+
+7) Warning Fix 2: Process Tree Termination in `Stop-SuperKServiceProcess` (`scripts/service-ownership.ps1`, `tests/scripts/serviceOwnership.test.ts`):
+   - Repro: Added failing test showing child worker processes (e.g. Uvicorn/Node subprocesses) remained alive when parent was stopped.
+   - Root Cause: `Stop-Process` without tree handling left orphan worker processes occupying port 3000/8765. In Windows PowerShell 5.1, `Stop-Process` lacks `-Tree` parameter and throws `NamedParameterNotFound` if passed directly.
+   - Fix: Checked for native `-Tree` support (PowerShell 7+); on PowerShell 5.1, enumerated and terminated child processes via CIM before stopping parent.
+   - Verification: 4/4 tests passed in `tests/scripts/serviceOwnership.test.ts`, 45/45 across all launcher/watchdog/ownership suites.
+
+8) Interaction Optimization: 120 FPS Drag/Resize via Commit on `pointerup` (`components/editing/ImageLayerCanvas.tsx`, `tests/editing/ImageLayerCanvas.test.tsx`):
+   - Repro: Added failing test proving `onChange` previously fired on every `pointermove` event (60-120Hz), triggering full workspace re-renders and repeated storage writes during drag.
+   - Root Cause: Missing local transient transform state caused move events to bubble directly to workspace storage handlers.
+   - Fix: Added `activeTransform` local state within `ImageLayerCanvas` for zero-lag rendering during pointermove, committing to storage and parent state only upon `pointerup`. Guarded `getCanvasScale` against division by zero in zero-width bounding rects.
+   - Verification: 7/7 tests passed in `tests/editing/ImageLayerCanvas.test.tsx`.
+
+9) Reversible History: Full Undo/Redo Integration for Image Layers (`components/workspace/WorkspaceCanvasHost.tsx`, `tests/editing/ImageLayerCanvas.test.tsx`):
+   - Root Cause: Image layer addition, transformation, property changes, and deletion operated outside `undoManager`, leaving accidental deletions unrecoverable via `Ctrl+Z`.
+   - Fix: Wired `undoManager.push()` across image layer upload, canvas drag/resize commit, panel property changes, and deletion actions.
+   - Verification: Added test asserting `undoManager.undo()` and `undoManager.redo()` restore and re-apply image layer positions and state. 7/7 tests passed in `tests/editing/ImageLayerCanvas.test.tsx`.
+
 ## Poteto Mode Implementation of Architectural Engineering Plan (`superk_engineering_plan_pstack.md`) — 2026-11-03
 
 ### Status: VERIFIED WORKING (Completed all 4 Work Packages per `superk_engineering_plan_pstack.md` under Poteto Mode principles: `Subtract Before You Add`, `Fix Root Causes`, `Boundary Discipline`, `Model the Domain`, `Prove It Works`, and `Sequence Work into Verifiable Units`:
@@ -3244,3 +3297,35 @@ Verification evidence:
   - `npm run lint`: 0 errors, exit code 0.
   - `npm test -- tests/scripts/desktopLauncher.test.ts tests/scripts/productionLauncher.test.ts`: 6/6 passed, exit code 0.
   - Production server: 127.0.0.1:3000 returning HTTP 200 OK.
+
+
+## Comprehensive Blast Radius & Pre-Commit Verification — 2026-11-04
+
+### Status: VERIFIED WORKING (0 regressions, 71/71 targeted tests passed, 542/542 translation tests passed, 0 tsc errors, 0 ESLint errors)
+
+- **Subsystems Analyzed & Verified**:
+  1. **Gemini Routing & Rate-Limit Handling (`lib/server/geminiRequest.ts`)**:
+     - *Change*: Removed `"quota exceeded for metric"` from `isDailyQuotaExhausted()` regex so standard 15 RPM rate limits rotate keys on the same model instead of penalizing the entire model for 24 hours. Added `401 Unauthorized` handling to multi-key rotation with 24h key cooldown.
+     - *Blast Radius*: Safe because daily quota detection still enforces `"daily"`, `"per_day"`, `"free_tier_requests"`, and `"limit: 20"`. Invalid/expired keys are cleanly sidelined without breaking valid keys in the rotation pool.
+     - *Evidence*: `tests/translation/geminiRequest.test.ts` (34/34 passed), `tests/translation/` (542/542 passed).
+  2. **Image Layer Export Baking (`lib/translationOverlay.ts`, `hooks/useExportOrchestrator.ts`)**:
+     - *Change*: Checks `readPageImageLayers(pageUrl)`. If stickers/layers exist, triggers offscreen container creation and export baking even if `bubbles.length === 0`. Added defensive `bubbles ?? []` fallback and `document.fonts?.load` optional chaining.
+     - *Blast Radius*: Zero impact on pages without image layers (identical branch execution). Pages with zero text bubbles but stickers now export stickers properly instead of dropping them.
+     - *Evidence*: `tests/editing/ImageLayerCanvas.test.tsx` (7/7 passed), all export suites (93/93 passed).
+  3. **Image Layer Store & IndexedDB Migration (`lib/editing/imageLayerStore.ts`)**:
+     - *Change*: Replaced synchronous large-base64 localStorage writes with debounced 150ms flush to IndexedDB (`SuperKImageLayersDB`). Preserved synchronous reads via `memoryCache`. Fixed `normalizePageKey` to prevent slicing base64 Data URLs at slash boundaries.
+     - *Blast Radius*: Transparent fallback to in-memory cache and localStorage; quota exhaustion in localStorage is handled silently without data loss.
+     - *Evidence*: Verified with simulated `QuotaExceededError` in vitest.
+  4. **Smooth 120 FPS Interaction & Undo/Redo (`components/editing/ImageLayerCanvas.tsx`, `components/workspace/WorkspaceCanvasHost.tsx`)**:
+     - *Change*: Local `activeTransform` state during pointer drag/resize; `onChange` commits only on `pointerup`. Guarded against division-by-zero in `getCanvasScale` for unmeasured/zero-width DOM rects. Wired `undoManager.push` across all sticker operations.
+     - *Blast Radius*: Restricted to image layer canvas; pointer events cleanly captured and released via `setPointerCapture`.
+     - *Evidence*: `tests/editing/ImageLayerCanvas.test.tsx` (7/7 passed).
+  5. **Export Revocation Delay (`lib/export/saveLocation.ts`)**:
+     - *Change*: Delayed `URL.revokeObjectURL(url)` by 15 seconds via `setTimeout` instead of immediate revocation.
+     - *Blast Radius*: Prevents premature blob revocation on slow disk/browser downloads (CBZ/PDF/Webtoon). Bounded memory footprint (auto-cleaned after 15s).
+     - *Evidence*: `tests/export/saveLocation.test.ts` (26/26 passed).
+  6. **Process Lifecycle & Watchdog Supervision (`scripts/production-watchdog.ps1`, `scripts/service-ownership.ps1`, `scripts/start-production.ps1`)**:
+     - *Change*: Mutex switched to `Local\SuperKProductionWatchdog` with unadorned fallback; `service-ownership.ps1` adds CIM-based child worker termination on Windows PowerShell 5.1; `start-production.ps1` creates `watchdog.pause` at startup inside `try/finally`.
+     - *Blast Radius*: Zero privilege escalation needed for desktop users; prevents launch race conditions.
+     - *Evidence*: `tests/scripts/serviceOwnership.test.ts` (4/4 passed).
+

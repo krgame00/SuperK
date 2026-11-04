@@ -29,6 +29,7 @@ import {
   generatePhotoshopBuildScript,
   generateStripFilename,
 } from "@/lib/export/exportManager";
+import { readPageImageLayers } from "@/lib/editing/imageLayerStore";
 import { shouldReuseCachedTranslatedRender } from "@/lib/export/renderFreshness";
 import {
   getAskExportDirectory,
@@ -575,11 +576,13 @@ export function useExportOrchestrator({
       const rawBubbles = bubbleCacheRef.current.get(pageUrl);
       const bubbles = rawBubbles ? rawBubbles.map((b) => ({ ...b })) : rawBubbles;
 
+      const pageImageLayers = readPageImageLayers(pageUrl);
+      const hasImageLayers = pageImageLayers.length > 0;
       const hasRenderableBubbles = Boolean(
         bubbles?.some((b) => b && !b.deleted && ((b.t ?? b.translated ?? "").trim() || b.layoutAdjustment)),
       );
 
-      if (hasRenderableBubbles && bubbles) {
+      if ((hasRenderableBubbles && bubbles) || hasImageLayers) {
         setTranslationResult(`⏳ กำลังเตรียมรูปภาพหน้า ${index + 1}/${pagesToRender.length}...`);
         try {
           return await new Promise<string>((resolve, reject) => {
@@ -609,7 +612,7 @@ export function useExportOrchestrator({
                 Math.max(10_000, Math.min(30_000, 2_000 + Math.round(megapixels * 1_000))),
               );
               applyTranslationOverlay(
-                bubbles,
+                bubbles ?? [],
                 "offscreen",
                 -1,
                 () => {},

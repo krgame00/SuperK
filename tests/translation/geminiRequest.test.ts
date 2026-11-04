@@ -6,6 +6,7 @@ import {
   requestGeminiRoutes,
   requestOpenAICompatible,
   clearKeyCooldowns,
+  defaultModelCooldowns,
   isKeyInCooldown,
   markKeyCooldown,
 } from "@/lib/server/geminiRequest";
@@ -807,3 +808,64 @@ test("immediately fast-falls back to next model on 429 daily quota without loopi
   expect(String(fetchImpl.mock.calls[0][0])).toContain("/models/gemini-3.8-flash:");
   expect(String(fetchImpl.mock.calls[1][0])).toContain("/models/gemini-3.5-flash-lite:");
 });
+
+test("standard 15 RPM quota error rotates to next key on same model and does not trigger daily model cooldown", async () => {
+  defaultModelCooldowns.clear();
+  const fetchImpl = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(
+      jsonResponse(
+        {
+          error: {
+            message:
+              "Resource has been exhausted (e.g. check quota). Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_requests, limit: 15",
+          },
+        },
+        429,
+      ),
+    )
+    .mockResolvedValueOnce(jsonResponse(successBody));
+
+  const result = await requestGemini({
+    apiKeys: ["key-1", "key-2"],
+    models: ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
+    payload: { contents: [] },
+    fetchImpl,
+    sleep: async () => undefined,
+  });
+
+  expect(result.model).toBe("gemini-3.5-flash-lite");
+  expect(result.keyIndex).toBe(1);
+  expect(fetchImpl).toHaveBeenCalledTimes(2);
+  expect(defaultModelCooldowns.has("gemini-3.5-flash-lite")).toBe(false);
+});
+
+test("HTTP 401 rotates to next key on the same model instead of aborting key loop", async () => {
+  const fetchImpl = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(
+      jsonResponse(
+        {
+          error: {
+            message: "API key not valid. Please pass a valid API key.",
+            status: "UNAUTHENTICATED",
+          },
+        },
+        401,
+      ),
+    )
+    .mockResolvedValueOnce(jsonResponse(successBody));
+
+  const result = await requestGemini({
+    apiKeys: ["invalid-key", "valid-key"],
+    models: ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
+    payload: { contents: [] },
+    fetchImpl,
+    sleep: async () => undefined,
+  });
+
+  expect(result.model).toBe("gemini-3.5-flash-lite");
+  expect(result.keyIndex).toBe(1);
+  expect(fetchImpl).toHaveBeenCalledTimes(2);
+});
+

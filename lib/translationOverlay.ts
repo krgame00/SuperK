@@ -1187,10 +1187,12 @@ export const applyTranslationOverlay = async (
   img.ondragstart = (e) => e.preventDefault();
 
   // Saved empty edits retain their geometry so users can select and refill them.
+  const pageKey = pageKeyOverride ?? `page-${currentPage}`;
+  const pageImageLayers = readPageImageLayers(pageKey);
   const real = bubbles.filter(b => b && !b.deleted && !b.hidden && (
     (b.t ?? b.translated ?? "").trim() || b.layoutAdjustment
   ));
-  if (real.length === 0) {
+  if (real.length === 0 && pageImageLayers.length === 0) {
     if (onComplete) {
       setTimeout(() => {
         const url = downloadTranslatedImage(viewMode, currentPage, "", true, container);
@@ -1245,7 +1247,6 @@ export const applyTranslationOverlay = async (
 
     // Adjustments are keyed by page URL — keying by array index re-mapped
     // every saved position whenever pages were reordered or deleted.
-    const pageKey = pageKeyOverride ?? `page-${currentPage}`;
     const storagePageKey = compactOverlayPageKey(pageKey);
     const savedAdj = readPageOverlayAdjustments(pageKey);
 
@@ -4304,10 +4305,14 @@ export const applyTranslationOverlay = async (
     if (img.complete && img.naturalWidth) paint();
     else img.onload = () => paint();
   };
-  document.fonts
-    .load(`1em ${resolveCanvasFontFamily(textStyleRef?.current?.fontFamily)}`)
-    .then(paintWhenReady)
-    .catch(paintWhenReady);
+  if (typeof document !== "undefined" && document.fonts?.load) {
+    document.fonts
+      .load(`1em ${resolveCanvasFontFamily(textStyleRef?.current?.fontFamily)}`)
+      .then(paintWhenReady)
+      .catch(paintWhenReady);
+  } else {
+    paintWhenReady();
+  }
 };
 
 export {

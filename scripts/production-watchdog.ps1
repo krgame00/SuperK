@@ -101,10 +101,15 @@ if ($MyInvocation.InvocationName -ne '.') {
     try {
         # The script-scope variable pins the mutex for the process lifetime; a
         # collected mutex releases its name and admits a second watchdog.
-        $script:SuperKWatchdogMutex = New-Object System.Threading.Mutex($true, 'Global\SuperKProductionWatchdog', [ref]$createdNew)
+        # Use Local namespace so non-elevated desktop users do not hit UnauthorizedAccessException.
+        $script:SuperKWatchdogMutex = New-Object System.Threading.Mutex($true, 'Local\SuperKProductionWatchdog', [ref]$createdNew)
     } catch {
-        # Without the single-instance guarantee two watchdogs would fight over restarts.
-        exit 0
+        try {
+            $script:SuperKWatchdogMutex = New-Object System.Threading.Mutex($true, 'SuperKProductionWatchdog', [ref]$createdNew)
+        } catch {
+            # Without the single-instance guarantee two watchdogs would fight over restarts.
+            exit 0
+        }
     }
     if (-not $createdNew) { exit 0 }
     $exitCode = 0
