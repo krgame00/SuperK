@@ -946,7 +946,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     }
     if (caught instanceof CleaningClientError && /confirm text before/.test(caught.message)) {
       setError({
-        message: "จุดนี้ต้องยืนยันข้อความก่อนอนุมัติ mask ลบ — กดปุ่ม 'ยืนยันว่าเป็นข้อความ' ในหน้าต่างแก้ Mask แล้วบันทึกอีกครั้ง (หรือคลีนหน้าใหม่เพื่อรับการจัดหมวดล่าสุด)",
+        message: "จุดนี้ต้องยืนยันข้อความก่อนอนุมัติ mask ลบ — กด 'ยืนยันว่าเป็นข้อความ' ในหน้าต่างแก้ Mask แล้วบันทึกอีกครั้ง หรือถ้าเป็นโลโก้/ชื่อเรื่องที่ไม่อยากลบ กด 'Protect' แทน",
         recovery: "retry",
       });
       return;

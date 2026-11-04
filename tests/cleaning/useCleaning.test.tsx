@@ -436,6 +436,7 @@ test("a confirm-text rejection names the unblock path instead of the raw service
   });
 
   expect(result.current.error?.message).toContain("ยืนยันว่าเป็นข้อความ");
+  expect(result.current.error?.message).toContain("Protect");
   expect(result.current.error?.message).not.toContain("confirm text before");
 });
 
