@@ -6,6 +6,16 @@
 
 ---
 
+## OCR ตายเงียบอีกครั้ง + watchdog ไม่ถูกอาวุธ — 2026-11-05
+
+- **อาการ:** popup "เปิด ocr-service\run.ps1 แล้วลองอีกครั้ง" — uvicorn ตายเงียบ (stderr จบที่ sweep telemetry, ใช้งานสุดท้าย 02:23 คืนก่อน, ไม่มี traceback) **และไม่มี watchdog** เพราะ web/ocr ชุดนั้นถูก start แบบ manual (`powershell -Command node server.js`) ไม่ผ่าน vbs
+- **แก้:** รัน launcher flow (rebuild + restart ทั้งคู่ — build ใหม่รวม fix completeness ด้วย ผู้ใช้ re-translate หน้า 35 ได้เลย) + spawn watchdog (PID 24560, mutex กันซ้อนยืนยันแล้ว) + smoke clean จริง: POST /v1/jobs → result 200
+- **UI:** hint ตอน service ล่มเปลี่ยนจาก `run.ps1` → `SuperK-Launcher.vbs (watchdog จะเฝ้าให้เอง)` (`ea34c13` + test pin `3e3b5ea`) — run.ps1 เองถูกอีก session แก้ venv-first + ใส่ sweep env แล้ว (จาก commit interrogate-findings)
+- **กติกาปฏิบัติ:** เริ่มระบบด้วยการดับเบิลคลิก `SuperK-Launcher.vbs` เท่านั้น — การ start node/uvicorn เองจะไม่มี watchdog เฝ้า
+- โน้ตอีก session: launcher tests เขียวหมดแล้ว (เขาแก้ browser-on-reuse เอง) — suite เหลือ fail เดียวคือ `routes.test.ts` model rotation ของเขา
+
+---
+
 ## "ยังจับไม่หมด" รอบใหม่ (page 35) — root cause 2 ชั้น + recovery ชั้นที่สอง — 2026-11-05
 
 - **ระบุจุดจาก crop ผู้ใช้:** template match (fine scale ถึง 3.0) ระบุหน้า 35 loc (386,45) score 0.812 — ข้อความที่หายคือ **"I'm cum-ming!"** (อ่านเป็น "sorry man" ครั้งแรกผิด — บับเบิลลายมือเหมือนกันสองอัน ตัวที่ match ผิดคือ "I'm cum-ming!" ที่ (388,48) ตัวจริงยืนยันด้วย full-crop 0.812)
