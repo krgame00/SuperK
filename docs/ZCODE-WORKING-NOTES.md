@@ -6,6 +6,16 @@
 
 ---
 
+## ปิด respawn hole ทั้ง 4 หลุมที่เหลือ — 2026-11-06
+
+- **หลุม + แก้ (`01ab43f`, ทั้งหมด red→green):** (1) confirmedRects ไม่ persist → เก็บ rect บน confirmation pair เดียว (`{candidateId, revisionKey, rect}`) + `replacePage` re-seed spatial store ตอน restore — reload+reclean ไม่ respawn อีก (2) แก้ bubble list wipe ทั้ง store → `invalidateRevisionsKeepingRects` (การแก้ bubble ไม่เกี่ยวกับการอนุมัติงานศิลป์ตำแหน่ง) (3) unconfirm ทิ้ง id-bound pair ให้ recheck ชุดเดิมชุบชีวิต → `unconfirmRect` รับ confirmation แล้วลบทั้งคู่ (4) กดยืนยันระหว่าง inspect in-flight เงียบ → toast "กำลังตรวจสอบพื้นหลังอยู่..."
+- **บั๊กแฝงที่ fix นี้ทำให้เห็น (แก้ด้วย):** `inspectPageRemnants` rebind แก้ `inspection.candidates` ในที่ (object จาก shared cache by reference) → approval ถูกอบใน cache ร่วม → unconfirm ไม่มีทางสำเร็จ + confirmation รั่วข้ามหน้าที่ revision identity เดียวกัน — แก้ด้วยการ rebuild object แทน mutate
+- **ข้อจำกัดที่ยังเปิด:** IDB round-trip จริงถูก mock ในเทสต์ (metadata ทั้ง object ถูกเก็บไม่มี whitelist จึงประเมินผ่าน store-level + mocked hook path); fingerprint จริงรันเฉพาะ test-mode
+- **ตัวเลข:** cleaning + watchdog + controller suites 435/435, tsc 0 — staged แบบแยก hunk อีกครั้ง (useCleaning.ts มี hunk แปล message ของอีก session ปนอยู่ ไม่รวม)
+- **การ deploy:** fix เป็น client bundle — ให้ผู้ใช้ rebuild ผ่าน launcher (รวมกับ fix สะสม: toast, toolbar lg, remnant clean fallback)
+
+---
+
 ## Remnant spot "กดแล้วกลับมาอีก" — ตรวจจับและแก้ 2026-11-06
 
 - **อาการ:** ใน RemnantReviewPanel กดปุ่มบน candidate card (จุดเส้นทแยงมุมดำ) แล้วจุดเดิมกลับมาโชว์เหมือนเดิมตลอด (crop ต้นฉบับ/หลังลบ เหมือนกันเป๊ะ)
