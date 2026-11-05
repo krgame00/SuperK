@@ -6,6 +6,16 @@
 
 ---
 
+## Remnant spot "กดแล้วกลับมาอีก" — ตรวจจับและแก้ 2026-11-06
+
+- **อาการ:** ใน RemnantReviewPanel กดปุ่มบน candidate card (จุดเส้นทแยงมุมดำ) แล้วจุดเดิมกลับมาโชว์เหมือนเดิมตลอด (crop ต้นฉบับ/หลังลบ เหมือนกันเป๊ะ)
+- **ราก (explorer ยืนยัน + ผม verify ทั้ง 3 จุด):** ปุ่มคลีนจุด → `createInkMaskBlob` → `extractGlyphInk` จัดเส้นบางเป็น artwork (fill < ULTRA_SPARSE_FILL 0.06) ทิ้งหมด → mask ว่าง → service ปฏิเสธ ("authorized mask is empty") → `handleCleanCandidate` **toast สำเร็จทั้งที่ล้มเหลว** → pixel ไม่เปลี่ยน → inspection ครั้งหน้าเจอจุดเดิม → วนไม่รู้จบ (ยืนยันลายภาพไม่เกี่ยว — flow คลีน unconfirm ก่อนเสมอ)
+- **แก้ (`165b0d8`):** (1) `createInkMaskBlob` fallback — เมื่อ extraction ว่าง ยกเลิก artwork-rule เฉพาะ caller นี้ (`keepAllComponents`) เพราะเป็นคำตัดสินของผู้ใช้บนจุดที่รีวิวแล้ว (2) ทั้ง clean/restore handler เช็คผล handleRetryRegion แล้ว toast error จริงแทน success ปลอม
+- **หลุมอื่นที่ explorer ขุดพบ ยังไม่แก้ (จดไว้ทำรอบหน้า):** rects ของ confirmation ไม่ persist (reload+reclean = respawn ทั้งหน้า), `setPageRemnantTextEvidence` wipe ทั้ง store เมื่อ bubble list เปลี่ยน (id เป็น positional index), unconfirm เหลือ id-bound entry ทำ card กลับเป็นยืนยันเอง, confirm ระหว่าง inspection in-flight เป็น no-op เงียบ ๆ
+- **ตัวเลข:** maskUtils 14/14, useWorkspaceController + cleaning 414/414, tsc 0
+
+---
+
 ## ปิด residual sweep ใน production ถาวร — ตัวกระดาน "จางครั้งที่สอง" — 2026-11-06
 
 - **อาการต่อ:** หลัง glyph-shape filter (7a5c78b) ผู้ใช้ยังเจอรอยที่มุมกล้องมือถือ + เส้นนิ้ว (ยังโดน 178 px) — component ที่เหลือคือก้อนทึบเล็ก/เส้นโค้งสั้นที่หน้าตาเหมือน glyph จนเกณฑ์รูปร่างแยกไม่ได้
