@@ -204,11 +204,13 @@ test.skipIf(process.platform !== "win32")("real watchdog process stands down on 
     fs.writeFileSync(path.join(root, ".superk-runtime", "watchdog.stop"), "stop");
     const started = Date.now();
     // execFileSync throws on a non-zero exit, so reaching the assertions proves exit 0.
+    // A unique mutex name keeps the test independent of the live production watchdog.
     execFileSync(
       "powershell.exe",
       [
         "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
         "-File", watchdog, "-ProjectRoot", root, "-MaxCycles", "2", "-IntervalSeconds", "1",
+        "-MutexName", `Local\\SuperKWatchdogTest-${Date.now()}`,
       ],
       { encoding: "utf8", windowsHide: true, timeout: 60000 },
     );

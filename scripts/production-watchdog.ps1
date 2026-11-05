@@ -3,7 +3,8 @@ param(
     [int]$IntervalSeconds = 10,
     [int]$MaxRestartsPerWindow = 5,
     [int]$WindowMinutes = 10,
-    [int]$MaxCycles = 0
+    [int]$MaxCycles = 0,
+    [string]$MutexName = 'Local\SuperKProductionWatchdog'
 )
 
 # Production watchdog: restarts the web/ocr services when their ports go quiet.
@@ -102,10 +103,10 @@ if ($MyInvocation.InvocationName -ne '.') {
         # The script-scope variable pins the mutex for the process lifetime; a
         # collected mutex releases its name and admits a second watchdog.
         # Use Local namespace so non-elevated desktop users do not hit UnauthorizedAccessException.
-        $script:SuperKWatchdogMutex = New-Object System.Threading.Mutex($true, 'Local\SuperKProductionWatchdog', [ref]$createdNew)
+        $script:SuperKWatchdogMutex = New-Object System.Threading.Mutex($true, $MutexName, [ref]$createdNew)
     } catch {
         try {
-            $script:SuperKWatchdogMutex = New-Object System.Threading.Mutex($true, 'SuperKProductionWatchdog', [ref]$createdNew)
+            $script:SuperKWatchdogMutex = New-Object System.Threading.Mutex($true, ($MutexName -replace '^Local\\', ''), [ref]$createdNew)
         } catch {
             # Without the single-instance guarantee two watchdogs would fight over restarts.
             exit 0
