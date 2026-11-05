@@ -1,6 +1,8 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import toast from "react-hot-toast";
 import { useWorkspaceController } from "@/hooks/useWorkspaceController";
+import { useCleaning } from "@/hooks/useCleaning";
 import { useTranslation } from "@/hooks/useTranslation";
 
 const docManagerState = vi.hoisted(() => ({ pages: [] as Array<{ url: string; name: string }> }));
@@ -157,6 +159,11 @@ vi.mock("@/lib/translationOverlay", () => ({
   syncPageOverlayAdjustments: vi.fn(),
 }));
 
+vi.mock("react-hot-toast", () => ({
+  default: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn(), loading: vi.fn(() => "mock-toast-id") }),
+  Toaster: () => null,
+}));
+
 describe("useWorkspaceController", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -217,5 +224,25 @@ describe("useWorkspaceController", () => {
 
     expect(translation.bubbleCacheRef.current.get("blob:p1")).toHaveLength(1);
     expect(translation.markPageDirty).toHaveBeenCalledWith("blob:p1");
+  });
+
+  it("a rejected artwork confirmation tells the user the background inspection is still running", async () => {
+    docManagerState.pages.push({ url: "blob:p1", name: "Page 1" });
+    const { result } = renderHook(() => useWorkspaceController());
+    const cleaning = vi.mocked(useCleaning).mock.results.at(-1)!.value;
+
+    cleaning.confirmArtworkCandidate.mockReturnValueOnce(true);
+    act(() => {
+      result.current.bottomStripProps.onConfirmArtworkCandidate?.("cand-1", { x: 0, y: 0, width: 4, height: 4 });
+    });
+    await act(async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); });
+    expect(toast.error).not.toHaveBeenCalled();
+
+    cleaning.confirmArtworkCandidate.mockReturnValueOnce(false);
+    act(() => {
+      result.current.bottomStripProps.onConfirmArtworkCandidate?.("cand-1", { x: 0, y: 0, width: 4, height: 4 });
+    });
+    await act(async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); });
+    expect(toast.error).toHaveBeenCalledWith("กำลังตรวจสอบพื้นหลังอยู่ ลองกดยืนยันอีกครั้งหลังตรวจเสร็จ");
   });
 });

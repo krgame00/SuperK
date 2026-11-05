@@ -68,6 +68,8 @@ export interface BackgroundArtworkConfirmation {
   candidateId: string;
   /** The inspection revisionKey this confirmation was recorded against. */
   revisionKey: string;
+  /** Where the approval was given, so a reload can re-seed the spatial approval even across revisions. */
+  rect?: PixelRect;
 }
 
 export interface BackgroundInspectionInput {

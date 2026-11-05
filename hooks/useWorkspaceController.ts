@@ -911,7 +911,10 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     onRestoreOriginalRemnant: handleRestoreCandidate,
     onCleanRemnantCandidate: handleCleanCandidate,
     onConfirmArtworkCandidate: (candidateId, rect) => {
-      if (currentPageUrl) confirmArtworkCandidate(currentPageUrl, candidateId, rect);
+      if (!currentPageUrl) return;
+      if (!confirmArtworkCandidate(currentPageUrl, candidateId, rect)) {
+        void import("react-hot-toast").then((m) => m.default.error("กำลังตรวจสอบพื้นหลังอยู่ ลองกดยืนยันอีกครั้งหลังตรวจเสร็จ"));
+      }
     },
     onUnconfirmArtworkCandidate: (candidate) => {
       if (currentPageUrl) unconfirmArtworkCandidate(currentPageUrl, candidate);

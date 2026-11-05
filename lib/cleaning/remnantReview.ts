@@ -286,7 +286,10 @@ export class RemnantConfirmationStore {
     const revisions = this.revisionsFor(pageUrl);
     const existing = revisions.get(confirmation.revisionKey) ?? [];
     const deduped = existing.filter((entry) => entry.candidateId !== confirmation.candidateId);
-    revisions.set(confirmation.revisionKey, [...deduped, confirmation].slice(-MAX_CONFIRMATIONS_PER_REVISION));
+    // Carry the rect on the stored pair so persistence and restore keep the
+    // approval bound to its location, not just to a revision key.
+    const stored = rect ? { ...confirmation, rect: { ...rect } } : confirmation;
+    revisions.set(confirmation.revisionKey, [...deduped, stored].slice(-MAX_CONFIRMATIONS_PER_REVISION));
 
     if (rect) {
       const rects = this.confirmedRects.get(pageUrl) ?? [];
@@ -296,7 +299,16 @@ export class RemnantConfirmationStore {
     }
   }
 
-  unconfirmRect(pageUrl: string, rect: PixelRect): void {
+  unconfirmRect(pageUrl: string, rect: PixelRect, confirmation?: BackgroundArtworkConfirmation): void {
+    if (confirmation) {
+      const revisions = this.pages.get(pageUrl);
+      const entries = revisions?.get(confirmation.revisionKey);
+      if (revisions && entries) {
+        const remaining = entries.filter((entry) => entry.candidateId !== confirmation.candidateId);
+        if (remaining.length > 0) revisions.set(confirmation.revisionKey, remaining);
+        else revisions.delete(confirmation.revisionKey);
+      }
+    }
     const rects = this.confirmedRects.get(pageUrl);
     if (!rects || rects.length === 0) return;
     const remaining = rects.filter((existing) => !isRectMatchingConfirmed(existing, [rect]));
@@ -331,16 +343,21 @@ export class RemnantConfirmationStore {
     return all;
   }
 
-  /** Seed a page from persisted metadata. */
+  /** Seed a page from persisted metadata; rect-carrying entries re-seed the spatial approval too. */
   replacePage(pageUrl: string, confirmations: readonly BackgroundArtworkConfirmation[]): void {
     this.invalidatePage(pageUrl);
-    for (const confirmation of confirmations) this.confirm(pageUrl, confirmation);
+    for (const confirmation of confirmations) this.confirm(pageUrl, confirmation, confirmation.rect);
   }
 
   /** Source replacement or page removal: old revisions can never return. */
   invalidatePage(pageUrl: string): void {
     this.pages.delete(pageUrl);
     this.confirmedRects.delete(pageUrl);
+  }
+
+  /** Clear only the revision-bound list; the revision-free confirmedRects survives. */
+  invalidateRevisionsKeepingRects(pageUrl: string): void {
+    this.pages.delete(pageUrl);
   }
 }
 

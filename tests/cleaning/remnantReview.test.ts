@@ -14,6 +14,7 @@ import {
   decodeLumaPlane,
   findRegionForCandidate,
   inspectCleanedPage,
+  isRectMatchingConfirmed,
   remnantRevisions,
 } from "@/lib/cleaning/remnantReview";
 import { authorizationIdentity } from "@/lib/cleaning/textAuthorization";
@@ -369,6 +370,52 @@ describe("RemnantConfirmationStore", () => {
     expect(store.isRectConfirmed("p", rect)).toBe(true);
     store.invalidatePage("p");
     expect(store.isRectConfirmed("p", rect)).toBe(false);
+  });
+
+  it("carries the confirmed rect on the persisted confirmation payload", () => {
+    const store = new RemnantConfirmationStore();
+    const rect = { x: 20, y: 24, width: 20, height: 10 };
+    store.confirm("p", { candidateId: "rem-1", revisionKey: "rev-A" }, rect);
+    expect(store.allForPage("p")).toEqual([
+      { candidateId: "rem-1", revisionKey: "rev-A", rect },
+    ]);
+  });
+
+  it("re-seeds confirmed rects when a page is restored from persisted metadata", () => {
+    const store = new RemnantConfirmationStore();
+    const rect = { x: 20, y: 24, width: 20, height: 10 };
+    store.replacePage("p", [{ candidateId: "rem-1", revisionKey: "rev-A", rect }]);
+    expect(store.isRectConfirmed("p", rect)).toBe(true);
+    expect(isRectMatchingConfirmed(rect, store.getConfirmedRects("p"))).toBe(true);
+  });
+
+  it("keeps confirmed rects when a bubble-list edit invalidates the revision-bound list", () => {
+    const store = new RemnantConfirmationStore();
+    const rect = { x: 20, y: 24, width: 20, height: 10 };
+    store.confirm("p", { candidateId: "rem-1", revisionKey: "rev-A" }, rect);
+    store.invalidateRevisionsKeepingRects("p");
+    expect(store.allForPage("p")).toEqual([]);
+    expect(store.confirmationsForRevision("p", "rev-A")).toEqual([]);
+    expect(store.isRectConfirmed("p", rect)).toBe(true);
+    expect(isRectMatchingConfirmed(rect, store.getConfirmedRects("p"))).toBe(true);
+  });
+
+  it("unconfirming kills the rect and the revision-bound pair so a same-revision rebind cannot resurrect", () => {
+    const store = new RemnantConfirmationStore();
+    const rect = { x: 20, y: 24, width: 20, height: 10 };
+    store.confirm("p", { candidateId: "rem-1", revisionKey: "rev-A" }, rect);
+    store.unconfirmRect("p", rect, { candidateId: "rem-1", revisionKey: "rev-A" });
+    expect(store.isRectConfirmed("p", rect)).toBe(false);
+    expect(store.allForPage("p")).toEqual([]);
+    const inspection = {
+      status: "inspected",
+      revisionKey: "rev-A",
+      revisions: REVISIONS,
+      candidates: [{ id: "rem-1", rect, state: "suspected-remnant" }],
+      inspectedAreas: 1,
+    } as unknown as Parameters<typeof applyArtworkConfirmations>[0];
+    const applied = applyArtworkConfirmations(inspection, store.allForPage("p"));
+    expect(applied.candidates[0].state).not.toBe("human-confirmed-artwork");
   });
 });
 

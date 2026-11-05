@@ -394,7 +394,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
         for (const key of humanInspectionsRef.current.keys()) if (key.startsWith(`${pageUrl}:`)) humanInspectionsRef.current.delete(key);
       }
       if (sourceRevision) lastSourceRevisionRef.current.set(pageUrl, sourceRevision);
-      const inspection = await inspectCleanedPage({
+      let inspection = await inspectCleanedPage({
         result: inspectionResult,
         ...(original && (!evidence || evidence.sourceContext === result.sourceFingerprint) ? { sourceBlob: original } : {}),
         textEvidence: evidence?.textEvidence,
@@ -403,9 +403,11 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       });
       const confirmedRects = confirmationsRef.current.getConfirmedRects(pageUrl);
       if (confirmedRects.length > 0 && inspection.status === "inspected") {
-        inspection.candidates = inspection.candidates.map((cand) => {
+        let changed = false;
+        const candidates = inspection.candidates.map((cand) => {
           if (cand.state === "human-confirmed-artwork") return cand;
           if (isRectMatchingConfirmed(cand.rect, confirmedRects)) {
+            changed = true;
             const conf: BackgroundArtworkConfirmation = {
               candidateId: cand.id,
               revisionKey: inspection.revisionKey,
@@ -419,6 +421,9 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
           }
           return cand;
         });
+        // The inspection may be a shared cache entry: rebuild instead of
+        // baking approvals into it, or an unconfirm could not un-confirm it.
+        if (changed) inspection = { ...inspection, candidates };
       }
       // A newer result superseded this run; it schedules its own inspection.
       if (inspectionTokensRef.current.get(pageUrl) !== token || resultsRef.current.get(pageUrl) !== result ||
@@ -441,7 +446,8 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
   const setPageRemnantTextEvidence = useCallback((pageUrl: string, evidence?: PageRemnantTextEvidence) => {
     const previous = textEvidenceRef.current.get(pageUrl);
     if (textEvidenceIdentity(previous?.textEvidence, previous?.sourceContext) === textEvidenceIdentity(evidence?.textEvidence, evidence?.sourceContext)) return;
-    confirmationsRef.current.invalidatePage(pageUrl);
+    // A bubble-list edit says nothing about whether artwork was approved at a location.
+    confirmationsRef.current.invalidateRevisionsKeepingRects(pageUrl);
     if (evidence) textEvidenceRef.current.set(pageUrl, { sourceContext: evidence.sourceContext, textEvidence: evidence.textEvidence.map(e => ({ id: e.id, box: [...e.box] })) });
     else textEvidenceRef.current.delete(pageUrl);
     if (explicitlyApprovedRemnantPagesRef.current.has(pageUrl) && remnantReviewsRef.current.has(pageUrl)) {
@@ -522,7 +528,8 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
 
   const unconfirmArtworkCandidate = useCallback(
     (pageUrl: string, candidate: RemnantCandidate): void => {
-      confirmationsRef.current.unconfirmRect(pageUrl, candidate.rect);
+      // Kill the id-bound pair too, or the next same-revision inspection re-marks it confirmed.
+      confirmationsRef.current.unconfirmRect(pageUrl, candidate.rect, candidate.artworkConfirmation);
       const review = getCurrentRemnantReview(pageUrl);
       if (!review || review.inspection.status !== "inspected") return;
       const updatedInspection: BackgroundInspectionResult = {

@@ -187,7 +187,8 @@ test("known source evidence outside a cleaned region invalidates approval synchr
   const changed = { ...evidence, textEvidence: [{ id: "outside-new", box: [300, 250, 600, 700] }] };
   act(() => { result.current.setPageRemnantTextEvidence("blob:one", changed); });
   await act(async () => { await vi.advanceTimersByTimeAsync(0); for (let i = 0; i < 40; i++) await Promise.resolve(); });
-  expect(result.current.getCurrentRemnantReview("blob:one", changed)?.eligibility).toBe("unresolved");
+  // A bubble-list edit re-inspects but keeps the spot-level approval alive.
+  expect(result.current.getCurrentRemnantReview("blob:one", changed)?.eligibility).toBe("human-confirmed");
   expect(result.current.getCurrentRemnantReview("blob:one", changed)?.inspection.revisionKey).not.toBe(review.inspection.revisionKey);
   const decoder = vi.mocked(createImageBitmap).getMockImplementation()!;
   let release!: () => void;
@@ -480,6 +481,87 @@ test("artwork confirmation binds to the exact candidate and revision, and a recl
   const recleaned = result.current.remnantReviews.get("blob:one");
   expect(recleaned?.eligibility).toBe("unresolved");
   expect(recleaned?.inspection.candidates.filter((c) => c.state !== "human-confirmed-artwork")).toHaveLength(1);
+});
+
+test("persisted artwork confirmations carry the confirmed rect", async () => {
+  vi.mocked(createCleaningJob).mockResolvedValue(queuedJob);
+  vi.mocked(getCleaningJob).mockResolvedValue(succeededJob);
+  vi.mocked(getCleaningResult).mockResolvedValue(cleaningResult);
+  const { result } = renderHook(() => useCleaning({ pages: ["blob:one"], currentPage: 0 }));
+  let cleaning!: Promise<PageCleaningResult>;
+  act(() => { cleaning = result.current.cleanPage("blob:one", SOURCE_BLOB); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); await cleaning; });
+  const candidateId = result.current.remnantReviews.get("blob:one")!.inspection.candidates[0].id;
+  await act(async () => { expect(result.current.confirmArtworkCandidate("blob:one", candidateId)).toBe(true); });
+  await act(async () => { for (let i = 0; i < 6; i += 1) await Promise.resolve(); });
+  const saved = vi.mocked(saveCleaningResultMetadata).mock.calls
+    .map(([record]) => record.artworkConfirmations?.find((c) => c.candidateId === candidateId))
+    .find(Boolean);
+  expect(saved).toMatchObject({ candidateId, rect: { x: 20, y: 24, width: 20, height: 10 } });
+});
+
+test("restoring re-seeds the rect store so a post-reload inspection keeps the spot approved", async () => {
+  vi.mocked(loadCleaningResultsMetadata).mockResolvedValue(new Map([
+    ["blob:one", storedMetadata({
+      // A stale revisionKey binds nothing; only the persisted rect can re-approve.
+      artworkConfirmations: [{ candidateId: "legacy-cand", revisionKey: "stale-rev", rect: { x: 20, y: 24, width: 20, height: 10 } }],
+    })],
+  ]));
+  vi.mocked(loadCleaningResultAssets).mockResolvedValue({
+    cleanBlob: UNCLEANED_CLEAN_BLOB,
+    maskBlob,
+    reviewMaskBlob: null,
+    protectedMaskBlob: null,
+  });
+  vi.mocked(getCleaningResult).mockRejectedValue(
+    new CleaningClientError(503, "Python cleaner backend is offline", "retry"),
+  );
+  const { result } = renderHook(() => useCleaning({ pages: ["blob:one"], currentPage: 0 }));
+  await act(async () => { for (let i = 0; i < 24; i += 1) await Promise.resolve(); });
+  const review = result.current.remnantReviews.get("blob:one");
+  expect(review?.inspection.candidates[0]?.state).toBe("human-confirmed-artwork");
+  expect(review?.eligibility).toBe("human-confirmed");
+});
+
+test("a bubble-list edit re-inspects but keeps the confirmed spot approved", async () => {
+  vi.mocked(createCleaningJob).mockResolvedValue(queuedJob);
+  vi.mocked(getCleaningJob).mockResolvedValue(succeededJob);
+  vi.mocked(getCleaningResult).mockResolvedValue(cleaningResult);
+  const { result } = renderHook(() => useCleaning({ pages: ["blob:one"], currentPage: 0 }));
+  let cleaning!: Promise<PageCleaningResult>;
+  act(() => { cleaning = result.current.cleanPage("blob:one", SOURCE_BLOB); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); await cleaning; });
+  const before = result.current.remnantReviews.get("blob:one")!;
+  const candidateId = before.inspection.candidates[0].id;
+  await act(async () => { expect(result.current.confirmArtworkCandidate("blob:one", candidateId)).toBe(true); });
+  expect(result.current.remnantReviews.get("blob:one")?.eligibility).toBe("human-confirmed");
+  const evidence = { sourceContext: `${SOURCE_BLOB.size}:image/png`, textEvidence: [{ id: "outside", box: [300, 250, 600, 700] }] };
+  act(() => { result.current.setPageRemnantTextEvidence("blob:one", evidence); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); for (let i = 0; i < 40; i++) await Promise.resolve(); });
+  const after = result.current.getCurrentRemnantReview("blob:one", evidence)!;
+  expect(after.inspection.revisionKey).not.toBe(before.inspection.revisionKey);
+  expect(after.inspection.candidates[0].state).toBe("human-confirmed-artwork");
+  expect(after.eligibility).toBe("human-confirmed");
+});
+
+test("unconfirming a candidate survives a same-revision recheck without resurrection", async () => {
+  vi.mocked(createCleaningJob).mockResolvedValue(queuedJob);
+  vi.mocked(getCleaningJob).mockResolvedValue(succeededJob);
+  vi.mocked(getCleaningResult).mockResolvedValue(cleaningResult);
+  const { result } = renderHook(() => useCleaning({ pages: ["blob:one"], currentPage: 0 }));
+  let cleaning!: Promise<PageCleaningResult>;
+  act(() => { cleaning = result.current.cleanPage("blob:one", SOURCE_BLOB); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); await cleaning; });
+  const candidate = result.current.remnantReviews.get("blob:one")!.inspection.candidates[0];
+  await act(async () => { expect(result.current.confirmArtworkCandidate("blob:one", candidate.id)).toBe(true); });
+  expect(result.current.remnantReviews.get("blob:one")?.eligibility).toBe("human-confirmed");
+  // The panel hands over the confirmed candidate as the review currently publishes it.
+  const confirmed = result.current.remnantReviews.get("blob:one")!.inspection.candidates[0];
+  act(() => { result.current.unconfirmArtworkCandidate("blob:one", confirmed); });
+  expect(result.current.remnantReviews.get("blob:one")?.inspection.candidates[0].state).not.toBe("human-confirmed-artwork");
+  await act(async () => { await result.current.recheckPageRemnants("blob:one"); });
+  const rechecked = result.current.remnantReviews.get("blob:one")!;
+  expect(rechecked.inspection.candidates[0].state).not.toBe("human-confirmed-artwork");
 });
 
 test("opening saved work inspects locally without provider calls and restores persisted confirmations", async () => {
