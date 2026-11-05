@@ -46,7 +46,6 @@ function Start-SuperKOcrProcess {
     New-Item -Path $logDirectory -ItemType Directory -Force | Out-Null
     $uvicornExe = Get-SuperKUvicornPath -ProjectRoot $ProjectRoot
     $env:SUPERK_ENABLE_ADAPTIVE_ROI_V2 = '1'
-    $env:SUPERK_RESIDUAL_SWEEP = '1'
     $runStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     Start-Process -FilePath $uvicornExe -ArgumentList @('app.api:app', '--host', '127.0.0.1', '--port', '8765') -WorkingDirectory (Join-Path $ProjectRoot 'ocr-service') -WindowStyle Hidden -PassThru -RedirectStandardOutput (Get-SuperKRunLog -LogDirectory $logDirectory -BaseName 'ocr' -RunStamp $runStamp) -RedirectStandardError (Get-SuperKRunLog -LogDirectory $logDirectory -BaseName 'ocr-error' -RunStamp $runStamp)
 }
@@ -58,7 +57,6 @@ function Start-SuperKWebProcess {
     $nodeExe = Get-SuperKNodePath
     $serverPath = Get-SuperKServerJsPath -ProjectRoot $ProjectRoot
     $env:SUPERK_ENABLE_ADAPTIVE_ROI_V2 = '1'
-    $env:SUPERK_RESIDUAL_SWEEP = '1'
     $env:PORT = '3000'
     $env:HOSTNAME = '127.0.0.1'
     $env:SUPERK_PROJECT_ROOT = $ProjectRoot
