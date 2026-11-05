@@ -976,7 +976,7 @@ export function WorkspaceCanvasHost({
           {/* PageViewer in full flex container */}
           <div className="flex-1 min-h-0 w-full h-full relative flex justify-center items-center overflow-hidden">
             {onOpenFindReplace && onOpenShortcuts && !isFocusMode && (
-              <div className="fixed left-3 top-1/2 -translate-y-1/2 z-30 hidden xl:flex flex-col gap-2">
+              <div className="fixed left-3 top-1/2 -translate-y-1/2 z-30 hidden lg:flex flex-col gap-2">
                 <StudioToolbar
                   activeTool={activeStudioTool}
                   onSelectTool={setActiveStudioTool}
