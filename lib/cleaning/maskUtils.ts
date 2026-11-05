@@ -92,6 +92,7 @@ export function extractGlyphInk(
   w: number,
   h: number,
   rgba?: Uint8ClampedArray | Uint8Array,
+  options?: { keepAllComponents?: boolean },
 ): GlyphInkExtraction {
   const ink = new Uint8Array(w * h);
   const total = w * h;
@@ -175,7 +176,7 @@ export function extractGlyphInk(
           bh >= ELONGATION_RATIO * bw)) ||
       (bw >= CROSS_SPAN_SHARE * w && bh <= RULE_LINE_THICKNESS_SHARE * h) ||
       (bh >= CROSS_SPAN_SHARE * h && bw <= RULE_LINE_THICKNESS_SHARE * w);
-    if (isArtwork) {
+    if (isArtwork && !options?.keepAllComponents) {
       dropped++;
       for (const p of comp) work[p] = 0;
     }
@@ -442,7 +443,13 @@ export async function createInkMaskBlob(
       const idx = i * 4;
       luma[i] = 0.299 * sPixels[idx] + 0.587 * sPixels[idx + 1] + 0.114 * sPixels[idx + 2];
     }
-    const { ink } = extractGlyphInk(luma, rw, rh, sPixels);
+    let { ink } = extractGlyphInk(luma, rw, rh, sPixels);
+    if (!ink.some((v) => v === 1)) {
+      // The remnant clean is an explicit user decision on an inspected spot,
+      // so the extractor's artwork rule must not veto it: a thin stroke the
+      // inspection flagged still has to be cleanable on demand.
+      ink = extractGlyphInk(luma, rw, rh, sPixels, { keepAllComponents: true }).ink;
+    }
 
     // Dilate ink by `dilation` pixels to cover anti-aliased character edges
     const maskData = ctx.createImageData(cWidth, cHeight);

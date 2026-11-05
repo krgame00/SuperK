@@ -457,6 +457,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     onToggleFocusMode: toggleFocusMode,
     onExitFocusMode: exitFocusMode,
     onToggleFocusToolbar: toggleFocusToolbar,
+    onEditMask: () => openMaskEditor(),
   });
 
   const headerProps: WorkspaceHeaderHostProps = {
@@ -708,7 +709,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
         cvs.width,
         cvs.height,
       );
-      const cropBase64 = cvs.toDataURL("image/jpeg", 0.92).split(",")[1] || "";
+      const cropBase64 = cvs.toDataURL("image/jpeg", 0.95).split(",")[1] || "";
       cvs.width = 0;
       cvs.height = 0;
       if (cropBase64 && typeof translateCrop === "function") {
@@ -839,7 +840,11 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
 
       const { width, height } = currentCleaningResult;
       const maskBlob = await createRegionMaskBlob(width, height, targetRegion.rect);
-      await handleRetryRegion(targetRegion.id, maskBlob, "auto", "protect");
+      const outcome = await handleRetryRegion(targetRegion.id, maskBlob, "auto", "protect");
+      if (!outcome) {
+        void import("react-hot-toast").then((m) => m.default.error("กู้คืนจุดนี้ไม่สำเร็จ กรุณาลองอีกครั้ง"));
+        return;
+      }
       confirmArtworkCandidate(pageUrl, candidate.id, candidate.rect);
       void import("react-hot-toast").then((m) => m.default.success("กู้คืนภาพเดิมเรียบร้อย"));
     },
@@ -867,7 +872,11 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
       if (targetRegion.textConfirmed !== true) {
         await handleRetryRegion(targetRegion.id, maskBlob, "auto", "confirm-text");
       }
-      await handleRetryRegion(targetRegion.id, maskBlob, "auto", "force-clean");
+      const outcome = await handleRetryRegion(targetRegion.id, maskBlob, "auto", "force-clean");
+      if (!outcome) {
+        void import("react-hot-toast").then((m) => m.default.error("คลีนจุดนี้ไม่สำเร็จ กรุณาลองอีกครั้ง"));
+        return;
+      }
       void import("react-hot-toast").then((m) => m.default.success("คลีนจุดนี้เรียบร้อย"));
     },
     [currentPageUrl, currentCleaningResult, handleRetryRegion, unconfirmArtworkCandidate],

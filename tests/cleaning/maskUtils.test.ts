@@ -201,6 +201,16 @@ describe("extractGlyphInk", () => {
     expect(result.ink.every((v) => v === 0)).toBe(true);
   });
 
+  it("keeps the ultra-sparse stroke when the caller opts into all components", () => {
+    const size = 40;
+    const rows = Array.from({ length: size }, (_, y) =>
+      Array.from({ length: size }, (_, x) => (x === y ? "#" : ".")).join(""),
+    );
+    const result = extractGlyphInk(lumaFrom(rows), size, size, undefined, { keepAllComponents: true });
+    expect(result.droppedComponents).toBe(0);
+    expect(result.ink.filter((v) => v === 1).length).toBe(size);
+  });
+
   it("drops a huge dark mass such as a hair block", () => {
     const rows = [
       "........................",
