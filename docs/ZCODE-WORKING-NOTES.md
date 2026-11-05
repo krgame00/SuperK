@@ -6,6 +6,16 @@
 
 ---
 
+## ปิด residual sweep ใน production ถาวร — ตัวกระดาน "จางครั้งที่สอง" — 2026-11-06
+
+- **อาการต่อ:** หลัง glyph-shape filter (7a5c78b) ผู้ใช้ยังเจอรอยที่มุมกล้องมือถือ + เส้นนิ้ว (ยังโดน 178 px) — component ที่เหลือคือก้อนทึบเล็ก/เส้นโค้งสั้นที่หน้าตาเหมือน glyph จนเกณฑ์รูปร่างแยกไม่ได้
+- **ตัดสินใจ:** ตรรกะ "ของเข้มไม่เปลี่ยนแถว ๆ ข้อความ = ข้อความที่พลาด" แยกจากงานศิลป์ manga ไม่เด็ดขาดโดยธรรมชาติ (เส้น → กล้อง → จะมีรอบถัดไป) ขณะที่ recovery แบบ crop + review flow รับชีวิตข้อความพลาดแล้ว → **ปิด sweep ใน production** (`b6af571`: ลบ env จาก service-start.ps1 + run.ps1; โค้ด + เทสต์คงอยู่ เปิดใหม่ได้ผ่าน SUPERK_RESIDUAL_SWEEP=1)
+- **บทเรียนการ deploy env:** แก้ service-start.ps1 แล้ว uvicorn เก่ายังจับ flag เดิมสองชั้น — (1) watchdog dot-source ฟังก์ชันไว้ในหน่วยความจำตั้งแต่ตอน spawn (ต้อง restart watchdog ด้วย) (2) launcher ข้าม start ocr เมื่อ port มีเจ้าของ (ต้อง kill uvicorn เอง) — ตรวจสอบเสมอด้วย sweep_runs ใน timings ของ job ใหม่ ไม่ใช่สมมุติว่าโค้ดใหม่ทำงาน
+- **พิสูจน์ปลายทาง:** re-clean หน้าเดิม — sweep_runs 0, **unmasked faded px = 0** (จาก 20,105), กล้องมือถือ/เส้นเพดาน/screentone ครบ ภาพเทียบ: scratch/fading-sweep-off.png
+- **ผลข้างเคียงที่ยอมรับ:** ข้อความที่ CTD mask head พลาดภายใน region (ที่เคยอาศัย sweep) จะไม่ถูกกวาดอัตโนมัติอีก — ทางลัดคือ re-clean/force-clean จุดนั้นผ่าน review flow หรือ mask editor
+
+---
+
 ## "คลีนแล้วส่วนอื่นจางลง" — residual sweep กวาดเส้นโครงสร้าง แก้แล้ว — 2026-11-05
 
 - **อาการ:** คลีนแล้วเส้น/โทนในบริเวณอื่น (นอก mask) จางลง — วัดจาก job จริง (d2ab5801, region-4): pixel เปลี่ยนนอก mask 23,447 px, กระจุกในวง region+24px (18,056 px = 9.25% ของวง), **unmasked dark→lighter 20,105 px** = เส้นเพดาน/ขอบ/screentone ถูก inpaint
