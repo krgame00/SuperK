@@ -843,7 +843,7 @@ class _ZeroBatchProbe:
         return {item.id: 0.0 for item, _mask in items}
 
 
-def _sweep_pipeline(full: CountingFullCleaner) -> CleaningPipeline:
+def _sweep_pipeline(full: CountingFullCleaner, size: int = 32) -> CleaningPipeline:
     return CleaningPipeline(
         detector=SweepDetector(),
         refiner=_prob_refiner,
@@ -852,7 +852,7 @@ def _sweep_pipeline(full: CountingFullCleaner) -> CleaningPipeline:
         } | {"lama-large": full},
         page_classifier=_comic_page,
         protection_detector=lambda *_args: ProtectionResult(
-            np.zeros((32, 32), np.uint8), np.zeros((32, 32), np.uint8), [],
+            np.zeros((size, size), np.uint8), np.zeros((size, size), np.uint8), [],
         ),
         eligibility_classifier=lambda *_args: _clean_decision(),
         residual_probe=_ZeroBatchProbe(),
@@ -893,6 +893,26 @@ def test_residual_sweep_disabled_by_default(monkeypatch):
     leftover[20:27, 20:27] = source[20:27, 20:27, 0] == 30
     assert np.all(output.clean_image[leftover] == 30)  # untouched
     assert output.timings_ms["residual_sweep_runs"] == 0
+
+
+def test_residual_sweep_spares_structural_lines(monkeypatch):
+    monkeypatch.setenv("SUPERK_RESIDUAL_SWEEP", "1")
+    source = np.full((64, 64, 3), 245, np.uint8)
+    source[10:13, 10:13] = [200, 10, 40]  # region-A text (cleaned by main pass)
+    source[20:27, 20:27] = 30  # leftover dark text the source pass never detected
+    # a structural ceiling line crossing the sweep zone beside the region
+    source[40:42, 4:60] = 25
+    full = CountingFullCleaner(240)
+    pipeline = _sweep_pipeline(full, size=64)
+
+    output = pipeline.run(source, cleaning_mode="all-text")
+
+    assert full.calls == 2  # main full-page pass + one residual sweep
+    assert np.all(output.clean_image[40:42, 4:60] == 25)  # line spared
+    leftover = np.zeros((64, 64), bool)
+    leftover[20:27, 20:27] = source[20:27, 20:27, 0] == 30
+    assert np.all(output.clean_image[leftover] == 240)  # text still swept
+    assert output.timings_ms["residual_sweep_runs"] == 1
 
 
 class TwoRegionDetector:

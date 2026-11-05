@@ -789,8 +789,19 @@ class CleaningPipeline:
                 )
                 residual_mask = np.zeros_like(sweep_candidate)
                 for comp_idx in range(1, sweep_count):
-                    if sweep_stats[comp_idx, cv2.CC_STAT_AREA] >= 40:
-                        residual_mask[sweep_labels == comp_idx] = 255
+                    area = sweep_stats[comp_idx, cv2.CC_STAT_AREA]
+                    if area < 40:
+                        continue
+                    bw = sweep_stats[comp_idx, cv2.CC_STAT_WIDTH]
+                    bh = sweep_stats[comp_idx, cv2.CC_STAT_HEIGHT]
+                    aspect = max(bw, bh) / max(1, min(bw, bh))
+                    fill = area / (bw * bh)
+                    # Structural artwork (panel and ceiling lines, halftone
+                    # clumps) shares this zone with leftover text; sweeping it
+                    # fades unmasked background. Only glyph-like ink sweeps.
+                    if aspect >= 8 or fill < 0.25:
+                        continue
+                    residual_mask[sweep_labels == comp_idx] = 255
                 LOGGER.warning(
                     "Residual sweep: candidate=%d kept=%d",
                     int(np.count_nonzero(sweep_candidate)),
