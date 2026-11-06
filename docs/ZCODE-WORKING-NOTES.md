@@ -6,6 +6,16 @@
 
 ---
 
+## AI Mask assist ยกระดับ: content re-derivation (ทาง A) — 2026-11-06
+
+- **โจทย์ (ผู้ใช้เลือกทาง A):** Local Smart AI เดิม polish เฉพาะวง 8px รอบ mask เดิม — mask ฟ่องจึงฟ่องเดิม (+3,588 px ป้องกันปลายนิ้ว แต่มือ/พื้นหลังยังถูกลบ)
+- **แก้ (`160d92e`):** โมดูลใหม่ `lib/cleaning/maskRederive.ts` — `rederiveRegionMaskFromContent` ตั้ง mask ใหม่จากเนื้อหา: **enclosed light region** (บับเบิล/กล่องขาวปิดสนิท) + **dark strokes ในนั้น** + **chroma strokes** (ตัวอักษรมีสี) = text zones; แสงที่แตะขอบ crop = outside paper (unknown — mask เดิมคงอยู่); dark ink ติดกระดาษ (มือ/เส้นขอบ) inherit จากเพื่อนบ้าน 1 รอบ = unmask; MaskEditor รัน re-derive **ก่อน** local audit แล้วโชว์ diff เทียบ mask ของผู้ใช้เอง
+- **พิสูจน์:** fixture 3/3 (bubble+lettering คงอยู่, hand-outline unmask, โซน unknown ไม่แตะ — บทเรียน: jsdom ImageData.data ไม่ surface indexed writes → ต้อง build typed array แล้ว wrap ตอนท้าย; และ mutation ผ่าน wrapper ไม่ค้าง) + พิสูจน์บน region-4 จริง (crop 181×245): suggestion เหลือเฉพาะตัวหนังสือทั้งสองก้อน, removed 13,882 px, มือ/เส้นเพดาน/กล้องครบ — ภาพ: scratch/rederive-region4.png
+- **การใช้งาน:** ปุ่ม "AI ตรวจ/แก้นีน Mask" เดิมตอนนี้จะ re-derive ก่อน polish (Local Smart AI ยัง polish บน mask ใหม่ที่ถูกต้องแล้ว); ผู้ใช้ปรับ Dilation ขยาย stroke ให้เต็มบับเบิลได้จากสไลเดอร์เดิม; Gemini assist ยังอยู่ครบ
+- **เกรดติด:** บับเบิลถูกขอบ crop ตัด = โซน unknown (mask เดิมคงอยู่) — ระวังตอน region rect ตัดกลางบับเบล; ถ้าอยากได้ interior ทั้งบับเบิล ใช้ Dilation slider ขยาย
+
+---
+
 ## ปิด respawn hole ทั้ง 4 หลุมที่เหลือ — 2026-11-06
 
 - **หลุม + แก้ (`01ab43f`, ทั้งหมด red→green):** (1) confirmedRects ไม่ persist → เก็บ rect บน confirmation pair เดียว (`{candidateId, revisionKey, rect}`) + `replacePage` re-seed spatial store ตอน restore — reload+reclean ไม่ respawn อีก (2) แก้ bubble list wipe ทั้ง store → `invalidateRevisionsKeepingRects` (การแก้ bubble ไม่เกี่ยวกับการอนุมัติงานศิลป์ตำแหน่ง) (3) unconfirm ทิ้ง id-bound pair ให้ recheck ชุดเดิมชุบชีวิต → `unconfirmRect` รับ confirmation แล้วลบทั้งคู่ (4) กดยืนยันระหว่าง inspect in-flight เงียบ → toast "กำลังตรวจสอบพื้นหลังอยู่..."
