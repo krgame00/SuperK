@@ -19,12 +19,14 @@ import {
 import {
   analyzeRegionMaskLocally,
   applyGeminiMaskReviewToSuggestion,
+  buildMaskDiffOverlay,
   buildRegionComparisonStripBase64,
   extractImageRegionCrop,
   type AiMaskAuditResult,
   type AiMaskViewMode,
   type GeminiMaskReviewPayload,
 } from "@/lib/cleaning/aiMaskInspector";
+import { rederiveRegionMaskFromContent } from "@/lib/cleaning/maskRederive";
 import { applyBrush, dilateMask, type BrushMode, type MaskPoint } from "@/lib/cleaning/maskEdits";
 import { inpaintCrop } from "@/lib/cleaning/client";
 import { BrushStrokeTracker } from "@/lib/inpaint/DirtyRectInpainter";
@@ -1318,13 +1320,23 @@ export function MaskEditor({
     ]);
     const originalCrop = extractImageRegionCrop(origImg, selectedRegion.rect);
     const cleanedCrop = extractImageRegionCrop(cleanImg, selectedRegion.rect);
+    // Re-derive from content first: the local audit only polishes around the
+    // base mask, so a fat base must be questioned before polishing.
+    const content = originalCrop
+      ? rederiveRegionMaskFromContent({ crop: originalCrop, baseMask: current })
+      : null;
     const audit = analyzeRegionMaskLocally({
       regionId: selectedRegion.id,
       rect: selectedRegion.rect,
-      baseMask: current,
+      baseMask: content ? content.mask : current,
       originalCrop,
       cleanedCrop,
     });
+    if (content) {
+      const diff = buildMaskDiffOverlay(current, content.mask, selectedRegion.rect);
+      audit.diffMask = diff.diffMask;
+      audit.stats = diff.stats;
+    }
     setAiAudit(audit);
     setAiViewMode("diff");
     paintCanvasOverlayOnly(audit.diffMask);
