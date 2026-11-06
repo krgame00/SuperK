@@ -7,6 +7,9 @@ export interface MaskPoint {
   y: number;
 }
 
+/** Same translucency as the system mask overlay (loadMaskImage uses 150). */
+const PAINT_ALPHA = 150;
+
 export interface PaintBrushSettings {
   shape?: BrushShape;
   source?: BrushSource;
@@ -39,7 +42,9 @@ export function applyBrushWithSettings(
   const data = new Uint8ClampedArray(mask.data);
   const activeRadius = Math.max(1, Math.round(settings.size / 2));
   const isCircle = (settings.shape ?? "circle") === "circle";
-  const alpha = settings.mode === "paint" ? 255 : 0;
+  // Painted strokes render at the same translucency as the system mask
+  // overlay, so the page content underneath a fresh stroke stays visible.
+  const alpha = settings.mode === "paint" ? PAINT_ALPHA : 0;
   const feather = Math.max(0, settings.feather ?? 0);
 
   for (const point of points) {
@@ -68,7 +73,7 @@ export function applyBrushWithSettings(
           const innerRadius = Math.max(0, activeRadius - feather);
           if (dist > innerRadius) {
             const ratio = 1 - (dist - innerRadius) / Math.max(1, feather);
-            appliedAlpha = Math.round(255 * Math.max(0, Math.min(1, ratio)));
+            appliedAlpha = Math.round(PAINT_ALPHA * Math.max(0, Math.min(1, ratio)));
           }
         }
 
