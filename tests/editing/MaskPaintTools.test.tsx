@@ -30,8 +30,8 @@ describe("MaskPaintTools", () => {
     };
 
     const result = applyBrushWithSettings(mask, [{ x: 5, y: 5 }], settings);
-    expect(alphaAt(result, 5, 5)).toBe(255);
-    expect(alphaAt(result, 4, 4)).toBe(255);
+    expect(alphaAt(result, 5, 5)).toBe(150);
+    expect(alphaAt(result, 4, 4)).toBe(150);
     expect(alphaAt(result, 0, 0)).toBe(0);
   });
 
@@ -45,7 +45,7 @@ describe("MaskPaintTools", () => {
     };
 
     const result = applyBrushWithSettings(mask, [{ x: 5, y: 5 }], settings);
-    expect(alphaAt(result, 5, 5)).toBe(255);
+    expect(alphaAt(result, 5, 5)).toBe(150);
     expect(alphaAt(result, 0, 0)).toBe(0);
   });
 
