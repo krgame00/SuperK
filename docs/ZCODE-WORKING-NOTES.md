@@ -6,6 +6,15 @@
 
 ---
 
+## โครงร่างค้าง: auto-triage "งานศิลป์ทึบ" ใน remnant review — ชน fixture language — 2026-11-06
+
+- **โจทย์:** จุดรีวิวที่เป็นงานศิลป์ชัด ๆ (ก้อนทึบ, เส้นคู่โครงสร้าง, streaks, รูปหัวใจ — ภาพ #7-#10 จากผู้ใช้) ยังถูกโยนเข้าลิสต์ "จุดสงสัย" ให้รีวิวมือ
+- **ดีไซน์ที่ลองแล้ว (revert แล้ว — อย่าเริ่มใหม่แบบเดิม):** ใน `backgroundRemnantInspection.ts` เพิ่มผู้เล่น component ของ surviving ink (largest component fill/share) แล้ว triage `fill ≥ 0.6 + share ≥ 0.3 + area ≥ 64` → state human-confirmed-artwork/detail `solid-artwork` — ผล: **เทสต์เดิม 5 ตัวแตก** เพราะ fixture ของชุดทดสอบสร้าง "ข้อความ" เป็น**สี่เหลี่ยมทึบล้วน** (fill 1.0) → เกณฑ์ก้อนทึบจับ fixture "ข้อความ" ของชุดทดสอบเอง
+- **แนวทางที่ถูก (session ถัดไป):** (1) อัปเดต fixture 5 จุดให้ text-like จริง (punch holes/counters ให้ fill ~0.3-0.5 ตาม glyph จริง) — แก้ 5 เทสต์: cache-bind, untouched-text, preserved-unresolved, evidence-invalidate (+1) (2) แล้วค่อยใส่ triage เฉพาะสาย preserved/unchanged (ห้ามแตะสาย full/partial-glyph ของ removal region — ของจริงที่คลีนไม่ออกต้องรีวิวเสมอ) (3) persist ผ่าน loop ใน inspectPageRemnants (โครงเดิมที่ revert ไว้: confirm ด้วย rect เมื่อ detail === "solid-artwork")
+- **ระหว่างนี้:** ปุ่ม "ยืนยันเป็นลายภาพ" STICKS แล้วหลัง fix respawn (165b0d8/01ab43f) — กดครั้งเดียวต่อจุด ไม่กลับมา
+
+---
+
 ## AI Mask assist ยกระดับ: content re-derivation (ทาง A) — 2026-11-06
 
 - **โจทย์ (ผู้ใช้เลือกทาง A):** Local Smart AI เดิม polish เฉพาะวง 8px รอบ mask เดิม — mask ฟ่องจึงฟ่องเดิม (+3,588 px ป้องกันปลายนิ้ว แต่มือ/พื้นหลังยังถูกลบ)
