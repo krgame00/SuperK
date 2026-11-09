@@ -5,7 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 9 พ.ย. 22:41 · `f7ef473c` · "แชตผมหายอะ" · ✅ · ↳ "ช่วยไปตรวจงานที่ผมล่าสุดหน่อย คุณเห็นไหม ผมจะให้ไปตรวจและทดสอบว่าใช้งานได้ตามที่ต้องการไหม"
+- 10 พ.ย. 00:33 · `f7ef473c` · "แชตผมหายอะ" · ✅ · ↳ "แล้วเรามีวิธีแก้ระบบไปจับพวกนี้ได้ไหม พอมีวิธีแก้ให้หายขาดไหม"
 - 7 พ.ย. 00:15 · `d62433fd` · "เปิด Fast Startup แก้ Windows Defender สแกน 4.8GB ทุกครั้ง" · ✅ · ↳ "ok"
 - 4 พ.ย. 01:39 · `f7c2c32c` · "แก้ระบบแปลจับข้อความไม่หมด (pstack-poteto-mode)" · ✅ · ↳ "com push"
 - 31 ต.ค. 00:22 · `dd65c0e3` · "GLM-5.3-Flash Empty Response Error" · ✅ · ↳ "เป็นไงบ้าง"
@@ -22,6 +22,44 @@
 บันทึกประวัติการทำงานของ ZCode ทุก session เรียงจาก **ใหม่ไปเก่า** (ไฟล์นี้แยกจาก `docs/AI-WORKING-NOTES.md` ซึ่งห้ามแตะตามกฎเดิม — ไฟล์นี้คือฉบับของ ZCode)
 
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
+
+---
+
+## แก้ระบบ mask เสนอลบ SFX/โน้ตดนตรี (ภาพ #1 #4 #10 ของผู้ใช้) — 2026-11-10
+
+### Status: แก้แล้ว CI เขียว (f46d50e + ece4dda, run 42664955088) — รอพิสูจน์หน้าจริงจากผู้ใช้
+
+- **อาการ:** MaskEditor เสนอ mask แดงทับโน้ตดนตรีในบับเบิล (#1) และตัว SFX บนพื้นหลัง/สกรีนโทน (#4 #10) — ต่อเนื่องกับงานค้าง solid-artwork ใน notes
+- **Root cause (สืบสายด้วย Explore agent):** 1) `text_eligibility.py` ตรวจ SFX **หลัง** สาย caption (rectangular/uniform backing) ทำให้ SFX บนการ์ดสี่เหลี่ยม/แผงสกรีนโทนถูกจัด NARRATION → CLEAN 2) mask head เก็บหมึกทึบใน region DIALOGUE ทั้งหมด รวมสัญลักษณ์ (โน้ต) — ไม่มีชั้นแยกศิลป์ทึบเลย (textRole "sfx" มีใน types แต่ไม่มีใครใช้; sfxPolicy.ts อ่านเฉพาะสายแปล)
+- **Fix 1 — จัดลำดับ SFX (f46d50e):** เช็ค SFX ก่อนสาย caption เมื่อ `rectangular_backing < SFX_RECTANGLE_CEILING (0.85)`; การ์ดแน่น ≥ 0.85 ยังชนะเป็น NARRATION ตามเดิม (ทดสอบ enclosed_backing คุมไว้) label SFX คงเกณฑ์เดิม (≥0.90 + enclosure <0.5) เพราะ textRole "sfx" ถูกใช้กันข้อความออกจาก scope การแปล — ติดป้ายรวดเร็วเกินจะเสียการแปลของข้อความจริงบนเสื้อผ้า (ทริปนี้เจอจากทบทวนข้ามระบบ ย้อนการเปลี่ยน label ของตัวเองใน ece4dda)
+- **Fix 2 — แยกสัญลักษณ์ทึบ (f46d50e):** โมดูลใหม่ `ocr-service/app/solid_symbols.py` peel ก้อนทึบ (area ≥120, ฝั่งสั้น ≥12px, fill ≥0.72, รูว่าง ≤2%, และ **ไม่เกินครึ่งของหมึกทั้ง region**) ออกจาก mask ของ region CLEAN ไปไว้ใน protected — ไม่ถูก inpaint ทุกโหมด รวม all-text; pixel จาก rescue (`rescued_mask` เพิ่มใน RefinedMask) ถูกยกเว้นเสมอ กันท่อ rescue โดน peel กิน
+- **หลักฐาน:** เทสต์ใหม่ 8 ตัว (solid_symbols) + 3 ตัว (eligibility) ทำแดงก่อนแก้; suite เต็ม ocr-service 275 passed + ruff สะอาด; CI ทั้งสอง job เขียว
+- **ข้อจำกัดตรง ๆ:** ยังไม่ได้พิสูจน์บนหน้าจริงของผู้ใช้ (เข้าถึงภาพเล่มจริงไม่ได้) — โน้ตที่ใหญ่เกินครึ่งของหมึก region จะยังหลุด (หายเป็น "ไม่จับ" ไม่ใช่ "จับเกิน") ให้ผู้ใช้ทดสอบรอบคลีนจริงแล้วรายงานกลับ; งานค้าง client-side solid-artwork triage (แก้ fixture 5 จุดก่อน) ยังรอตามแผนเดิมในไฟล์นี้
+
+---
+
+## Fix CI แดง: เบนช์มาร์กวัดเวลาไม่นิ่งบน runner (CI ตายมาตั้งแต่ 6 พ.ย.) — 2026-11-09
+
+### Status: แก้แล้ว CI เขียว (run 42655914303 ผ่านทั้งสอง job)
+
+- **อาการ (ผู้ใช้แจ้งภาพ):** CI / Frontend (tsc + eslint + vitest) Failing — `gh run view --log-failed` เจอจุดเดียว: `tests/unit/workspacePerformanceAndRepair.test.ts:104` assert `optimizedMs < legacyMs / 10` วัดเวลาจริงบน runner ปลอดภัย → ครั้งนี้ได้ 9.2× (289ms vs 2672ms) พังขอบ อีก 2,154 เทสต์ + tsc + eslint ผ่านหมด
+- **Root cause:** assertion วัด wall-clock ratio บนเครื่องแชร์ เจตนาของเทสต์ ("ตัด JSON.stringify 42MB ทิ้ง") พิสูจน์ด้วยขนาด payload อยู่แล้ว (42MB → 8KB) เส้นเวลาจึงเป็นเกตที่แกว่งไม่เพิ่มความมั่นใจ
+- **Fix (commit `5556264`):** ตัด assertion เวลา ใส่ spy นับ `JSON.stringify` payload-scale (>10k chars) ระหว่างรอบ optimized ต้องได้ 0 ครั้ง — deterministic ทุกเครื่อง เวลาเก็บไว้เป็น log เพื่อคนอ่านเท่านั้น; เทสต์เบนช์มาร์กตัวอื่นในไฟล์ (exportImageBlob) ตรวจ correctness อย่างเดียวอยู่แล้วไม่มีเกตเวลา
+- **หลักฐาน:** เทสต์ไฟล์นี้ผ่านซ้ำ 3 รอบ tsc/eslint 0 error push แล้ว CI run 42655914303 เขียว (Frontend 4m58s, Backend 54s) — เป็นการยืนยันบน surface จริง (CI) โดยตรง
+- **หมายเหตุรอแก้ (ไม่ด่วน):** annotation เตือน actions/checkout@v4 กับ setup-python@v5 ถูกบังคับรันบน Node 24 เพราะ Node 20 deprecated — อัปเกรด action เวอร์ชันใหม่วันหลัง
+
+---
+
+## ตรวจงาน commit 1f556e5 (split view + compact handles + mask audit + pronoun matrix) — 2026-11-09
+
+### Status: ตรวจแล้ว ผ่าน 3 ใน 4 ช่องทาง runtime + เทสต์คงที่ครบ
+
+- **ที่มา:** ผู้ใช้ขอตรวจ+ทดสอบงานล่าสุด → commit `1f556e5` (22:46) รวมงานค่ำนี้ทั้งหมด (และห่อ fix ปุ่มลูกศร `lg:left-20` ของ session นี้ไปด้วย)
+- **คงที่:** vitest 7 ชุด 202/202 ผ่าน (usePageZoom 266 บรรทัดเทสต์ใหม่, translationOverlay, aiMaskInspector, MaskEditorAllButtons, pageViewer, PageZoomToolbar, WorkspacePage) + `tsc --noEmit` 0 error
+- **Runtime A — split-view fit ต่อ pane (ผ่าน):** วัดจริง viewport 1150 ภาพ 365×548 ใน pane 558×548 (fit จำกัดด้วยความสูงพอดี) กลับ single view รีฟิต 376×564 ป้ายซูมตามจริง 46%↔47%
+- **Runtime B — compact handle outset (ผ่าน):** บับเบิล 47×36 เลือกแล้ว 4 handle อยู่นอกกล่องทั้งหมด (หมุนซ้าย 11px/บน 35px, ขยายขวา 9px/บน 35px, ย้ายใต้ 14px) Scale↔Width ห่างแนวตั้ง 78px ไม่ทับตัวหนังสือ — ภาพหลักฐานบันทึกใน artifacts
+- **Runtime C — ปุ่ม AI ตรวจ/เทียบ Mask:** ตรวจได้ระดับ component (ชุด MaskEditorAllButtons เรนเดอร์ MaskEditor จริง ผ่านครบ) ลองปลอมผลคลีนลง IDB เพื่อกดปุ่มจริงแต่แอปทิ้งข้อมูลเพราะ sourceHash ไม่ตรง fingerprint จริงของภาพ จึงยืนยันบน UI จริงไม่ได้ในรอบนี้
+- **หมายเหตุ:** handle ที่วัดได้ 18px (element ที่มี title) ต่างจากบันทึกใน AI-WORKING-NOTES ที่อ้าง 30px — น่าจะวัดคนละชั้น (icon กับปุ่มครอบ) ไม่ใช่ฟังก์ชันพัง; :3000 เป็น build 21:41 ยังไม่มี split-view centering ต้อง rebuild ผ่าน launcher อีกรอบ
 
 ---
 
