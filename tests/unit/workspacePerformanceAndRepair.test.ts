@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   compactOverlayPageKey,
   readPageOverlayAdjustments,
@@ -80,6 +80,7 @@ describe("Workspace Performance, Base64 Collision Prevention & Export Decode Ben
     const legacyMs = performance.now() - legacyStart;
 
     // 2. Optimized approach: lightweight evidence key without page.url Base64 serialization
+    const stringifySpy = vi.spyOn(JSON, "stringify");
     const optimizedStart = performance.now();
     let optimizedPayloadChars = 0;
     for (let r = 0; r < iterations; r++) {
@@ -93,15 +94,23 @@ describe("Workspace Performance, Base64 Collision Prevention & Export Decode Ben
       expect(key.length).toBeGreaterThan(100);
     }
     const optimizedMs = performance.now() - optimizedStart;
+    // The deterministic proof of the fix: the optimized key never serializes the
+    // Base64 payload, no matter how fast or slow the machine under test is.
+    const payloadScaleStringifyCalls = stringifySpy.mock.calls.filter(
+      (args) => typeof args[0] === "string" && args[0].length > 10_000,
+    ).length;
+    stringifySpy.mockRestore();
 
     console.info(
       `[Benchmark remnantEvidenceKey (10 renders x 21 pages @ 2MB Base64)] Legacy: ${legacyMs.toFixed(2)}ms (payload ${(legacyPayloadChars / (1024 * 1024)).toFixed(2)} MB/render) vs Optimized: ${optimizedMs.toFixed(3)}ms (payload ${(optimizedPayloadChars / 1024).toFixed(2)} KB/render) -> Speedup: ${(legacyMs / Math.max(optimizedMs, 0.001)).toFixed(1)}x, Memory reduction: ${(legacyPayloadChars / optimizedPayloadChars).toFixed(0)}x`,
     );
 
-    // Payload size must drop from >40 MB to <10 KB, and execution must be dramatically faster
+    // Payload size must drop from >40 MB to <10 KB, and the optimized key must
+    // never JSON.stringify the Base64 payload. The wall-clock ratio is logged
+    // for humans but not asserted — CI runner timing is too noisy for a gate.
     expect(legacyPayloadChars).toBeGreaterThan(40_000_000);
     expect(optimizedPayloadChars).toBeLessThan(10_000);
-    expect(optimizedMs).toBeLessThan(legacyMs / 10);
+    expect(payloadScaleStringifyCalls).toBe(0);
   });
 
   it("compacts all data: URLs (including <=512 char data URLs) without prefix collision across 21 pages", () => {
