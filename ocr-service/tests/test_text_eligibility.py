@@ -178,6 +178,41 @@ def test_irregular_free_text_can_be_sfx_preserved() -> None:
     assert ProtectionReason.SFX_POLICY in decision.protection_reasons
 
 
+def test_stylized_sfx_over_rectangular_backing_is_preserved() -> None:
+    # SFX lettering drawn over a screentone panel or a hand-drawn frame: the
+    # backing reads rectangular, but the strokes are clearly stylized. Erasing
+    # artwork is irreversible, so strong SFX evidence must outrank the backing
+    # shape instead of falling through to the narration caption branch.
+    decision = _classify(
+        _features(
+            rectangular=0.80,
+            uniformity=0.70,
+            artwork_edges=0.60,
+            irregularity=0.72,
+        ),
+    )
+
+    assert decision.text_role is TextRole.SFX
+    assert decision.action is AutomaticAction.PRESERVE
+    assert ProtectionReason.SFX_POLICY in decision.protection_reasons
+
+
+def test_stylized_sfx_over_uniform_backing_is_preserved() -> None:
+    # Same rule for SFX drawn directly on flat sky or screentone: the uniform
+    # backing alone must not promote the region to narration (which cleans).
+    decision = _classify(
+        _features(
+            uniformity=0.80,
+            artwork_edges=0.55,
+            irregularity=0.65,
+        ),
+    )
+
+    assert decision.text_role is TextRole.SFX
+    assert decision.action is AutomaticAction.PRESERVE
+    assert ProtectionReason.SFX_POLICY in decision.protection_reasons
+
+
 def test_margin_review_text_is_attempted_on_comic_page() -> None:
     decision = _classify(
         _features(enclosure=1),
@@ -314,19 +349,19 @@ def test_narration_threshold_only_changes_semantic_role(
     [
         (
             0.899,
-            TextRole.REVIEW,
-            AutomaticAction.PRESERVE,
-            [ProtectionReason.LOW_CONFIDENCE],
-        ),
-        (
-            0.900,
             TextRole.SFX,
             AutomaticAction.PRESERVE,
             [ProtectionReason.SFX_POLICY],
         ),
+        (
+            0.30,
+            TextRole.REVIEW,
+            AutomaticAction.PRESERVE,
+            [ProtectionReason.LOW_CONFIDENCE],
+        ),
     ],
 )
-def test_sfx_threshold_controls_preservation(
+def test_sfx_stylization_controls_role_and_preservation(
     score: float,
     expected_role: TextRole,
     expected_action: AutomaticAction,

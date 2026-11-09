@@ -35,6 +35,7 @@ from app.schemas import (
     RegionStatus,
     TextRole,
 )
+from app.solid_symbols import peel_solid_symbols
 from app.text_eligibility import EligibilityDecision, classify_eligibility
 from app.verifier import ResidualProbe, verify_damage, verify_region
 
@@ -161,13 +162,18 @@ class CleaningPipeline:
             page,
             refined.regions,
         )
-        eligible, review, decisions = self._build_eligibility(
+        eligible, review, decisions, solid_symbols = self._build_eligibility(
             image_rgb,
             refined,
             page,
             protection,
             cleaning_mode,
         )
+        if np.any(solid_symbols):
+            protection = replace(
+                protection,
+                protected_mask=np.maximum(protection.protected_mask, solid_symbols),
+            )
         if cleaning_mode is CleaningMode.ALL_TEXT:
             # Automatic protection is advisory for detected text in this mode.
             # Keep protection over other artwork and use only glyph-mask pixels.
@@ -373,10 +379,11 @@ class CleaningPipeline:
         page: PageContext,
         protection: ProtectionResult,
         cleaning_mode: CleaningMode = CleaningMode.SAFE,
-    ) -> tuple[BinaryMask, BinaryMask, dict[str, EligibilityDecision]]:
+    ) -> tuple[BinaryMask, BinaryMask, dict[str, EligibilityDecision], BinaryMask]:
         eligible = np.zeros_like(refined.mask)
         review = protection.review_mask.copy()
         decisions: dict[str, EligibilityDecision] = {}
+        solid_symbols = np.zeros_like(refined.mask)
         for region in refined.regions:
             region_mask = _region_mask(refined.mask, region)
             decision = self.eligibility_classifier(
@@ -398,13 +405,25 @@ class CleaningPipeline:
                 })
             decisions[region.id] = decision
             if decision.action is AutomaticAction.CLEAN:
+                rescued_keep = (
+                    _region_mask(refined.rescued_mask, region)
+                    if refined.rescued_mask is not None
+                    else None
+                )
+                text_mask, symbols_mask = peel_solid_symbols(region_mask, keep_mask=rescued_keep)
+                if np.any(symbols_mask):
+                    # Hand-drawn symbols (music notes, hearts) inside a dialogue
+                    # region are artwork: divert them to protection so they are
+                    # never inpainted, regardless of the cleaning mode.
+                    solid_symbols = np.maximum(solid_symbols, symbols_mask)
+                    region_mask = text_mask
                 eligible = np.maximum(eligible, region_mask)
             elif decision.text_role is TextRole.REVIEW:
                 review = np.maximum(review, region_mask)
         if cleaning_mode is CleaningMode.SAFE:
             eligible[protection.protected_mask > 0] = 0
             eligible[review > 0] = 0
-        return eligible, review, decisions
+        return eligible, review, decisions, solid_symbols
 
     def _run_batched(
         self,

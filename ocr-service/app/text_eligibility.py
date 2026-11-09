@@ -23,6 +23,7 @@ UI_LABEL_MAX_AREA_FRACTION = 0.012
 UI_LABEL_MAX_HEIGHT_FRACTION = 0.08
 DIALOGUE_ENCLOSURE_THRESHOLD = 0.72
 STORY_BACKING_THRESHOLD = 0.55
+SFX_RECTANGLE_CEILING = 0.85
 SFX_FEATURE_THRESHOLD = 0.35
 BACKING_STD_NORMALIZER = 96.0
 
@@ -122,7 +123,14 @@ def classify_eligibility(
         + 0.45 * features.rectangular_backing,
     )
 
-    # 1. Bounded rectangular caption card
+    # 1. Stylized artwork lettering (sound effects, hand-drawn signs) that is
+    #    not sitting on a dominant caption card. Erasing artwork is irreversible
+    #    while erasing a missed caption is recoverable, so SFX evidence outranks
+    #    a weak rectangle; a strong card still wins the caption branch.
+    if has_sfx_features and features.rectangular_backing < SFX_RECTANGLE_CEILING:
+        return _sfx_decision(sfx_score, features)
+
+    # 2. Bounded rectangular caption card
     if features.rectangular_backing >= STORY_BACKING_THRESHOLD:
         return _threshold_decision(
             TextRole.NARRATION,
@@ -131,11 +139,11 @@ def classify_eligibility(
             features,
         )
 
-    # 2. Text embedded in artwork / clothing / sound effects without rectangular caption backing
+    # 3. Text embedded in artwork / clothing / sound effects without caption backing
     if has_sfx_features:
         return _sfx_decision(sfx_score, features)
 
-    # 3. Borderless caption on margin or clean uniform space
+    # 4. Borderless caption on margin or clean uniform space
     if features.backing_uniformity >= STORY_BACKING_THRESHOLD:
         return _threshold_decision(
             TextRole.NARRATION,
@@ -284,22 +292,15 @@ def _sfx_decision(
     confidence: float,
     features: EligibilityFeatures,
 ) -> EligibilityDecision:
-    if (
-        confidence >= SFX_THRESHOLD
-        and features.enclosure_score < 0.50
-    ):
-        return EligibilityDecision(
-            text_role=TextRole.SFX,
-            confidence=confidence,
-            action=AutomaticAction.PRESERVE,
-            protection_reasons=[ProtectionReason.SFX_POLICY],
-            features=features,
-        )
+    # Strong SFX features always preserve. The recorded confidence is the
+    # stylization score; labeling the region SFX (instead of REVIEW) keeps it
+    # out of the manual review queue so hand-drawn lettering stops resurfacing
+    # as a suspect point on every re-inspection.
     return EligibilityDecision(
-        text_role=TextRole.REVIEW,
+        text_role=TextRole.SFX,
         confidence=confidence,
         action=AutomaticAction.PRESERVE,
-        protection_reasons=[ProtectionReason.LOW_CONFIDENCE],
+        protection_reasons=[ProtectionReason.SFX_POLICY],
         features=features,
     )
 

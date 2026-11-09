@@ -37,6 +37,8 @@ class RefinedMask:
     regions: list[MaskRegion]
     protected_edges: BinaryMask
     envelope: BinaryMask | None = None
+    """Ink pixels added by the low-coverage rescue, excluded from symbol peeling."""
+    rescued_mask: BinaryMask | None = None
 
 
 def build_protected_edges(
@@ -350,7 +352,11 @@ def refine_mask(
             image_rgb=image_rgb,
             probability=detection.mask_probability,
         )
-        refined = replace(refined, mask=rescued)
+        refined = replace(
+            refined,
+            mask=rescued,
+            rescued_mask=((rescued > 0) & (refined.mask == 0)).astype(np.uint8) * 255,
+        )
         regions = []
         for region in refined.regions:
             r = region.rect
