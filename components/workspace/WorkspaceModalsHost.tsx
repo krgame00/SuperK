@@ -81,6 +81,14 @@ export interface WorkspaceModalsHostProps {
   onNsfwBypassModeChange: (enabled: boolean) => void;
   autoProceedOnReview: boolean;
   onAutoProceedOnReviewChange: (enabled: boolean) => void;
+  autoLearnGlossary?: boolean;
+  onAutoLearnGlossaryChange?: (enabled: boolean) => void;
+  pronounMatrix?: ComponentProps<typeof SettingsModal>["pronounMatrix"];
+  onPronounMatrixChange?: ComponentProps<typeof SettingsModal>["onPronounMatrixChange"];
+  autoFitBubbleContour?: boolean;
+  onAutoFitBubbleContourChange?: (enabled: boolean) => void;
+  parallelPages?: number;
+  onParallelPagesChange?: (count: number) => void;
 
   // 3. Find & Replace Dialog
   isFindReplaceOpen: boolean;
@@ -191,6 +199,14 @@ export function WorkspaceModalsHost(props: WorkspaceModalsHostProps): ReactNode 
     onNsfwBypassModeChange,
     autoProceedOnReview,
     onAutoProceedOnReviewChange,
+    autoLearnGlossary,
+    onAutoLearnGlossaryChange,
+    pronounMatrix,
+    onPronounMatrixChange,
+    autoFitBubbleContour,
+    onAutoFitBubbleContourChange,
+    parallelPages,
+    onParallelPagesChange,
 
     isFindReplaceOpen,
     onCloseFindReplace,
@@ -301,6 +317,14 @@ export function WorkspaceModalsHost(props: WorkspaceModalsHostProps): ReactNode 
         onNsfwBypassModeChange={onNsfwBypassModeChange}
         autoProceedOnReview={autoProceedOnReview}
         onAutoProceedOnReviewChange={onAutoProceedOnReviewChange}
+        autoLearnGlossary={autoLearnGlossary}
+        onAutoLearnGlossaryChange={onAutoLearnGlossaryChange}
+        pronounMatrix={pronounMatrix}
+        onPronounMatrixChange={onPronounMatrixChange}
+        autoFitBubbleContour={autoFitBubbleContour}
+        onAutoFitBubbleContourChange={onAutoFitBubbleContourChange}
+        parallelPages={parallelPages}
+        onParallelPagesChange={onParallelPagesChange}
         onOpenLogs={onOpenLogs}
       />
 

@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Eraser,
+  Loader2,
   Maximize2,
   Paintbrush,
   RotateCcw,
@@ -22,11 +23,13 @@ import {
   buildMaskDiffOverlay,
   buildRegionComparisonStripBase64,
   extractImageRegionCrop,
+  extractMaskRegionCrop,
+  spliceMaskRegionCrop,
   type AiMaskAuditResult,
   type AiMaskViewMode,
   type GeminiMaskReviewPayload,
 } from "@/lib/cleaning/aiMaskInspector";
-import { rederiveRegionMaskFromContent } from "@/lib/cleaning/maskRederive";
+import { rederiveRegionMaskFromContent, type MaskRederiveResult } from "@/lib/cleaning/maskRederive";
 import { applyBrush, dilateMask, type BrushMode, type MaskPoint } from "@/lib/cleaning/maskEdits";
 import { inpaintCrop } from "@/lib/cleaning/client";
 import { BrushStrokeTracker } from "@/lib/inpaint/DirtyRectInpainter";
@@ -320,6 +323,7 @@ export function MaskEditor({
   const [aiAudit, setAiAudit] = useState<AiMaskAuditResult | null>(null);
   const [aiViewMode, setAiViewMode] = useState<AiMaskViewMode>("diff");
   const [isRequestingGeminiMask, setIsRequestingGeminiMask] = useState(false);
+  const [isAuditingAi, setIsAuditingAi] = useState(false);
   const cachedSourceImgRef = useRef<HTMLImageElement | null>(null);
   const cachedCleanImgRef = useRef<HTMLImageElement | null>(null);
 
@@ -1313,34 +1317,58 @@ export function MaskEditor({
 
   const handleRunAiMaskAudit = async () => {
     const current = aiAudit ? aiAudit.baseMask : imageDataRef.current;
-    if (submittingRef.current || !current || !selectedRegion) return;
-    const [origImg, cleanImg] = await Promise.all([
-      resolveLoadedImage(sourceUrl, cachedSourceImgRef, comparison === "original" || !cleanUrl),
-      resolveLoadedImage(cleanUrl, cachedCleanImgRef, comparison === "cleaned"),
-    ]);
-    const originalCrop = extractImageRegionCrop(origImg, selectedRegion.rect);
-    const cleanedCrop = extractImageRegionCrop(cleanImg, selectedRegion.rect);
-    // Re-derive from content first: the local audit only polishes around the
-    // base mask, so a fat base must be questioned before polishing.
-    const content = originalCrop
-      ? rederiveRegionMaskFromContent({ crop: originalCrop, baseMask: current })
-      : null;
-    const audit = analyzeRegionMaskLocally({
-      regionId: selectedRegion.id,
-      rect: selectedRegion.rect,
-      baseMask: content ? content.mask : current,
-      originalCrop,
-      cleanedCrop,
-    });
-    if (content) {
-      const diff = buildMaskDiffOverlay(current, content.mask, selectedRegion.rect);
-      audit.diffMask = diff.diffMask;
-      audit.stats = diff.stats;
+    if (submittingRef.current || isAuditingAi || !current || !selectedRegion) {
+      if (!selectedRegion) {
+        setStatusMessage("กรุณาเลือกพื้นที่ข้อความ (Region) ที่ต้องการตรวจก่อน");
+      }
+      return;
     }
-    setAiAudit(audit);
-    setAiViewMode("diff");
-    paintCanvasOverlayOnly(audit.diffMask);
-    setStatusMessage(audit.summary);
+
+    setIsAuditingAi(true);
+    setStatusMessage("กำลังวิเคราะห์และตรวจเทียบ Mask ด้วย AI…");
+    try {
+      const [origImg, cleanImg] = await Promise.all([
+        resolveLoadedImage(sourceUrl, cachedSourceImgRef, comparison === "original" || !cleanUrl),
+        resolveLoadedImage(cleanUrl, cachedCleanImgRef, comparison === "cleaned"),
+      ]);
+      const originalCrop = extractImageRegionCrop(origImg, selectedRegion.rect);
+      const cleanedCrop = extractImageRegionCrop(cleanImg, selectedRegion.rect);
+      const baseMaskCrop = extractMaskRegionCrop(current, selectedRegion.rect);
+
+      let workingBase = current;
+      let contentRederived: MaskRederiveResult | null = null;
+      if (originalCrop && baseMaskCrop) {
+        contentRederived = rederiveRegionMaskFromContent({
+          crop: originalCrop,
+          baseMask: baseMaskCrop,
+        });
+        workingBase = spliceMaskRegionCrop(current, contentRederived.mask, selectedRegion.rect);
+      }
+
+      const audit = analyzeRegionMaskLocally({
+        regionId: selectedRegion.id,
+        rect: selectedRegion.rect,
+        baseMask: workingBase,
+        originalCrop,
+        cleanedCrop,
+      });
+
+      if (contentRederived) {
+        const diff = buildMaskDiffOverlay(current, audit.suggestedMask, selectedRegion.rect);
+        audit.diffMask = diff.diffMask;
+        audit.stats = diff.stats;
+      }
+
+      setAiAudit(audit);
+      setAiViewMode("diff");
+      paintCanvasOverlayOnly(audit.diffMask);
+      setStatusMessage(audit.summary);
+    } catch (err) {
+      console.error("[MaskEditor] AI mask audit failed:", err);
+      setStatusMessage("เกิดข้อผิดพลาดในการตรวจเทียบ AI Mask กรุณาลองใหม่อีกครั้ง");
+    } finally {
+      setIsAuditingAi(false);
+    }
   };
 
   const handleAskGeminiMaskReview = async () => {
@@ -1714,25 +1742,55 @@ export function MaskEditor({
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              disabled={isSubmitting || !selectedRegion || !canvasSize.width}
+              disabled={isSubmitting || isAuditingAi || !selectedRegion || !canvasSize.width}
               onClick={aiAudit ? handleCloseAiAudit : handleRunAiMaskAudit}
-              className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-semibold transition-colors ${
+              title={
+                !selectedRegion
+                  ? "กรุณาเลือกพื้นที่ข้อความ (Region) ก่อนกดตรวจ"
+                  : aiAudit
+                  ? "ปิดโหมดเปรียบเทียบ AI Mask"
+                  : "วิเคราะห์และตรวจเทียบ Mask อัตโนมัติด้วย AI"
+              }
+              aria-label={aiAudit ? "ปิดโหมดเปรียบเทียบ AI Mask" : "AI ตรวจ/เทียบ Mask"}
+              className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
                 aiAudit
                   ? "border-emerald-400/60 bg-emerald-500/20 text-emerald-200 hover:bg-emerald-500/30"
-                  : "border-cyan-400/50 bg-cyan-500/15 text-cyan-200 hover:bg-cyan-500/25"
-              } disabled:opacity-40`}
+                  : "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20"
+              } disabled:opacity-40 disabled:cursor-not-allowed`}
             >
-              <Sparkles className="h-3.5 w-3.5" />
-              <span>{aiAudit ? "กำลังเทียบ AI Mask" : "AI ตรวจ/เทียบ Mask"}</span>
+              {isAuditingAi ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" />
+              )}
+              <span>
+                {isAuditingAi
+                  ? "กำลังตรวจ AI Mask…"
+                  : aiAudit
+                  ? "กำลังเทียบ AI Mask"
+                  : "AI ตรวจ/เทียบ Mask"}
+              </span>
             </button>
 
             <button
               type="button"
-              disabled={isSubmitting || isRequestingGeminiMask || !selectedRegion || !canvasSize.width}
+              disabled={isSubmitting || isRequestingGeminiMask || isAuditingAi || !selectedRegion || !canvasSize.width}
               onClick={handleAskGeminiMaskReview}
-              className="flex items-center gap-1.5 rounded-md border border-purple-400/50 bg-purple-500/15 px-3 py-1.5 text-xs font-semibold text-purple-200 transition-colors hover:bg-purple-500/25 disabled:opacity-40"
+              title={
+                !selectedRegion
+                  ? "กรุณาเลือกพื้นที่ข้อความ (Region) ก่อนขอคำแนะนำจาก Gemini"
+                  : isRequestingGeminiMask
+                  ? "Gemini กำลังวิเคราะห์จุดนี้…"
+                  : "ส่งภาพจุดนี้ให้ Gemini Vision วิเคราะห์"
+              }
+              aria-label="ให้ Gemini วิเคราะห์จุดนี้"
+              className="flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/20 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <Sparkles className="h-3.5 w-3.5" />
+              {isRequestingGeminiMask ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" />
+              )}
               <span>{isRequestingGeminiMask ? "Gemini กำลังดู…" : "ให้ Gemini วิเคราะห์จุดนี้"}</span>
             </button>
           </div>
@@ -1774,7 +1832,7 @@ export function MaskEditor({
                       onClick={() => handleSelectAiViewMode(tab.id)}
                       className={`rounded px-2.5 py-1 text-[11px] font-medium transition-colors ${
                         aiViewMode === tab.id
-                          ? "bg-emerald-500 text-neutral-950 font-semibold"
+                          ? "bg-emerald-500 text-emerald-950 font-bold"
                           : "text-muted hover:text-foreground"
                       }`}
                     >
@@ -1798,7 +1856,7 @@ export function MaskEditor({
                     const committed = commitAiSuggestedMaskToCanvas();
                     if (committed) void handleOneClickClean(committed);
                   }}
-                  className="rounded-md bg-emerald-500 px-2.5 py-1 text-[11px] font-bold text-neutral-950 hover:brightness-110"
+                  className="rounded-md bg-emerald-500 px-2.5 py-1 text-[11px] font-bold text-emerald-950 hover:brightness-110"
                 >
                   ใช้ AI + คลีนจุดนี้เลย
                 </button>
@@ -1912,8 +1970,8 @@ export function MaskEditor({
                         }}
                         className={`absolute transition-all ${
                           isSelected
-                            ? "border-2 border-cyan-400 bg-cyan-400/10"
-                            : "border border-dashed border-white/35 bg-white/5 hover:border-cyan-300/80 hover:bg-cyan-300/10"
+                            ? "border-2 border-primary bg-primary/10 shadow-sm"
+                            : "border border-dashed border-white/30 bg-white/5 hover:border-primary/60 hover:bg-primary/5"
                         }`}
                       >
                         {/* Clickable Region Pill / Badge */}
@@ -1929,7 +1987,7 @@ export function MaskEditor({
                           title={`เลือกจุดที่ ${idx + 1}`}
                           className={`pointer-events-auto absolute -top-5 left-0 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold shadow-sm transition-transform active:scale-95 ${
                             isSelected
-                              ? "bg-cyan-400 text-neutral-950"
+                              ? "bg-primary text-primary-content font-bold shadow-sm"
                               : "bg-neutral-800/90 text-white/80 hover:bg-neutral-700"
                           }`}
                         >
@@ -2202,7 +2260,7 @@ export function MaskEditor({
                 type="button"
                 disabled={isSubmitting || !regionId || selectedRegion?.textConfirmed !== true}
                 onClick={() => submit("force-clean")}
-                className="h-7 rounded-md bg-primary/20 border border-primary/40 px-2.5 text-[11px] font-semibold text-primary-light transition-colors hover:bg-primary/30 disabled:opacity-40"
+                className="h-7 rounded-md bg-primary/20 border border-primary/40 px-2.5 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/30 disabled:opacity-40"
               >
                 อนุมัติ Mask และลบ
               </button>

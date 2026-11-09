@@ -250,10 +250,25 @@ class JobStore:
             return self._restore_job_from_disk(job_id)
 
     def _restore_job_from_disk(self, job_id: str) -> JobState | None:
-        job_dir = self.cache_dir / job_id
-        result_file = job_dir / "result.json"
-        if not result_file.is_file():
+        candidate_dirs = [self.cache_dir]
+        for fallback in (
+            Path("F:/manga-cache/ocr-jobs/jobs"),
+            Path(__file__).resolve().parent.parent / ".cache" / "jobs",
+            Path(__file__).resolve().parent.parent.parent / ".cache" / "jobs",
+        ):
+            if fallback.exists() and fallback not in candidate_dirs:
+                candidate_dirs.append(fallback)
+
+        job_dir = None
+        for candidate in candidate_dirs:
+            target = candidate / job_id
+            if (target / "result.json").is_file():
+                job_dir = target
+                break
+
+        if job_dir is None:
             return None
+        result_file = job_dir / "result.json"
         try:
             import json
             result_data = json.loads(result_file.read_text(encoding="utf-8"))

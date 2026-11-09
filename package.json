@@ -10,7 +10,8 @@
     "postinstall": "node scripts/copy-pdf-worker.mjs",
     "lint": "eslint",
     "test": "vitest run --root .",
-    "test:watch": "vitest --root ."
+    "test:watch": "vitest --root .",
+    "shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/create-desktop-shortcut.ps1"
   },
   "dependencies": {
     "@ducanh2912/next-pwa": "^10.2.9",

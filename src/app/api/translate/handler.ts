@@ -18,6 +18,10 @@ import {
   type FlexibleGlossaryEntry,
   buildGlossaryDirectives,
 } from "@/lib/translation/glossary";
+import {
+  type PronounRelation,
+  buildPronounMatrixDirectives,
+} from "@/lib/translation/pronounMatrix";
 import type { TranslationObservabilityMeta } from "@/lib/translation/requestError";
 import { FIXED_IMAGE_MODELS } from "@/lib/translation/imageModelChoices";
 import { getSyncedExtensionSettings } from "@/src/app/api/extension/settings/handler";
@@ -42,6 +46,7 @@ interface TranslationRequestPayload {
   context?: string;
   policy?: Partial<TranslationPolicy>;
   glossary?: FlexibleGlossaryEntry[];
+  pronounMatrix?: PronounRelation[];
 }
 
 interface GeminiResponseData {
@@ -65,6 +70,7 @@ export function buildTranslationPrompt({
   context,
   policy,
   glossary,
+  pronounMatrix,
 }: {
   targetLang?: string;
   sourceLang?: string;
@@ -72,6 +78,7 @@ export function buildTranslationPrompt({
   context?: string;
   policy?: Partial<TranslationPolicy>;
   glossary?: FlexibleGlossaryEntry[];
+  pronounMatrix?: PronounRelation[];
 }): string {
   const sourceHint =
     sourceLang && sourceLang !== "auto"
@@ -87,6 +94,7 @@ export function buildTranslationPrompt({
     : "";
 
   const glossaryDirective = buildGlossaryDirectives(glossary);
+  const pronounDirective = buildPronounMatrixDirectives(pronounMatrix);
   const policyRules = buildPolicyDirectives(policy);
   // Foreign-script leakage (Japanese kana/kanji carried over from the source
   // page, Cyrillic glitch runs) is a recurring Gemini failure mode for Thai
@@ -102,12 +110,15 @@ export function buildTranslationPrompt({
     : "";
 
   return (
-    `You are an expert manga translator. ${sourceHint}Translate this manga page to ${targetLanguageLabel}.${retryDirective}${contextDirective}${glossaryDirective}\n` +
+    `You are an expert manga translator. ${sourceHint}Translate this manga page to ${targetLanguageLabel}.${retryDirective}${contextDirective}${glossaryDirective}${pronounDirective}\n` +
     `- Capture original_text EXACTLY as visible in each text region, preserving the source wording. Do not rewrite, translate, or guess unreadable source text.\n` +
     `- Preserve the complete source meaning in 't'. Do not omit or add meaning, invent pronouns, names, relationships, actions, or events. Preserve uncertainty and implied subjects rather than guessing. Natural phrasing must never alter meaning.\n` +
     `- Use highly natural, conversational flow appropriate for comic books. Avoid rigid word-for-word translation.\n` +
     `- Arrange sentences beautifully according to native Thai idioms and phrasing (เรียบเรียงประโยคให้สละสลวยเหมือนคนไทยพูดกันในชีวิตจริง ไม่แปลตรงตัว).\n` +
     `- Do NOT merge visually separate text blocks, floating paragraphs, or distinct character profile/status sections into a single bubble. Output each distinct speech bubble, floating paragraph, or profile section (e.g., Title/Bio, Talent, Characteristics, Acquired Skills) as its own separate entry in "bubbles" with its exact bounding box [ymin, xmin, ymax, xmax] at its original position.\n` +
+    `- Capture ALL dialogue, monologue, and narration text inside speech bubbles, rectangular or trapezoidal boxes, narrative captions, slanted/tilted dialogue boxes, and thought containers (ทั้งบอลลูนกลม/รี, กล่องสี่เหลี่ยม, กล่องคำพูดทรงเฉียง, กล่องบรรยาย). Do NOT skip text simply because it is enclosed in an angled, sharp, or rectangular border.\n` +
+    `- Capture floating text outside bubbles (ข้อความลอยนอกกรอบ): muttered dialogue, background character chatter, floating asides, and narrative text printed directly over manga art without enclosing borders.\n` +
+    `- Capture small handwritten text beside panels or character faces (chibi text, scribbled side-reactions, mutterings, whispers, or small explanatory notes next to dialogue). Bounding each distinct note in its own box.\n` +
     `- Capture ALL visible character dialogue, speech, vocalizations, moans, gasps, and reactions (e.g. Ah~, Ha~, Ahn!, Mm~, Kya~, Ngh, Haa, Fuh...). Character vocalizations and moans count as dialogue/reactions — translate or transliterate them into natural Thai expressions (เช่น ฮ่า~, อ๊ะ~, อ๊าง!, อื้ม~, กรี๊ด~, ฮึ่ม) and do NOT skip them.\n` +
     `- For table of contents, member lists, and character profile cards, capture and translate each section title, member name, and page reference.\n` +
     `- For multiline speech bubbles or stuttered phrases (e.g., "N-\\n\\nNO, I JUST..."), the bounding box MUST enclose the ENTIRE bubble from top to bottom, including any starter letters at the top.\n` +
@@ -232,7 +243,8 @@ async function handleTranslationRequest(
     const validPolicy = fields.policy === undefined ||
       (fields.policy !== null && typeof fields.policy === "object" && !Array.isArray(fields.policy));
     if (!validStrings || !validBooleans || !validPolicy ||
-        (fields.glossary !== undefined && !Array.isArray(fields.glossary))) {
+        (fields.glossary !== undefined && !Array.isArray(fields.glossary)) ||
+        (fields.pronounMatrix !== undefined && !Array.isArray(fields.pronounMatrix))) {
       return NextResponse.json({ error: "Invalid translation payload", code: "INVALID_REQUEST" }, { status: 400 });
     }
     const {
@@ -247,6 +259,7 @@ async function handleTranslationRequest(
       context,
       policy,
       glossary,
+      pronounMatrix,
     } = body as TranslationRequestPayload;
 
     if (!imageBase64) {
@@ -297,6 +310,7 @@ async function handleTranslationRequest(
           context,
           policy,
           glossary: effectiveGlossary,
+          pronounMatrix,
           translateBaseUrl,
           translateApiKey,
           signal,
@@ -325,6 +339,7 @@ async function handleTranslationRequest(
       context,
       policy,
       glossary: effectiveGlossary,
+      pronounMatrix,
     });
 
     const payload = {
@@ -385,7 +400,8 @@ async function handleTranslationRequest(
       }
       const retryModels = [
         "gemini-3.8-flash",
-        ...FIXED_IMAGE_MODELS.filter((m) => m !== "gemini-3.8-flash"),
+        "gemini-3.5-flash-lite",
+        ...FIXED_IMAGE_MODELS.filter((m) => m !== "gemini-3.8-flash" && m !== "gemini-3.5-flash-lite"),
       ];
       const models = modelPreference && modelPreference !== "auto"
         ? [modelPreference]
@@ -412,7 +428,7 @@ async function handleTranslationRequest(
         signal,
         userApiKeyRaw: effectiveUserApiKey,
         serverApiKeyRaw: process.env.GEMINI_API_KEY,
-        modelPreference: modelPreference || (isRetry ? "gemini-3.8-flash" : "auto"),
+        modelPreference: modelPreference || (isRetry ? "gemini-3.5-flash-lite" : "auto"),
         allowPreview: allowPreview === true,
         payload,
         attemptTimeoutMs: 25_000,
@@ -585,6 +601,7 @@ async function handleOpenAICompatible({
   context,
   policy,
   glossary,
+  pronounMatrix,
   translateBaseUrl,
   translateApiKey,
   signal,
@@ -597,6 +614,7 @@ async function handleOpenAICompatible({
   context: string | undefined;
   policy?: Partial<TranslationPolicy>;
   glossary?: FlexibleGlossaryEntry[];
+  pronounMatrix?: PronounRelation[];
   translateBaseUrl: string;
   translateApiKey: string;
   signal?: AbortSignal;
@@ -608,6 +626,7 @@ async function handleOpenAICompatible({
     context,
     policy,
     glossary,
+    pronounMatrix,
   });
 
   // OpenAI-compatible payload with vision (image_url with data URI)

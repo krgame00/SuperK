@@ -2134,6 +2134,45 @@ test("separates overlapping handles on a tiny bubble and allows scaling or A+ en
   expect(bubble.fontSizeMultiplier!).toBeGreaterThan(multBeforeScale * 1.3);
 });
 
+test("outsets handles and separates scale/width on compact dialogue bubbles (55x70) to prevent text occlusion and overlap", async () => {
+  const dialogue = "...หา?\nเปลี่ยน\nโทรศัพท์ใหม่\nมาเหรอ?";
+  const { container, chromeRoot, wrapper } = await renderOverlayFresh(dialogue, {
+    layoutAdjustment: { bx: 300, by: 200, bw: 55, bh: 70, iw: 1000, ih: 1200 },
+    fontSizeMultiplier: 1,
+  });
+  mockCanvasRect(container, 1);
+  vi.spyOn(chromeRoot, "getBoundingClientRect").mockReturnValue({
+    left: 0, top: 0, right: 1000, bottom: 1200, width: 1000, height: 1200,
+  } as DOMRect);
+  vi.spyOn(wrapper, "getBoundingClientRect").mockReturnValue({
+    left: 300, top: 200, right: 355, bottom: 270, width: 55, height: 70,
+  } as DOMRect);
+
+  wrapper.focus();
+
+  const rotate = chromeRoot.querySelector<HTMLElement>(".action-handle--rotate")!;
+  const scale = chromeRoot.querySelector<HTMLElement>(".action-handle--scale")!;
+  const width = chromeRoot.querySelector<HTMLElement>(".action-handle--width")!;
+  const move = chromeRoot.querySelector<HTMLElement>(".action-handle--move")!;
+
+  // 1. All handles must have the refined 30px compact size
+  expect(rotate.style.width).toBe("30px");
+  expect(scale.style.width).toBe("30px");
+  expect(width.style.width).toBe("30px");
+  expect(move.style.width).toBe("30px");
+
+  // 2. Scale (ne) and Width (e) must not have identical transform base
+  expect(scale.style.transform).not.toBe(width.style.transform);
+  // Scale should be outset top-right (negative Y, positive X)
+  expect(scale.dataset.baseTranslate).toMatch(/calc\(-50% \+ \d+px\), calc\(-50% - \d+px\)/);
+  // Width should be outset bottom-right (positive Y, positive X) to prevent vertical collision
+  expect(width.dataset.baseTranslate).toMatch(/calc\(-50% \+ \d+px\), calc\(-50% \+ \d+px\)/);
+
+  // 3. Move handle at sw and rotate handle at nw must be outset left (negative X) to keep bubble text clear
+  expect(move.dataset.baseTranslate).toMatch(/calc\(-50% - \d+px\), calc\(-50% \+ \d+px\)/);
+  expect(rotate.dataset.baseTranslate).toMatch(/calc\(-50% - \d+px\), calc\(-50% - \d+px\)/);
+});
+
 test("width preview lays out the text once and draws with the computed live reflow", async () => {
   const text = "ทั้งที่ข้าอุตส่าห์แต่งตัวในแบบที่เจ้าชอบแท้ๆ";
   const { container, chromeRoot, bubble } = await renderOverlayFresh(text, {

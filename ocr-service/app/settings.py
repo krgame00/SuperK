@@ -12,7 +12,13 @@ class Settings(BaseSettings):
     )
 
     model_dir: Path = Path("models")
-    cache_dir: Path = Path(".cache")
+    cache_dir: Path = Field(
+        default_factory=lambda: (
+            Path("F:/manga-cache/ocr-jobs")
+            if Path("F:/manga-cache/ocr-jobs").exists()
+            else Path(".cache")
+        )
+    )
     max_workers: int = Field(default=1, ge=1)
     max_upload_mb: int = Field(default=80, gt=0)
     # Completed job asset dirs older than this are swept on startup/submit/periodic

@@ -78,7 +78,7 @@ describe("PageViewer navigation", () => {
     );
 
     const prevBtn = screen.getByTitle("Previous Page (Left Arrow)");
-    expect(prevBtn).toHaveClass("xl:left-20");
+    expect(prevBtn).toHaveClass("lg:left-20");
     fireEvent.click(prevBtn);
 
     expect(onPageChange).toHaveBeenCalledTimes(1);

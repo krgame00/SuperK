@@ -122,17 +122,17 @@ describe("Workspace Focus Mode Top Bar Toggle", () => {
     expect(toolbarContainer?.className).toContain("pointer-events-none");
 
     // Toggle button should be present with "แสดงแถบบน"
-    const toggleBtn = screen.getByRole("button", { name: "แสดงแถบเครื่องมือคลีน (B)" });
+    const toggleBtn = screen.getByRole("button", { name: "แสดงแถบเครื่องมือคลีน (Ctrl+B)" });
     expect(toggleBtn).toBeInTheDocument();
 
     // Click toggle button to reveal toolbar
     fireEvent.click(toggleBtn);
     expect(toolbarContainer?.className).toContain("translate-y-0");
     expect(toolbarContainer?.className).toContain("opacity-100");
-    expect(screen.getByRole("button", { name: "ซ่อนแถบเครื่องมือคลีน (B)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "ซ่อนแถบเครื่องมือคลีน (Ctrl+B)" })).toBeInTheDocument();
 
     // Press 'B' key to hide toolbar again
-    fireEvent.keyDown(window, { key: "B" });
+    fireEvent.keyDown(window, { key: "b", ctrlKey: true });
     expect(toolbarContainer?.className).toContain("-translate-y-24");
     expect(toolbarContainer?.className).toContain("opacity-0");
 

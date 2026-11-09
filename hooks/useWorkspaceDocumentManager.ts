@@ -238,6 +238,10 @@ export function useWorkspaceDocumentManager({
 
         for (let fileIdx = 0; fileIdx < sorted.length; fileIdx++) {
           const file = sorted[fileIdx];
+          const isFontFile = /\.(ttf|otf|woff2?)$/i.test(file.name);
+          const isProjectFile =
+            file.name.toLowerCase().endsWith(".superk") ||
+            file.name.toLowerCase().endsWith(".superk.json");
           const isArchive =
             file.type === "application/zip" ||
             file.type === "application/x-zip-compressed" ||
@@ -247,7 +251,63 @@ export function useWorkspaceDocumentManager({
             file.type === "application/pdf" ||
             file.name.toLowerCase().endsWith(".pdf");
 
-          if (isArchive) {
+          if (isFontFile) {
+            try {
+              setImportStatusMessage(`กำลังติดตั้งแบบอักษร: ${file.name}...`);
+              const { registerCustomFontFromFile } = await import(
+                "@/lib/customFonts"
+              );
+              const customFont = await registerCustomFontFromFile(file);
+              const toast = (await import("react-hot-toast")).default;
+              toast.success(
+                `🎨 ติดตั้งฟอนต์ "${customFont.familyName}" สำเร็จและพร้อมใช้งานทันที!`,
+              );
+              continue;
+            } catch (e) {
+              console.error("Failed to register custom font", e);
+              failureCount++;
+              const toast = (await import("react-hot-toast")).default;
+              toast.error(
+                e instanceof Error
+                  ? e.message
+                  : `ไม่สามารถติดตั้งฟอนต์: ${file.name}`,
+              );
+              continue;
+            }
+          }
+
+          if (isProjectFile) {
+            try {
+              setImportStatusMessage(`กำลังเปิดไฟล์โปรเจกต์: ${file.name}...`);
+              const { importPortableProjectBundle } = await import(
+                "@/lib/projectStore"
+              );
+              const raw = await file.text();
+              await importPortableProjectBundle(raw);
+              const restoreFn = sessionBridgeRef.current?.restoreSavedSession;
+              const restored = restoreFn ? await restoreFn() : null;
+              if (restored && restored.pages.length > 0) {
+                setPages(restored.pages);
+                setCurrentPage(restored.currentPage);
+                setSavedSessionData(null);
+                const toast = (await import("react-hot-toast")).default;
+                toast.success(
+                  `📂 เปิดโปรเจกต์สำเร็จ (${restored.pages.length} หน้า)!`,
+                );
+              }
+              return;
+            } catch (e) {
+              console.error("Failed to import project file", e);
+              failureCount++;
+              const toast = (await import("react-hot-toast")).default;
+              toast.error(
+                e instanceof Error
+                  ? e.message
+                  : `ไม่สามารถเปิดไฟล์โปรเจกต์: ${file.name}`,
+              );
+              continue;
+            }
+          } else if (isArchive) {
             try {
               setImportStatusMessage(`กำลังแตกไฟล์ ZIP/CBZ: ${file.name}...`);
               const zip = new JSZip();
@@ -569,15 +629,15 @@ export function useWorkspaceDocumentManager({
         return;
       }
       const blob = new Blob([JSON.stringify(bundle)], {
-        type: "application/json;charset=utf-8",
+        type: "application/octet-stream;charset=utf-8",
       });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${deriveProjectExportName(pagesRef.current, "SuperK_Project")}.superk.json`;
+      a.download = `${deriveProjectExportName(pagesRef.current, "SuperK_Project")}.superk`;
       a.click();
       URL.revokeObjectURL(url);
-      toast.success("💾 บันทึกไฟล์โปรเจกต์ (.superk.json) เรียบร้อยแล้ว!");
+      toast.success("💾 บันทึกไฟล์โปรเจกต์ (.superk) เรียบร้อยแล้ว!");
     } catch {
       toast.error("บันทึกไฟล์โปรเจกต์ไม่สำเร็จ");
     }
@@ -586,7 +646,7 @@ export function useWorkspaceDocumentManager({
   const handleImportProjectFile = useCallback(() => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".json,.superk,.superk.json,application/json";
+    input.accept = ".superk,.superk.json,.json,application/json,application/octet-stream";
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) return;
@@ -635,6 +695,7 @@ export function useWorkspaceDocumentManager({
     isDragging,
     isImporting,
     importStatusMessage,
+    processFiles,
     savedSessionData,
     setSavedSessionData,
     handleImageUpload,

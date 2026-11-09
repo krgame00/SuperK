@@ -58,10 +58,11 @@ describe("useWorkspaceShortcuts", () => {
       onToggleFocusMode: vi.fn(),
       onExitFocusMode: vi.fn(),
       onToggleFocusToolbar: vi.fn(),
+      onEditMask: vi.fn(),
     };
   });
 
-  it("handles Focus Mode shortcuts (F, B, Escape)", () => {
+  it("handles Focus Mode shortcuts (F, Ctrl+B, Escape) and Brush shortcut (bare B)", () => {
     const { rerender } = renderHook(
       (opts) => useWorkspaceShortcuts(opts),
       { initialProps: defaultOptions }
@@ -73,11 +74,17 @@ describe("useWorkspaceShortcuts", () => {
     });
     expect(defaultOptions.onToggleFocusMode).toHaveBeenCalledTimes(1);
 
-    // 'B' toggles toolbar
+    // 'Ctrl+B' toggles toolbar
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "b", ctrlKey: true }));
+    });
+    expect(defaultOptions.onToggleFocusToolbar).toHaveBeenCalledTimes(1);
+
+    // Bare 'B' opens Brush / Mask Editor
     act(() => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "b" }));
     });
-    expect(defaultOptions.onToggleFocusToolbar).toHaveBeenCalledTimes(1);
+    expect(defaultOptions.onEditMask).toHaveBeenCalledTimes(1);
 
     // 'Escape' exits focus mode when active
     rerender({ ...defaultOptions, isFocusMode: true });
@@ -242,5 +249,21 @@ describe("useWorkspaceShortcuts", () => {
 
     undoSpy.mockRestore();
     redoSpy.mockRestore();
+  });
+
+  it("handles backslash key to toggle Side-by-Side Split View", () => {
+    const onToggleSplitView = vi.fn();
+    renderHook(() =>
+      useWorkspaceShortcuts({
+        ...defaultOptions,
+        onToggleSplitView,
+      })
+    );
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "\\" }));
+    });
+
+    expect(onToggleSplitView).toHaveBeenCalledTimes(1);
   });
 });

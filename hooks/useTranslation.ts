@@ -43,12 +43,13 @@ import {
   applyNearbyStyleFallbacks,
   inferTextStyleCategory,
 } from "@/lib/colorMatching/nearbyStyleFallback";
-import { type GlossaryEntry } from "@/lib/translation/glossary";
+import { type GlossaryEntry, extractGlossaryCandidatesFromBubbles, mergeGlossaryEntries } from "@/lib/translation/glossary";
+import { type PronounRelation } from "@/lib/translation/pronounMatrix";
 import {
   classifyTranslationError,
   type DiagnosticDetail,
 } from "@/lib/translation/diagnostics";
-import { CleaningClientError } from "@/lib/cleaning/client";
+import { CleaningClientError, isCleaningClientError } from "@/lib/cleaning/client";
 import type { CleaningMode } from "@/lib/cleaning/types";
 import {
   buildFailureGroups,
@@ -537,24 +538,154 @@ export function useTranslation({
     return "";
   });
 
-  const [glossary, setGlossary] = useState<GlossaryEntry[]>(() => {
-    if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
-      try {
+    const [glossary, setGlossary] = useState<GlossaryEntry[]>(() => {
+    try {
+      if (typeof window !== "undefined") {
         const saved = localStorage.getItem("manga_glossary");
-        return saved ? JSON.parse(saved) : [];
-      } catch {
-        return [];
+        if (saved) return JSON.parse(saved);
       }
-    }
+    } catch {}
     return [];
   });
 
-  const updateGlossary = useCallback((newGlossary: GlossaryEntry[]) => {
-    setGlossary(newGlossary);
+  const glossaryRef = useRef<GlossaryEntry[]>(glossary);
+  useEffect(() => {
+    glossaryRef.current = glossary;
+  }, [glossary]);
+
+  const [autoLearnGlossary, setAutoLearnGlossary] = useState<boolean>(() => {
+    try {
+      if (typeof window !== "undefined") {
+        const saved = localStorage.getItem("superk:auto-learn-glossary");
+        if (saved !== null) return saved === "true";
+      }
+    } catch {}
+    return true;
+  });
+
+  const autoLearnGlossaryRef = useRef(autoLearnGlossary);
+  useEffect(() => {
+    autoLearnGlossaryRef.current = autoLearnGlossary;
+  }, [autoLearnGlossary]);
+
+  const updateAutoLearnGlossary = useCallback((enabled: boolean) => {
+    setAutoLearnGlossary(enabled);
     if (typeof window !== "undefined") {
-      localStorage.setItem("manga_glossary", JSON.stringify(newGlossary));
+      try {
+        localStorage.setItem("superk:auto-learn-glossary", String(enabled));
+      } catch {}
     }
   }, []);
+
+  const updateGlossary = useCallback((newGlossary: GlossaryEntry[]) => {
+    glossaryRef.current = newGlossary;
+    setGlossary(newGlossary);
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("manga_glossary", JSON.stringify(newGlossary));
+      } catch {}
+    }
+  }, []);
+
+  const [pronounMatrix, setPronounMatrix] = useState<PronounRelation[]>(() => {
+    try {
+      if (typeof window !== "undefined") {
+        const saved = localStorage.getItem("superk:pronoun-matrix");
+        if (saved) return JSON.parse(saved);
+      }
+    } catch {}
+    return [];
+  });
+
+  const pronounMatrixRef = useRef<PronounRelation[]>(pronounMatrix);
+  useEffect(() => {
+    pronounMatrixRef.current = pronounMatrix;
+  }, [pronounMatrix]);
+
+  const updatePronounMatrix = useCallback((newMatrix: PronounRelation[]) => {
+    pronounMatrixRef.current = newMatrix;
+    setPronounMatrix(newMatrix);
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("superk:pronoun-matrix", JSON.stringify(newMatrix));
+      } catch {}
+    }
+  }, []);
+
+  const [autoFitBubbleContour, setAutoFitBubbleContour] = useState<boolean>(() => {
+    try {
+      if (typeof window !== "undefined") {
+        const saved = localStorage.getItem("superk:auto-fit-contour");
+        if (saved !== null) return saved === "1" || saved === "true";
+      }
+    } catch {}
+    return true;
+  });
+
+  const autoFitBubbleContourRef = useRef<boolean>(autoFitBubbleContour);
+  useEffect(() => {
+    autoFitBubbleContourRef.current = autoFitBubbleContour;
+  }, [autoFitBubbleContour]);
+
+  const updateAutoFitBubbleContour = useCallback((enabled: boolean) => {
+    autoFitBubbleContourRef.current = enabled;
+    setAutoFitBubbleContour(enabled);
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("superk:auto-fit-contour", enabled ? "1" : "0");
+      } catch {}
+    }
+  }, []);
+
+  const [batchParallelPages, setBatchParallelPages] = useState<number>(() => {
+    try {
+      if (typeof window !== "undefined") {
+        const saved = localStorage.getItem("superk:parallel-pages");
+        if (saved) {
+          const parsed = parseInt(saved, 10);
+          if (parsed >= 1 && parsed <= 5) return parsed;
+        }
+      }
+    } catch {}
+    return parallelPages ?? 1;
+  });
+
+  const batchParallelPagesRef = useRef<number>(batchParallelPages);
+  useEffect(() => {
+    batchParallelPagesRef.current = batchParallelPages;
+  }, [batchParallelPages]);
+
+  const updateBatchParallelPages = useCallback((count: number) => {
+    const clamped = Math.max(1, Math.min(5, count));
+    batchParallelPagesRef.current = clamped;
+    setBatchParallelPages(clamped);
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("superk:parallel-pages", String(clamped));
+      } catch {}
+    }
+  }, []);
+
+  const autoLearnCandidates = useCallback((bubbles: TranslatedBubble[]) => {
+    if (!autoLearnGlossaryRef.current || !Array.isArray(bubbles) || bubbles.length === 0) return;
+    const candidates = extractGlossaryCandidatesFromBubbles(bubbles, glossaryRef.current);
+    if (candidates.length === 0) return;
+
+    const { merged, addedCount } = mergeGlossaryEntries(glossaryRef.current, candidates);
+    if (addedCount > 0) {
+      updateGlossary(merged);
+      if (typeof window !== "undefined") {
+        import("react-hot-toast").then(({ default: toast }) => {
+          const namesSummary = candidates.slice(0, 3).map((c) => `${c.source} ➔ ${c.target}`).join(", ");
+          const moreText = candidates.length > 3 ? ` และอีก ${candidates.length - 3} คำ` : "";
+          toast.success(`✨ จำชื่อตัวละครอัตโนมัติ: ${namesSummary}${moreText}`, {
+            id: "auto-learn-glossary",
+            duration: 4000,
+          });
+        }).catch(() => {});
+      }
+    }
+  }, [updateGlossary]);
 
   const activePageRef = useRef("");
   useEffect(() => {
@@ -1095,13 +1226,17 @@ export function useTranslation({
           sourceLang,
           modelPreference,
           apiKey: userApiKey,
-          allowPreview: allowPreviewModels,
-          glossary,
+          allowPreview: allowPreviewModels, isRetry: true, glossary: glossaryRef.current, pronounMatrix: pronounMatrixRef.current,
           policy: { sfx: sfxModeRef.current },
         }),
       });
       const data = await readTranslationResponse<{ text: string }>(res);
-      const parsed = normalizeTargetTranslationPayload(JSON.parse(data.text), targetLang);
+      const rawParsed = (data.text ? parseLLMJSON(data.text) : data) as
+        | ({ bubbles?: unknown[] } & Record<string, unknown>)
+        | null;
+      const parsed = rawParsed
+        ? normalizeTargetTranslationPayload(rawParsed as { bubbles?: TranslatedBubble[] }, targetLang)
+        : null;
       if (!parsed || !parsed.bubbles || parsed.bubbles.length === 0) {
         setTranslationResult("❌ ไม่พบข้อความในจุดที่เลือก");
         return;
@@ -1368,7 +1503,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           setTranslationResult("กำลังตรวจความหมายและสำนวนคำแปล…");
         }
         return reviewTranslatedBubbles(bubbles,{targetLang,apiKey:userApiKey,modelPreference,
-          allowPreview:allowPreviewModels,glossary,signal,
+          allowPreview:allowPreviewModels,glossary:glossaryRef.current,signal,
           sourceRevision:getPageSourceRevision(pageUrl),repairContamination:true});
       };
       const unresolvedScriptWarning = (bubbles: TranslatedBubble[]) => {
@@ -1411,9 +1546,9 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           const cropH = crop.height;
           let cropBase64 = "";
           try {
-            // JPEG 0.9 keeps the crop visually lossless for the retry prompt
-            // while cutting the upload payload ~70% vs PNG (slices use JPEG 0.8).
-            cropBase64 = crop.toDataURL("image/jpeg", 0.9).split(",")[1];
+            // JPEG 0.95 keeps the crop visually lossless for the retry prompt
+            // while cutting the upload payload ~60% vs PNG.
+            cropBase64 = crop.toDataURL("image/jpeg", 0.95).split(",")[1];
           } finally {
             crop.width = 0;
             crop.height = 0;
@@ -1424,7 +1559,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             // isRetry: the full-page pass already missed this region, so the
             // crop gets the high-precision retry prompt and model rotation.
             body:JSON.stringify({imageBase64:cropBase64,mimeType:"image/jpeg",
-              targetLang,sourceLang,modelPreference,apiKey:userApiKey,allowPreview:allowPreviewModels,glossary,isRetry:true,policy:{sfx:sfxModeRef.current}}),
+              targetLang,sourceLang,modelPreference,apiKey:userApiKey,allowPreview:allowPreviewModels,glossary:glossaryRef.current,pronounMatrix:pronounMatrixRef.current,isRetry:true,policy:{sfx:sfxModeRef.current}}),
           });
           const data = await readTranslationResponse<{text:string}>(response);
           const parsed = parseLLMJSON(data.text) as {bubbles?:TranslatedBubble[]} | null;
@@ -1462,8 +1597,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
               sourceLang,
               modelPreference,
               apiKey: userApiKey,
-              allowPreview: allowPreviewModels,
-              glossary,
+              allowPreview: allowPreviewModels, glossary: glossaryRef.current, pronounMatrix: pronounMatrixRef.current,
               policy: { sfx: sfxModeRef.current },
             }),
             signal,
@@ -1513,7 +1647,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
               throw new Error("Canvas 2D context is unavailable for NSFW slicing");
             }
             ctx.drawImage(imgEl, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
-            const sliceBase64 = canvas.toDataURL("image/jpeg", 0.8).split(",")[1];
+            const sliceBase64 = canvas.toDataURL("image/jpeg", 0.95).split(",")[1];
             canvas.width = 0;
             canvas.height = 0;
             slices.push({ row, col, sx, sy, sWidth, sHeight, base64: sliceBase64 });
@@ -1536,8 +1670,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
                 sourceLang,
                 modelPreference,
                 apiKey: userApiKey,
-                allowPreview: allowPreviewModels,
-                glossary,
+                allowPreview: allowPreviewModels, glossary: glossaryRef.current, pronounMatrix: pronounMatrixRef.current,
                 policy: { sfx: sfxModeRef.current },
               }),
               signal,
@@ -1687,6 +1820,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           jobTargetIdentity,
         );
         bubbleCacheRef.current.set(pageUrl, coloredBubbles);
+        autoLearnCandidates(coloredBubbles);
         pageTargetCacheRef.current.set(pageUrl, jobTargetIdentity);
         completedPagesRef.current.add(pageUrl);
         markPageDirty(pageUrl, false);
@@ -1731,8 +1865,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             sourceLang,
             modelPreference,
             apiKey: userApiKey,
-            allowPreview: allowPreviewModels,
-            glossary,
+            allowPreview: allowPreviewModels, glossary: glossaryRef.current, pronounMatrix: pronounMatrixRef.current,
             policy: { sfx: sfxModeRef.current },
           }),
           signal,
@@ -1797,7 +1930,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         }
         ctx.filter = "contrast(1.35) brightness(1.05)";
         ctx.drawImage(imgEl, 0, 0);
-        const enhancedBase64 = canvas.toDataURL("image/jpeg", 0.9).split(",")[1];
+        const enhancedBase64 = canvas.toDataURL("image/jpeg", 0.95).split(",")[1];
         canvas.width = 0;
         canvas.height = 0;
         if (!enhancedBase64) {
@@ -1817,9 +1950,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             sourceLang,
             modelPreference,
             apiKey: userApiKey,
-            allowPreview: allowPreviewModels,
-            isRetry: true,
-            glossary,
+            allowPreview: allowPreviewModels, isRetry: true, glossary: glossaryRef.current, pronounMatrix: pronounMatrixRef.current,
             policy: { sfx: sfxModeRef.current },
           }),
           signal,
@@ -1926,6 +2057,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       );
       discardOptimisticResidue = false;
       bubbleCacheRef.current.set(pageUrl, coloredBubbles);
+        autoLearnCandidates(coloredBubbles);
       pageTargetCacheRef.current.set(pageUrl, jobTargetIdentity);
       completedPagesRef.current.add(pageUrl);
       markPageDirty(pageUrl, false);
@@ -2166,23 +2298,39 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         pageIndex: number,
       ): Promise<PreparationOutcome> => {
         if (signal.aborted) return { ok: false, error: signal.reason };
-        return new Promise<PreparationOutcome>((resolve) => {
-          const finish = (outcome: PreparationOutcome) => {
-            signal.removeEventListener("abort", onAbort);
-            resolve(outcome);
-          };
-          const onAbort = () => finish({ ok: false, error: signal.reason });
-          signal.addEventListener("abort", onAbort, { once: true });
-          try {
-            clearVisibleTranslation(pages[pageIndex], pageIndex);
-            preparePageForTranslation(pages[pageIndex], pageIndex, signal).then(
-              (value) => finish({ ok: true, value }),
-              (error) => finish({ ok: false, error }),
-            );
-          } catch (error) {
-            finish({ ok: false, error });
+        let attempt = 0;
+        const maxAttempts = 3;
+        while (attempt < maxAttempts) {
+          attempt++;
+          if (signal.aborted) return { ok: false, error: signal.reason };
+          const outcome = await new Promise<PreparationOutcome>((resolve) => {
+            const finish = (res: PreparationOutcome) => {
+              signal.removeEventListener("abort", onAbort);
+              resolve(res);
+            };
+            const onAbort = () => finish({ ok: false, error: signal.reason });
+            signal.addEventListener("abort", onAbort, { once: true });
+            try {
+              clearVisibleTranslation(pages[pageIndex], pageIndex);
+              preparePageForTranslation(pages[pageIndex], pageIndex, signal).then(
+                (value) => finish({ ok: true, value }),
+                (error) => finish({ ok: false, error }),
+              );
+            } catch (error) {
+              finish({ ok: false, error });
+            }
+          });
+          if (outcome.ok || signal.aborted) return outcome;
+          const isServiceUnavailable =
+            isCleaningClientError(outcome.error) &&
+            (outcome.error.status === 0 || outcome.error.status === 502 || outcome.error.status === 503);
+          if (isServiceUnavailable && attempt < maxAttempts && !signal.aborted) {
+            await new Promise((r) => setTimeout(r, 1500));
+            continue;
           }
-        });
+          return outcome;
+        }
+        return { ok: false, error: new Error("Preparation attempts exhausted") };
       };
       // Continuous local cleaning is the default; retain the explicit opt-out.
       const legacyPerformanceMode =
@@ -2238,7 +2386,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       // Concurrency stays small — the server round-robins its key pool, so
       // two workers restore throughput when Gemini latency spikes without
       // multiplying rate pressure.
-      const PARALLEL_PAGES = Math.max(1, parallelPages ?? 1);
+      const PARALLEL_PAGES = Math.max(1, batchParallelPagesRef.current ?? parallelPages ?? 1);
       let nextCursor = 0;
       let quotaAborted = false;
       const busyPages = new Set<number>();
@@ -2289,9 +2437,10 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         } catch (error) {
           busyPages.delete(i);
           if (signal.aborted || isUserCancelledError(error)) return;
-          const explicitCleaningCode = error instanceof CleaningClientError
+          const isCleanerErr = isCleaningClientError(error);
+          const explicitCleaningCode = isCleanerErr
             ? (error.status === 0 || error.status === 502 || error.status === 503 ||
-              /timeout|sidecar|8765|เซิร์ฟเวอร์/i.test(error.message))
+              /timeout|sidecar|8765|เซิร์ฟเวอร์|unavailable/i.test(error.message))
                 ? "LOCAL_SIDECAR_OFFLINE"
                 : error.status >= 500
                   ? "LOCAL_CLEANER_FAILED"
@@ -2299,7 +2448,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             : undefined;
           const diagnostic = classifyTranslationError(
             error,
-            error instanceof CleaningClientError ? error.status : undefined,
+            isCleanerErr ? error.status : undefined,
             explicitCleaningCode,
           );
           const failureItem: BatchPageFailure = {
@@ -2611,9 +2760,10 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         );
       } catch (err: unknown) {
         if (!isUserCancelledError(err)) {
-          const explicitCleaningCode = err instanceof CleaningClientError
+          const isCleanerErr = isCleaningClientError(err);
+          const explicitCleaningCode = isCleanerErr
             ? (err.status === 0 || err.status === 502 || err.status === 503 ||
-              /timeout|sidecar|8765|เซิร์ฟเวอร์/i.test(err.message))
+              /timeout|sidecar|8765|เซิร์ฟเวอร์|unavailable/i.test(err.message))
                 ? "LOCAL_SIDECAR_OFFLINE"
                 : err.status >= 500
                   ? "LOCAL_CLEANER_FAILED"
@@ -2621,7 +2771,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             : undefined;
           const diag = classifyTranslationError(
             err,
-            err instanceof CleaningClientError ? err.status : undefined,
+            isCleanerErr ? err.status : undefined,
             explicitCleaningCode,
           );
           const failureItem: BatchPageFailure = {
@@ -3045,8 +3195,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
               targetLang: targetId,
               apiKey: userApiKey,
               modelPreference,
-              allowPreview: allowPreviewModels,
-              glossary,
+              allowPreview: allowPreviewModels, glossary: glossaryRef.current,
               signal: controller.signal,
               sourceRevision: getPageSourceRevision(pageUrl),
               repairContamination: true,
@@ -3493,6 +3642,14 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     },
     glossary,
     setGlossary: updateGlossary,
+    autoLearnGlossary,
+    setAutoLearnGlossary: updateAutoLearnGlossary,
+    pronounMatrix,
+    setPronounMatrix: updatePronounMatrix,
+    autoFitBubbleContour,
+    setAutoFitBubbleContour: updateAutoFitBubbleContour,
+    parallelPages: batchParallelPages,
+    setParallelPages: updateBatchParallelPages,
     restoreSavedSession,
     clearSavedSession,
     saveStatus,

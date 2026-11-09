@@ -24,6 +24,7 @@ from app.model_store import ModelStore
 from app.ort_utils import (
     create_cpu_inference_session,
     create_inference_session,
+    get_inference_lock,
     is_gpu_device_error,
     is_gpu_suspended,
     mark_gpu_device_suspended,
@@ -169,7 +170,8 @@ class LamaLargeCleaner:
             self.session = self._cpu_session_factory()
 
         try:
-            output = self.session.run(None, input_feed)[0]
+            with get_inference_lock():
+                output = self.session.run(None, input_feed)[0]
         except Exception as err:
             providers = self.providers
             can_fallback = (
@@ -189,7 +191,8 @@ class LamaLargeCleaner:
             )
             self._cpu_fallback_used = True
             self.session = self._cpu_session_factory()
-            output = self.session.run(None, input_feed)[0]
+            with get_inference_lock():
+                output = self.session.run(None, input_feed)[0]
         if legacy_buffers:
             repaired_float = (
                 np.asarray(output, dtype=np.float32)

@@ -13,6 +13,7 @@ import {
   EyeOff,
   GalleryVertical,
   RectangleHorizontal,
+  Columns,
   Sparkles,
   Eraser,
   Paintbrush,
@@ -88,6 +89,8 @@ export interface WorkspaceHeaderHostProps {
 
   viewLayout: "single" | "scroll";
   onToggleViewLayout: () => void;
+  isSplitView?: boolean;
+  onToggleSplitView?: () => void;
 
   textSizePoints: TranslatedBubble[];
   operationBusy: boolean;
@@ -167,6 +170,8 @@ export function WorkspaceHeaderHost({
   onToggleOriginalTranslated,
   viewLayout,
   onToggleViewLayout,
+  isSplitView = false,
+  onToggleSplitView,
   textSizePoints,
   operationBusy,
   onResizeSavedText,
@@ -237,7 +242,7 @@ export function WorkspaceHeaderHost({
 
   return (
     <header
-      className={`w-full bg-background/95 backdrop-blur-md border-b border-border/80 h-14 flex justify-between items-center px-3 sm:px-5 z-50 fixed top-0 select-none transition-transform duration-300 ${
+      className={`w-full bg-background/95 backdrop-blur-md border-b border-border/80 h-12 flex justify-between items-center px-3 sm:px-4 z-50 fixed top-0 select-none transition-transform duration-300 ${
         isFocusMode ? "-translate-y-full pointer-events-none" : "translate-y-0"
       }`}
     >
@@ -246,7 +251,7 @@ export function WorkspaceHeaderHost({
         <img
           src="/icon-512.png"
           alt="SuperK Logo"
-          className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg shadow-sm border border-border/80 object-cover flex-shrink-0"
+          className="w-7 h-7 rounded-lg shadow-sm border border-border/80 object-cover flex-shrink-0"
         />
         <h1 className="text-base font-semibold tracking-tight text-foreground flex items-center">
           <span className="flex items-center gap-0.5">
@@ -407,6 +412,31 @@ export function WorkspaceHeaderHost({
                 )}
               </button>
 
+              {/* Split View toggle */}
+              <button
+                type="button"
+                onClick={onToggleSplitView}
+                disabled={pages.length === 0}
+                aria-pressed={isSplitView}
+                aria-label={
+                  isSplitView
+                    ? "ปิดโหมดเปรียบเทียบสองฝั่ง (Split View)"
+                    : "เปิดโหมดเปรียบเทียบสองฝั่ง (Split View)"
+                }
+                className={`h-8.5 w-8.5 rounded-lg border border-border flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                  isSplitView
+                    ? "text-primary bg-primary/15 border-primary/40 shadow-sm"
+                    : "text-muted hover:text-foreground hover:bg-surface-hover/80 bg-surface"
+                } disabled:opacity-30`}
+                title={
+                  isSplitView
+                    ? "ปิดโหมดเทียบสองฝั่ง (Split View)"
+                    : "โหมดเทียบสองฝั่ง (Split View)"
+                }
+              >
+                <Columns className="w-4 h-4" aria-hidden="true" />
+              </button>
+
               {/* Advanced Tools dropdown */}
               <SavedTextSizeControls
                 key={currentPageUrl}
@@ -468,6 +498,25 @@ export function WorkspaceHeaderHost({
 
             {/* ── Primary Action Buttons ── */}
             <div className="flex items-center gap-2">
+              {/* ── One-Click Complete Project (Whole book clean + translate + typeset) ── */}
+              {pages.length > 1 && !operationBusy && primaryAction.kind !== "busy" && (
+                <button
+                  type="button"
+                  onClick={() => void onTranslateBook()}
+                  disabled={operationBusy}
+                  className="h-8.5 px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 hover:from-amber-400 hover:to-orange-500 text-white shadow-sm hover:shadow active:scale-95 disabled:opacity-50 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+                  title={`คลีนภาพ แปลภาษา และจัดหน้าครบทั้ง ${pages.length} หน้าอัตโนมัติ (One-Click)`}
+                  aria-label={`One-Click Complete Project แปลและจัดหน้าทั้งเล่ม ${pages.length} หน้า`}
+                >
+                  <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span className="hidden sm:inline">⚡ จบทั้งเล่ม</span>
+                  <span className="sm:hidden">⚡ ทั้งเล่ม</span>
+                  <span className="text-[10px] bg-black/20 px-1.5 py-0.5 rounded-full tabular-nums">
+                    {pages.length}
+                  </span>
+                </button>
+              )}
+
               {primaryAction.kind !== "export" && (
                 <WorkspacePrimaryAction
                   state={primaryAction}
@@ -523,7 +572,7 @@ export function WorkspaceHeaderHost({
                   disabled={isPublishingBack}
                   aria-label="ส่งคำแปลกลับไปยังหน้าอ่านบนเว็บ"
                   className="h-8.5 px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm disabled:opacity-50 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
-                  title={`ส่งคำแปลกลับไปยัง ${pages[currentPage]?.originUrl}`}
+                  title={`ส่งกลับหน้าอ่าน ${pages[currentPage]?.originUrl}`}
                 >
                   {isPublishingBack ? (
                     <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
@@ -697,10 +746,11 @@ export function WorkspaceHeaderHost({
                       onCloseMobileMenu();
                     }}
                     disabled={operationBusy || pages.length === 0}
-                    className="w-full bg-surface text-foreground hover:bg-surface-hover disabled:opacity-50 px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-all duration-150 border border-transparent"
+                    className="w-full bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 hover:from-amber-400 hover:to-orange-500 text-white font-semibold disabled:opacity-50 px-4 py-2.5 rounded-lg text-sm flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
+                    aria-label={`One-Click Complete Project แปลทั้งเล่ม ${pages.length} หน้า`}
                   >
-                    <Sparkles className="w-5 h-5 text-primary" />
-                    <span>✨ แปลทั้งเล่ม</span>
+                    <Sparkles className="w-4 h-4" />
+                    <span>⚡ จบทั้งเล่มในคลิกเดียว ({pages.length} หน้า)</span>
                   </button>
                 </div>
               )}
@@ -792,6 +842,23 @@ export function WorkspaceHeaderHost({
                   <span>
                     {viewLayout === "scroll" ? "เลื่อนอ่าน" : "ทีละหน้า"}
                   </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    onToggleSplitView?.();
+                    onCloseMobileMenu();
+                  }}
+                  disabled={pages.length === 0}
+                  className={`p-2.5 rounded-lg text-xs font-medium flex flex-col items-center justify-center gap-1.5 transition-all duration-150 border ${
+                    isSplitView
+                      ? "text-primary bg-primary/10 border-primary/20"
+                      : "bg-surface text-foreground border-transparent"
+                  }`}
+                >
+                  <Columns className="w-5 h-5" />
+                  <span>เทียบสองฝั่ง</span>
                 </button>
 
                 <button

@@ -79,8 +79,8 @@ export function WorkspaceAdvancedTools({
       : []),
     {
       id: "translate-book",
-      label: "แปลทั้งเล่ม",
-      icon: <Sparkles className="h-4 w-4 text-primary" />,
+      label: "⚡ จบทั้งเล่มในคลิกเดียว (One-Click)",
+      icon: <Sparkles className="h-4 w-4 text-amber-500" />,
       disabled: busy,
       onSelect: onTranslateBook,
     },

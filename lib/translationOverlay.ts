@@ -3188,32 +3188,32 @@ export const applyTranslationOverlay = async (
           pos: 'nw',
           cursor: 'grab',
           title: 'หมุนข้อความ (ดูดมุมฉาก 90° อัตโนมัติ)',
-          size: 36,
-          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>`
+          size: 30,
+          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>`
         },
         {
           id: 'scale',
           pos: 'ne',
           cursor: 'nesw-resize',
           title: 'ปรับขนาดเฉียง (ย่อ-ขยายทั้งกล่องและตัวหนังสือ)',
-          size: 36,
-          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" x2="14" y1="3" y2="10"/><line x1="3" x2="10" y1="21" y2="14"/></svg>`
+          size: 30,
+          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" x2="14" y1="3" y2="10"/><line x1="3" x2="10" y1="21" y2="14"/></svg>`
         },
         {
           id: 'width',
           pos: 'e',
           cursor: 'ew-resize',
           title: 'ปรับความกว้าง (ลากซ้าย-ขวา เพื่อตัดบรรทัดใหม่ ขนาดตัวหนังสือเท่าเดิม)',
-          size: 36,
-          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="6,8 2,12 6,16" fill="#2563eb"/><polygon points="18,8 22,12 18,16" fill="#2563eb"/><line x1="4" y1="12" x2="20" y2="12"/></svg>`
+          size: 30,
+          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="6,8 2,12 6,16" fill="currentColor"/><polygon points="18,8 22,12 18,16" fill="currentColor"/><line x1="4" y1="12" x2="20" y2="12"/></svg>`
         },
         {
           id: 'move',
           pos: 'sw',
           cursor: 'move',
           title: 'ย้ายตำแหน่ง (ลากเพื่อย้ายกล่อง)',
-          size: 36,
-          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" x2="22" y1="12" y2="12"/><line x1="12" x2="12" y1="2" y2="22"/></svg>`
+          size: 30,
+          icon: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" x2="22" y1="12" y2="12"/><line x1="12" x2="12" y1="2" y2="22"/></svg>`
         }
       ];
 
@@ -3226,20 +3226,20 @@ export const applyTranslationOverlay = async (
         const handleSize = size || 36;
         const handleZIndex = id === "scale" ? 54 : id === "rotate" ? 53 : id === "move" ? 52 : 51;
         handle.dataset.baseTranslate = "translate(-50%, -50%)";
-        handle.style.cssText = `position:absolute; width:${handleSize}px; height:${handleSize}px; background:#ffffff; border:2.5px solid #3b82f6; border-radius:50%; z-index:${handleZIndex}; opacity:0; pointer-events:none; display:flex; align-items:center; justify-content:center; color:#2563eb; cursor:${cursor}; box-shadow:0 3px 10px rgba(0,0,0,0.35); transition:opacity 120ms ease, box-shadow 120ms ease, filter 120ms ease, transform 120ms ease; touch-action:none; user-select:none; transform:translate(-50%, -50%) scale(1);`;
+        handle.style.cssText = `position:absolute; width:${handleSize}px; height:${handleSize}px; background:#ffffff; border:2.5px solid var(--primary, #f43f5e); border-radius:50%; z-index:${handleZIndex}; opacity:0; pointer-events:none; display:flex; align-items:center; justify-content:center; color:var(--primary, #f43f5e); cursor:${cursor}; box-shadow:0 3px 10px rgba(0,0,0,0.35); transition:opacity 120ms ease, box-shadow 120ms ease, filter 120ms ease, transform 120ms ease; touch-action:none; user-select:none; transform:translate(-50%, -50%) scale(1);`;
         handle.innerHTML = icon;
 
         handle.addEventListener('mouseenter', () => {
           handle.style.filter = 'brightness(1.05)';
-          handle.style.boxShadow = '0 6px 16px rgba(37,99,235,0.45)';
-          handle.style.borderColor = '#1d4ed8';
+          handle.style.boxShadow = '0 6px 16px rgba(244,63,94,0.45)';
+          handle.style.borderColor = 'var(--primary-hover, #e11d48)';
           const baseTranslate = handle.dataset.baseTranslate || 'translate(-50%, -50%)';
           handle.style.transform = `${baseTranslate} scale(1.06)`;
         });
         handle.addEventListener('mouseleave', () => {
           handle.style.filter = '';
           handle.style.boxShadow = '0 3px 10px rgba(0,0,0,0.35)';
-          handle.style.borderColor = '#3b82f6';
+          handle.style.borderColor = 'var(--primary, #f43f5e)';
           const baseTranslate = handle.dataset.baseTranslate || 'translate(-50%, -50%)';
           handle.style.transform = `${baseTranslate} scale(1)`;
         });
@@ -3752,9 +3752,9 @@ export const applyTranslationOverlay = async (
         background: rgba(24, 24, 27, 0.96);
         backdrop-filter: blur(12px);
         border: 1px solid rgba(255, 255, 255, 0.24);
-        border-radius: 11px;
-        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
-        padding: 4px 6px;
+        border-radius: 9px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+        padding: 3px 4px;
         display: flex;
         align-items: center;
         gap: 2px;
@@ -3775,9 +3775,9 @@ export const applyTranslationOverlay = async (
         btn.className = "action-handle";
         btn.innerHTML = svg;
         btn.style.cssText = `
-          width: 36px;
-          height: 36px;
-          border-radius: 8px;
+          width: 30px;
+          height: 30px;
+          border-radius: 6px;
           background: transparent;
           color: ${isDanger ? '#ef4444' : '#e4e4e7'};
           border: none;
@@ -3831,7 +3831,7 @@ export const applyTranslationOverlay = async (
 
       const createDivider = () => {
         const div = document.createElement("div");
-        div.style.cssText = `width:1.5px; height:24px; background:rgba(255,255,255,0.25); margin:0 4px;`;
+        div.style.cssText = `width:1px; height:18px; background:rgba(255,255,255,0.2); margin:0 2px;`;
         return div;
       };
 
@@ -3899,8 +3899,8 @@ export const applyTranslationOverlay = async (
       const syncItalicBtnStyle = (btnEl: HTMLButtonElement) => {
         const active = Boolean(b.isItalic ?? b.italic ?? currentIsItalic);
         btnEl.setAttribute("aria-pressed", String(active));
-        btnEl.style.color = active ? "#60a5fa" : "#e4e4e7";
-        btnEl.style.background = active ? "rgba(59, 130, 246, 0.22)" : "transparent";
+        btnEl.style.color = active ? "var(--primary, #f43f5e)" : "#e4e4e7";
+        btnEl.style.background = active ? "rgba(244, 63, 94, 0.22)" : "transparent";
       };
 
       const toggleBubbleItalic = () => {
@@ -4015,8 +4015,8 @@ export const applyTranslationOverlay = async (
         const active = Boolean(b.warp && b.warp.type !== "none");
         btnEl.setAttribute("aria-pressed", String(active));
         btnEl.title = `ดัดรูปทรง SFX: ${getWarpLabel(b.warp?.type ?? "none")} (คลิกเพื่อเปลี่ยนรูปทรง)`;
-        btnEl.style.color = active ? "#c084fc" : "#e4e4e7";
-        btnEl.style.background = active ? "rgba(192, 132, 252, 0.22)" : "transparent";
+        btnEl.style.color = active ? "var(--primary, #f43f5e)" : "#e4e4e7";
+        btnEl.style.background = active ? "rgba(244, 63, 94, 0.22)" : "transparent";
       };
 
       const warpBtn = createToolBtn(
@@ -4083,10 +4083,23 @@ export const applyTranslationOverlay = async (
         };
 
         if (!chromeRoot) {
+          const isCompact = currentBw < 85 || currentBh < 85;
+          const padPercentX = isCompact ? Math.max(6, Math.round((85 - currentBw) / 2)) : 0;
+          const padPercentY = isCompact ? Math.max(6, Math.round((85 - currentBh) / 2)) : 0;
           chromeHandles.forEach((handle) => {
-            const [left, top] = localPoints[handle.dataset.handlePosition ?? "nw"];
+            const pos = handle.dataset.handlePosition ?? "nw";
+            const [left, top] = localPoints[pos];
             handle.style.left = `${left / currentBw * 100}%`;
             handle.style.top = `${top / currentBh * 100}%`;
+            let baseTranslate = "translate(-50%, -50%)";
+            if (isCompact) {
+              if (pos === "nw") baseTranslate = `translate(calc(-50% - ${padPercentX}px), calc(-50% - ${padPercentY}px))`;
+              else if (pos === "ne") baseTranslate = `translate(calc(-50% + ${padPercentX}px), calc(-50% - ${padPercentY}px))`;
+              else if (pos === "e") baseTranslate = `translate(calc(-50% + ${padPercentX}px), calc(-50% + ${Math.round(padPercentY * 1.5)}px))`;
+              else if (pos === "sw") baseTranslate = `translate(calc(-50% - ${padPercentX}px), calc(-50% + ${padPercentY}px))`;
+            }
+            handle.dataset.baseTranslate = baseTranslate;
+            handle.style.transform = `${baseTranslate} scale(1)`;
           });
           const wrapperChromeScale = Math.max(
             0.6,
@@ -4097,7 +4110,7 @@ export const applyTranslationOverlay = async (
             handle.style.zoom = String(wrapperChromeScale);
           });
           toolbar.style.left = `${(selection.x + selection.width / 2) / currentBw * 100}%`;
-          toolbar.style.top = `calc(${selection.y / currentBh * 100}% - 10px)`;
+          toolbar.style.top = `calc(${selection.y / currentBh * 100}% - ${isCompact ? 16 : 10}px)`;
           toolbar.style.transform = "translate(-50%, -100%)";
           activeEditorPosition?.();
           return;
@@ -4150,10 +4163,16 @@ export const applyTranslationOverlay = async (
         const rootWidth = rootRect.width || Math.max(right + 16, baseToolbarWidth + 16);
         const boxW = right - left;
         const boxH = bottom - top;
-        const isCompactBox = (boxW > 0 || boxH > 0) && (boxW < 36 || boxH < 36);
-        const padX = isCompactBox ? Math.round(Math.max(0, (36 - boxW) / 2) / chromeScale) : 0;
-        const padY = isCompactBox ? Math.round(Math.max(0, (36 - boxH) / 2) / chromeScale) : 0;
-        const padEastY = isCompactBox ? Math.round(Math.max(8, (44 - boxH) / 2) / chromeScale) : 0;
+        // In screen coordinates, a box with width < 85px or height < 85px is compact.
+        // Outset handles outward to keep text clear and prevent handle collision.
+        const isCompactW = (boxW > 0 || boxH > 0) && boxW < 85;
+        const isCompactH = (boxH > 0 || boxH > 0) && boxH < 85;
+        const isCompactBox = isCompactW || isCompactH;
+
+        const padX = isCompactW ? Math.round(Math.max(6, (85 - boxW) / 2) / chromeScale) : 0;
+        const padY = isCompactH ? Math.round(Math.max(6, (85 - boxH) / 2) / chromeScale) : 0;
+        const padEastY = isCompactH ? Math.round(Math.max(12, (95 - boxH) / 2) / chromeScale) : 0;
+
         const placeBelow = top < scaledHeight + 14;
         const minCenter = scaledWidth / 2 + 8;
         const maxCenter = Math.max(minCenter, rootWidth - scaledWidth / 2 - 8);

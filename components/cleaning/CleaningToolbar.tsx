@@ -88,7 +88,19 @@ export function CleaningToolbar({
             เปิด <code>SuperK-Launcher.vbs</code> แล้วลองอีกครั้ง (watchdog จะเฝ้าบริการให้เอง)
           </p>
         )}
-        {error && error.recovery !== "start-local-service" && (
+        {error && error.recovery === "reclean" && (
+          <div className="flex items-center gap-1.5 text-xs font-medium text-amber-300 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-md" role="alert">
+            <span>{error.message || "ไฟล์ภาพคลีนเดิมไม่อยู่ในเครื่อง กรุณากดคลีนข้อความใหม่อีกครั้ง"}</span>
+            <button
+              type="button"
+              onClick={onClean}
+              className="underline hover:text-white font-semibold cursor-pointer ml-1"
+            >
+              กดคลีนใหม่
+            </button>
+          </div>
+        )}
+        {error && error.recovery !== "start-local-service" && error.recovery !== "reclean" && (
           <p className="max-w-[46ch] text-xs font-medium text-red-400 bg-red-500/10 border border-red-500/20 px-2.5 py-1 rounded-md" role="alert">
             {error.message || "การคลีนภาพล้มเหลว กรุณาลองใหม่อีกครั้ง"}
           </p>
@@ -183,7 +195,7 @@ export function CleaningToolbar({
               <button
                 type="button"
                 onClick={onCollapse}
-                title="ย่อแถบเครื่องมือ (กด B)"
+                title="ย่อแถบเครื่องมือ (กด Ctrl+B)"
                 aria-label="ย่อแถบเครื่องมือ"
                 className="inline-flex h-7.5 w-7.5 sm:h-8 sm:w-8 items-center justify-center rounded-lg border border-border/80 bg-surface text-muted transition-all duration-150 hover:bg-surface-hover hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background cursor-pointer shrink-0"
               >

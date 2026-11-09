@@ -869,3 +869,27 @@ test("HTTP 401 rotates to next key on the same model instead of aborting key loo
   expect(fetchImpl).toHaveBeenCalledTimes(2);
 });
 
+test("tries all keys in multi-key pool before considering model fallback", async () => {
+  const cooldowns = new Map<string, number>();
+  markKeyCooldown("key-1", 100_000, cooldowns);
+  markKeyCooldown("key-2", 100_000, cooldowns);
+
+  const fetchImpl = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(jsonResponse(successBody));
+
+  const result = await requestGemini({
+    apiKeys: ["key-1", "key-2", "key-3"],
+    models: ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
+    payload: { contents: [] },
+    fetchImpl,
+    keyCooldowns: cooldowns,
+    now: () => 1000,
+  });
+
+  expect(result.model).toBe("gemini-3.5-flash-lite");
+  expect(result.keyIndex).toBe(2);
+  expect(fetchImpl).toHaveBeenCalledTimes(1);
+});
+
+

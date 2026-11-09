@@ -113,6 +113,7 @@ if ($MyInvocation.InvocationName -ne '.') {
         }
     }
     if (-not $createdNew) { exit 0 }
+    Initialize-SuperKRuntimeEnvironment
     $exitCode = 0
     $script:SuperKWatchdogStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     Write-SuperKWatchdogLog -ProjectRoot $rootPath -Message "watchdog started (pid $PID, interval ${IntervalSeconds}s, window ${WindowMinutes}m)"

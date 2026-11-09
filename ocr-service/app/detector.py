@@ -13,6 +13,7 @@ from app.model_store import ModelStore
 from app.ort_utils import (
     create_cpu_inference_session,
     create_inference_session,
+    get_inference_lock,
     is_gpu_device_error,
     is_gpu_suspended,
     mark_gpu_device_suspended,
@@ -129,7 +130,8 @@ class TextDetector:
             self.input_name = self.session.get_inputs()[0].name
 
         try:
-            raw_boxes, raw_mask = self.session.run(
+            with get_inference_lock():
+                raw_boxes, raw_mask = self.session.run(
                 None,
                 {self.input_name: tensor},
             )
@@ -152,7 +154,8 @@ class TextDetector:
             self._cpu_fallback_used = True
             self.session = self._cpu_session_factory()
             self.input_name = self.session.get_inputs()[0].name
-            raw_boxes, raw_mask = self.session.run(
+            with get_inference_lock():
+                raw_boxes, raw_mask = self.session.run(
                 None,
                 {self.input_name: tensor},
             )

@@ -2,10 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { type GlossaryEntry } from "@/lib/translation/glossary";
+import {
+  type PronounRelation,
+  COMMON_PRONOUN_PRESETS,
+  mergePronounRelations,
+} from "@/lib/translation/pronounMatrix";
 import { TARGET_LANGUAGES, resolveTargetLanguage, getAllowedThaiTokens, saveCustomAllowedThaiTokens, removeAllowedThaiTokens } from "@/lib/languagePolicy";
 import { MANUAL_IMAGE_MODEL_IDS } from "@/lib/translation/imageModelChoices";
 import { workspaceResourceManager } from "@/lib/lifecycle/workspaceResourceManager";
-import { Plus, Trash2, BookText, Flame, X, ChevronDown, Download, Folder, Search, Check, Sparkles, Power, AlertTriangle, Loader2, Upload, Type, ScrollText } from "lucide-react";
+import { Plus, Trash2, BookText, Users, Flame, X, ChevronDown, Download, Folder, Search, Check, Sparkles, Power, AlertTriangle, Loader2, Upload, Type, ScrollText, Layers } from "lucide-react";
 import {
   BUILTIN_MANGA_FONTS,
   BUILTIN_CANVAS_FONT_VARS,
@@ -134,6 +139,14 @@ export interface SettingsModalProps {
   onApiKeyValidated?: () => void;
   glossary?: GlossaryEntry[];
   onGlossaryChange?: (glossary: GlossaryEntry[]) => void;
+  autoLearnGlossary?: boolean;
+  onAutoLearnGlossaryChange?: (enabled: boolean) => void;
+  pronounMatrix?: PronounRelation[];
+  onPronounMatrixChange?: (matrix: PronounRelation[]) => void;
+  autoFitBubbleContour?: boolean;
+  onAutoFitBubbleContourChange?: (enabled: boolean) => void;
+  parallelPages?: number;
+  onParallelPagesChange?: (count: number) => void;
   nsfwBypassMode?: boolean;
   onNsfwBypassModeChange?: (enabled: boolean) => void;
   autoProceedOnReview?: boolean;
@@ -164,6 +177,14 @@ export function SettingsModal({
   onApiKeyValidated,
   glossary = [],
   onGlossaryChange,
+  autoLearnGlossary = true,
+  onAutoLearnGlossaryChange,
+  pronounMatrix = [],
+  onPronounMatrixChange,
+  autoFitBubbleContour = true,
+  onAutoFitBubbleContourChange,
+  parallelPages = 2,
+  onParallelPagesChange,
   nsfwBypassMode = false,
   onNsfwBypassModeChange,
   autoProceedOnReview = true,
@@ -188,6 +209,14 @@ export function SettingsModal({
   const apiKeySlots = splitApiKeySlots(userApiKey, apiKeyLimit);
   const [newSource, setNewSource] = useState("");
   const [newTarget, setNewTarget] = useState("");
+  const [newNote, setNewNote] = useState("");
+  const [glossaryFilter, setGlossaryFilter] = useState("");
+  const [pronounSpeaker, setPronounSpeaker] = useState("");
+  const [pronounListener, setPronounListener] = useState("");
+  const [pronounFirstPerson, setPronounFirstPerson] = useState("");
+  const [pronounSecondPerson, setPronounSecondPerson] = useState("");
+  const [pronounNote, setPronounNote] = useState("");
+  const [pronounFilter, setPronounFilter] = useState("");
   const [customTokens, setCustomTokens] = useState<readonly string[]>(() => getAllowedThaiTokens());
   const [newCustomToken, setNewCustomToken] = useState("");
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
@@ -539,16 +568,56 @@ export function SettingsModal({
     if (!newSource.trim() || !newTarget.trim()) return;
     const updated = [
       ...glossary,
-      { source: newSource.trim(), target: newTarget.trim() },
+      {
+        source: newSource.trim(),
+        target: newTarget.trim(),
+        ...(newNote.trim() ? { note: newNote.trim() } : {}),
+      },
     ];
     onGlossaryChange?.(updated);
     setNewSource("");
     setNewTarget("");
+    setNewNote("");
   };
 
   const handleRemoveGlossary = (index: number) => {
     const updated = glossary.filter((_, i) => i !== index);
     onGlossaryChange?.(updated);
+  };
+
+  const handleAddPronounRelation = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pronounSpeaker.trim() || !pronounListener.trim()) return;
+    if (!pronounFirstPerson.trim() && !pronounSecondPerson.trim()) return;
+
+    const newRelation: PronounRelation = {
+      speaker: pronounSpeaker.trim(),
+      listener: pronounListener.trim(),
+      firstPerson: pronounFirstPerson.trim(),
+      secondPerson: pronounSecondPerson.trim(),
+      note: pronounNote.trim() || undefined,
+    };
+
+    const { merged } = mergePronounRelations(pronounMatrix, [newRelation]);
+    onPronounMatrixChange?.(merged);
+    setPronounSpeaker("");
+    setPronounListener("");
+    setPronounFirstPerson("");
+    setPronounSecondPerson("");
+    setPronounNote("");
+  };
+
+  const handleRemovePronounRelation = (index: number) => {
+    const updated = pronounMatrix.filter((_, i) => i !== index);
+    onPronounMatrixChange?.(updated);
+  };
+
+  const handleApplyPronounPreset = (preset: (typeof COMMON_PRONOUN_PRESETS)[number]) => {
+    setPronounFirstPerson(preset.firstPerson);
+    setPronounSecondPerson(preset.secondPerson);
+    if (!pronounNote.trim()) {
+      setPronounNote(preset.note);
+    }
   };
 
   const usableModels =
@@ -1184,6 +1253,37 @@ export function SettingsModal({
                   ตัวอย่างข้อความแปล
                 </span>
               </div>
+
+              {/* Contour Auto-Fit toggle switch */}
+              <div className="flex items-center justify-between py-1.5 px-2.5 rounded-lg bg-surface/70 border border-surface-hover mt-3">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-primary" />
+                  <div>
+                    <div className="text-xs font-medium text-foreground">
+                      ปรับขนาดฟอนต์ให้พอดีรูปทรงบอลลูนอัตโนมัติ (Contour Auto-Fit)
+                    </div>
+                    <div className="text-[10px] text-muted">
+                      ใช้ BubbleTypesetEngine คำนวณความโค้งเว้าของบอลลูน จัดวางข้อความและตัดคำภาษาไทยให้เต็มพื้นที่ ไม่ล้นกรอบ
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={autoFitBubbleContour}
+                  aria-label="เปิดปิดการปรับขนาดฟอนต์ให้พอดีรูปทรงบอลลูนอัตโนมัติ (Contour Auto-Fit)"
+                  onClick={() => onAutoFitBubbleContourChange?.(!autoFitBubbleContour)}
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-1 focus:ring-primary ${
+                    autoFitBubbleContour ? "bg-primary" : "bg-muted/40"
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                      autoFitBubbleContour ? "translate-x-4" : "translate-x-0"
+                    }`}
+                  />
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1197,6 +1297,60 @@ export function SettingsModal({
                 {glossary.length} คำ
               </span>
             </div>
+            <p className="mb-2 text-[11px] text-muted">
+              ระบบจะส่งชื่อและคำแปลเหล่านี้ล็อกใน Gemini Prompt เพื่อให้การแปลชื่อตัวละครถูกต้องตรงกันทั้งเรื่อง
+            </p>
+
+            {/* Quick-add manga archetypes */}
+            <div className="mb-2.5 flex flex-wrap items-center gap-1">
+              <span className="text-[10px] text-muted mr-0.5">คำเรียกพบบ่อย:</span>
+              {[
+                { source: "先生", target: "อาจารย์" },
+                { source: "先輩", target: "รุ่นพี่" },
+                { source: "後輩", target: "รุ่นน้อง" },
+              ].map((archetype) => (
+                <button
+                  key={archetype.source}
+                  type="button"
+                  onClick={() => {
+                    if (!glossary.some((g) => g.source === archetype.source)) {
+                      onGlossaryChange?.([...glossary, archetype]);
+                    }
+                  }}
+                  className="rounded bg-surface px-1.5 py-0.5 text-[10px] text-foreground border border-surface-hover hover:border-primary/40 hover:text-primary transition-colors cursor-pointer"
+                >
+                  +{archetype.source} ({archetype.target})
+                </button>
+              ))}
+            </div>
+
+            {/* Auto-learn Character Names toggle */}
+            <div className="flex items-center justify-between py-1.5 px-2.5 rounded-lg bg-surface/70 border border-surface-hover mb-2.5">
+              <div>
+                <div className="text-xs font-medium text-foreground">
+                  Auto-learn Character Names
+                </div>
+                <div className="text-[10px] text-muted">
+                  เรียนรู้และบันทึกชื่อตัวละครเข้า Glossary อัตโนมัติขณะแปล
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={autoLearnGlossary}
+                aria-label="เปิดปิดการบันทึกชื่อตัวละครอัตโนมัติ"
+                onClick={() => onAutoLearnGlossaryChange?.(!autoLearnGlossary)}
+                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-1 focus:ring-primary ${
+                  autoLearnGlossary ? "bg-primary" : "bg-muted/40"
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                    autoLearnGlossary ? "translate-x-4" : "translate-x-0"
+                  }`}
+                />
+              </button>
+            </div>
 
             {glossary.length > 0 && (
               <div className="mb-2 max-h-28 space-y-1 overflow-y-auto rounded-md border border-surface-hover bg-background/50 p-1.5 text-xs">
@@ -1205,10 +1359,15 @@ export function SettingsModal({
                     key={idx}
                     className="flex items-center justify-between rounded bg-surface px-2 py-1 text-foreground"
                   >
-                    <div className="truncate">
+                    <div className="truncate flex-1">
                       <span className="font-medium text-primary">{entry.source}</span>
                       <span className="mx-1 text-muted">➔</span>
                       <span>{entry.target}</span>
+                      {entry.note && (
+                        <span className="ml-1.5 text-[10px] text-muted-foreground/75 italic">
+                          ({entry.note})
+                        </span>
+                      )}
                     </div>
                     <button
                       type="button"
@@ -1224,33 +1383,46 @@ export function SettingsModal({
               </div>
             )}
 
-            <form onSubmit={handleAddGlossary} className="flex gap-1.5" aria-label="เพิ่มคำศัพท์ใหม่">
-              <input
-                id="settings-glossary-source"
-                aria-label="คำต้นฉบับ เช่น Luffy"
-                type="text"
-                value={newSource}
-                onChange={(e) => setNewSource(e.target.value)}
-                placeholder="ชื่อต้นฉบับ (Luffy)"
-                className="w-1/2 rounded border border-surface-hover bg-background px-2 py-1 text-xs text-foreground placeholder:text-muted/60 focus:outline-none focus:ring-1 focus:ring-primary"
-              />
-              <input
-                id="settings-glossary-target"
-                aria-label="คำแปลที่ต้องการ เช่น ลูฟี่"
-                type="text"
-                value={newTarget}
-                onChange={(e) => setNewTarget(e.target.value)}
-                placeholder="คำแปล (ลูฟี่)"
-                className="w-1/2 rounded border border-surface-hover bg-background px-2 py-1 text-xs text-foreground placeholder:text-muted/60 focus:outline-none focus:ring-1 focus:ring-primary"
-              />
-              <button
-                type="submit"
-                className="flex items-center justify-center rounded bg-primary px-2 py-1 text-primary-content hover:bg-primary-hover"
-                title="เพิ่มคำศัพท์"
-                aria-label="เพิ่มคำศัพท์ลงใน Glossary"
-              >
-                <Plus className="h-3.5 w-3.5" />
-              </button>
+            <form onSubmit={handleAddGlossary} className="space-y-1.5" aria-label="เพิ่มคำศัพท์ใหม่">
+              <div className="flex gap-1.5">
+                <input
+                  id="settings-glossary-source"
+                  aria-label="คำต้นฉบับ เช่น Luffy"
+                  type="text"
+                  value={newSource}
+                  onChange={(e) => setNewSource(e.target.value)}
+                  placeholder="ชื่อต้นฉบับ (Luffy)"
+                  className="w-1/2 rounded border border-surface-hover bg-background px-2 py-1 text-xs text-foreground placeholder:text-muted/60 focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                <input
+                  id="settings-glossary-target"
+                  aria-label="คำแปลที่ต้องการ เช่น ลูฟี่"
+                  type="text"
+                  value={newTarget}
+                  onChange={(e) => setNewTarget(e.target.value)}
+                  placeholder="คำแปล (ลูฟี่)"
+                  className="w-1/2 rounded border border-surface-hover bg-background px-2 py-1 text-xs text-foreground placeholder:text-muted/60 focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div className="flex gap-1.5">
+                <input
+                  id="settings-glossary-note"
+                  aria-label="คำอธิบายหรือความสัมพันธ์ เช่น เพื่อนร่วมทีม (ไม่บังคับ)"
+                  type="text"
+                  value={newNote}
+                  onChange={(e) => setNewNote(e.target.value)}
+                  placeholder="คำอธิบายหรือความสัมพันธ์ เช่น เพื่อนร่วมทีม (ไม่บังคับ)"
+                  className="flex-1 rounded border border-surface-hover bg-background px-2 py-1 text-xs text-foreground placeholder:text-muted/60 focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                <button
+                  type="submit"
+                  className="flex items-center justify-center rounded bg-primary px-3 py-1 text-primary-content hover:bg-primary-hover shrink-0"
+                  title="เพิ่มคำศัพท์"
+                  aria-label="เพิ่มคำศัพท์ลงใน Glossary"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </form>
 
             <div className="mt-2 flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-border/50">
@@ -1309,6 +1481,228 @@ export function SettingsModal({
                     } catch {
                       const toast = (await import("react-hot-toast")).default;
                       toast.error("รูปแบบไฟล์คลังคำศัพท์ไม่ถูกต้อง");
+                    } finally {
+                      e.target.value = "";
+                    }
+                  }}
+                />
+              </label>
+            </div>
+          </div>
+
+          {/* Character Relationship & Pronoun Matrix Section */}
+          <div className="rounded-xl border border-border/70 bg-background/45 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                <Users className="h-4 w-4 text-primary" />
+                <span>ตารางความสัมพันธ์สรรพนาม (Pronoun & Relationship Matrix)</span>
+              </span>
+              <span className="rounded-full bg-primary/10 border border-primary/30 px-2 py-0.5 text-[10px] font-medium text-primary">
+                {pronounMatrix.length} คู่
+              </span>
+            </div>
+
+            {/* Lock Indicator Banner */}
+            <div className="mb-2.5 flex items-start gap-2 rounded-lg border border-purple-500/30 bg-purple-500/10 p-2 text-xs text-purple-300">
+              <span className="text-sm">🔒</span>
+              <div className="flex-1 text-[11px] leading-relaxed text-purple-200">
+                <strong className="text-purple-100 font-semibold">ล็อกสรรพนามใน AI Prompt:</strong> กำหนดสรรพนามที่ตัวละครใช้เรียกตัวเองและเรียกอีกฝ่าย เพื่อความคงเส้นคงวาของบทสนทนาตลอดทั้งเรื่อง
+              </div>
+            </div>
+
+            {/* Quick Presets */}
+            <div className="mb-2.5">
+              <div className="text-[10px] text-muted mb-1 font-medium">แม่แบบสรรพนามยอดนิยม (คลิกเพื่อใส่ค่า):</div>
+              <div className="flex flex-wrap gap-1">
+                {COMMON_PRONOUN_PRESETS.map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => handleApplyPronounPreset(preset)}
+                    className="rounded border border-surface-hover bg-surface/80 hover:bg-surface-hover/80 px-2 py-0.5 text-[10px] text-muted-foreground hover:text-primary transition-colors cursor-pointer"
+                    title={preset.description}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Filter Search Box when many entries */}
+            {pronounMatrix.length > 3 && (
+              <div className="relative mb-2">
+                <Search className="absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted" />
+                <input
+                  type="text"
+                  value={pronounFilter}
+                  onChange={(e) => setPronounFilter(e.target.value)}
+                  placeholder="ค้นหาตามชื่อตัวละครหรือสรรพนาม..."
+                  className="w-full rounded border border-surface-hover bg-background/60 py-1 pl-7 pr-2 text-xs text-foreground placeholder:text-muted/60 focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+            )}
+
+            {/* Relations List */}
+            {pronounMatrix.length > 0 && (
+              <div className="mb-2.5 max-h-40 space-y-1 overflow-y-auto rounded-md border border-surface-hover bg-background/50 p-1.5 text-xs">
+                {pronounMatrix
+                  .filter((entry) => {
+                    if (!pronounFilter.trim()) return true;
+                    const query = pronounFilter.trim().toLowerCase();
+                    return (
+                      entry.speaker.toLowerCase().includes(query) ||
+                      entry.listener.toLowerCase().includes(query) ||
+                      entry.firstPerson.toLowerCase().includes(query) ||
+                      entry.secondPerson.toLowerCase().includes(query) ||
+                      (entry.note && entry.note.toLowerCase().includes(query))
+                    );
+                  })
+                  .map((entry, idx) => (
+                    <div
+                      key={`${entry.speaker}-${entry.listener}-${idx}`}
+                      className="flex items-center justify-between rounded bg-surface px-2.5 py-1.5 text-foreground hover:bg-surface-hover/70 transition-colors"
+                    >
+                      <div className="min-w-0 flex-1 truncate pr-2 text-[11px]">
+                        <span className="font-semibold text-primary">{entry.speaker}</span>
+                        <span className="mx-1 text-muted">พูดกับ</span>
+                        <span className="font-semibold text-primary">{entry.listener}</span>
+                        <span className="mx-1.5 text-muted/60">|</span>
+                        <span className="text-muted">แทนตัว:</span>
+                        <span className="ml-1 font-medium text-foreground">&quot;{entry.firstPerson}&quot;</span>
+                        <span className="mx-1 text-muted">/</span>
+                        <span className="text-muted">เรียก:</span>
+                        <span className="ml-1 font-medium text-foreground">&quot;{entry.secondPerson}&quot;</span>
+                        {entry.note && (
+                          <span className="ml-1.5 text-[10px] text-muted italic">({entry.note})</span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRemovePronounRelation(idx)}
+                        className="ml-1 text-muted hover:text-red-400 p-0.5 rounded transition-colors"
+                        title="ลบความสัมพันธ์"
+                        aria-label={`ลบความสัมพันธ์ ${entry.speaker} ถึง ${entry.listener}`}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            )}
+
+            {/* Input Form */}
+            <form onSubmit={handleAddPronounRelation} className="space-y-1.5" aria-label="เพิ่มความสัมพันธ์สรรพนาม">
+              <div className="grid grid-cols-2 gap-1.5">
+                <input
+                  id="settings-pronoun-speaker"
+                  aria-label="ผู้พูด เช่น นารูโตะ"
+                  type="text"
+                  value={pronounSpeaker}
+                  onChange={(e) => setPronounSpeaker(e.target.value)}
+                  placeholder="ผู้พูด (เช่น นารูโตะ)"
+                  className="rounded border border-surface-hover bg-background/60 px-2 py-1 text-xs text-foreground placeholder:text-muted/60 focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                <input
+                  id="settings-pronoun-listener"
+                  aria-label="ผู้ฟัง เช่น ซาสึเกะ"
+                  type="text"
+                  value={pronounListener}
+                  onChange={(e) => setPronounListener(e.target.value)}
+                  placeholder="ผู้ฟัง (เช่น ซาสึเกะ)"
+                  className="rounded border border-surface-hover bg-background/60 px-2 py-1 text-xs text-foreground placeholder:text-muted/60 focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-1.5">
+                <input
+                  id="settings-pronoun-first"
+                  aria-label="สรรพนามแทนตัว เช่น ฉัน, ข้า"
+                  type="text"
+                  value={pronounFirstPerson}
+                  onChange={(e) => setPronounFirstPerson(e.target.value)}
+                  placeholder="แทนตัวเอง (เช่น ฉัน, ข้า, เรา)"
+                  className="rounded border border-surface-hover bg-background/60 px-2 py-1 text-xs text-foreground placeholder:text-muted/60 focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                <input
+                  id="settings-pronoun-second"
+                  aria-label="สรรพนามเรียกอีกฝ่าย เช่น นาย, แก, เจ้า"
+                  type="text"
+                  value={pronounSecondPerson}
+                  onChange={(e) => setPronounSecondPerson(e.target.value)}
+                  placeholder="เรียกอีกฝ่าย (เช่น นาย, แก, เจ้า)"
+                  className="rounded border border-surface-hover bg-background/60 px-2 py-1 text-xs text-foreground placeholder:text-muted/60 focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+
+              <div className="flex gap-1.5">
+                <input
+                  id="settings-pronoun-note"
+                  aria-label="โทนหรือหมายเหตุ เช่น เพื่อนสนิทกึ่งคู่แข่ง"
+                  type="text"
+                  value={pronounNote}
+                  onChange={(e) => setPronounNote(e.target.value)}
+                  placeholder="โทน / หมายเหตุ (เช่น เพื่อนสนิทกึ่งคู่แข่ง, สุภาพมาก)"
+                  className="flex-1 rounded border border-surface-hover bg-background/60 px-2 py-1 text-xs text-foreground placeholder:text-muted/60 focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                <button
+                  type="submit"
+                  aria-label="เพิ่มความสัมพันธ์ลงในตาราง"
+                  disabled={!pronounSpeaker.trim() || !pronounListener.trim() || (!pronounFirstPerson.trim() && !pronounSecondPerson.trim())}
+                  className="flex items-center gap-1 rounded bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground hover:bg-primary-hover disabled:opacity-40 transition-colors cursor-pointer"
+                >
+                  <Plus className="h-3 w-3" />
+                  เพิ่ม
+                </button>
+              </div>
+            </form>
+
+            {/* Export & Import Buttons */}
+            <div className="mt-2.5 flex gap-1.5">
+              <button
+                type="button"
+                aria-label="ส่งออกตารางสรรพนาม (.json)"
+                disabled={pronounMatrix.length === 0}
+                onClick={() => {
+                  const blob = new Blob([JSON.stringify(pronounMatrix, null, 2)], {
+                    type: "application/json;charset=utf-8",
+                  });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `superk-pronoun-matrix-${new Date().toISOString().slice(0, 10)}.json`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="flex-1 rounded border border-surface-hover bg-surface px-2 py-1.5 text-[11px] font-medium text-foreground hover:bg-surface-hover disabled:opacity-40 transition-colors cursor-pointer"
+              >
+                📤 ส่งออก (.json)
+              </button>
+              <label className="flex-1 rounded border border-surface-hover bg-surface px-2 py-1.5 text-center text-[11px] font-medium text-foreground hover:bg-surface-hover transition-colors cursor-pointer">
+                📥 นำเข้า (.json)
+                <input
+                  type="file"
+                  aria-label="นำเข้าตารางสรรพนาม (.json)"
+                  accept="application/json,.json"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    try {
+                      const raw = await file.text();
+                      const parsed = JSON.parse(raw);
+                      if (!Array.isArray(parsed)) throw new Error("Invalid format");
+                      const { mergePronounRelations } = await import("@/lib/translation/pronounMatrix");
+                      const { merged, addedCount, updatedCount } = mergePronounRelations(pronounMatrix, parsed);
+                      onPronounMatrixChange?.(merged);
+                      const toast = (await import("react-hot-toast")).default;
+                      if (addedCount > 0 || updatedCount > 0) {
+                        toast.success(`✨ นำเข้าตารางสรรพนามสำเร็จ (เพิ่มใหม่ ${addedCount} คู่, ปรับปรุง ${updatedCount} คู่)`);
+                      } else {
+                        toast("ความสัมพันธ์ทั้งหมดมีอยู่ในตารางแล้ว", { icon: "ℹ️" });
+                      }
+                    } catch {
+                      const toast = (await import("react-hot-toast")).default;
+                      toast.error("รูปแบบไฟล์ตารางสรรพนามไม่ถูกต้อง");
                     } finally {
                       e.target.value = "";
                     }
@@ -2098,6 +2492,34 @@ export function SettingsModal({
               </div>
             </div>
           </div>
+
+          <div className="rounded-xl border border-border/70 bg-background/45 p-3">
+            <div className="flex items-center justify-between mb-1.5">
+              <label htmlFor="settings-parallel-pages" className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+                <Layers className="h-3.5 w-3.5 text-primary" />
+                <span>การแปลหลายหน้าแบบคู่ขนาน (Bounded Parallel Translation)</span>
+              </label>
+              <span className="rounded-full bg-primary/10 border border-primary/30 px-2 py-0.5 text-[10px] font-medium text-primary">
+                {parallelPages} หน้าพร้อมกัน
+              </span>
+            </div>
+            <p className="mb-2 text-[10px] leading-relaxed text-muted">
+              กระจายงานแปลหลายหน้าพร้อมกันด้วย Concurrency Worker Pool โดยมีระบบควบคุม Rate Limiter และ Backoff อัตโนมัติเมื่อเจอโควตาจำกัด
+            </p>
+            <select
+              id="settings-parallel-pages"
+              aria-label="การแปลหลายหน้าแบบคู่ขนาน (Parallel Translation)"
+              value={String(parallelPages)}
+              onChange={(e) => onParallelPagesChange?.(Number(e.target.value))}
+              className="w-full rounded-md border border-surface-hover bg-background px-3 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer"
+            >
+              <option value="1">1 หน้า (ตามลำดับ — ปลอดภัยสูงสุด ประหยัดโควตา API)</option>
+              <option value="2">2 หน้า (แนะนำ — เร็วขึ้น 2 เท่า สมดุลความเร็วและโควตา Gemini Flash)</option>
+              <option value="3">3 หน้า (เร็วพิเศษ — เร็วขึ้น 3 เท่า สำหรับงานแปลหลายสิบหน้า)</option>
+              <option value="4">4 หน้า (เทอร์โบ — สำหรับผู้ใช้ที่มีหลาย API Key)</option>
+            </select>
+          </div>
+
           <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-3 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">

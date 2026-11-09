@@ -21,6 +21,7 @@ export function useWorkspaceToolbarView(options: WorkspaceToolbarViewOptions = {
   );
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isThumbnailsCollapsed, setIsThumbnailsCollapsed] = useState(false);
+  const [isSplitView, setIsSplitView] = useState(false);
   const [isFocusMode, setIsFocusMode] = useState(false);
   const [isFocusToolbarVisible, setIsFocusToolbarVisible] = useState(false);
   const [toolbarPosition, setToolbarPosition] = useState<ToolbarPosition>("top");
@@ -93,6 +94,10 @@ export function useWorkspaceToolbarView(options: WorkspaceToolbarViewOptions = {
     setViewLayout((prev) => (prev === "single" ? "scroll" : "single"));
   }, []);
 
+  const toggleSplitView = useCallback(() => {
+    setIsSplitView((prev) => !prev);
+  }, []);
+
   const toggleMobileMenu = useCallback(() => {
     setIsMobileMenuOpen((prev) => !prev);
   }, []);
@@ -111,6 +116,9 @@ export function useWorkspaceToolbarView(options: WorkspaceToolbarViewOptions = {
     viewLayout,
     setViewLayout,
     toggleViewLayout,
+    isSplitView,
+    setIsSplitView,
+    toggleSplitView,
     isMobileMenuOpen,
     setIsMobileMenuOpen,
     toggleMobileMenu,

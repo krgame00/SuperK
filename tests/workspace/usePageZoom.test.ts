@@ -340,4 +340,270 @@ describe("usePageZoom", () => {
 
     document.body.removeChild(bubbleEl);
   });
+
+  test("allows panning with Spacebar held even at fitScale", () => {
+    const container = createMockContainer(1000, 1000);
+    const containerRef = { current: container };
+
+    const { result } = renderHook(() =>
+      usePageZoom({
+        currentPage: 0,
+        workspaceLayer: "original",
+        viewLayout: "single",
+        containerRef,
+        imageNaturalWidth: 1000,
+        imageNaturalHeight: 1000,
+      }),
+    );
+
+    expect(result.current.isFit).toBe(true);
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", key: " " }));
+    });
+    expect(result.current.isSpacePressed).toBe(true);
+
+    const preventDefault = vi.fn();
+    act(() => {
+      result.current.handlePointerDown({
+        button: 0,
+        clientX: 200,
+        clientY: 200,
+        target: container,
+        currentTarget: container,
+        pointerId: 1,
+        preventDefault,
+      } as unknown as React.PointerEvent);
+    });
+
+    expect(result.current.isPanning).toBe(true);
+    expect(preventDefault).toHaveBeenCalled();
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keyup", { code: "Space", key: " " }));
+    });
+    expect(result.current.isSpacePressed).toBe(false);
+  });
+
+  test("smooths continuous pinch gestures on trackpad wheel with small deltaY", () => {
+    const container = createMockContainer(1000, 1000);
+    const containerRef = { current: container };
+
+    const { result } = renderHook(() =>
+      usePageZoom({
+        currentPage: 0,
+        workspaceLayer: "original",
+        viewLayout: "single",
+        containerRef,
+        imageNaturalWidth: 1000,
+        imageNaturalHeight: 1000,
+      }),
+    );
+
+    const pinchEvent = new WheelEvent("wheel", {
+      deltaY: -2,
+      deltaMode: 0,
+      ctrlKey: true,
+      cancelable: true,
+      clientX: 500,
+      clientY: 500,
+    });
+
+    act(() => {
+      result.current.handleWheel(pinchEvent);
+    });
+
+    expect(result.current.scale).toBeGreaterThan(1.01);
+    expect(result.current.scale).toBeLessThan(1.05);
+    expect(result.current.isWheelActive).toBe(true);
+  });
+
+  test("applies inertial glide on pointerup with high release velocity", () => {
+    vi.useFakeTimers();
+    const container = createMockContainer(1000, 1000);
+    const containerRef = { current: container };
+
+    const { result } = renderHook(() =>
+      usePageZoom({
+        currentPage: 0,
+        workspaceLayer: "original",
+        viewLayout: "single",
+        containerRef,
+        imageNaturalWidth: 2000,
+        imageNaturalHeight: 2000,
+      }),
+    );
+
+    act(() => {
+      result.current.zoomTo(2.0);
+    });
+
+    const preventDefault = vi.fn();
+    act(() => {
+      result.current.handlePointerDown({
+        button: 0,
+        clientX: 400,
+        clientY: 400,
+        target: container,
+        currentTarget: container,
+        pointerId: 1,
+        preventDefault,
+      } as unknown as React.PointerEvent);
+    });
+
+    act(() => {
+      result.current.handlePointerMove({
+        clientX: 300,
+        clientY: 300,
+      } as unknown as React.PointerEvent);
+    });
+
+    act(() => {
+      result.current.handlePointerUp({
+        pointerId: 1,
+        currentTarget: container,
+      } as unknown as React.PointerEvent);
+    });
+
+    expect(result.current.isPanning).toBe(false);
+    expect(result.current.isInertiaActive).toBe(true);
+
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+
+    expect(result.current.isInertiaActive).toBe(false);
+    vi.useRealTimers();
+  });
+
+  test("cancels inertial glide immediately when pointerdown fires during glide", () => {
+    vi.useFakeTimers();
+    const container = createMockContainer(1000, 1000);
+    const containerRef = { current: container };
+
+    const { result } = renderHook(() =>
+      usePageZoom({
+        currentPage: 0,
+        workspaceLayer: "original",
+        viewLayout: "single",
+        containerRef,
+        imageNaturalWidth: 2000,
+        imageNaturalHeight: 2000,
+      }),
+    );
+
+    act(() => {
+      result.current.zoomTo(2.0);
+    });
+
+    const preventDefault = vi.fn();
+    act(() => {
+      result.current.handlePointerDown({
+        button: 0,
+        clientX: 400,
+        clientY: 400,
+        target: container,
+        currentTarget: container,
+        pointerId: 1,
+        preventDefault,
+      } as unknown as React.PointerEvent);
+    });
+
+    act(() => {
+      result.current.handlePointerMove({
+        clientX: 300,
+        clientY: 300,
+      } as unknown as React.PointerEvent);
+    });
+
+    act(() => {
+      result.current.handlePointerUp({
+        pointerId: 1,
+        currentTarget: container,
+      } as unknown as React.PointerEvent);
+    });
+
+    expect(result.current.isInertiaActive).toBe(true);
+
+    // Another click during glide should immediately stop inertia
+    act(() => {
+      result.current.handlePointerDown({
+        button: 0,
+        clientX: 300,
+        clientY: 300,
+        target: container,
+        currentTarget: container,
+        pointerId: 2,
+        preventDefault,
+      } as unknown as React.PointerEvent);
+    });
+
+    expect(result.current.isInertiaActive).toBe(false);
+    vi.useRealTimers();
+  });
+
+  test("calculates fitScale and centers image within split-view half pane when isSplitView is true", () => {
+    // 1400px wide, 900px high viewport
+    const container = createMockContainer(1400, 900);
+    const containerRef = { current: container };
+
+    const { result } = renderHook(() =>
+      usePageZoom({
+        currentPage: 0,
+        workspaceLayer: "original",
+        viewLayout: "single",
+        containerRef,
+        imageNaturalWidth: 800,
+        imageNaturalHeight: 1200,
+        isSplitView: true,
+      }),
+    );
+
+    // Available pane width: Math.floor((1400 - 28) / 2) = 686px
+    // Available pane height: 900 - 16 = 884px
+    // scaleX = 686 / 800 = 0.8575, scaleY = 884 / 1200 = 0.73666...
+    // fitScale = Math.min(0.8575, 0.73666...) ~= 0.7367
+    expect(result.current.fitScale).toBeCloseTo(884 / 1200, 3);
+    expect(result.current.scale).toBeCloseTo(884 / 1200, 3);
+
+    // Centering in 686px pane:
+    // scaledW = 800 * (884 / 1200) = 589.33px
+    // pan.x = (686 - 589.33) / 2 ~= 48.33px (perfectly centered, NOT pushed 400px right)
+    const expectedScaledW = 800 * (884 / 1200);
+    const expectedPanX = (686 - expectedScaledW) / 2;
+    expect(result.current.pan.x).toBeCloseTo(expectedPanX, 1);
+    expect(result.current.pan.y).toBeCloseTo(0, 1);
+  });
+
+  test("resets zoom state to split fit dimensions when isSplitView toggles dynamically", () => {
+    const container = createMockContainer(1400, 900);
+    const containerRef = { current: container };
+
+    const { result, rerender } = renderHook(
+      ({ isSplitView }) =>
+        usePageZoom({
+          currentPage: 0,
+          workspaceLayer: "original",
+          viewLayout: "single",
+          containerRef,
+          imageNaturalWidth: 800,
+          imageNaturalHeight: 1200,
+          isSplitView,
+        }),
+      {
+        initialProps: { isSplitView: false },
+      },
+    );
+
+    // Single view: fitScale = 900 / 1200 = 0.75, pan.x = (1400 - 800 * 0.75) / 2 = 400px
+    expect(result.current.fitScale).toBeCloseTo(0.75, 2);
+    expect(result.current.pan.x).toBeCloseTo(400, 1);
+
+    // Toggle to split view:
+    rerender({ isSplitView: true });
+
+    // Split view: fitScale = 884 / 1200 ~= 0.7367, pan.x ~= 48.33px
+    expect(result.current.fitScale).toBeCloseTo(884 / 1200, 3);
+    expect(result.current.pan.x).toBeCloseTo((686 - 800 * (884 / 1200)) / 2, 1);
+  });
 });

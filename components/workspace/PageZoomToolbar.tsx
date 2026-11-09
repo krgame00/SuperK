@@ -119,7 +119,7 @@ export function PageZoomToolbar({
               aria-label={isFocusMode ? "ออกจากโหมดโฟกัส (Esc หรือ F)" : "เปิดโหมดโฟกัส (F)"}
               aria-pressed={isFocusMode}
               title={isFocusMode ? "Exit Focus Mode (Esc / F)" : "Focus Mode (F)"}
-              className={`flex h-7 w-7 items-center justify-center rounded-lg transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+              className={`flex h-7.5 w-7.5 sm:h-8 sm:w-8 items-center justify-center rounded-lg transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
                 isFocusMode
                   ? "text-primary bg-primary/20 font-semibold"
                   : "text-muted hover:text-foreground hover:bg-white/10"
@@ -142,7 +142,7 @@ export function PageZoomToolbar({
       ref={menuRef}
       role="toolbar"
       aria-label="เครื่องมือซูมและย่อขยายภาพ"
-      className={`absolute ${avoidBottomChrome ? "bottom-12" : "bottom-3"} right-3 z-20 flex items-center bg-surface/85 backdrop-blur-md border border-border/70 rounded-xl p-1 shadow-lg gap-0.5 select-none opacity-50 hover:opacity-100 focus-within:opacity-100 transition-[bottom,opacity] duration-200`}
+      className={`absolute ${avoidBottomChrome ? "bottom-12" : "bottom-3"} right-3 z-20 flex items-center bg-surface/85 backdrop-blur-md border border-border/70 rounded-xl p-1 shadow-lg gap-0.5 select-none opacity-85 hover:opacity-100 focus-within:opacity-100 transition-[bottom,opacity] duration-200`}
     >
       {/* Zoom Out Button */}
       <button
@@ -151,7 +151,7 @@ export function PageZoomToolbar({
         onClick={onZoomOut}
         aria-label="ซูมออก"
         title="ซูมออก (-)"
-        className="flex h-7 w-7 items-center justify-center rounded-lg text-muted hover:text-foreground hover:bg-white/10 active:scale-95 disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        className="flex h-7.5 w-7.5 sm:h-8 sm:w-8 items-center justify-center rounded-lg text-muted hover:text-foreground hover:bg-white/10 active:scale-95 disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
       >
         <ZoomOut className="w-3.5 h-3.5" aria-hidden="true" />
       </button>
@@ -225,7 +225,7 @@ export function PageZoomToolbar({
         onClick={onZoomIn}
         aria-label="ซูมเข้า"
         title="ซูมเข้า (+)"
-        className="flex h-7 w-7 items-center justify-center rounded-lg text-muted hover:text-foreground hover:bg-white/10 active:scale-95 disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        className="flex h-7.5 w-7.5 sm:h-8 sm:w-8 items-center justify-center rounded-lg text-muted hover:text-foreground hover:bg-white/10 active:scale-95 disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
       >
         <ZoomIn className="w-3.5 h-3.5" aria-hidden="true" />
       </button>
@@ -238,7 +238,7 @@ export function PageZoomToolbar({
         aria-label="พอดีหน้าจอ"
         aria-pressed={isFit}
         title="พอดีหน้าจอ (0)"
-        className={`flex h-7 w-7 items-center justify-center rounded-lg transition-all active:scale-95 disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+        className={`flex h-7.5 w-7.5 sm:h-8 sm:w-8 items-center justify-center rounded-lg transition-all active:scale-95 disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
           isFit
             ? "text-primary bg-primary/15 font-semibold"
             : "text-muted hover:text-foreground hover:bg-white/10"
@@ -256,7 +256,7 @@ export function PageZoomToolbar({
             aria-label={isFocusMode ? "ออกจากโหมดโฟกัส (Esc หรือ F)" : "เปิดโหมดโฟกัส (F)"}
             aria-pressed={isFocusMode}
             title={isFocusMode ? "Exit Focus Mode (Esc / F)" : "Focus Mode (F)"}
-              className={`flex h-7 w-7 items-center justify-center rounded-lg transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+              className={`flex h-7.5 w-7.5 sm:h-8 sm:w-8 items-center justify-center rounded-lg transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
                 isFocusMode
                   ? "text-primary bg-primary/20 font-semibold"
                   : "text-muted hover:text-foreground hover:bg-white/10"

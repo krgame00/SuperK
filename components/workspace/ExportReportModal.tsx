@@ -166,7 +166,7 @@ export function ExportReportModal({
                 onClick={() => setFilterMode("issues")}
                 className={`rounded-lg px-2.5 py-1 font-medium transition-colors cursor-pointer ${
                   filterMode === "issues"
-                    ? "bg-amber-500 text-neutral-950 font-semibold"
+                    ? "bg-amber-500 text-amber-950 font-bold"
                     : "bg-surface text-muted hover:text-foreground"
                 }`}
               >
@@ -178,7 +178,7 @@ export function ExportReportModal({
                   onClick={() => setFilterMode("untranslated")}
                   className={`rounded-lg px-2.5 py-1 font-medium transition-colors cursor-pointer ${
                     filterMode === "untranslated"
-                      ? "bg-amber-500 text-neutral-950 font-semibold"
+                      ? "bg-amber-500 text-amber-950 font-bold"
                       : "bg-surface text-muted hover:text-foreground"
                   }`}
                 >

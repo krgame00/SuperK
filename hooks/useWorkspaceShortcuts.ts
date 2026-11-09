@@ -41,6 +41,12 @@ export interface UseWorkspaceShortcutsOptions {
   onToggleFocusMode: () => void;
   onExitFocusMode: () => void;
   onToggleFocusToolbar: () => void;
+
+  // Mask / Brush tool
+  onEditMask?: () => void;
+
+  // Split View
+  onToggleSplitView?: () => void;
 }
 
 export function useWorkspaceShortcuts({
@@ -55,6 +61,8 @@ export function useWorkspaceShortcuts({
   onToggleFocusMode,
   onExitFocusMode,
   onToggleFocusToolbar,
+  onEditMask,
+  onToggleSplitView,
 }: UseWorkspaceShortcutsOptions): {
   canUndo: boolean;
   canRedo: boolean;
@@ -75,6 +83,8 @@ export function useWorkspaceShortcuts({
     onToggleFocusMode,
     onExitFocusMode,
     onToggleFocusToolbar,
+    onEditMask,
+    onToggleSplitView,
   });
 
   useEffect(() => {
@@ -90,6 +100,8 @@ export function useWorkspaceShortcuts({
       onToggleFocusMode,
       onExitFocusMode,
       onToggleFocusToolbar,
+      onEditMask,
+      onToggleSplitView,
     };
   });
 
@@ -144,10 +156,18 @@ export function useWorkspaceShortcuts({
         }
       }
 
-      if (isB) {
-        if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+      // Toolbar toggle: Ctrl+B or Cmd+B
+      if ((e.ctrlKey || e.metaKey) && isB && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        opts.onToggleFocusToolbar();
+        return;
+      }
+
+      // Mask / Brush tool: Bare B
+      if (isB && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        if (opts.onEditMask) {
           e.preventDefault();
-          opts.onToggleFocusToolbar();
+          opts.onEditMask();
           return;
         }
       }
@@ -192,6 +212,15 @@ export function useWorkspaceShortcuts({
         e.preventDefault();
         opts.onOpenShortcuts();
         return;
+      }
+
+      // Toggle Split View: \
+      if (e.key === "\\" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        if (opts.onToggleSplitView) {
+          e.preventDefault();
+          opts.onToggleSplitView();
+          return;
+        }
       }
 
       // Don't trigger standard shortcuts when modifier keys are held

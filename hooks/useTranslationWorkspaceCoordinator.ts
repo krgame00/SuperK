@@ -171,7 +171,7 @@ export function useTranslationWorkspaceCoordinator({
     }
   }, [handleTranslate, operationBusy, pagesCount, setIsUiOperationBusy, setWorkspaceLayer, uiOperationLockRef]);
 
-  // Execute whole-book batch translation and auto-organize
+  // Execute whole-book batch translation and auto-organize (One-Click Complete Project)
   const handleTranslateBook = useCallback(async (): Promise<void> => {
     if (
       uiOperationLockRef.current ||
@@ -185,6 +185,22 @@ export function useTranslationWorkspaceCoordinator({
       setWorkspaceLayer("translated");
       await handleTranslateAll();
       await handleAutoOrganizeAllPages();
+      const toastModule = await import("react-hot-toast");
+      const toastObj = toastModule.default as unknown as {
+        success?: (msg: string, opts?: unknown) => void;
+        (msg: string, opts?: unknown): void;
+      };
+      if (typeof toastObj?.success === "function") {
+        toastObj.success(
+          `🎉 เสร็จสิ้นทั้งเล่มในคลิกเดียว! คลีน แปล และจัดหน้าครบทั้ง ${pagesCount} หน้าเรียบร้อย พร้อมส่งออก`,
+          { duration: 5000, icon: "✨" },
+        );
+      } else if (typeof toastObj === "function") {
+        toastObj(
+          `🎉 เสร็จสิ้นทั้งเล่มในคลิกเดียว! คลีน แปล และจัดหน้าครบทั้ง ${pagesCount} หน้าเรียบร้อย พร้อมส่งออก`,
+          { duration: 5000 },
+        );
+      }
     } finally {
       uiOperationLockRef.current = false;
       setIsUiOperationBusy(false);

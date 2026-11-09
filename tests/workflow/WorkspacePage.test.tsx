@@ -1214,7 +1214,7 @@ test("batch translate book runs auto-organization after batch translation comple
   const toolsTrigger = screen.getAllByRole("button", { name: "เครื่องมือ" })[0];
   fireEvent.click(toolsTrigger);
 
-  const translateBookItem = await screen.findByRole("menuitem", { name: /^แปลทั้งเล่ม$/ });
+  const [translateBookItem] = await screen.findAllByRole("menuitem", { name: /แปลทั้งเล่ม|จบทั้งเล่มในคลิกเดียว/ });
   await act(async () => {
     fireEvent.click(translateBookItem);
   });

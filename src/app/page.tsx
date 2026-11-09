@@ -40,7 +40,7 @@ export default function WorkspacePage() {
       {translateAllProgress && (
         <div
           className={`fixed left-0 right-0 z-50 transition-all duration-200 ${
-            isFocusMode ? "top-0" : "top-14"
+            isFocusMode ? "top-0" : "top-12"
           }`}
         >
           <div className="h-1 bg-surface/60 backdrop-blur-xs w-full">

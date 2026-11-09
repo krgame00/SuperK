@@ -31,11 +31,20 @@ export function rederiveRegionMaskFromContent(params: {
   const { crop, baseMask } = params;
   const w = crop.width;
   const h = crop.height;
-  // Mutate a raw typed array and wrap it at the end: jsdom's ImageData.data
-  // getter does not surface indexed writes made on the wrapped instance.
-  const out = new Uint8ClampedArray(baseMask.data);
-
   const total = w * h;
+  const expectedBytes = total * 4;
+
+  // Defensive allocation: guarantee out matches crop dimensions (w * h * 4)
+  const out = new Uint8ClampedArray(expectedBytes);
+  if (baseMask.data.length === expectedBytes) {
+    out.set(baseMask.data);
+  } else {
+    const copyLen = Math.min(out.length, baseMask.data.length);
+    for (let i = 0; i < copyLen; i++) {
+      out[i] = baseMask.data[i];
+    }
+  }
+
   const luma = new Uint8Array(total);
   const chroma = new Uint8Array(total);
   for (let i = 0; i < total; i++) {
@@ -48,7 +57,7 @@ export function rederiveRegionMaskFromContent(params: {
   }
 
   const isActive = (i: number): boolean =>
-    baseMask.data[i * 4] > 0 || baseMask.data[i * 4 + 1] > 0 || baseMask.data[i * 4 + 2] > 0;
+    out[i * 4] > 0 || out[i * 4 + 1] > 0 || out[i * 4 + 2] > 0;
 
   // Label light components: border-touching = outside paper (unknown), enclosed = bubble interior.
   const zone = new Uint8Array(total); // 0 unknown, 1 bubble interior, 2 outside paper, 3 chroma stroke

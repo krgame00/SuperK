@@ -42,12 +42,14 @@ function Get-SuperKUvicornPath {
 
 function Start-SuperKOcrProcess {
     param([string]$ProjectRoot)
+    Initialize-SuperKRuntimeEnvironment
     $logDirectory = Join-Path $ProjectRoot '.superk-runtime'
     New-Item -Path $logDirectory -ItemType Directory -Force | Out-Null
     $uvicornExe = Get-SuperKUvicornPath -ProjectRoot $ProjectRoot
+    $pythonExe = Join-Path (Join-Path $ProjectRoot 'ocr-service') '.venv\Scripts\python.exe'
     $env:SUPERK_ENABLE_ADAPTIVE_ROI_V2 = '1'
     $runStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    Start-Process -FilePath $uvicornExe -ArgumentList @('app.api:app', '--host', '127.0.0.1', '--port', '8765') -WorkingDirectory (Join-Path $ProjectRoot 'ocr-service') -WindowStyle Hidden -PassThru -RedirectStandardOutput (Get-SuperKRunLog -LogDirectory $logDirectory -BaseName 'ocr' -RunStamp $runStamp) -RedirectStandardError (Get-SuperKRunLog -LogDirectory $logDirectory -BaseName 'ocr-error' -RunStamp $runStamp)
+    Start-Process -FilePath $pythonExe -ArgumentList @("`"$uvicornExe`"", 'app.api:app', '--host', '127.0.0.1', '--port', '8765') -WorkingDirectory (Join-Path $ProjectRoot 'ocr-service') -WindowStyle Hidden -PassThru -RedirectStandardOutput (Get-SuperKRunLog -LogDirectory $logDirectory -BaseName 'ocr' -RunStamp $runStamp) -RedirectStandardError (Get-SuperKRunLog -LogDirectory $logDirectory -BaseName 'ocr-error' -RunStamp $runStamp)
 }
 
 function Start-SuperKWebProcess {

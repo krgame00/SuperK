@@ -168,7 +168,7 @@ describe("WorkspaceCanvasHost", () => {
     fireEvent.click(exitBtn);
     expect(props.onExitFocusMode).toHaveBeenCalledTimes(1);
 
-    const toggleToolbarBtn = screen.getByRole("button", { name: "ซ่อนแถบเครื่องมือคลีน (B)" });
+    const toggleToolbarBtn = screen.getByRole("button", { name: "ซ่อนแถบเครื่องมือคลีน (Ctrl+B)" });
     fireEvent.click(toggleToolbarBtn);
     expect(props.onToggleFocusToolbar).toHaveBeenCalledTimes(1);
   });

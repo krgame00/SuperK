@@ -141,18 +141,18 @@ describe("Workspace Toolbar Docking and Collapse", () => {
     expect(screen.queryByRole("region", { name: "Cleaning toolbar" })).toBeNull();
 
     // Click expand on mini-pill
-    const expandBtn = screen.getByRole("button", { name: "ขยายแถบเครื่องมือ (กด B)" });
+    const expandBtn = screen.getByRole("button", { name: "ขยายแถบเครื่องมือ (กด Ctrl+B)" });
     fireEvent.click(expandBtn);
 
     // Full toolbar returns
     expect(await screen.findByRole("region", { name: "Cleaning toolbar" })).toBeInTheDocument();
 
     // Press 'B' key to collapse again
-    fireEvent.keyDown(window, { key: "B" });
+    fireEvent.keyDown(window, { key: "b", ctrlKey: true });
     expect(await screen.findByRole("region", { name: "แถบเครื่องมือแบบย่อ" })).toBeInTheDocument();
 
     // Press 'B' key again to expand
-    fireEvent.keyDown(window, { key: "B" });
+    fireEvent.keyDown(window, { key: "b", ctrlKey: true });
     expect(await screen.findByRole("region", { name: "Cleaning toolbar" })).toBeInTheDocument();
   });
 

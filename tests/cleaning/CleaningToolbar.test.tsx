@@ -104,3 +104,26 @@ test("renders children when provided", () => {
   );
   expect(screen.getByTestId("custom-child")).toBeInTheDocument();
 });
+
+test("renders actionable reclean recovery banner when saved assets are missing", () => {
+  const onClean = vi.fn();
+  render(
+    <CleaningToolbar
+      hasPage
+      hasResult={false}
+      hasTranslated={false}
+      layer="original"
+      onClean={onClean}
+      onEditMask={vi.fn()}
+      onLayerChange={vi.fn()}
+      error={{
+        message: "ไฟล์ภาพคลีนเดิมไม่อยู่ในเครื่อง กรุณากดคลีนข้อความใหม่อีกครั้ง",
+        recovery: "reclean",
+      }}
+    />,
+  );
+  expect(screen.getByText(/ไฟล์ภาพคลีนเดิมไม่อยู่ในเครื่อง/)).toBeTruthy();
+  const recleanBtn = screen.getByRole("button", { name: "กดคลีนใหม่" });
+  fireEvent.click(recleanBtn);
+  expect(onClean).toHaveBeenCalledOnce();
+});

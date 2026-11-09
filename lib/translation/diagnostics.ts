@@ -214,12 +214,16 @@ export function classifyTranslationError(
     msg.includes("คลีนได้") ||
     msg.includes("sidecar") ||
     msg.includes("econnrefused") ||
-    msg.includes("เซิร์ฟเวอร์คลีน")
+    msg.includes("เซิร์ฟเวอร์คลีน") ||
+    msg.includes("local cleaning service is unavailable") ||
+    msg.includes("cleaning service is unavailable") ||
+    msg.includes("cleaning service returned 503")
   ) {
     return DIAGNOSTIC_TAXONOMY.LOCAL_SIDECAR_OFFLINE;
   }
   if (
     msg.includes("cleaner") ||
+    msg.includes("cleaning failed") ||
     msg.includes("model load") ||
     msg.includes("model failed") ||
     msg.includes("inference") ||

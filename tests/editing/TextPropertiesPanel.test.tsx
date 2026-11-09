@@ -114,4 +114,88 @@ describe("TextPropertiesPanel", () => {
     expect(onChange).toHaveBeenCalledWith({ fontFamily: "Prompt, sans-serif" });
     expect(onBatchApply).toHaveBeenCalledWith({ fontFamily: "Prompt, sans-serif" });
   });
+
+  it("renders 5 typography preset buttons and applies preset style on click", () => {
+    const onChange = vi.fn();
+    render(
+      <TextPropertiesPanel
+        layer={sampleLayer}
+        onChange={onChange}
+      />,
+    );
+
+    const shoutBtn = screen.getByRole("button", { name: "ใช้สไตล์ เสียงตะโกน" });
+    expect(shoutBtn).toBeInTheDocument();
+
+    fireEvent.click(shoutBtn);
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fontFamily: "Chakra Petch, sans-serif",
+        isBold: true,
+        strokeWidth: 4,
+      }),
+    );
+  });
+
+  it("broadcasts typography preset when scope is all-pages", () => {
+    const onChange = vi.fn();
+    const onBatchApply = vi.fn();
+    render(
+      <TextPropertiesPanel
+        layer={sampleLayer}
+        onChange={onChange}
+        scope="all-pages"
+        onBatchApplyTypography={onBatchApply}
+      />,
+    );
+
+    const whisperBtn = screen.getByRole("button", { name: "ใช้สไตล์ เสียงกระซิบ" });
+    fireEvent.click(whisperBtn);
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fontFamily: "Mali, sans-serif",
+        isItalic: true,
+      }),
+    );
+    expect(onBatchApply).toHaveBeenCalledWith({
+      fontFamily: "Mali, sans-serif",
+      isBold: false,
+      isItalic: true,
+    });
+  });
+
+  it("renders auto-fit button and calls onAutoFitBubble when clicked", () => {
+    const onAutoFit = vi.fn();
+    render(
+      <TextPropertiesPanel
+        layer={sampleLayer}
+        onChange={vi.fn()}
+        onAutoFitBubble={onAutoFit}
+      />,
+    );
+
+    const autoFitBtn = screen.getByRole("button", {
+      name: /ปรับพอดีบอลลูน|Auto Fit/i,
+    });
+    expect(autoFitBtn).toBeInTheDocument();
+
+    fireEvent.click(autoFitBtn);
+    expect(onAutoFit).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders custom font upload button and accepts font files", () => {
+    render(
+      <TextPropertiesPanel
+        layer={sampleLayer}
+        onChange={vi.fn()}
+      />,
+    );
+
+    const uploadBtn = screen.getByRole("button", { name: "เพิ่มแบบอักษรใหม่" });
+    expect(uploadBtn).toBeInTheDocument();
+
+    const fileInput = screen.getByLabelText("เลือกไฟล์ฟอนต์");
+    expect(fileInput).toHaveAttribute("accept", ".ttf,.otf,.woff,.woff2");
+  });
 });

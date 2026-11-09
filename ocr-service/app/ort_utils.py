@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from pathlib import Path
 
 import onnxruntime as ort
@@ -18,6 +19,12 @@ import onnxruntime as ort
 logger = logging.getLogger(__name__)
 
 _GPU_DEVICE_SUSPENDED = False
+_INFERENCE_LOCK = threading.RLock()
+
+
+def get_inference_lock() -> threading.RLock:
+    '''Return the global reentrant lock used to serialize ONNX / DirectML inference across worker threads.'''
+    return _INFERENCE_LOCK
 
 _GPU_ERROR_SIGNATURES = (
     "887a0005",
@@ -61,6 +68,7 @@ def reset_gpu_suspended() -> None:
     """Reset the GPU suspension flag (used by tests or manual re-initialization)."""
     global _GPU_DEVICE_SUSPENDED
     _GPU_DEVICE_SUSPENDED = False
+_INFERENCE_LOCK = threading.RLock()
 
 
 def _ensure_cuda_path() -> None:

@@ -5,6 +5,14 @@ import {
   requestGemini,
 } from "@/lib/server/geminiRequest";
 import { requireLocalRequest } from "@/lib/server/localRequest";
+import {
+  buildGlossaryDirectives,
+  type FlexibleGlossaryEntry,
+} from "@/lib/translation/glossary";
+import {
+  buildPronounMatrixDirectives,
+  type PronounRelation,
+} from "@/lib/translation/pronounMatrix";
 import { FIXED_IMAGE_MODELS } from "@/lib/translation/imageModelChoices";
 import { getSyncedExtensionSettings } from "@/src/app/api/extension/settings/handler";
 
@@ -28,7 +36,7 @@ export async function POST(req: Request) {
   try {
     const denial = requireLocalRequest(req);
     if (denial) return denial;
-    const { bubbles, targetLang, modelPreference, policy, apiKey } = await req.json();
+    const { bubbles, targetLang, modelPreference, policy, apiKey, glossary, pronounMatrix } = await req.json();
     
     if (!bubbles || !Array.isArray(bubbles)) {
       return NextResponse.json({ error: "Missing or invalid text data" }, { status: 400 });
@@ -42,9 +50,10 @@ export async function POST(req: Request) {
       typeof raw === "string"
         ? raw.split(/[\s,;]+/).map((key) => key.trim()).filter(Boolean)
         : [];
+    const syncedSettings = getSyncedExtensionSettings();
     const userApiKeyRaw = typeof apiKey === "string" && apiKey.trim()
       ? apiKey
-      : getSyncedExtensionSettings().geminiApiKey;
+      : syncedSettings.geminiApiKey;
     const userKeys = Array.from(new Set(parseKeyList(userApiKeyRaw)));
     const serverKeys = Array.from(new Set(parseKeyList(process.env.GEMINI_API_KEY)));
     const apiKeys = Array.from(new Set([...userKeys, ...serverKeys]));
@@ -59,6 +68,15 @@ export async function POST(req: Request) {
       ? "- PRESERVE Sound Effects (SFX) in original form without translation."
       : "- Translate Sound Effects (SFX) and wrap them in asterisks, e.g., *BOOM* or *ตู้ม*.";
 
+    const effectiveGlossary: FlexibleGlossaryEntry[] =
+      glossary && Array.isArray(glossary) && glossary.length > 0
+        ? glossary
+        : syncedSettings.glossary && syncedSettings.glossary.length > 0
+          ? syncedSettings.glossary
+          : [];
+    const glossaryDirective = buildGlossaryDirectives(effectiveGlossary);
+    const pronounDirective = buildPronounMatrixDirectives(pronounMatrix);
+
     const promptText = 
       `You are an expert manga translator. Translate the following JSON list of text blocks to ${targetLang || 'Thai'}.\n`+
       `- Use highly natural, conversational flow appropriate for comic books. Avoid rigid word-for-word translation.\n`+
@@ -66,6 +84,8 @@ export async function POST(req: Request) {
       `- Do NOT use line breaks (\\n) in the translated text. Keep the text of each bubble on a single continuous line (ห้ามเว้นบรรทัดมั่ว ให้ต่อเป็นบรรทัดเดียวกัน).\n`+
       `- For Thai: Adapt pronouns (แก, ฉัน, นาย, ข้า, เอ็ง) and endings (ครับ, ค่ะ, วะ, เว้ย, สิ, นะ) based on character relationships and mood.\n`+
       `${sfxDirective}\n`+
+      `${glossaryDirective}`+
+      `${pronounDirective}`+
       `- Read order is usually Right-to-Left, Top-to-Bottom.\n`+
       `The input format is {"bubbles":[{"t":"original text","box":[ymin,xmin,ymax,xmax]}]}.\n`+
       `Output ONLY valid JSON, no markdown, no explanation.\n`+

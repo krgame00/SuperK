@@ -283,4 +283,41 @@ describe("WorkspaceHeaderHost", () => {
     fireEvent.click(cancelBtn);
     expect(onCancelPrimaryAction).toHaveBeenCalledTimes(1);
   });
+
+  it("renders One-Click Complete Project button when multiple pages exist and triggers onTranslateBook", () => {
+    const onTranslateBook = vi.fn();
+    const props: WorkspaceHeaderHostProps = {
+      ...createDefaultProps(),
+      pages: [
+        { url: "blob:page-1", name: "Page 1" },
+        { url: "blob:page-2", name: "Page 2" },
+      ],
+      currentPage: 0,
+      currentPageUrl: "blob:page-1",
+      onTranslateBook,
+    };
+
+    render(<WorkspaceHeaderHost {...props} />);
+
+    const oneClickBtn = screen.getByRole("button", { name: /One-Click Complete Project/i });
+    expect(oneClickBtn).toBeInTheDocument();
+    expect(oneClickBtn).toHaveTextContent("⚡ จบทั้งเล่ม");
+    expect(oneClickBtn).toHaveTextContent("2");
+
+    fireEvent.click(oneClickBtn);
+    expect(onTranslateBook).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not render One-Click button on desktop header when only 1 page exists", () => {
+    const props: WorkspaceHeaderHostProps = {
+      ...createDefaultProps(),
+      pages: [{ url: "blob:page-1", name: "Page 1" }],
+      currentPage: 0,
+      currentPageUrl: "blob:page-1",
+    };
+
+    render(<WorkspaceHeaderHost {...props} />);
+
+    expect(screen.queryByRole("button", { name: /One-Click Complete Project/i })).not.toBeInTheDocument();
+  });
 });

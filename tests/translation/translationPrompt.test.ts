@@ -27,5 +27,34 @@ describe("buildTranslationPrompt script directive", () => {
     const prompt = buildTranslationPrompt({ targetLang: "Japanese" });
     expect(prompt).not.toContain("ENTIRELY in Thai script");
   });
-});
 
+  it("explicitly instructs detection of rectangular, trapezoidal, slanted, and narrative dialogue boxes", () => {
+    const prompt = buildTranslationPrompt({ targetLang: "Thai" });
+    expect(prompt).toContain("rectangular or trapezoidal boxes");
+    expect(prompt).toContain("slanted/tilted dialogue boxes");
+    expect(prompt).toContain("floating text outside bubbles");
+    expect(prompt).toContain("small handwritten text beside panels or character faces");
+  });
+
+  it("injects pronoun matrix instructions when pronounMatrix is passed", () => {
+    const prompt = buildTranslationPrompt({
+      targetLang: "Thai",
+      pronounMatrix: [
+        {
+          speaker: "ลอยด์",
+          listener: "ยอร์",
+          firstPerson: "ผม",
+          secondPerson: "คุณ",
+          note: "คู่แต่งงานปลอมๆ สุภาพ",
+        },
+      ],
+    });
+    expect(prompt).toContain("CHARACTER PRONOUN & RELATIONSHIP MATRIX (MANDATORY CONSISTENCY):");
+    expect(prompt).toContain('- When "ลอยด์" speaks to "ยอร์": MUST use 1st-person self: "ผม", 2nd-person addressee: "คุณ", Tone/Nuance: คู่แต่งงานปลอมๆ สุภาพ');
+  });
+
+  it("omits pronoun matrix section when pronounMatrix is empty or undefined", () => {
+    const prompt = buildTranslationPrompt({ targetLang: "Thai", pronounMatrix: [] });
+    expect(prompt).not.toContain("CHARACTER PRONOUN & RELATIONSHIP MATRIX");
+  });
+});

@@ -9,10 +9,22 @@ if (typeof globalThis.ImageData === "undefined") {
     readonly height: number;
     readonly colorSpace = "srgb";
 
-    constructor(data: Uint8ClampedArray, width: number, height?: number) {
-      this.data = data;
-      this.width = width;
-      this.height = height ?? data.length / 4 / width;
+    constructor(dataOrWidth: Uint8ClampedArray | number, widthOrHeight?: number, maybeHeight?: number) {
+      if (typeof dataOrWidth === "number") {
+        const width = dataOrWidth;
+        const height = widthOrHeight ?? 1;
+        this.width = width;
+        this.height = height;
+        this.data = new Uint8ClampedArray(width * height * 4);
+      } else {
+        this.data = dataOrWidth;
+        const width = widthOrHeight ?? 1;
+        this.width = width;
+        if (typeof maybeHeight === "number" && dataOrWidth.length !== width * maybeHeight * 4) {
+          throw new Error(`IndexSizeError: ${dataOrWidth.length} !== ${width * maybeHeight * 4}`);
+        }
+        this.height = maybeHeight ?? dataOrWidth.length / 4 / width;
+      }
     }
   }
 

@@ -324,61 +324,101 @@ export function analyzeRegionMaskLocally(params: {
     const strokeThreshold = Math.max(26, contrastSpan * 0.48);
     const haloThreshold = Math.max(20, contrastSpan * 0.34);
 
-    // Helper: estimate local background luma in a 7x7 window from unmasked ring pixels
+    // Helper: estimate local background paper luma in a local window (80th percentile of unmasked pixels)
     const localBgAt = (cx: number, cy: number): number => {
-      let sum = 0;
-      let count = 0;
-      const y0 = Math.max(0, cy - 4);
-      const y1 = Math.min(rh - 1, cy + 4);
-      const x0 = Math.max(0, cx - 4);
-      const x1 = Math.min(rw - 1, cx + 4);
+      const vals: number[] = [];
+      const y0 = Math.max(0, cy - 5);
+      const y1 = Math.min(rh - 1, cy + 5);
+      const x0 = Math.max(0, cx - 5);
+      const x1 = Math.min(rw - 1, cx + 5);
       for (let ny = y0; ny <= y1; ny += 2) {
         const rOff = ny * rw;
         for (let nx = x0; nx <= x1; nx += 2) {
           const ni = rOff + nx;
           if (curGrid[ni] === 0 && nearMask[ni] === 0) {
-            sum += luma[ni];
-            count += 1;
+            vals.push(luma[ni]);
           }
         }
       }
-      return count >= 2 ? sum / count : bgMedian;
+      if (vals.length < 2) return bgMedian;
+      vals.sort((a, b) => a - b);
+      const highIdx = Math.floor(vals.length * 0.8);
+      return vals[highIdx];
     };
 
-    // 1. Detect Under-Masked text stroke / glyph pixels strictly within textBand:
-    // Collect candidate pixels first, then filter via Connected Component Analysis (CCA)
-    // so only genuine text-sized glyph strokes/halos are added and character art is NEVER touched.
+    // 1. Detect Under-Masked text stroke / glyph pixels:
+    // A) Pixels within textBand of existing masks (halo / stroke extension)
+    // B) Inpainting remnant specks on bright paper (only where inpainting occurred / modified pixels!)
+    // C) Unmasked speech balloon text glyphs on bright white paper
     const candidateAdd = new Uint8Array(rw * rh);
     for (let ly = 2; ly < rh - 2; ly++) {
       const rOff = ly * rw;
       for (let lx = 2; lx < rw - 2; lx++) {
         const i = rOff + lx;
-        if (curGrid[i] === 1 || textBand[i] === 0) continue;
+        if (curGrid[i] === 1) continue;
         const locBg = localBgAt(lx, ly);
         const origDiff = Math.abs(luma[i] - locBg);
         const cleanDiff = cleanLuma ? Math.abs(cleanLuma[i] - locBg) : origDiff;
+        const isCleanModified = cleanLuma ? Math.abs(cleanLuma[i] - luma[i]) >= 18 : false;
+        const isNearMaskOrBand = nearMask[i] > 0 || textBand[i] === 1;
 
-        // Must still be visible/uncleaned in the cleaned image if cleanLuma is present
-        if (cleanLuma && cleanDiff < haloThreshold * 0.8) continue;
-
-        if (nearMask[i] === 2 && origDiff >= haloThreshold && cleanDiff >= haloThreshold * 0.85) {
-          candidateAdd[i] = 1;
-        } else if (nearMask[i] === 1 && origDiff >= strokeThreshold && cleanDiff >= strokeThreshold * 0.85) {
-          candidateAdd[i] = 1;
-        } else if (origDiff >= strokeThreshold * 1.25 && cleanDiff >= strokeThreshold * 1.05) {
-          // Detached glyph stroke candidate inside textBand (within 6px of text mask)
-          candidateAdd[i] = 1;
+        if (textBand[i] === 1) {
+          if (nearMask[i] === 2 && origDiff >= haloThreshold && cleanDiff >= 12) {
+            candidateAdd[i] = 1;
+          } else if (nearMask[i] === 1 && origDiff >= strokeThreshold && cleanDiff >= 12) {
+            candidateAdd[i] = 1;
+          } else if (origDiff >= strokeThreshold * 1.25 && cleanDiff >= 12) {
+            // Detached glyph stroke candidate inside textBand (within 6px of text mask)
+            candidateAdd[i] = 1;
+          }
+        } else if (locBg >= 200) {
+          if (cleanLuma && (isCleanModified || isNearMaskOrBand)) {
+            // A) Leftover inpainting residue specks: must be modified by inpainting or near mask
+            if (cleanDiff >= 12 && cleanDiff <= 140 && cleanLuma[i] < locBg - 8) {
+              candidateAdd[i] = 1;
+            }
+          } else if (luma[i] <= 145 && origDiff >= 28) {
+            // B) Unmasked speech balloon text glyphs on bright white paper (locBg >= 210)
+            if (locBg >= 210 && (!cleanLuma || cleanDiff >= 24)) {
+              candidateAdd[i] = 1;
+            }
+          }
         }
       }
     }
 
-    // Connected Component Filtering on candidateAdd:
-    // Reject any component that is too large (character line-art/shading), too elongated (borders/hair),
-    // or lacks direct proximity to text glyphs.
+    // Connected Component Extraction & Filtering on candidateAdd:
+    // Rejects components that are too large (character line-art/shading), too elongated (borders/hair),
+    // touch outer region borders, or are isolated drawing strokes (wrinkles/sweat drops on clothing/skin),
+    // while approving text glyphs in both existing and unmasked speech balloons.
     const visited = new Uint8Array(rw * rh);
-    const maxTotalAdded = Math.max(120, Math.min(3600, Math.round(currentMaskCount * 0.22)));
+    const maxTotalAdded = Math.max(
+      1600,
+      Math.min(15000, Math.round(Math.max(currentMaskCount * 0.8, rw * rh * 0.35))),
+    );
     let totalAddedSoFar = 0;
     const queue = new Int32Array(rw * rh);
+
+    interface CompInfo {
+      pixels: number[];
+      minX: number;
+      maxX: number;
+      minY: number;
+      maxY: number;
+      compArea: number;
+      compW: number;
+      compH: number;
+      aspect: number;
+      fillRatio: number;
+      touchesExistingMask: boolean;
+      touchesBorder: boolean;
+      hasCleanModified: boolean;
+      centerX: number;
+      centerY: number;
+      surroundBg: number;
+    }
+
+    const comps: CompInfo[] = [];
 
     for (let ly = 2; ly < rh - 2; ly++) {
       for (let lx = 2; lx < rw - 2; lx++) {
@@ -396,6 +436,7 @@ export function analyzeRegionMaskLocally(params: {
         let maxY = ly;
         let touchesExistingMask = false;
         let touchesBorder = false;
+        let hasCleanModified = false;
 
         while (head < tail) {
           const curr = queue[head++];
@@ -407,6 +448,7 @@ export function analyzeRegionMaskLocally(params: {
           if (cy > maxY) maxY = cy;
           if (nearMask[curr] >= 2) touchesExistingMask = true;
           if (cx <= 2 || cx >= rw - 3 || cy <= 2 || cy >= rh - 3) touchesBorder = true;
+          if (cleanLuma && Math.abs(cleanLuma[curr] - luma[curr]) >= 18) hasCleanModified = true;
 
           for (let dy = -1; dy <= 1; dy++) {
             const ny = cy + dy;
@@ -429,38 +471,132 @@ export function analyzeRegionMaskLocally(params: {
         const compH = maxY - minY + 1;
         const aspect = compW / Math.max(1, compH);
         const fillRatio = compArea / Math.max(1, compW * compH);
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
 
-        // Text-glyph criteria:
-        // - Small compact stroke/halo (2..260 px, box <= 36x36)
-        // - Not touching region border
-        // - Not a long character contour or solid shading block
-        const isGlyphHalo =
-          touchesExistingMask &&
-          !touchesBorder &&
-          compArea >= 2 &&
-          compArea <= 260 &&
-          compW <= 36 &&
-          compH <= 36;
-        const isDetachedPunctuationOrStroke =
-          !touchesBorder &&
-          compArea >= 4 &&
-          compArea <= 140 &&
-          compW <= 24 &&
-          compH <= 24 &&
-          aspect >= 0.2 &&
-          aspect <= 4.5 &&
-          fillRatio >= 0.14 &&
-          fillRatio <= 0.78;
-
-        if (
-          (isGlyphHalo || isDetachedPunctuationOrStroke) &&
-          totalAddedSoFar + compArea <= maxTotalAdded
-        ) {
-          for (let k = 0; k < tail; k++) {
-            nextGrid[queue[k]] = 1;
+        let surroundSum = 0;
+        let surroundCount = 0;
+        const sY0 = Math.max(0, minY - 4);
+        const sY1 = Math.min(rh - 1, maxY + 4);
+        const sX0 = Math.max(0, minX - 4);
+        const sX1 = Math.min(rw - 1, maxX + 4);
+        for (let sy = sY0; sy <= sY1; sy += 2) {
+          const rOff = sy * rw;
+          for (let sx = sX0; sx <= sX1; sx += 2) {
+            if (sx >= minX && sx <= maxX && sy >= minY && sy <= maxY) continue;
+            surroundSum += luma[rOff + sx];
+            surroundCount += 1;
           }
-          totalAddedSoFar += compArea;
         }
+        const surroundBg = surroundCount > 0 ? surroundSum / surroundCount : localBgAt(Math.round(centerX), Math.round(centerY));
+
+        const pixelList: number[] = new Array(tail);
+        for (let k = 0; k < tail; k++) {
+          pixelList[k] = queue[k];
+        }
+
+        comps.push({
+          pixels: pixelList,
+          minX,
+          maxX,
+          minY,
+          maxY,
+          compArea,
+          compW,
+          compH,
+          aspect,
+          fillRatio,
+          touchesExistingMask,
+          touchesBorder,
+          hasCleanModified,
+          centerX,
+          centerY,
+          surroundBg,
+        });
+      }
+    }
+
+    for (const c of comps) {
+      if (c.touchesBorder) continue;
+
+      // 1. Existing mask text halo extension (sub-pixel anti-aliasing edge):
+      const isGlyphHalo =
+        c.touchesExistingMask &&
+        c.compArea >= 2 &&
+        c.compArea <= 280 &&
+        c.compW <= 38 &&
+        c.compH <= 38;
+
+      // 2. Inpainting remnant speck in previously cleaned balloon area:
+      const isRemnantSpeck =
+        cleanLuma !== null &&
+        (c.touchesExistingMask || c.hasCleanModified) &&
+        c.compArea >= 2 &&
+        c.compArea <= 280 &&
+        c.compW <= 38 &&
+        c.compH <= 38 &&
+        c.surroundBg >= 180;
+
+      // 3. Speech balloon / dialogue box text glyph verification:
+      // Ensures candidate is an actual text character enclosed within a bright balloon interior,
+      // and not an isolated drawing stroke (sweat drop, shirt fold, face hatching).
+      let isSpeechBalloonTextGlyph = false;
+      if (
+        c.compArea >= 4 &&
+        c.compArea <= 700 &&
+        c.compW >= 2 &&
+        c.compW <= 42 &&
+        c.compH >= 3 &&
+        c.compH <= 45 &&
+        c.aspect >= 0.18 &&
+        c.aspect <= 5.5
+      ) {
+        // Reject 1px-thin needle strokes (sweat drops, shading lines, hair strands):
+        const isNeedleStroke = (c.compW <= 1 && c.compH >= 6) || (c.compH <= 1 && c.compW >= 6);
+        const isStrokeOrGlyphFill = c.compW <= 24 || c.compH <= 24 || c.fillRatio <= 0.88;
+
+        if (!isNeedleStroke && isStrokeOrGlyphFill && c.fillRatio >= 0.08 && c.surroundBg >= 210) {
+          // Clustering Check: dialogue text characters exist in words or lines with neighboring glyphs.
+          // Require at least one sibling candidate within dialogue pitch (<= 42px),
+          // OR an established standalone text character block (compArea >= 45, surroundBg >= 225).
+          const hasSibling = comps.some(
+            (other) =>
+              other !== c &&
+              !other.touchesBorder &&
+              other.surroundBg >= 200 &&
+              Math.hypot(c.centerX - other.centerX, c.centerY - other.centerY) <= 42,
+          );
+          if (hasSibling || (c.compArea >= 45 && c.surroundBg >= 225 && c.aspect >= 0.22 && c.aspect <= 4.0)) {
+            isSpeechBalloonTextGlyph = true;
+          }
+        }
+      }
+
+      if (
+        (isGlyphHalo || isRemnantSpeck || isSpeechBalloonTextGlyph) &&
+        totalAddedSoFar + c.compArea <= maxTotalAdded
+      ) {
+        for (let k = 0; k < c.pixels.length; k++) {
+          const pIdx = c.pixels[k];
+          nextGrid[pIdx] = 1;
+          if (isSpeechBalloonTextGlyph) {
+            const py = Math.floor(pIdx / rw);
+            const px = pIdx - py * rw;
+            for (let dy = -1; dy <= 1; dy++) {
+              const ny = py + dy;
+              if (ny < 1 || ny >= rh - 1) continue;
+              for (let dx = -1; dx <= 1; dx++) {
+                const nx = px + dx;
+                if (nx < 1 || nx >= rw - 1) continue;
+                const ni = ny * rw + nx;
+                if (nextGrid[ni] === 0 && luma[ni] >= 140) {
+                  nextGrid[ni] = 1;
+                }
+              }
+            }
+          }
+        }
+        totalAddedSoFar += c.compArea;
       }
     }
 
@@ -589,9 +725,9 @@ export function applyGeminiMaskReviewToSuggestion(
   for (const box of review.addBoxes) {
     const [ymin, xmin, ymax, xmax] = box;
     const boxAreaRatio = ((ymax - ymin) * (xmax - xmin)) / 1_000_000;
-    // If originalCrop is present and the region is large, ignore overly broad boxes (> 30% of region)
-    // that accidentally enclose whole character bodies instead of specific missed text glyphs.
-    if (luma && rw * rh > 20_000 && boxAreaRatio > 0.30) {
+    // If originalCrop is present and the region is large, ignore overly broad boxes (> 85% of region)
+    // that accidentally enclose the entire panel frame instead of specific missed text glyphs.
+    if (luma && rw * rh > 20_000 && boxAreaRatio > 0.85) {
       continue;
     }
     const lx0 = Math.max(1, Math.floor((xmin / 1000) * rw));
@@ -705,6 +841,71 @@ export function extractImageRegionCrop(
     canvas.width = 0;
     canvas.height = 0;
   }
+}
+
+/**
+ * Extract a cropped region from a full-canvas mask ImageData.
+ */
+export function extractMaskRegionCrop(
+  mask: ImageData | null | undefined,
+  rect: PixelRect,
+): ImageData | null {
+  if (!mask || mask.width <= 0 || mask.height <= 0) return null;
+  const clamped = clampRect(rect, mask.width, mask.height);
+  if (clamped.width <= 0 || clamped.height <= 0) return null;
+  const cw = clamped.width;
+  const ch = clamped.height;
+  const mw = mask.width;
+  const mData = mask.data;
+  const cropData = new Uint8ClampedArray(cw * ch * 4);
+  for (let cy = 0; cy < ch; cy++) {
+    const gy = clamped.y + cy;
+    const srcRow = gy * mw;
+    const dstRow = cy * cw;
+    for (let cx = 0; cx < cw; cx++) {
+      const gx = clamped.x + cx;
+      const srcIdx = (srcRow + gx) * 4;
+      const dstIdx = (dstRow + cx) * 4;
+      cropData[dstIdx] = mData[srcIdx];
+      cropData[dstIdx + 1] = mData[srcIdx + 1];
+      cropData[dstIdx + 2] = mData[srcIdx + 2];
+      cropData[dstIdx + 3] = mData[srcIdx + 3];
+    }
+  }
+  return new ImageData(cropData, cw, ch);
+}
+
+/**
+ * Splice a cropped mask ImageData back into a full-canvas mask ImageData within `rect`.
+ */
+export function spliceMaskRegionCrop(
+  fullMask: ImageData,
+  cropMask: ImageData,
+  rect: PixelRect,
+): ImageData {
+  const result = cloneImageData(fullMask);
+  const clamped = clampRect(rect, fullMask.width, fullMask.height);
+  const cw = Math.min(clamped.width, cropMask.width);
+  const ch = Math.min(clamped.height, cropMask.height);
+  const mw = fullMask.width;
+  const cropW = cropMask.width;
+  const fData = result.data;
+  const cData = cropMask.data;
+  for (let cy = 0; cy < ch; cy++) {
+    const gy = clamped.y + cy;
+    const srcRow = cy * cropW;
+    const dstRow = gy * mw;
+    for (let cx = 0; cx < cw; cx++) {
+      const gx = clamped.x + cx;
+      const srcIdx = (srcRow + cx) * 4;
+      const dstIdx = (dstRow + gx) * 4;
+      fData[dstIdx] = cData[srcIdx];
+      fData[dstIdx + 1] = cData[srcIdx + 1];
+      fData[dstIdx + 2] = cData[srcIdx + 2];
+      fData[dstIdx + 3] = cData[srcIdx + 3];
+    }
+  }
+  return result;
 }
 
 /**

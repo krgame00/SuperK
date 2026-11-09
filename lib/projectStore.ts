@@ -793,17 +793,28 @@ export const loadCleaningResultAssets = async (
   reviewMaskBlob: Blob | null;
   protectedMaskBlob: Blob | null;
 }> => {
-  const cleanAssetId = metadata.cleanAssetId || `clean_${encodeURIComponent(metadata.pageUrl)}`;
-  const maskAssetId = metadata.maskAssetId || `mask_${encodeURIComponent(metadata.pageUrl)}`;
-  const reviewMaskAssetId = metadata.reviewMaskAssetId || `review_mask_${encodeURIComponent(metadata.pageUrl)}`;
-  const protectedMaskAssetId = metadata.protectedMaskAssetId || `protected_mask_${encodeURIComponent(metadata.pageUrl)}`;
+  const assetKey = metadata.pageId || encodeURIComponent(metadata.pageUrl);
+  const cleanAssetId = metadata.cleanAssetId || `clean_${assetKey}`;
+  const maskAssetId = metadata.maskAssetId || `mask_${assetKey}`;
+  const reviewMaskAssetId = metadata.reviewMaskAssetId || `review_mask_${assetKey}`;
+  const protectedMaskAssetId = metadata.protectedMaskAssetId || `protected_mask_${assetKey}`;
 
-  const [cleanBlob, maskBlob, reviewMaskBlob, protectedMaskBlob] = await Promise.all([
+  let [cleanBlob, maskBlob, reviewMaskBlob, protectedMaskBlob] = await Promise.all([
     loadAsset(cleanAssetId),
     loadAsset(maskAssetId),
     loadAsset(reviewMaskAssetId),
     loadAsset(protectedMaskAssetId),
   ]);
+
+  if (!cleanBlob && metadata.pageId) {
+    const fallbackUrlKey = `clean_${encodeURIComponent(metadata.pageUrl)}`;
+    cleanBlob = await loadAsset(fallbackUrlKey);
+    if (cleanBlob) {
+      maskBlob = await loadAsset(`mask_${encodeURIComponent(metadata.pageUrl)}`);
+      reviewMaskBlob = await loadAsset(`review_mask_${encodeURIComponent(metadata.pageUrl)}`);
+      protectedMaskBlob = await loadAsset(`protected_mask_${encodeURIComponent(metadata.pageUrl)}`);
+    }
+  }
 
   return { cleanBlob, maskBlob, reviewMaskBlob, protectedMaskBlob };
 };
@@ -992,6 +1003,7 @@ export interface PortableProjectBundle {
   bubbleCache: [string, TranslatedBubble[]][];
   pageTargetCache: [string, PageTargetIdentity][];
   translatedImageCache: [string, string][];
+  pronounMatrix?: unknown[];
 }
 
 export const exportPortableProjectBundle = async (): Promise<PortableProjectBundle | null> => {
@@ -1044,6 +1056,14 @@ export const exportPortableProjectBundle = async (): Promise<PortableProjectBund
     }
   }
 
+  let pronounMatrix: unknown[] | undefined = undefined;
+  if (typeof window !== "undefined") {
+    try {
+      const saved = localStorage.getItem("superk:pronoun-matrix");
+      if (saved) pronounMatrix = JSON.parse(saved);
+    } catch {}
+  }
+
   return {
     format: "superk-project-v1",
     exportedAt: Date.now(),
@@ -1052,6 +1072,7 @@ export const exportPortableProjectBundle = async (): Promise<PortableProjectBund
     bubbleCache,
     pageTargetCache,
     translatedImageCache,
+    pronounMatrix,
   };
 };
 
@@ -1066,6 +1087,12 @@ export const importPortableProjectBundle = async (
     parsed.pages.length === 0
   ) {
     throw new Error("รูปแบบไฟล์โปรเจกต์ (.superk) ไม่ถูกต้อง");
+  }
+
+  if (Array.isArray(parsed.pronounMatrix) && typeof window !== "undefined") {
+    try {
+      localStorage.setItem("superk:pronoun-matrix", JSON.stringify(parsed.pronounMatrix));
+    } catch {}
   }
 
   await saveProjectSession({

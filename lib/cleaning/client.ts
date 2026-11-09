@@ -19,7 +19,17 @@ export class CleaningClientError extends Error {
   ) {
     super(message);
     this.name = "CleaningClientError";
+    Object.setPrototypeOf(this, CleaningClientError.prototype);
   }
+}
+
+export function isCleaningClientError(error: unknown): error is CleaningClientError {
+  return (
+    error instanceof CleaningClientError ||
+    (error instanceof Error &&
+      (error.name === "CleaningClientError" ||
+        ("status" in error && typeof (error as { status: unknown }).status === "number" && "recovery" in error)))
+  );
 }
 
 export async function createCleaningJob(

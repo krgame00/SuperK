@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -82,6 +83,8 @@ export interface WorkspaceCanvasHostProps {
   onImageError: (url: string) => void;
   viewLayout: "single" | "scroll";
   onViewLayoutChange: (layout: "single" | "scroll") => void;
+  isSplitView?: boolean;
+  onToggleSplitView?: () => void;
   onToggleFocusMode: () => void;
   isThumbnailsCollapsed: boolean;
 
@@ -176,6 +179,8 @@ export function WorkspaceCanvasHost({
   onImageError,
   viewLayout,
   onViewLayoutChange,
+  isSplitView = false,
+  onToggleSplitView,
   onToggleFocusMode,
   isThumbnailsCollapsed,
   isDragging,
@@ -278,6 +283,26 @@ export function WorkspaceCanvasHost({
     return {};
   });
   const [selectedImageLayerId, setSelectedImageLayerId] = useState<string | null>(null);
+  const handleAutoFitSelectedBubble = useCallback(async () => {
+    if (!selectedBubbleBridge) return;
+    const { fitBubbleTextWithinBounds } = await import("@/lib/bubbleLayoutOptimizer");
+    const imgEl = document.querySelector("#pageContainer img") as HTMLImageElement | null;
+    const iw = imgEl?.naturalWidth || 1200;
+    const ih = imgEl?.naturalHeight || 1800;
+    const fitted = fitBubbleTextWithinBounds(selectedBubbleBridge.bubble, iw, ih, {
+      forceRealign: true,
+      overrideUserModified: true,
+    });
+    if (fitted.targetFontSize) {
+      selectedBubbleBridge.applyUpdates({
+        targetFontSize: fitted.targetFontSize,
+        fontSize: fitted.targetFontSize,
+        layoutAdjustment: fitted.layoutAdjustment,
+      });
+      setInspectorTick((t) => t + 1);
+    }
+  }, [selectedBubbleBridge]);
+
   const activePageUrlKey = pages[currentPage]?.url ?? "page_0";
 
   const handleUpdatePageImageLayers = (pageKey: string, nextLayers: ImageLayer[]) => {
@@ -352,8 +377,8 @@ export function WorkspaceCanvasHost({
         isFocusMode
           ? "h-[100dvh] mt-0"
           : pages.length > 0
-            ? "h-[calc(100dvh-3.5rem)] mt-14"
-            : "flex-1 min-h-[calc(100dvh-3.5rem)] mt-14"
+            ? "h-[calc(100dvh-3rem)] mt-12"
+            : "flex-1 min-h-[calc(100dvh-3rem)] mt-12"
       } ${isDragging ? "opacity-50" : "opacity-100"}`}
     >
       {isFocusMode && (
@@ -363,11 +388,11 @@ export function WorkspaceCanvasHost({
             onClick={onToggleFocusToolbar}
             aria-label={
               isFocusToolbarVisible
-                ? "ซ่อนแถบเครื่องมือคลีน (B)"
-                : "แสดงแถบเครื่องมือคลีน (B)"
+                ? "ซ่อนแถบเครื่องมือคลีน (Ctrl+B)"
+                : "แสดงแถบเครื่องมือคลีน (Ctrl+B)"
             }
             className="bg-surface/90 hover:bg-surface text-foreground/80 hover:text-foreground text-xs px-3 py-1.5 rounded-full border border-border/80 shadow-lg backdrop-blur-md transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
-            title={isFocusToolbarVisible ? "ซ่อนแถบบน (B)" : "แสดงแถบบน (B)"}
+            title={isFocusToolbarVisible ? "ซ่อนแถบบน (Ctrl+B)" : "แสดงแถบบน (Ctrl+B)"}
           >
             {isFocusToolbarVisible ? (
               <EyeOff className="w-3.5 h-3.5 text-primary" />
@@ -464,7 +489,7 @@ export function WorkspaceCanvasHost({
             } ${
               isFocusMode && !isFocusToolbarVisible
                 ? `${toolbarPosition === "top" ? "-translate-y-24" : "translate-y-24"} opacity-0 pointer-events-none max-h-0 py-0 overflow-hidden`
-                : `${toolbarPosition === "top" ? "translate-y-0 pt-2.5 pb-2" : "translate-y-0 py-0"} opacity-100`
+                : `${toolbarPosition === "top" ? "translate-y-0 py-1" : "translate-y-0 py-0"} opacity-100`
             }`}
           >
             <div
@@ -482,8 +507,8 @@ export function WorkspaceCanvasHost({
                     type="button"
                     onClick={onToggleToolbarCollapsed}
                     className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground hover:text-primary transition-colors cursor-pointer"
-                    title="ขยายแถบเครื่องมือ (กด B)"
-                    aria-label="ขยายแถบเครื่องมือ (กด B)"
+                    title="ขยายแถบเครื่องมือ (กด Ctrl+B)"
+                    aria-label="ขยายแถบเครื่องมือ (กด Ctrl+B)"
                   >
                     <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 text-primary">
                       <Eraser className="h-3 w-3" />
@@ -1059,13 +1084,9 @@ export function WorkspaceCanvasHost({
                 aria-label="คุณสมบัติข้อความ"
                 style={{ display: sidePanel === "remnants" ? "none" : undefined }}
                 className={`fixed right-3 z-50 hidden lg:flex flex-col gap-2 overflow-y-auto pr-0.5 transition-all duration-200 ${
-                  toolbarPosition === "top" && !isToolbarCollapsed
-                    ? isPageReviewRequired && batchFailures.length > 0
-                      ? "top-56 max-h-[calc(100dvh-15.5rem)]"
-                      : isPageReviewRequired || batchFailures.length > 0
-                        ? "top-48 max-h-[calc(100dvh-13.5rem)]"
-                        : "top-32 max-h-[calc(100dvh-9.5rem)]"
-                    : "top-16 max-h-[calc(100dvh-5.5rem)]"
+                  isFocusMode
+                    ? "top-3 max-h-[calc(100dvh-1.5rem)]"
+                    : "top-14 max-h-[calc(100dvh-4.5rem)]"
                 }`}
               >
                 {selectedBubbleBridge && (
@@ -1112,6 +1133,7 @@ export function WorkspaceCanvasHost({
                       scope={inspectorScope}
                       onScopeChange={setInspectorScope}
                       onBatchApplyTypography={onBatchApplyTypography}
+                      onAutoFitBubble={handleAutoFitSelectedBubble}
                       onChange={(updates: Partial<TextLayer>) => {
                         selectedBubbleBridge.applyUpdates(updates as Record<string, unknown>);
                         setInspectorTick((t) => t + 1);
@@ -1313,6 +1335,7 @@ export function WorkspaceCanvasHost({
               pages={pages}
               currentPage={currentPage}
               viewLayout={viewLayout}
+              isSplitView={isSplitView}
               workspaceLayer={workspaceLayer}
               currentCleaningResult={currentCleaningResult}
               cleaningResultsByPage={cleaningResultsByPage}

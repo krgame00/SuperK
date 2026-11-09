@@ -1,8 +1,39 @@
 # ZCode Working Notes — SuperK / Manga Translator
 
+<!-- session-index:auto:start -->
+## 📇 ดัชนีแชตอัตโนมัติ (Stop hook — ห้ามแก้มือ)
+
+อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
+
+- 9 พ.ย. 22:41 · `f7ef473c` · "แชตผมหายอะ" · ✅ · ↳ "ช่วยไปตรวจงานที่ผมล่าสุดหน่อย คุณเห็นไหม ผมจะให้ไปตรวจและทดสอบว่าใช้งานได้ตามที่ต้องการไหม"
+- 7 พ.ย. 00:15 · `d62433fd` · "เปิด Fast Startup แก้ Windows Defender สแกน 4.8GB ทุกครั้ง" · ✅ · ↳ "ok"
+- 4 พ.ย. 01:39 · `f7c2c32c` · "แก้ระบบแปลจับข้อความไม่หมด (pstack-poteto-mode)" · ✅ · ↳ "com push"
+- 31 ต.ค. 00:22 · `dd65c0e3` · "GLM-5.3-Flash Empty Response Error" · ✅ · ↳ "เป็นไงบ้าง"
+- 31 ต.ค. 00:21 · `c53b6e6f` · "มันแปลได้ไม่ครบ เราจะแก้ได้ยังไงหรอ กดแปลใหม่อีกรอบก็แล้ว" · ✅ · ↳ "next.js มีอัพเดตไหม"
+- 30 ต.ค. 23:25 · `6dc85d7a` · "มันแปลได้ไม่ครบ เราจะแก้ได้ยังไงหรอ กดแปลใหม่อีกรอบก็แล้ว" · ⚠️ · ↳ "มันแปลได้ไม่ครบ เราจะแก้ได้ยังไงหรอ กดแปลใหม่อีกรอบก็แล้ว"
+- 29 ต.ค. 23:33 · `a2b81cc1` · "แปลแล้วมีข้อความเดิมซ้ำกัน เราจะแก้ยังไง" · ⚠️ · ↳ "The model returned no content (often caused by captcha not completed, an expired token, or plan issues). Send again and captcha verificatio…"
+- 29 ต.ค. 23:32 · `4ff45742` · "เทสๆ" · ⚠️ · ↳ "เราช่วยไปดูงานคลีนและช่วยปรับให้มันไม่ไปจับเส้นตัวละครได้ไหม เอางานล่าสุดที่ผมทำค้างไว้นะ Worked for 1m 18s Thought · a few seconds รับทราบ…"
+- 27 ต.ค. 22:55 · `461c0b5e` · "[$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\psta..." · ⚠️ · ↳ "[$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\pstack-poteto-mode\\SKILL.md)"
+- 27 ต.ค. 22:49 · `f8d5072f` · "[$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\psta..." · ⚠️ · ↳ "[$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\pstack-poteto-mode\\SKILL.md)"
+- 3 ต.ค. 01:20 · `b3119b06` · "ช่วยรีวิวระบบของผมทั้งหมดหน่อย" · — · ↳ "ทำไหมแปลแล้วมีข้อความซ้อน เราจะแก้ยังไง"
+- 7 ก.ย. 02:00 · `bccfc281` · "รีวิวระบบหของผมหน่อย" · — · ↳ "เขียนแผนงานมา"
+<!-- session-index:auto:end -->
+
 บันทึกประวัติการทำงานของ ZCode ทุก session เรียงจาก **ใหม่ไปเก่า** (ไฟล์นี้แยกจาก `docs/AI-WORKING-NOTES.md` ซึ่งห้ามแตะตามกฎเดิม — ไฟล์นี้คือฉบับของ ZCode)
 
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
+
+---
+
+## Fix ปุ่มเปลี่ยนหน้าทับ rail เครื่องมือตอนจอแคบ (ช่วง lg–xl) — 2026-11-09
+
+### Status: แก้แล้ว พิสูจน์บนเบราว์เซอร์จริง (pageViewer tests 4/4)
+
+- **อาการ (ผู้ใช้แจ้งพร้อมภาพ):** ย่อจอเล็กแล้วปุ่มวงกลมลูกศร "<" ทับกลาง rail เครื่องมือซ้ายจอ ปิดปุ่มกลาง rail
+- **Root cause (พิสูจน์ด้วย rect จริง):** ปุ่มหน้าก่อนหน้าใน `PageViewer.tsx` ขยับหนี rail ด้วย `xl:left-20` แต่ `StudioToolbar` (`WorkspaceCanvasHost.tsx:1004`) ใช้ `hidden lg:flex` แสดงตั้งแต่ 1024px → ช่วง 1024–1279px ทั้งสองอยู่ `left-3/sm:left-6` กลางแนวตั้ง z-30 เท่ากัน วัดจริงที่ 1150×800: arrow x28–76 ทับ rail x12–68 (`overlap=true`, ปิดปุ่ม "ค้นหาและแทนที่คำ")
+- **Fix:** `xl:left-20` → `lg:left-20` (ขยับหนี rail ตั้งแต่ rail มีอยู่) + อัปเดตเทสต์ `tests/unit/pageViewer.test.tsx` จาก `xl:left-20` เป็น `lg:left-20`
+- **หลักฐานหลังแก้:** วัดจริง 3 ขนาด — 900px: rail ซ่อน (parent hidden) arrow x28, 1150px: arrow x96 ห่าง rail 28px, 1280px: arrow x96 ไม่ชน (`overlap=false` ทั้งหมด) บน dev server :3001 (production :3000 ยังเป็น build เก่า ต้อง rebuild ก่อน)
+- **ยังไม่ commit:** `PageViewer.tsx` มี in-flight edits ร่วมจาก session อื่นปนอยู่ ให้ผู้ใช้เลือกจังหวะ commit เอง
 
 ---
 

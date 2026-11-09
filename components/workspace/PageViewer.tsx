@@ -27,6 +27,7 @@ export interface PageViewerProps {
   onToggleFocusMode?: () => void;
   isFilmstripVisible?: boolean;
   hasInspectorOpen?: boolean;
+  isSplitView?: boolean;
 }
 
 function VirtualPageItem({
@@ -74,12 +75,22 @@ function VirtualPageItem({
 
   return (
     <div
-      className={`relative cursor-pointer hover:opacity-95 transition-opacity ${
+      role="button"
+      tabIndex={0}
+      aria-label={`หน้า ${index + 1} จาก ${totalPages}: คลิกเพื่อแก้ไขหน้านี้ในโหมดทีละหน้า`}
+      className={`relative cursor-pointer hover:opacity-95 transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 rounded-md ${
         scrollZoomMode === "actual-size" ? "w-auto max-w-none flex justify-center" : "w-full"
       }`}
       onClick={() => {
         onPageChange(index);
         onViewLayoutChange("single");
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onPageChange(index);
+          onViewLayoutChange("single");
+        }
       }}
       title="คลิกเพื่อแก้ไขหน้านี้ในโหมดทีละหน้า"
     >
@@ -120,6 +131,7 @@ export function PageViewer({
   onToggleFocusMode,
   isFilmstripVisible = false,
   hasInspectorOpen = false,
+  isSplitView = false,
 }: PageViewerProps): ReactElement | null {
   const touchStartXRef = useRef<number | null>(null);
   const touchStartYRef = useRef<number | null>(null);
@@ -221,9 +233,16 @@ export function PageViewer({
     containerRef: viewportRef,
     imageNaturalWidth: naturalDimensions?.width,
     imageNaturalHeight: naturalDimensions?.height,
+    isSplitView,
   });
 
-  const isTransitionActive = Boolean(naturalDimensions && hasSettled && !zoom.isPanning);
+  const isTransitionActive = Boolean(
+    naturalDimensions &&
+    hasSettled &&
+    !zoom.isPanning &&
+    !zoom.isInertiaActive &&
+    !zoom.isWheelActive
+  );
 
   // Remeasure virtualizer items when scrollZoomMode changes
   useEffect(() => {
@@ -349,9 +368,11 @@ export function PageViewer({
           className={`relative w-full h-full flex justify-center items-center overflow-hidden select-none ${
             zoom.isPanning
               ? "cursor-grabbing"
-              : zoom.scale > zoom.fitScale + 0.05
+              : zoom.isSpacePressed
                 ? "cursor-grab"
-                : "cursor-default"
+                : zoom.scale > zoom.fitScale + 0.05
+                  ? "cursor-grab"
+                  : "cursor-default"
           } ${
             workspaceLayer === "translated" ? "" : "hide-translation"
           }`}
@@ -363,7 +384,7 @@ export function PageViewer({
               onClick={() => onPageChange((prev) => prev - 1)}
               aria-label={`หน้าที่แล้ว (หน้า ${currentPage} จาก ${pages.length})`}
               className={`absolute top-1/2 -translate-y-1/2 flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-full border border-border/80 bg-background/80 text-foreground/90 shadow-xl backdrop-blur-md transition-all duration-150 hover:bg-surface hover:text-white hover:scale-110 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background z-30 ${
-                isFocusMode ? "left-3 sm:left-6" : "left-3 sm:left-6 xl:left-20"
+                isFocusMode ? "left-3 sm:left-6" : "left-3 sm:left-6 lg:left-20"
               }`}
               title="Previous Page (Left Arrow)"
             >
@@ -372,118 +393,280 @@ export function PageViewer({
           )}
 
           {/* Inner container that hugs the image tightly with zoom and pan transform */}
-          <div
-            key={currentPage}
-            id="pageContainer"
-            onDragStart={(e) => e.preventDefault()}
-            className={`absolute top-0 left-0 inline-flex shrink-0 justify-center items-center select-none ${
-              isTransitionActive ? "transition-transform duration-150 ease-out" : ""
-            }`}
-            style={{
-              width: naturalDimensions ? `${naturalDimensions.width}px` : "100%",
-              height: naturalDimensions ? `${naturalDimensions.height}px` : "100%",
-              opacity: naturalDimensions ? 1 : 0,
-              transition: isTransitionActive ? undefined : "none",
-              ...zoom.stageStyle,
-            }}
-          >
-            {currentPageItem && brokenPages.has(currentPageItem.url) ? (
-              <div className="flex flex-col items-center justify-center p-8 bg-surface/40 border border-red-500/30 rounded-xl text-center gap-3 my-8">
-                <div className="text-red-400 font-medium text-base">
-                  ⚠️ รูปภาพนี้เสีย หรือโหลดไม่สมบูรณ์ ({currentPageItem.name})
+          {isSplitView ? (
+            <div className="relative w-full h-full flex flex-row items-center justify-center gap-3 p-2 overflow-hidden z-10">
+              {/* Left Column: Original Raw Artwork */}
+              <div
+                data-testid="split-view-original-pane"
+                className="relative flex-1 h-full flex items-center justify-center border-r border-border/60 overflow-hidden bg-background/40 rounded-xl"
+              >
+                <div className="absolute top-2 left-2 z-30 bg-black/75 text-neutral-200 border border-neutral-700/60 px-2.5 py-0.5 rounded-md text-[11px] font-semibold tracking-wide shadow-md pointer-events-none">
+                  ต้นฉบับ (Original)
                 </div>
-                <p className="text-muted text-xs max-w-sm">
-                  รูปนี้อาจมาจากไฟล์ทอร์เรนต์ที่โหลดไม่ครบ 100% ทำให้ไม่สามารถแสดงผลได้
-                </p>
-                <button
-                  type="button"
-                  onClick={() => onRemovePage(currentPage)}
-                  aria-label={`ลบรูปภาพที่เสียออก: ${currentPageItem.name}`}
-                  className="bg-red-500/20 text-red-400 hover:bg-red-500/30 px-4 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
-                >
-                  🗑️ ลบรูปพังนี้ออก
-                </button>
-              </div>
-            ) : currentPageItem ? (
-              <>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={
-                    workspaceLayer === "original"
-                      ? currentPageItem.url
-                      : currentCleaningResult?.cleanUrl ??
-                        cleaningResultsByPage.get(currentPageItem.url)?.cleanUrl ??
-                        currentPageItem.url
-                  }
-                  alt={`หน้า ${currentPage + 1}: ${currentPageItem.name}`}
-                  title={currentPageItem.name}
-                  draggable={false}
-                  decoding="async"
-                  onDragStart={(e) => e.preventDefault()}
-                  onLoad={(e) => {
-                    const img = e.currentTarget;
-                    if (img.naturalWidth && img.naturalHeight && currentPageItem) {
-                      setNaturalDimensionsMap((prev) => ({
-                        ...prev,
-                        [currentPageItem.url]: {
-                          width: img.naturalWidth,
-                          height: img.naturalHeight,
-                        },
-                      }));
-                    }
-                  }}
-                  onError={() => onImageError(currentPageItem.url)}
-                  className="max-w-none max-h-none object-contain drop-shadow-sm select-none block pointer-events-none"
-                  style={{
-                    width: "100%",
-                    height: "100%",
-                    userSelect: "none",
-                    WebkitUserDrag: "none",
-                  } as React.CSSProperties}
-                />
-              </>
-            ) : null}
-            {workspaceLayer === "mask" && currentCleaningResult && (
-              <>
-                {[
-                  {
-                    url: currentCleaningResult.maskUrl,
-                    color: "rgba(255, 55, 80, .58)",
-                    label: "Eligible cleaning mask",
-                  },
-                  {
-                    url: currentCleaningResult.reviewMaskUrl,
-                    color: "rgba(255, 190, 40, .58)",
-                    label: "Review mask",
-                  },
-                  {
-                    url: currentCleaningResult.protectedMaskUrl,
-                    color: "rgba(45, 145, 255, .58)",
-                    label: "Protected mask",
-                  },
-                ].map((maskLayer) => (
-                  <span
-                    key={maskLayer.label}
-                    role="img"
-                    aria-label={maskLayer.label}
-                    className="pointer-events-none absolute inset-0 mix-blend-screen"
+                {currentPageItem && (
+                  <div
+                    className="absolute top-0 left-0 inline-flex shrink-0 justify-center items-center select-none"
                     style={{
-                      backgroundColor: maskLayer.color,
-                      maskImage: `url(${maskLayer.url})`,
-                      WebkitMaskImage: `url(${maskLayer.url})`,
-                      maskPosition: "center",
-                      WebkitMaskPosition: "center",
-                      maskRepeat: "no-repeat",
-                      WebkitMaskRepeat: "no-repeat",
-                      maskSize: "100% 100%",
-                      WebkitMaskSize: "100% 100%",
+                      width: naturalDimensions ? `${naturalDimensions.width}px` : "100%",
+                      height: naturalDimensions ? `${naturalDimensions.height}px` : "100%",
+                      opacity: naturalDimensions ? 1 : 0,
+                      ...zoom.stageStyle,
                     }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={currentPageItem.url}
+                      alt={`ต้นฉบับ: ${currentPageItem.name}`}
+                      draggable={false}
+                      decoding="async"
+                      className="max-w-none max-h-none object-contain drop-shadow-sm select-none block pointer-events-none"
+                      style={{
+                        width: "100%",
+                        height: "100%",
+                        userSelect: "none",
+                        WebkitUserDrag: "none",
+                      } as React.CSSProperties}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Right Column: Translated & Cleaned Artwork */}
+              <div
+                data-testid="split-view-translated-pane"
+                className="relative flex-1 h-full flex items-center justify-center overflow-hidden bg-background/40 rounded-xl"
+              >
+                <div className="absolute top-2 left-2 z-30 bg-primary/85 text-white border border-primary/50 px-2.5 py-0.5 rounded-md text-[11px] font-semibold tracking-wide shadow-md pointer-events-none">
+                  หน้าแปลแล้ว (Translated)
+                </div>
+                <div
+                  key={currentPage}
+                  id="pageContainer"
+                  onDragStart={(e) => e.preventDefault()}
+                  className={`absolute top-0 left-0 inline-flex shrink-0 justify-center items-center select-none ${
+                    isTransitionActive ? "transition-transform duration-150 ease-out" : ""
+                  }`}
+                  style={{
+                    width: naturalDimensions ? `${naturalDimensions.width}px` : "100%",
+                    height: naturalDimensions ? `${naturalDimensions.height}px` : "100%",
+                    opacity: naturalDimensions ? 1 : 0,
+                    transition: isTransitionActive ? undefined : "none",
+                    ...zoom.stageStyle,
+                  }}
+                >
+                  {currentPageItem && brokenPages.has(currentPageItem.url) ? (
+                    <div className="flex flex-col items-center justify-center p-8 bg-surface/40 border border-red-500/30 rounded-xl text-center gap-3 my-8">
+                      <div className="text-red-400 font-medium text-base">
+                        ⚠️ รูปภาพนี้เสีย หรือโหลดไม่สมบูรณ์ ({currentPageItem.name})
+                      </div>
+                      <p className="text-muted text-xs max-w-sm">
+                        รูปนี้อาจมาจากไฟล์ทอร์เรนต์ที่โหลดไม่ครบ 100% ทำให้ไม่สามารถแสดงผลได้
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => onRemovePage(currentPage)}
+                        aria-label={`ลบรูปภาพที่เสียออก: ${currentPageItem.name}`}
+                        className="bg-red-500/20 text-red-400 hover:bg-red-500/30 px-4 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+                      >
+                        🗑️ ลบรูปพังนี้ออก
+                      </button>
+                    </div>
+                  ) : currentPageItem ? (
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={
+                          workspaceLayer === "original"
+                            ? currentPageItem.url
+                            : currentCleaningResult?.cleanUrl ??
+                              cleaningResultsByPage.get(currentPageItem.url)?.cleanUrl ??
+                              currentPageItem.url
+                        }
+                        alt={`หน้า ${currentPage + 1}: ${currentPageItem.name}`}
+                        title={currentPageItem.name}
+                        draggable={false}
+                        decoding="async"
+                        onDragStart={(e) => e.preventDefault()}
+                        onLoad={(e) => {
+                          const img = e.currentTarget;
+                          if (img.naturalWidth && img.naturalHeight && currentPageItem) {
+                            setNaturalDimensionsMap((prev) => ({
+                              ...prev,
+                              [currentPageItem.url]: {
+                                width: img.naturalWidth,
+                                height: img.naturalHeight,
+                              },
+                            }));
+                          }
+                        }}
+                        onError={() => onImageError(currentPageItem.url)}
+                        className="max-w-none max-h-none object-contain drop-shadow-sm select-none block pointer-events-none"
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          userSelect: "none",
+                          WebkitUserDrag: "none",
+                        } as React.CSSProperties}
+                      />
+                    </>
+                  ) : null}
+                  {workspaceLayer === "mask" && currentCleaningResult && (
+                    <>
+                      {[
+                        {
+                          url: currentCleaningResult.maskUrl,
+                          color: "rgba(255, 55, 80, .58)",
+                          label: "Eligible cleaning mask",
+                        },
+                        {
+                          url: currentCleaningResult.reviewMaskUrl,
+                          color: "rgba(255, 190, 40, .58)",
+                          label: "Review mask",
+                        },
+                        {
+                          url: currentCleaningResult.protectedMaskUrl,
+                          color: "rgba(45, 145, 255, .58)",
+                          label: "Protected mask",
+                        },
+                      ].map((maskLayer) => (
+                        <span
+                          key={maskLayer.label}
+                          role="img"
+                          aria-label={maskLayer.label}
+                          className="pointer-events-none absolute inset-0 mix-blend-screen"
+                          style={{
+                            backgroundColor: maskLayer.color,
+                            maskImage: `url(${maskLayer.url})`,
+                            WebkitMaskImage: `url(${maskLayer.url})`,
+                            maskPosition: "center",
+                            WebkitMaskPosition: "center",
+                            maskRepeat: "no-repeat",
+                            WebkitMaskRepeat: "no-repeat",
+                            maskSize: "100% 100%",
+                            WebkitMaskSize: "100% 100%",
+                          }}
+                        />
+                      ))}
+                      <MaskLegend regions={currentCleaningResult.regions} />
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div
+              key={currentPage}
+              id="pageContainer"
+              onDragStart={(e) => e.preventDefault()}
+              className={`absolute top-0 left-0 inline-flex shrink-0 justify-center items-center select-none ${
+                isTransitionActive ? "transition-transform duration-150 ease-out" : ""
+              }`}
+              style={{
+                width: naturalDimensions ? `${naturalDimensions.width}px` : "100%",
+                height: naturalDimensions ? `${naturalDimensions.height}px` : "100%",
+                opacity: naturalDimensions ? 1 : 0,
+                transition: isTransitionActive ? undefined : "none",
+                ...zoom.stageStyle,
+              }}
+            >
+              {currentPageItem && brokenPages.has(currentPageItem.url) ? (
+                <div className="flex flex-col items-center justify-center p-8 bg-surface/40 border border-red-500/30 rounded-xl text-center gap-3 my-8">
+                  <div className="text-red-400 font-medium text-base">
+                    ⚠️ รูปภาพนี้เสีย หรือโหลดไม่สมบูรณ์ ({currentPageItem.name})
+                  </div>
+                  <p className="text-muted text-xs max-w-sm">
+                    รูปนี้อาจมาจากไฟล์ทอร์เรนต์ที่โหลดไม่ครบ 100% ทำให้ไม่สามารถแสดงผลได้
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => onRemovePage(currentPage)}
+                    aria-label={`ลบรูปภาพที่เสียออก: ${currentPageItem.name}`}
+                    className="bg-red-500/20 text-red-400 hover:bg-red-500/30 px-4 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+                  >
+                    🗑️ ลบรูปพังนี้ออก
+                  </button>
+                </div>
+              ) : currentPageItem ? (
+                <>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={
+                      workspaceLayer === "original"
+                        ? currentPageItem.url
+                        : currentCleaningResult?.cleanUrl ??
+                          cleaningResultsByPage.get(currentPageItem.url)?.cleanUrl ??
+                          currentPageItem.url
+                    }
+                    alt={`หน้า ${currentPage + 1}: ${currentPageItem.name}`}
+                    title={currentPageItem.name}
+                    draggable={false}
+                    decoding="async"
+                    onDragStart={(e) => e.preventDefault()}
+                    onLoad={(e) => {
+                      const img = e.currentTarget;
+                      if (img.naturalWidth && img.naturalHeight && currentPageItem) {
+                        setNaturalDimensionsMap((prev) => ({
+                          ...prev,
+                          [currentPageItem.url]: {
+                            width: img.naturalWidth,
+                            height: img.naturalHeight,
+                          },
+                        }));
+                      }
+                    }}
+                    onError={() => onImageError(currentPageItem.url)}
+                    className="max-w-none max-h-none object-contain drop-shadow-sm select-none block pointer-events-none"
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      userSelect: "none",
+                      WebkitUserDrag: "none",
+                    } as React.CSSProperties}
                   />
-                ))}
-                <MaskLegend regions={currentCleaningResult.regions} />
-              </>
-            )}
-          </div>
+                </>
+              ) : null}
+              {workspaceLayer === "mask" && currentCleaningResult && (
+                <>
+                  {[
+                    {
+                      url: currentCleaningResult.maskUrl,
+                      color: "rgba(255, 55, 80, .58)",
+                      label: "Eligible cleaning mask",
+                    },
+                    {
+                      url: currentCleaningResult.reviewMaskUrl,
+                      color: "rgba(255, 190, 40, .58)",
+                      label: "Review mask",
+                    },
+                    {
+                      url: currentCleaningResult.protectedMaskUrl,
+                      color: "rgba(45, 145, 255, .58)",
+                      label: "Protected mask",
+                    },
+                  ].map((maskLayer) => (
+                    <span
+                      key={maskLayer.label}
+                      role="img"
+                      aria-label={maskLayer.label}
+                      className="pointer-events-none absolute inset-0 mix-blend-screen"
+                      style={{
+                        backgroundColor: maskLayer.color,
+                        maskImage: `url(${maskLayer.url})`,
+                        WebkitMaskImage: `url(${maskLayer.url})`,
+                        maskPosition: "center",
+                        WebkitMaskPosition: "center",
+                        maskRepeat: "no-repeat",
+                        WebkitMaskRepeat: "no-repeat",
+                        maskSize: "100% 100%",
+                        WebkitMaskSize: "100% 100%",
+                      }}
+                    />
+                  ))}
+                  <MaskLegend regions={currentCleaningResult.regions} />
+                </>
+              )}
+            </div>
+          )}
 
           <div
             id="overlayChromeLayer"
