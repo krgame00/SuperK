@@ -182,7 +182,9 @@ def test_stylized_sfx_over_rectangular_backing_is_preserved() -> None:
     # SFX lettering drawn over a screentone panel or a hand-drawn frame: the
     # backing reads rectangular, but the strokes are clearly stylized. Erasing
     # artwork is irreversible, so strong SFX evidence must outrank the backing
-    # shape instead of falling through to the narration caption branch.
+    # shape instead of falling through to the narration caption branch. The
+    # role label keeps its strict gate (it feeds the translation scope), but
+    # the action is always preserve.
     decision = _classify(
         _features(
             rectangular=0.80,
@@ -192,9 +194,9 @@ def test_stylized_sfx_over_rectangular_backing_is_preserved() -> None:
         ),
     )
 
-    assert decision.text_role is TextRole.SFX
     assert decision.action is AutomaticAction.PRESERVE
-    assert ProtectionReason.SFX_POLICY in decision.protection_reasons
+    assert decision.text_role in (TextRole.SFX, TextRole.REVIEW)
+    assert decision.text_role is not TextRole.NARRATION
 
 
 def test_stylized_sfx_over_uniform_backing_is_preserved() -> None:
@@ -205,6 +207,23 @@ def test_stylized_sfx_over_uniform_backing_is_preserved() -> None:
             uniformity=0.80,
             artwork_edges=0.55,
             irregularity=0.65,
+        ),
+    )
+
+    assert decision.action is AutomaticAction.PRESERVE
+    assert decision.text_role in (TextRole.SFX, TextRole.REVIEW)
+    assert decision.text_role is not TextRole.NARRATION
+
+
+def test_confident_sfx_over_rectangular_backing_is_labeled_sfx() -> None:
+    # Highly stylized lettering with a weak rectangle gets the SFX label, so
+    # it is protected and kept out of the translation scope on purpose.
+    decision = _classify(
+        _features(
+            rectangular=0.80,
+            uniformity=0.70,
+            artwork_edges=0.90,
+            irregularity=0.95,
         ),
     )
 
@@ -349,15 +368,15 @@ def test_narration_threshold_only_changes_semantic_role(
     [
         (
             0.899,
-            TextRole.SFX,
-            AutomaticAction.PRESERVE,
-            [ProtectionReason.SFX_POLICY],
-        ),
-        (
-            0.30,
             TextRole.REVIEW,
             AutomaticAction.PRESERVE,
             [ProtectionReason.LOW_CONFIDENCE],
+        ),
+        (
+            0.900,
+            TextRole.SFX,
+            AutomaticAction.PRESERVE,
+            [ProtectionReason.SFX_POLICY],
         ),
     ],
 )

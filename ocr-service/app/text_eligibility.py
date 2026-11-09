@@ -292,15 +292,22 @@ def _sfx_decision(
     confidence: float,
     features: EligibilityFeatures,
 ) -> EligibilityDecision:
-    # Strong SFX features always preserve. The recorded confidence is the
-    # stylization score; labeling the region SFX (instead of REVIEW) keeps it
-    # out of the manual review queue so hand-drawn lettering stops resurfacing
-    # as a suspect point on every re-inspection.
+    if (
+        confidence >= SFX_THRESHOLD
+        and features.enclosure_score < 0.50
+    ):
+        return EligibilityDecision(
+            text_role=TextRole.SFX,
+            confidence=confidence,
+            action=AutomaticAction.PRESERVE,
+            protection_reasons=[ProtectionReason.SFX_POLICY],
+            features=features,
+        )
     return EligibilityDecision(
-        text_role=TextRole.SFX,
+        text_role=TextRole.REVIEW,
         confidence=confidence,
         action=AutomaticAction.PRESERVE,
-        protection_reasons=[ProtectionReason.SFX_POLICY],
+        protection_reasons=[ProtectionReason.LOW_CONFIDENCE],
         features=features,
     )
 
