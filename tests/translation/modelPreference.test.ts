@@ -140,6 +140,20 @@ describe("model preference persistence", () => {
     expect(readPersistedModelPreference(storage)).toEqual(pref);
   });
 
+  it("keeps the selection alive when the storage quota is exceeded", () => {
+    const fullStorage = {
+      setItem: () => {
+        throw new DOMException("quota exceeded", "QuotaExceededError");
+      },
+    };
+    expect(() =>
+      writePersistedModelPreference(
+        { engine: "local", baseUrl: "http://localhost:11434/v1", model: "qwen2.5vl:7b" },
+        fullStorage,
+      ),
+    ).not.toThrow();
+  });
+
   it("falls back to auto when the key is absent", () => {
     expect(readPersistedModelPreference(fakeStorage())).toEqual(AUTO_MODEL_PREFERENCE);
   });
