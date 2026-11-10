@@ -1,5 +1,44 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Feature: Visual Novel Memory Hooking & Monotonic Debounce IPC (Next-Gen Blueprint Module 4) — 2026-11-10
+
+### Status: VERIFIED WORKING (Implemented Monotonic Sliding Window Debounce in `lib/vn/monotonicDebounce.ts` and Platform IPC Named Pipe Server in `lib/vn/pipeServer.ts` per principles: `model-the-domain`, `fix-root-causes`, `prove-it-works`, `laziness-protocol`, `experience-first`):
+
+1) Problem & Domain Analysis:
+   - Module 4 of the SuperK Next-Gen Architectural Blueprint specified: "สถาปัตยกรรมดักจับข้อความในเกม Visual Novel ตรงจากหน่วยความจำ (Visual Novel Memory Hooking - Zero OCR)".
+   - Traditional screen-capture OCR approaches for Visual Novels incur high CPU overhead (25-45%), high latency (850-1500ms), OCR reading errors on stylized game fonts, and waste thousands of LLM tokens re-sending duplicate video frames.
+   - When game engines (Ren'Py, Unity TextMeshPro, Kirikiri, GDI) animate dialogue with typewriter effects at 60Hz, progressive partial strings ("ส" -> "สวั" -> "สวัส" -> "สวัสดี") flood the translation layer if not properly debounced.
+
+2) Implementation & Architecture:
+   - Type Definitions (`lib/vn/types.ts`):
+     - `TextFrame`: Typed dialogue payload containing `timestamp`, `speakerName`, `rawText`, `engineType` (`renpy`, `unity_tmp`, `kirikiri`, `gdi`, `unknown`), and `processId`.
+     - `DebounceOptions` & `DebounceState`: Finite state machine states (`IDLE`, `ACCUMULATING`, `EMITTED`).
+   - Monotonic Sliding Window Debounce (`lib/vn/monotonicDebounce.ts`):
+     - Solves typewriter text growth via Monotonic Sliding Window algorithm:
+       $\text{State Transition: } \text{IDLE} \xrightarrow{\text{Text Change}} \text{ACCUMULATING} \xrightarrow{\text{Timer } \ge 180\text{ms}} \text{EMIT\_TRANSLATION}$.
+     - Deduplicates 60Hz redundant engine frames and progressive extensions without re-triggering unnecessary translation API calls.
+     - `extractSpeakerAndDialogue`: Automatically parses Japanese-style brackets `【桜】`, western brackets `[Sakura]`, and colon headers `Sakura:`.
+     - Dynamically propagates speaker identification across progressive character typing.
+     - `maxHoldTimeMs` guard (default 2500ms) to ensure long typewriter animations never stall indefinitely.
+   - Local IPC Named Pipe Server (`lib/vn/pipeServer.ts`):
+     - Listens on Windows Named Pipe (`\\.\pipe\superk_vn_hook`) and POSIX domain socket (`/tmp/superk_vn_hook.sock`).
+     - Zero external dependencies: Built on native Node.js `net` socket streams.
+     - Stream protocol: Accepts newline/null-delimited JSON `TextFrame` messages or direct UTF-8 string fallbacks, streaming directly into the monotonic debounce engine.
+
+3) Verification Evidence:
+   - Vitest Unit Tests:
+     - `tests/vn/monotonicDebounce.test.ts`: 8/8 tests passed (100%), verifying bracketed/colon speaker parsing, progressive typewriter expansion, 180ms stability debounce timeout, 60Hz duplicate suppression, immediate branch flushing, and max hold timeouts.
+     - `tests/vn/pipeServer.test.ts`: 3/3 tests passed (100%), verifying platform pipe path resolution, live IPC socket streaming with simulated hook client, and plain text fallback.
+     - Full Blueprint Modules Suite: 35/35 tests passed (100%).
+   - Type Safety & Linting:
+     - `npx tsc --noEmit`: 0 errors.
+     - `npm run lint`: 0 errors (87 preexisting legacy warnings).
+   - Production Build & Running Server:
+     - `npm run build`: Compiled successfully in Turbopack in 3.8s, static routes generated, standalone assets synced.
+     - Port 3000 (Next.js Standalone): HTTP 200 OK (`curl.exe -sI http://127.0.0.1:3000`).
+     - Port 8765 (Uvicorn OCR Service): HTTP 200 OK `{"status":"ok"}`.
+
+
 ## Feature: Manga Panel Segmentation & Topological Reading Flow DAG (Next-Gen Blueprint Module 2) — 2026-11-10
 
 ### Status: VERIFIED WORKING (Implemented Two-Tier Hierarchical Reading Flow DAG with Spatial Dominance Matrix in `lib/translation/panelReadingFlowDAG.ts`, connected into `lib/translation/bubbleReadingOrder.ts` and `lib/translation/sanitizer.ts` per principles: `model-the-domain`, `fix-root-causes`, `prove-it-works`, `laziness-protocol`, `experience-first`):
