@@ -65,12 +65,11 @@ def test_tier2_gradient_background_routing() -> None:
 
 
 def test_tier3_complex_artwork_routing() -> None:
-    # High-variance noisy texture mimicking complex background illustration
+    # High-variance aperiodic noise mimicking complex background illustration.
+    # The texture must stay free of dominant periodicity: a periodic grid reads
+    # as screentone and legitimately routes to the procedural fast path.
     rng = np.random.default_rng(42)
     noise = rng.integers(0, 256, (100, 100, 3), dtype=np.uint8)
-    # Add strong high-frequency edges
-    noise[::4, :] = 0
-    noise[:, ::4] = 255
 
     mask = np.zeros((100, 100), dtype=np.uint8)
     mask[30:70, 30:70] = 255
@@ -101,10 +100,10 @@ def test_tier3_complex_artwork_routing() -> None:
 
 
 def test_tier3_graceful_fallback_when_neural_cleaner_none() -> None:
-    # Noisy texture but tier3_cleaner is None
+    # Aperiodic noisy texture but tier3_cleaner is None. Periodic stripes would
+    # read as screentone and take the procedural fast path before the fallback.
     rng = np.random.default_rng(99)
     noise = rng.integers(0, 256, (100, 100, 3), dtype=np.uint8)
-    noise[::3, :] = 0
 
     mask = np.zeros((100, 100), dtype=np.uint8)
     mask[40:60, 40:60] = 255
