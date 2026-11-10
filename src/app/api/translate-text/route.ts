@@ -14,6 +14,7 @@ import {
   type PronounRelation,
 } from "@/lib/translation/pronounMatrix";
 import { FIXED_IMAGE_MODELS } from "@/lib/translation/imageModelChoices";
+import { sanitizeTranslationPayloadJson } from "@/lib/translation/sanitizer";
 import { getSyncedExtensionSettings } from "@/src/app/api/extension/settings/handler";
 
 interface GeminiResponseData {
@@ -179,7 +180,8 @@ export async function POST(req: Request) {
     } catch {
       return NextResponse.json({ error: "ผลลัพธ์จาก AI ไม่ใช่ JSON ที่ถูกต้อง" }, { status: 502 });
     }
-    return NextResponse.json({ text: cleanText });
+    const sanitizedText = sanitizeTranslationPayloadJson(cleanText, targetLang);
+    return NextResponse.json({ text: sanitizedText });
 
   } catch (error) {
     console.error("API error:", error);

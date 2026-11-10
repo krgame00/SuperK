@@ -1,5 +1,39 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Feature: SuperK Next-Gen Unified Pipeline Integration (Blueprint Phase 4) — 2026-11-10
+
+### Status: VERIFIED WORKING (Unified all 4 blueprint modules across Web De-scrambler, Panel Flow DAG, Comic Typography, and VN Monotonic IPC; connected sanitizer into `src/app/api/translate-text/route.ts`; verified with end-to-end integration test `tests/integration/nextGenUnifiedPipeline.test.ts` per principles: `model-the-domain`, `fix-root-causes`, `prove-it-works`, `laziness-protocol`, `experience-first`):
+
+1) Problem & Domain Analysis:
+   - Blueprint Section 5 specified Phase 4: "System Integration & Optimization — ทดสอบประสิทธิภาพ end-to-end และเปิดใช้งานสถาปัตยกรรม SuperK Next-Gen อย่างสมบูรณ์".
+   - The individual modules (1: Image De-scrambler, 2: Reading Flow DAG, 3: Contour Classifier & Typography, 4: VN Memory Hooking) required end-to-end contract verification to guarantee seamless data flow across the entire system.
+   - Direct text translation (`src/app/api/translate-text/route.ts`) previously omitted `sanitizeTranslationPayloadJson`, leaving text-first callers (such as Chrome Extension or VN Hooking IPC) without CJK echo filtering and topological reading order guarantees.
+
+2) Implementation & Architecture:
+   - Pipeline Integration in `src/app/api/translate-text/route.ts`:
+     - Wired `sanitizeTranslationPayloadJson` from `lib/translation/sanitizer.ts` into the translation response handler.
+     - Ensures all text translations automatically pass through CJK foreign echo suppression and the Two-Tier Hierarchical Reading Flow DAG.
+   - Comprehensive End-to-End Test (`tests/integration/nextGenUnifiedPipeline.test.ts`):
+     - Step 1: Validates GigaViewer permutation inversion, remainder margins ($R_w, R_h$), and 19-slice tile mapping.
+     - Step 2: Validates Spatial Dominance Matrix and Intra-Panel Sub-DAG sorting on staggered cross-panel dialogue, completely preventing dialogue interleaving ($A_1 \to A_2 \to B_1 \to B_2$).
+     - Step 3: Validates 4-archetype polygon classification (`shouting`), dynamic stroke width ($S_w$), and automatic Bulge Warp ($k=0.35$).
+     - Step 4: Validates progressive typewriter frame streaming ("ฉัน" $\to$ "ฉันจะ" $\to$ "ฉันจะเป็นราชาโจรสลัด!") and bracketed speaker extraction `【ルフィ】` via Monotonic Sliding Window Debounce.
+     - Step 5: Validates Gemini payload CJK sanitization and canonical RTL reading order preservation.
+
+3) Verification Evidence:
+   - End-to-End & Full Blueprint Test Suite:
+     - `tests/integration/nextGenUnifiedPipeline.test.ts`: 1/1 passed (100%).
+     - All Blueprint Suites: 9 test files, 63/63 tests passed (100%).
+     - Python OCR & Screentone Suite: 300 tests (297 passed, 3 skipped, 0 failures).
+   - Type Safety & Linting:
+     - `npx tsc --noEmit`: 0 errors.
+     - `npm run lint`: 0 errors (88 preexisting legacy warnings).
+   - Production Build & Running Server:
+     - `npm run build`: Compiled successfully in Turbopack in 3.3s, static routes generated, standalone assets synced.
+     - Port 3000 (Next.js Standalone): HTTP 200 OK (`curl.exe -sI http://127.0.0.1:3000`).
+     - Port 8765 (Uvicorn OCR Service): HTTP 200 OK `{"status":"ok"}`.
+
+
 ## Feature: Visual Novel Memory Hooking & Monotonic Debounce IPC (Next-Gen Blueprint Module 4) — 2026-11-10
 
 ### Status: VERIFIED WORKING (Implemented Monotonic Sliding Window Debounce in `lib/vn/monotonicDebounce.ts` and Platform IPC Named Pipe Server in `lib/vn/pipeServer.ts` per principles: `model-the-domain`, `fix-root-causes`, `prove-it-works`, `laziness-protocol`, `experience-first`):
