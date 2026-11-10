@@ -1,6 +1,7 @@
 from app.cleaners.base import Cleaner
 from app.cleaners.flat import FlatCleaner, GradientCleaner
-from app.cleaners.hybrid_inpainter import HybridInpainter, HybridInpaintResult, InpaintTier
+from app.cleaners.hybrid_inpainter import HybridInpainter, HybridInpaintResult
+from app.cleaners.tier_router import InpaintTier, TierDiagnostics, TieredInpainter
 
 __all__ = [
     "Cleaner",
@@ -9,4 +10,6 @@ __all__ = [
     "HybridInpainter",
     "HybridInpaintResult",
     "InpaintTier",
+    "TierDiagnostics",
+    "TieredInpainter",
 ]

@@ -62,6 +62,7 @@ ProgressCallback = Callable[[JobStage, int, int], None]
 RETRY_CLEANER_ALIASES: dict[str, str] = {
     "flat": "flat",
     "opencv": "gradient",
+    "gradient": "gradient",
     "aot": "aot",
     "anime-lama": "anime-lama",
     "lama-large": "lama-large",

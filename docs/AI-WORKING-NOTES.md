@@ -1,5 +1,45 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Feature: 3-Tier Multi-Tier Inpainting Architecture (Section 3.1 & 5.1 Architectural Blueprint) — 2026-11-10
+
+### Status: VERIFIED WORKING (Implemented Multi-Tier Inpainting in `ocr-service/app/cleaners/tier_router.py`, reconnected `FlatCleaner` and `GradientCleaner` in `app/api.py:_default_pipeline_factory`, and registered `RETRY_CLEANER_ALIASES` in `app/pipeline.py` per principles: `model-the-domain`, `fix-root-causes`, `prove-it-works`, `laziness-protocol`):
+
+1) Problem & Root-Cause Analysis:
+   - Torii Translate reverse engineering (Section 3.1 & 5.1 of architectural blueprint) identified that uniform flat speech bubbles require < 2ms zero-GPU solid fill, simple gradients require 10-50ms CPU Telea inpainting, and only complex line-art/illustrations need 200-800ms deep neural inpainting.
+   - Previously in `_default_pipeline_factory` (`ocr-service/app/api.py:683-698`), when `lama_large` was available, `CleanerRoute.FLAT` and `CleanerRoute.GRADIENT` were hard-overridden to `lama_large`.
+   - This forced all flat white speech bubbles through heavy ONNX neural network inference, incurring unnecessary CPU/GPU load and latency.
+
+2) Implementation & Architecture:
+   - Created `TieredInpainter` (`ocr-service/app/cleaners/tier_router.py`):
+     - `InpaintTier` enum: `TIER_1_SOLID`, `TIER_2_ALGORITHMIC`, `TIER_3_NEURAL`.
+     - `classify_tier`: Fast perimeter ring sampling checks if `has_dominant_bg` or `CleanerRoute.FLAT` (Tier 1), `CleanerRoute.GRADIENT` (Tier 2), or `CleanerRoute.ARTWORK` (Tier 3).
+     - `clean_with_diagnostics`: Returns repaired image and `TierDiagnostics` (tier, cleaner_name, elapsed_ms, dominant_color_bgr, has_dominant_bg_color).
+     - Graceful fallback: If Tier 3 cleaner is not loaded, falls back cleanly to Tier 2 algorithmic inpainting.
+   - Connected in `_default_pipeline_factory` (`ocr-service/app/api.py`):
+     - `CleanerRoute.FLAT` -> `flat` (`FlatCleaner`, Tier 1 Solid Fill < 2ms, zero GPU).
+     - `CleanerRoute.GRADIENT` -> `gradient` (`GradientCleaner`, Tier 2 CPU Telea Fast Marching 10-50ms).
+     - `CleanerRoute.ARTWORK` -> `artwork` (`lama_large` or `aot`, Tier 3 Neural Inpainting).
+     - Configured `"tiered"` and `"hybrid"` aliases, while preserving `SUPERK_FORCE_ALL_LAMA=1` override if needed.
+   - Two-Pass Ensemble Escalation (`ocr-service/app/pipeline.py:302`):
+     - If Tier 1 or Tier 2 verification rejects a candidate (`report.accepted == False`), pipeline automatically escalates to Tier 3 `lama-large` on the second pass.
+
+3) Verification Evidence:
+   - Python Unit Tests:
+     - `tests/test_tier_router.py`: 5/5 tests passed (100%), verifying Tier 1 solid balloon (< 10ms), Tier 2 gradient, Tier 3 complex artwork, Tier 3 fallback, and Cleaner protocol conformance.
+     - `tests/test_flat_cleaner.py`: 3/3 tests passed.
+     - `tests/test_hybrid_inpainter.py`: 5/5 tests passed.
+     - `tests/test_region_router.py`: 3/3 tests passed.
+     - `tests/test_pipeline.py`: 35/35 tests passed.
+     - `tests/test_api.py`: 27/27 tests passed.
+     - Total: 61 passed, 2 skipped in 3.57s.
+   - Linting & Type Safety:
+     - `ruff check .`: 0 errors in `ocr-service`.
+     - `npx tsc --noEmit`: 0 errors in Next.js web application.
+     - `npm run lint`: 0 errors (87 preexisting legacy warnings).
+   - Running Services Verified:
+     - Port 3000 (Next.js Standalone): HTTP 200 OK.
+     - Port 8765 (Uvicorn OCR Service): HTTP 200 OK `{"status":"ok"}`.
+
 ## Feature: Double Bubble Voronoi Splitting (Section 3.2 Architectural Blueprint) — 2026-11-10
 
 ### Status: VERIFIED WORKING (Implemented Voronoi Diagram conjoined twin bubble splitting engine in `lib/typeset/voronoiBubbleSplit.ts`, integrated into `lib/bubbleLayoutOptimizer.ts` and `lib/typeset/BubbleTypesetEngine.ts` per principles: `model-the-domain`, `fix-root-causes`, `prove-it-works`, `laziness-protocol`):

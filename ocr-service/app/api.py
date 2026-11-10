@@ -20,6 +20,7 @@ from PIL import Image, UnidentifiedImageError
 from app.cleaners.aot import AotCleaner
 from app.cleaners.flat import FlatCleaner, GradientCleaner
 from app.cleaners.lama_large import LamaLargeCleaner
+from app.cleaners.tier_router import TieredInpainter
 from app.detector import HybridTextDetector
 from app.jobs import JobStore, Pipeline, PipelineFactory, _decode_mask, _decode_rgb
 from app.model_store import ModelStore
@@ -680,22 +681,43 @@ def _default_pipeline_factory(settings: Settings) -> Callable[[], Pipeline]:
             lama_large = None
 
         aot = AotCleaner(model_store)
-        if lama_large is not None:
+        flat = FlatCleaner()
+        gradient = GradientCleaner()
+        artwork = lama_large if lama_large is not None else aot
+        tiered = TieredInpainter(
+            tier1_cleaner=flat,
+            tier2_cleaner=gradient,
+            tier3_cleaner=artwork,
+        )
+
+        force_all_lama = os.getenv("SUPERK_FORCE_ALL_LAMA") == "1"
+        if force_all_lama and lama_large is not None:
             cleaners: dict = {
                 CleanerRoute.FLAT: lama_large,
                 CleanerRoute.GRADIENT: lama_large,
                 CleanerRoute.ARTWORK: lama_large,
+                "flat": flat,
+                "gradient": gradient,
+                "hybrid": tiered,
+                "tiered": tiered,
                 "lama-large": lama_large,
                 "anime-lama": lama_large,
                 "aot": aot,
             }
         else:
             cleaners = {
-                CleanerRoute.FLAT: FlatCleaner(),
-                CleanerRoute.GRADIENT: GradientCleaner(),
-                CleanerRoute.ARTWORK: aot,
+                CleanerRoute.FLAT: flat,
+                CleanerRoute.GRADIENT: gradient,
+                CleanerRoute.ARTWORK: artwork,
+                "flat": flat,
+                "gradient": gradient,
+                "hybrid": tiered,
+                "tiered": tiered,
                 "aot": aot,
             }
+            if lama_large is not None:
+                cleaners["lama-large"] = lama_large
+                cleaners["anime-lama"] = lama_large
 
         return CleaningPipeline(
             detector=detector,
