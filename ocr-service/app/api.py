@@ -562,6 +562,8 @@ def create_app(
                     "bbox": list(p.bbox),
                     "polygon": [list(pt) for pt in p.polygon],
                     "scanline_ratios": p.scanline_ratios,
+                    "category": p.category,
+                    "shape_features": p.shape_features,
                 }
                 for p in profiles
             ]

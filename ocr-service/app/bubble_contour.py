@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Literal
 
 import cv2
 import numpy as np
+
+BubbleCategory = Literal["normal", "shouting", "thought", "narration"]
 
 
 @dataclass(frozen=True)
@@ -12,6 +15,56 @@ class BubbleProfile:
     bbox: tuple[int, int, int, int]          # (x, y, w, h) of safe area
     polygon: list[tuple[int, int]]           # Contour coordinates
     scanline_ratios: list[float]             # Horizontal width ratio across vertical slices
+    category: BubbleCategory = "normal"      # "normal" | "shouting" | "thought" | "narration"
+    shape_features: dict[str, float] = field(default_factory=dict)
+
+
+def classify_bubble_contour(contour: np.ndarray) -> tuple[BubbleCategory, dict[str, float]]:
+    """
+    Classifies a bubble contour into one of four comic archetypes:
+    - CAT-01 normal: smooth oval/circle (high Q > 0.60, defects <= 2, extent 0.60..0.88)
+    - CAT-02 shouting: starburst/spiky perimeter (defects >= 5, low Q < 0.55)
+    - CAT-03 thought: puffy cloud lobes (defects 3..6, moderate Q <= 0.75)
+    - CAT-04 narration: box/rectangle (extent >= 0.85, defects <= 1)
+    """
+    area = float(cv2.contourArea(contour))
+    perimeter = float(cv2.arcLength(contour, closed=True))
+    q = float((4.0 * np.pi * area) / (perimeter ** 2)) if perimeter > 0 else 0.0
+
+    rx, ry, rw, rh = cv2.boundingRect(contour)
+    extent = float(area / max(1.0, float(rw * rh)))
+
+    # Convexity defects calculation
+    approx = cv2.approxPolyDP(contour, epsilon=max(1.0, perimeter * 0.005), closed=True)
+    defects_count = 0
+    if len(approx) > 3:
+        hull = cv2.convexHull(approx, returnPoints=False)
+        if hull is not None and len(hull) > 3:
+            try:
+                defects = cv2.convexityDefects(approx, hull)
+                if defects is not None:
+                    tau = max(3.0, min(rw, rh) * 0.05)
+                    for d in defects:
+                        depth = float(d[0][3]) / 256.0
+                        if depth >= tau:
+                            defects_count += 1
+            except cv2.error:
+                defects_count = 0
+
+    features: dict[str, float] = {
+        "q": round(q, 4),
+        "extent": round(extent, 4),
+        "defects": float(defects_count),
+    }
+
+    # Blueprint 3.2 Classification Heuristics
+    if extent >= 0.85 and defects_count <= 1:
+        return "narration", features
+    if defects_count >= 5 and q < 0.55:
+        return "shouting", features
+    if 3 <= defects_count <= 6 and q <= 0.82:
+        return "thought", features
+    return "normal", features
 
 
 def extract_bubble_profiles(
@@ -68,6 +121,8 @@ def extract_bubble_profiles(
                     bbox=(bx, by, bw, bh),
                     polygon=[(bx, by), (bx + bw, by), (bx + bw, by + bh), (bx, by + bh)],
                     scanline_ratios=[1.0] * num_slices,
+                    category="normal",
+                    shape_features={"q": 1.0, "extent": 1.0, "defects": 0.0},
                 )
             )
             continue
@@ -104,6 +159,8 @@ def extract_bubble_profiles(
                     bbox=(bx, by, bw, bh),
                     polygon=[(bx, by), (bx + bw, by), (bx + bw, by + bh), (bx, by + bh)],
                     scanline_ratios=[1.0] * num_slices,
+                    category="normal",
+                    shape_features={"q": 1.0, "extent": 1.0, "defects": 0.0},
                 )
             )
             continue
@@ -126,12 +183,17 @@ def extract_bubble_profiles(
         approx_poly = cv2.approxPolyDP(main_contour, epsilon=2.5, closed=True)
         poly_pts = [(int(pt[0][0]), int(pt[0][1])) for pt in approx_poly]
 
+        # Classify balloon contour into comic category (normal / shouting / thought / narration)
+        cat, shape_feat = classify_bubble_contour(main_contour)
+
         profiles.append(
             BubbleProfile(
                 text_box_id=idx,
                 bbox=(int(cx_rect), int(cy_rect), int(cw_rect), int(ch_rect)),
                 polygon=poly_pts,
                 scanline_ratios=scanline_ratios,
+                category=cat,
+                shape_features=shape_feat,
             )
         )
 

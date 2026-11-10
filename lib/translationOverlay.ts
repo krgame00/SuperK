@@ -43,6 +43,10 @@ import {
   getNextWarpType,
   getWarpLabel,
 } from "./tools/TextWarpRenderer";
+import {
+  resolveCategoryTypography,
+  type BubbleCategory,
+} from "./typography/comicTypography";
 import { fitTextToBubbleContour } from "./typeset/BubbleTypesetEngine";
 import { readPageImageLayers } from "./editing/imageLayerStore";
 
@@ -175,6 +179,8 @@ export interface TranslatedBubble {
   warp?: WarpConfig;
   /** Authentic speech bubble scanline chord width ratios (20 vertical slices) */
   scanlineRatios?: number[];
+  /** Comic bubble archetype (CAT-01 normal, CAT-02 shouting, CAT-03 thought, CAT-04 narration) */
+  bubbleCategory?: BubbleCategory;
   [key: string]: unknown;
 }
 
@@ -197,13 +203,21 @@ export const resolveBubbleFontFamily = (
     return resolveCanvasFontFamily(customBubbleFont);
   }
   const category =
+    bubble?.bubbleCategory ||
     bubble?.styleProfile?.category ||
     (bubble as { styleCategory?: string } | undefined)?.styleCategory;
   const catFont =
     category && style?.categoryFonts ? style.categoryFonts[category] : undefined;
-  return resolveCanvasFontFamily(
-    catFont && catFont.trim().length > 0 ? catFont : style?.fontFamily,
-  );
+  if (catFont && catFont.trim().length > 0) {
+    return resolveCanvasFontFamily(catFont);
+  }
+  if (category) {
+    const rules = resolveCategoryTypography(category);
+    if (rules.fontFamilyFallback && !style?.fontFamily) {
+      return resolveCanvasFontFamily(rules.fontFamilyFallback);
+    }
+  }
+  return resolveCanvasFontFamily(style?.fontFamily);
 };
 
 export interface OverlayAdjustment {
@@ -232,6 +246,8 @@ export interface OverlayAdjustment {
   warp?: WarpConfig;
   /** Persisted custom font family override */
   fontFamily?: string;
+  /** Persisted comic bubble archetype */
+  bubbleCategory?: BubbleCategory;
   /** Persisted text alignment */
   align?: "left" | "center" | "right";
   /** Persisted bold font weight override */
@@ -1512,6 +1528,9 @@ export const applyTranslationOverlay = async (
       if (adj?.warp !== undefined && b.warp === undefined) {
         b.warp = { ...adj.warp };
       }
+      if (adj?.bubbleCategory !== undefined && b.bubbleCategory === undefined) {
+        b.bubbleCategory = adj.bubbleCategory;
+      }
       const persistedStyleProfile = adj?.styleProfile ?? legacyAdj?.styleProfile;
       if (
         persistedStyleProfile &&
@@ -1581,6 +1600,7 @@ export const applyTranslationOverlay = async (
           ...(b.layoutSnapshot ? { layoutSnapshot: b.layoutSnapshot } : {}),
           ...(b.styleProfile ? { styleProfile: cloneTextStyleProfile(b.styleProfile) } : {}),
           ...(b.warp ? { warp: { ...b.warp } } : {}),
+          ...(b.bubbleCategory ? { bubbleCategory: b.bubbleCategory } : {}),
         };
         b.layoutAdjustment = persistedLayout;
 
@@ -2004,9 +2024,14 @@ export const applyTranslationOverlay = async (
           ? snapshotFit.layout.lineHeightPx * snapshotFit.scale
           : fixedLayout ? fontSize * 1.30 : Math.min(fontSize * 1.30, currentBh / Math.max(1, lines.length));
 
-        currentIsItalic = Boolean(b.isItalic ?? b.italic ?? currentIsItalic);
+        const comicCategory = (b.bubbleCategory || (b as { category?: BubbleCategory }).category) as BubbleCategory | undefined;
+        const categoryRules = comicCategory ? resolveCategoryTypography(comicCategory, fontSize, b.warp) : undefined;
+
+        currentIsItalic = Boolean(
+          b.isItalic ?? b.italic ?? (categoryRules?.fontStyle === "italic" ? true : currentIsItalic),
+        );
         const isBoldFlag = (b as { isBold?: boolean }).isBold ?? true;
-        const weightToken = isBoldFlag ? "bold" : "normal";
+        const weightToken = categoryRules?.fontWeight ?? (isBoldFlag ? "bold" : "normal");
         const fontStylePrefix = currentIsItalic ? `italic ${weightToken}` : weightToken;
         ctx.globalAlpha = opacity;
         ctx.textAlign = "center";
@@ -2017,12 +2042,16 @@ export const applyTranslationOverlay = async (
         ctx.miterLimit = 2;
         ctx.strokeStyle = outlineColor;
         const customStrokeWidth = (b as { strokeWidth?: number }).strokeWidth;
+        const baseOutlineWidth = resolvedStyle.hasOutline
+          ? Math.max(
+              categoryRules?.dynamicStrokeWidth ?? (resolvedStyle.outlineWidthRatio >= 0.18 ? 3.2 : 1),
+              fontSize * resolvedStyle.outlineWidthRatio,
+            )
+          : 0;
         ctx.lineWidth =
           typeof customStrokeWidth === "number"
             ? customStrokeWidth
-            : resolvedStyle.hasOutline
-              ? Math.max(resolvedStyle.outlineWidthRatio >= 0.18 ? 3.2 : 1, fontSize * resolvedStyle.outlineWidthRatio)
-              : 0;
+            : baseOutlineWidth;
 
         let fillPaint: string | CanvasGradient = textColor;
         const gradient = resolvedStyle.fillGradient;
@@ -2120,11 +2149,15 @@ export const applyTranslationOverlay = async (
         const leftPad = Math.max(6, Math.round(currentBw * 0.04));
         const indentPad = leftPad + Math.round(fontSize * 0.85);
 
+        const effectiveWarp =
+          b.warp && b.warp.type !== "none"
+            ? b.warp
+            : categoryRules?.warpConfig;
         const isWarped = Boolean(
-          b.warp &&
-          (b.warp.type !== "none" ||
-            (typeof b.warp.horizontal === "number" && Math.abs(b.warp.horizontal) >= 0.001) ||
-            (typeof b.warp.vertical === "number" && Math.abs(b.warp.vertical) >= 0.001))
+          effectiveWarp &&
+          (effectiveWarp.type !== "none" ||
+            (typeof effectiveWarp.horizontal === "number" && Math.abs(effectiveWarp.horizontal) >= 0.001) ||
+            (typeof effectiveWarp.vertical === "number" && Math.abs(effectiveWarp.vertical) >= 0.001))
         );
         let activeCtx: CanvasRenderingContext2D = ctx;
         let warpCanvas: HTMLCanvasElement | OffscreenCanvas | null = null;
@@ -2213,9 +2246,9 @@ export const applyTranslationOverlay = async (
         });
         activeCtx.textAlign = "center";
 
-        if (isWarped && warpCanvas && b.warp) {
+        if (isWarped && warpCanvas && effectiveWarp) {
           ctx.clearRect(0, 0, currentBw, currentBh);
-          renderWarpedText(ctx, warpCanvas, 0, 0, b.warp);
+          renderWarpedText(ctx, warpCanvas, 0, 0, effectiveWarp);
         }
         // Snapshot renders keep the captured selection (scaled for a corner
         // release) so the crisp redraw, reopening, and Undo/Redo all show the

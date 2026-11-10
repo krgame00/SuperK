@@ -186,11 +186,19 @@ export async function inpaintCrop(
   return await response.blob();
 }
 
+import type { BubbleCategory } from "../typography/comicTypography";
+
 export interface BubbleContourProfile {
   text_box_id: number;
   bbox: [number, number, number, number];
   polygon: Array<[number, number]>;
   scanline_ratios: number[];
+  category?: BubbleCategory;
+  shape_features?: {
+    q?: number;
+    extent?: number;
+    defects?: number;
+  };
 }
 
 export async function detectBubbleProfiles(

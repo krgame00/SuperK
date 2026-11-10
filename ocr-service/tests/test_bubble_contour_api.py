@@ -60,6 +60,9 @@ def test_detect_bubbles_endpoint(client: TestClient) -> None:
     assert profile["text_box_id"] == 0
     assert len(profile["scanline_ratios"]) == 20
     assert len(profile["polygon"]) >= 4
+    assert profile["category"] in ("normal", "shouting", "thought", "narration")
+    assert "shape_features" in profile
+    assert "q" in profile["shape_features"]
     bx, by, bw, bh = profile["bbox"]
     assert bx <= 80 and (bx + bw) >= 120
 

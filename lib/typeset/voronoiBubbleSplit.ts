@@ -12,6 +12,7 @@
  */
 
 import type { TranslatedBubble } from "@/lib/translationOverlay";
+import { classifyPolygonGeometry } from "../typography/comicTypography";
 
 export interface Point2D {
   x: number;
@@ -364,9 +365,15 @@ export function splitDoubleBubble(
   const scanlinesA = generateVoronoiScanlineRatios(split.polygonA);
   const scanlinesB = generateVoronoiScanlineRatios(split.polygonB);
 
+  const polyPtsA: Array<[number, number]> = split.polygonA.map((p) => [p.x, p.y]);
+  const polyPtsB: Array<[number, number]> = split.polygonB.map((p) => [p.x, p.y]);
+  const catA = bubbleA.bubbleCategory ?? classifyPolygonGeometry(polyPtsA).category;
+  const catB = bubbleB.bubbleCategory ?? classifyPolygonGeometry(polyPtsB).category;
+
   const updatedA: TranslatedBubble = {
     ...bubbleA,
     scanlineRatios: scanlinesA,
+    bubbleCategory: catA,
     box: [
       Math.round((split.boxA.y / ih) * 1000),
       Math.round((split.boxA.x / iw) * 1000),
@@ -379,6 +386,7 @@ export function splitDoubleBubble(
       by: split.boxA.y,
       bw: split.boxA.width,
       bh: split.boxA.height,
+      bubbleCategory: catA,
       iw,
       ih,
       userModified: false,
@@ -390,6 +398,7 @@ export function splitDoubleBubble(
   const updatedB: TranslatedBubble = {
     ...bubbleB,
     scanlineRatios: scanlinesB,
+    bubbleCategory: catB,
     box: [
       Math.round((split.boxB.y / ih) * 1000),
       Math.round((split.boxB.x / iw) * 1000),
@@ -402,6 +411,7 @@ export function splitDoubleBubble(
       by: split.boxB.y,
       bw: split.boxB.width,
       bh: split.boxB.height,
+      bubbleCategory: catB,
       iw,
       ih,
       userModified: false,
@@ -466,6 +476,11 @@ export function splitSingleDoubleBubble(
   const scanlinesA = generateVoronoiScanlineRatios(split.polygonA);
   const scanlinesB = generateVoronoiScanlineRatios(split.polygonB);
 
+  const polyPtsA: Array<[number, number]> = split.polygonA.map((p) => [p.x, p.y]);
+  const polyPtsB: Array<[number, number]> = split.polygonB.map((p) => [p.x, p.y]);
+  const catA = bubble.bubbleCategory ?? classifyPolygonGeometry(polyPtsA).category;
+  const catB = bubble.bubbleCategory ?? classifyPolygonGeometry(polyPtsB).category;
+
   const baseId = bubble.id !== undefined ? String(bubble.id) : "double";
 
   const bubble1: TranslatedBubble = {
@@ -473,6 +488,7 @@ export function splitSingleDoubleBubble(
     id: `${baseId}-lobe1`,
     t: text1,
     scanlineRatios: scanlinesA,
+    bubbleCategory: catA,
     box: [
       Math.round((split.boxA.y / ih) * 1000),
       Math.round((split.boxA.x / iw) * 1000),
@@ -484,6 +500,7 @@ export function splitSingleDoubleBubble(
       by: split.boxA.y,
       bw: split.boxA.width,
       bh: split.boxA.height,
+      bubbleCategory: catA,
       iw,
       ih,
       userModified: false,
@@ -497,6 +514,7 @@ export function splitSingleDoubleBubble(
     id: `${baseId}-lobe2`,
     t: text2,
     scanlineRatios: scanlinesB,
+    bubbleCategory: catB,
     box: [
       Math.round((split.boxB.y / ih) * 1000),
       Math.round((split.boxB.x / iw) * 1000),
@@ -508,6 +526,7 @@ export function splitSingleDoubleBubble(
       by: split.boxB.y,
       bw: split.boxB.width,
       bh: split.boxB.height,
+      bubbleCategory: catB,
       iw,
       ih,
       userModified: false,

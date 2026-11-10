@@ -1,6 +1,59 @@
 # AI Working Notes — SuperK / Manga Translator
 
-## Feature: Contour-Constrained Line Wrapping & Scanline Chord Ratios (Section 3.2 Item 1 Architectural Blueprint) — 2026-11-10
+## Feature: Bubble Contour Classification & Auto Comic Typography (Next-Gen Blueprint Module 3) — 2026-11-10
+
+### Status: VERIFIED WORKING (Implemented 4-Archetype Comic Contour Classifier in `ocr-service/app/bubble_contour.py` and `lib/typography/comicTypography.ts`, wired Dynamic Stroke Width and Auto Bulge Warp into `lib/translationOverlay.ts` and `lib/typeset/voronoiBubbleSplit.ts` per principles: `model-the-domain`, `fix-root-causes`, `prove-it-works`, `laziness-protocol`, `experience-first`):
+
+1) Problem & Domain Analysis:
+   - Module 3 of the SuperK Next-Gen Architectural Blueprint specified: "ระบบจำแนกรูปทรงบอลลูนและการจัดวางฟอนต์คอมิกส์อัตโนมัติ (Bubble Contour Classifier & Auto Comic Typography)".
+   - Previously, all bubbles used identical uniform typography and font weights regardless of whether the speaker was whispering, screaming, narrating, or thinking.
+   - Speech balloons carrying shouting/impact dialogue lacked visual punch, while rectangular narration boxes were rendered with the same oval-oriented formatting as character speech.
+
+2) Implementation & Architecture:
+   - Python Geometric Feature Extraction & Classifier (`ocr-service/app/bubble_contour.py`):
+     - Calculates 3D geometric feature vector from OpenCV contour:
+       1. Isoperimetric Quotient $Q = \frac{4\pi \cdot \text{Area}}{\text{Perimeter}^2}$ (circularity metric).
+       2. Bounding Box Extent $E = \frac{\text{Area}}{W_{rect} \times H_{rect}}$ (rectangular fill ratio).
+       3. Convexity Defects Count $D_\tau = \sum \mathbb{I}(\text{depth} > \tau)$ (n-point spike and lobe indentation counter).
+     - Archetype Classification Matrix:
+       - CAT-01 `normal` (smooth oval/circle): $Q > 0.60, D_\tau \le 2, E \in [0.60, 0.88]$.
+       - CAT-02 `shouting` (jagged starburst): $D_\tau \ge 5, Q < 0.55$.
+       - CAT-03 `thought` (cloud lobes): $3 \le D_\tau \le 6, Q \le 0.82$.
+       - CAT-04 `narration` (crisp rectangle): $E \ge 0.85, D_\tau \le 1$.
+     - Serialized in `/v1/detect/bubbles` API with `category` and `shape_features` dictionary.
+   - Frontend Comic Typography Engine (`lib/typography/comicTypography.ts`):
+     - `calculateDynamicStrokeWidth`: Computes $S_w = \max(1.5, \lfloor H_{text} / 12 \rfloor)$ with archetype multiplier (1.35x for shouting, 0.85x for thought).
+     - `resolveCategoryTypography`:
+       - `shouting`: Bold display weight (`800`), auto Bulge Warp ($\{ \text{type}: \text{"bulge"}, \text{bend}: 0.35 \}$ per blueprint $k=0.35$), Prompt display font fallback.
+       - `thought`: Italic style (`italic`), casual weight (`400`), soft outline stroke, Kanit font fallback.
+       - `narration`: Formal weight (`500`), Sarabun serif/formal font fallback, square box padding.
+       - `normal`: Standard dialogue weight (`bold`), balanced stroke.
+     - `classifyPolygonGeometry`: Pure TypeScript client-side Shoelace area and Euclidean perimeter evaluator for Voronoi-split bubbles and offline edits.
+   - Overlay & Split Bubble Integration (`lib/translationOverlay.ts` & `lib/typeset/voronoiBubbleSplit.ts`):
+     - Extended `TranslatedBubble` and `OverlayAdjustment` with `bubbleCategory?: BubbleCategory`.
+     - `renderCanvasText`: Automatically applies archetype font weights, dynamic stroke width, and Bulge Warp deformation for shouting dialogue while respecting user explicit warp overrides.
+     - Voronoi split bubble generator automatically evaluates lobe polygons and assigns `bubbleCategory`.
+
+3) Verification Evidence:
+   - Backend Python Tests:
+     - `tests/test_bubble_classification.py`: 5/5 tests passed (100%), verifying normal ellipse, rectangle narration, starburst shouting, cloud thought, and integration pipeline.
+     - `tests/test_bubble_contour.py`: 3/3 tests passed (100%).
+     - `tests/test_bubble_contour_api.py`: 2/2 tests passed (100%), asserting serialized category and shape_features in HTTP response.
+     - Full Python Test Suite: 285 passed, 3 skipped in 19.59s.
+   - Frontend Vitest Tests:
+     - `tests/unit/comicTypography.test.ts`: 6/6 tests passed (100%), verifying dynamic stroke, shouting auto-bulge, thought italic, narration formatting, and client-side polygon classification.
+     - Full Vitest Unit Suite: 47/47 tests passed (100%).
+   - Type Safety & Linting:
+     - `ruff check .`: 0 errors.
+     - `npx tsc --noEmit`: 0 errors.
+     - `npm run lint`: 0 errors (87 preexisting legacy warnings).
+   - Production Build:
+     - `npm run build`: Compiled successfully in Turbopack, generated static/dynamic routes, synced standalone assets to `.next/standalone`.
+   - Running Services Verified:
+     - Port 3000 (Next.js Standalone): HTTP 200 OK.
+     - Port 8765 (Uvicorn OCR Service): HTTP 200 OK `{"status":"ok"}`.
+
+
 
 ### Status: VERIFIED WORKING (Connected authentic Scanline Chord Ratios into `BubbleTypesetEngine.ts`, `translationOverlay.ts`, `bubbleLayoutOptimizer.ts`, and `voronoiBubbleSplit.ts` per principles: `model-the-domain`, `fix-root-causes`, `prove-it-works`, `laziness-protocol`):
 
