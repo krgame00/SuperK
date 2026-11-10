@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SettingsModal, type SettingsModalProps } from "@/components/workspace/SettingsModal";
+import { AUTO_MODEL_PREFERENCE } from "@/lib/translation/modelPreference";
 
 const defaultProps: SettingsModalProps = {
   isOpen: true,
@@ -15,7 +16,7 @@ const defaultProps: SettingsModalProps = {
     textOutline: "#ffffff",
   },
   onTextStyleChange: vi.fn(),
-  modelPreference: "auto",
+  modelPreference: AUTO_MODEL_PREFERENCE,
   onModelPreferenceChange: vi.fn(),
   userApiKey: "",
   onUserApiKeyChange: vi.fn(),
@@ -187,7 +188,7 @@ describe("SettingsModal dynamic Gemini catalog", () => {
     render(
       <SettingsModal
         {...defaultProps}
-        modelPreference="retired-model"
+        modelPreference={{ engine: "gemini", model: "retired-model" }}
         onModelPreferenceChange={onModelPreferenceChange}
       />,
     );
@@ -200,7 +201,7 @@ describe("SettingsModal dynamic Gemini catalog", () => {
     expect(screen.queryByRole("option", { name: /retired-model/i })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "เปลี่ยนเป็น Auto" }));
-    expect(onModelPreferenceChange).toHaveBeenCalledWith("auto");
+    expect(onModelPreferenceChange).toHaveBeenCalledWith(AUTO_MODEL_PREFERENCE);
   });
 
   it("renders ten masked key slots and stores the active pool through the existing key string boundary", () => {

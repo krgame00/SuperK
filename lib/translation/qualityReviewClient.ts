@@ -1,11 +1,12 @@
 import type { TranslatedBubble } from "@/lib/translationOverlay";
 import { inspectTargetText } from "@/lib/languagePolicy";
 import { guardQualityReview, MAX_REVIEW_ITEMS, MAX_REVIEW_TEXT_LENGTH, parseQualityReviews, unavailableReview, withReviewIdentity, type QualityReviewItem, type TranslationReview } from "./qualityReview";
+import { modelPreferenceToString, parseModelPreference, type ModelPreferenceWire } from "./modelPreference";
 
 interface ReviewOptions {
   targetLang: string;
   apiKey?: string;
-  modelPreference?: string;
+  modelPreference?: ModelPreferenceWire;
   allowPreview?: boolean;
   glossary?: unknown[];
   signal?: AbortSignal;
@@ -31,6 +32,21 @@ function chunkItems(items: QualityReviewItem[]): QualityReviewItem[][] {
  */
 export async function reviewTranslatedBubbles(bubbles: TranslatedBubble[], options: ReviewOptions): Promise<TranslatedBubble[]> {
   if (options.signal?.aborted) throw new DOMException("Cancelled", "AbortError");
+  const parsedPreference = parseModelPreference(options.modelPreference);
+  if (parsedPreference?.engine === "local") {
+    // Review runs cloud-side, so a local selection must never send derived
+    // text to Gemini; every active point keeps an explicit unavailable snapshot.
+    return bubbles.map((bubble, index) => {
+      if (bubble.deleted) return bubble;
+      const item: QualityReviewItem = {
+        id: String(index),
+        sourceText: typeof bubble.original_text === "string" ? bubble.original_text : "",
+        translatedText: bubble.t || bubble.translated || "",
+      };
+      return {...bubble,translationReview:guardQualityReview(withReviewIdentity(
+        unavailableReview(item),options.targetLang,options.sourceRevision),options.targetLang)};
+    });
+  }
   const result = bubbles.slice();
   const entries = bubbles.flatMap((bubble, index) => {
     if (bubble.deleted) return [];
@@ -56,7 +72,7 @@ export async function reviewTranslatedBubbles(bubbles: TranslatedBubble[], optio
       const response = await (options.fetchImpl ?? fetch)("/api/translation-review", {
         method:"POST",headers:{"Content-Type":"application/json"},signal:controller.signal,
         body:JSON.stringify({items:chunk,targetLang:options.targetLang,apiKey:options.apiKey,
-          modelPreference:options.modelPreference,allowPreview:options.allowPreview,
+          modelPreference:parsedPreference ? modelPreferenceToString(parsedPreference) : undefined,allowPreview:options.allowPreview,
           glossary:options.glossary ?? [],...(mode ? {mode}:{})}),
       });
       if (options.signal?.aborted) throw new DOMException("Cancelled", "AbortError");

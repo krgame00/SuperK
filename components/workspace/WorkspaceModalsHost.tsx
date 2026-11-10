@@ -14,6 +14,7 @@ import type { PageCleaningResult } from "@/hooks/useCleaning";
 import type { PageReviewInfo } from "@/lib/export/reviewGate";
 import type { PageExportSource } from "@/lib/export/pageSource";
 import { normalizePageExportSource } from "@/lib/export/pageSource";
+import type { ModelPreference } from "@/lib/translation/modelPreference";
 
 export interface WorkspaceExportPageItem {
   id?: string;
@@ -63,8 +64,8 @@ export interface WorkspaceModalsHostProps {
   onSourceLangChange: (lang: string) => void;
   textStyle: ComponentProps<typeof SettingsModal>["textStyle"];
   onTextStyleChange: ComponentProps<typeof SettingsModal>["onTextStyleChange"];
-  modelPreference: string;
-  onModelPreferenceChange: (model: string) => void;
+  modelPreference: ModelPreference;
+  onModelPreferenceChange: (model: ModelPreference) => void;
   allowPreviewModels: boolean;
   onAllowPreviewModelsChange: (allow: boolean) => void;
   userApiKey: string;

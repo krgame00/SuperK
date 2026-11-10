@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { AUTO_MODEL_PREFERENCE } from "@/lib/translation/modelPreference";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 // Mock hooks and heavy modules for WorkspacePage
@@ -20,7 +21,7 @@ vi.mock("@/hooks/useTranslation", () => ({
     setTargetLang: vi.fn(),
     sourceLang: "auto",
     setSourceLang: vi.fn(),
-    modelPreference: "auto",
+    modelPreference: AUTO_MODEL_PREFERENCE,
     setModelPreference: vi.fn(),
     textStyle: {
       fontFamily: "Itim, sans-serif",
@@ -77,7 +78,7 @@ describe("SettingsModal Accessibility", () => {
       textOutline: "#ffffff",
     },
     onTextStyleChange: vi.fn(),
-    modelPreference: "auto",
+    modelPreference: AUTO_MODEL_PREFERENCE,
     onModelPreferenceChange: vi.fn(),
     userApiKey: "",
     onUserApiKeyChange: vi.fn(),

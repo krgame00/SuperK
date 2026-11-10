@@ -31,6 +31,12 @@ import { resolveTranslationOutcome } from "@/lib/translationPipeline";
 import { parseLLMJSON } from "@/lib/parseLLMJSON";
 import { deduplicateTranslations, excludeDeletedTranslations, findMissingTranslationRegions, recoverMissingTranslations } from "@/lib/translation/completeness";
 import { reviewTranslatedBubbles } from "@/lib/translation/qualityReviewClient";
+import {
+  AUTO_MODEL_PREFERENCE,
+  readPersistedModelPreference,
+  writePersistedModelPreference,
+  type ModelPreference,
+} from "@/lib/translation/modelPreference";
 import { invalidateQualityReview, isReviewCurrent, needsQualityReview, withReviewIdentity, type TranslationReview } from "@/lib/translation/qualityReview";
 import { undoManager } from "@/lib/undoManager";
 import { LANGUAGE_POLICY_VERSION, inspectTargetText, normalizeTargetTranslationPayload, formatOffendingCharacters, repairExcludedScriptText } from "@/lib/languagePolicy";
@@ -480,7 +486,11 @@ export function useTranslation({
   const targetLangRef = useRef(targetLang);
   targetLangRef.current = targetLang;
   const [sourceLang, setSourceLang] = useState("auto");
-  const [modelPreference, setModelPreference] = useState("auto");
+  const [modelPreference, setModelPreferenceState] = useState<ModelPreference>(() => readPersistedModelPreference());
+  const setModelPreference = (pref: ModelPreference) => {
+    setModelPreferenceState(pref);
+    writePersistedModelPreference(pref);
+  };
   const [allowPreviewModels, setAllowPreviewModelsState] = useState<boolean>(() => {
     if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
       return localStorage.getItem("gemini_allow_preview_models") === "true";
@@ -1841,7 +1851,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       let res: Response;
       if (
         activePageRef.current === pageUrl &&
-        (!modelPreference || modelPreference === "auto")
+        modelPreference.engine === "auto"
       ) {
         setTranslationResult("กำลังแปลด้วย Auto · จะสลับโมเดลที่พร้อมใช้เมื่อจำเป็น…");
       }
@@ -1850,7 +1860,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           setTranslationResult(`กำลังแปลด้วย Auto · สลับไป ${event.model} (fallback ${event.fallbackCount} ครั้ง)…`);
         }
       };
-      const wantsProgress = !modelPreference || modelPreference === "auto";
+      const wantsProgress = modelPreference.engine === "auto";
       try {
         res = await fetch("/api/translate", {
           method: "POST",
@@ -2542,7 +2552,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
                   ? ` · ลองใหม่ได้ในประมาณ ${Math.ceil(err.retryAfterMs / 1000)} วิ`
                   : "";
               const autoHint =
-                modelPreference && modelPreference !== "auto"
+                modelPreference.engine !== "auto"
                   ? " · สามารถเปลี่ยนโมเดลเป็น Auto ได้"
                   : "";
               setTranslationResult(`แปลไม่สำเร็จ: ${errMsg}${retryHint}${autoHint}`);

@@ -15,7 +15,7 @@ describe("SettingsModal Auto-Fit & Parallel Translation Settings", () => {
       textOutline: "#ffffff",
     },
     onTextStyleChange: vi.fn(),
-    modelPreference: "gemini-3.5-flash-lite",
+    modelPreference: { engine: "gemini", model: "gemini-3.5-flash-lite" },
     onModelPreferenceChange: vi.fn(),
     userApiKey: "test-api-key",
     onUserApiKeyChange: vi.fn(),

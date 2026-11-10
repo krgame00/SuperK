@@ -9,6 +9,7 @@ import {
 } from "@/lib/translation/pronounMatrix";
 import { TARGET_LANGUAGES, resolveTargetLanguage, getAllowedThaiTokens, saveCustomAllowedThaiTokens, removeAllowedThaiTokens } from "@/lib/languagePolicy";
 import { MANUAL_IMAGE_MODEL_IDS } from "@/lib/translation/imageModelChoices";
+import { AUTO_MODEL_PREFERENCE, normalizeLocalBaseUrl, type ModelPreference } from "@/lib/translation/modelPreference";
 import { workspaceResourceManager } from "@/lib/lifecycle/workspaceResourceManager";
 import { Plus, Trash2, BookText, Users, Flame, X, ChevronDown, Download, Folder, Search, Check, Sparkles, Power, AlertTriangle, Loader2, Upload, Type, ScrollText, Layers } from "lucide-react";
 import {
@@ -33,6 +34,15 @@ import {
   isDirectoryPickerSupported,
   isBraveBrowser,
 } from "@/lib/export/saveLocation";
+
+const DEFAULT_LOCAL_BASE_URL = "http://localhost:11434";
+
+// Component-local only: the status light is a probe view, never persisted.
+type LocalEngineStatus =
+  | { state: "idle" }
+  | { state: "checking" }
+  | { state: "connected"; models: Array<{ id: string }> }
+  | { state: "unreachable"; message: string };
 
 export interface WorkspaceTextStyle {
   fontFamily: string;
@@ -128,8 +138,8 @@ export interface SettingsModalProps {
   onTargetLangChange?: (lang: string) => void;
   textStyle: WorkspaceTextStyle;
   onTextStyleChange: (style: WorkspaceTextStyle | ((prev: WorkspaceTextStyle) => WorkspaceTextStyle)) => void;
-  modelPreference: string;
-  onModelPreferenceChange: (model: string) => void;
+  modelPreference: ModelPreference;
+  onModelPreferenceChange: (model: ModelPreference) => void;
   allowPreviewModels?: boolean;
   onAllowPreviewModelsChange?: (enabled: boolean) => void;
   userApiKey: string;
@@ -221,6 +231,11 @@ export function SettingsModal({
   const [newCustomToken, setNewCustomToken] = useState("");
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
+  const [localBaseUrlInput, setLocalBaseUrlInput] = useState(() =>
+    modelPreference.engine === "local" ? modelPreference.baseUrl : DEFAULT_LOCAL_BASE_URL,
+  );
+  const [localEngineStatus, setLocalEngineStatus] = useState<LocalEngineStatus>({ state: "idle" });
+  const localProbeSeqRef = useRef(0);
   const [fontPickerOpen, setFontPickerOpen] = useState(false);
   const [fontSearch, setFontSearch] = useState("");
   const [fontCategoryFilter, setFontCategoryFilter] = useState<
@@ -327,6 +342,53 @@ export function SettingsModal({
     },
     [onTextStyleChange, textStyle.fontFamily],
   );
+
+  const probeLocalEngineStatus = useCallback(async (rawBaseUrl: string) => {
+    const seq = ++localProbeSeqRef.current;
+    setLocalEngineStatus({ state: "checking" });
+    try {
+      const response = await fetch("/api/translate/local-models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ baseUrl: rawBaseUrl }),
+      });
+      const data = await response.json() as { ok?: boolean; models?: Array<{ id: string }>; error?: string };
+      if (seq !== localProbeSeqRef.current) return;
+      if (response.ok && data.ok === true && Array.isArray(data.models)) {
+        setLocalEngineStatus({ state: "connected", models: data.models });
+      } else {
+        setLocalEngineStatus({ state: "unreachable", message: data.error || "ตรวจสอบ Local Engine ไม่สำเร็จ" });
+      }
+    } catch {
+      if (seq !== localProbeSeqRef.current) return;
+      setLocalEngineStatus({ state: "unreachable", message: "ตรวจสอบ Local Engine ไม่สำเร็จ" });
+    }
+  }, []);
+
+  const commitLocalBaseUrl = () => {
+    const normalized = normalizeLocalBaseUrl(localBaseUrlInput);
+    if (!normalized) return;
+    if (modelPreference.engine !== "local" || modelPreference.baseUrl !== normalized) {
+      onModelPreferenceChange({
+        engine: "local",
+        baseUrl: normalized,
+        model: modelPreference.engine === "local" ? modelPreference.model : "",
+      });
+    }
+    void probeLocalEngineStatus(normalized);
+  };
+
+  const selectLocalPreference = () => {
+    const normalized = normalizeLocalBaseUrl(localBaseUrlInput) ?? "";
+    onModelPreferenceChange({
+      engine: "local",
+      baseUrl: normalized,
+      model: modelPreference.engine === "local" ? modelPreference.model : "",
+    });
+    setModelPickerOpen(false);
+    setModelSearch("");
+    if (normalized) void probeLocalEngineStatus(normalized);
+  };
 
   const loadGeminiCatalog = useCallback(async (force: boolean) => {
     setCatalogStatus("loading");
@@ -632,9 +694,9 @@ export function SettingsModal({
           (model.status === "ready" || model.status === "partial_quota"),
         )
       : [];
-  const selectedCatalogModel = usableModels.find((model) => model.id === modelPreference);
+  const selectedCatalogModel = usableModels.find((model) => modelPreference.engine === "gemini" && model.id === modelPreference.model);
   const selectedModelNeedsAutoRecovery =
-    modelPreference !== "auto" &&
+    modelPreference.engine === "gemini" &&
     (
       !selectedCatalogModel ||
       selectedCatalogModel.status === "high_demand" ||
@@ -661,6 +723,29 @@ export function SettingsModal({
   const autoMatchesSearch =
     !normalizedModelSearch ||
     "auto automatic อัตโนมัติ".includes(normalizedModelSearch);
+  const localMatchesSearch =
+    !normalizedModelSearch ||
+    "local ollama llama โลคอล โดเมนภายใน".includes(normalizedModelSearch);
+  const localEngineModels =
+    localEngineStatus.state === "connected" ? localEngineStatus.models : [];
+  const localModelOptions =
+    modelPreference.engine === "local" &&
+    modelPreference.model &&
+    !localEngineModels.some((model) => model.id === modelPreference.model)
+      ? [{ id: modelPreference.model }, ...localEngineModels]
+      : localEngineModels;
+  const localStatusView = (() => {
+    switch (localEngineStatus.state) {
+      case "idle":
+        return { dot: "bg-muted", text: "ยังไม่ได้ตรวจสถานะ" };
+      case "checking":
+        return { dot: "bg-amber-400 animate-pulse", text: "กำลังตรวจสอบ..." };
+      case "connected":
+        return { dot: "bg-emerald-400", text: `เชื่อมต่อแล้ว · ${localEngineStatus.models.length} โมเดล` };
+      case "unreachable":
+        return { dot: "bg-red-400", text: localEngineStatus.message };
+    }
+  })();
 
   const resolveFontPreviewCss = (cssVal: string) => {
     const primary = (cssVal || "Itim, sans-serif")
@@ -1901,16 +1986,20 @@ export function SettingsModal({
               >
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">
-                    {modelPreference === "auto"
+                    {modelPreference.engine === "auto"
                       ? "Auto"
-                      : selectedCatalogModel?.displayName ?? modelPreference}
+                      : modelPreference.engine === "local"
+                        ? `Local · ${modelPreference.model || "not configured"}`
+                        : selectedCatalogModel?.displayName ?? modelPreference.model}
                   </span>
                   <span className="block truncate text-[10px] font-normal text-muted">
-                    {modelPreference === "auto"
+                    {modelPreference.engine === "auto"
                       ? "ใช้โมเดลและ Key ที่พร้อมใช้อัตโนมัติ"
-                      : selectedCatalogModel
-                        ? catalogModelMeta(selectedCatalogModel)
-                        : "Unavailable · ไม่สามารถเลือกซ้ำได้"}
+                      : modelPreference.engine === "local"
+                        ? modelPreference.baseUrl || "ยังไม่ได้ตั้งค่า base URL"
+                        : selectedCatalogModel
+                          ? catalogModelMeta(selectedCatalogModel)
+                          : "Unavailable · ไม่สามารถเลือกซ้ำได้"}
                   </span>
                 </span>
                 <ChevronDown
@@ -1947,14 +2036,14 @@ export function SettingsModal({
                       <button
                         type="button"
                         role="option"
-                        aria-selected={modelPreference === "auto"}
+                        aria-selected={modelPreference.engine === "auto"}
                         onClick={() => {
-                          onModelPreferenceChange("auto");
+                          onModelPreferenceChange(AUTO_MODEL_PREFERENCE);
                           setModelPickerOpen(false);
                           setModelSearch("");
                         }}
                         className={`flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left transition-colors ${
-                          modelPreference === "auto"
+                          modelPreference.engine === "auto"
                             ? "bg-primary/15 text-primary"
                             : "text-foreground hover:bg-surface-hover"
                         }`}
@@ -1965,7 +2054,29 @@ export function SettingsModal({
                             เลือกโมเดลและ Key ที่พร้อมใช้อัตโนมัติ
                           </span>
                         </span>
-                        {modelPreference === "auto" && <Check className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}
+                        {modelPreference.engine === "auto" && <Check className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}
+                      </button>
+                    )}
+
+                    {localMatchesSearch && (
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={modelPreference.engine === "local"}
+                        onClick={selectLocalPreference}
+                        className={`flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left transition-colors ${
+                          modelPreference.engine === "local"
+                            ? "bg-primary/15 text-primary"
+                            : "text-foreground hover:bg-surface-hover"
+                        }`}
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-xs font-semibold">Local (โดเมนภายใน)</span>
+                          <span className="block text-[10px] text-muted">
+                            แปลผ่าน Local LLM บนเครื่องนี้ (เช่น Ollama, llama.cpp) — ไม่ใช้คีย์และไม่ส่งข้อมูลขึ้นคลาวด์
+                          </span>
+                        </span>
+                        {modelPreference.engine === "local" && <Check className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}
                       </button>
                     )}
 
@@ -1974,15 +2085,15 @@ export function SettingsModal({
                         key={model.id}
                         type="button"
                         role="option"
-                        aria-selected={modelPreference === model.id}
+                        aria-selected={modelPreference.engine === "gemini" && modelPreference.model === model.id}
                         aria-label={`${model.displayName} ${catalogModelMeta(model)}`}
                         onClick={() => {
-                          onModelPreferenceChange(model.id);
+                          onModelPreferenceChange({ engine: "gemini", model: model.id });
                           setModelPickerOpen(false);
                           setModelSearch("");
                         }}
                         className={`flex w-full min-w-0 items-start gap-2 rounded-md px-2.5 py-2 text-left transition-colors ${
-                          modelPreference === model.id
+                          modelPreference.engine === "gemini" && modelPreference.model === model.id
                             ? "bg-primary/15 text-primary"
                             : "text-foreground hover:bg-surface-hover"
                         }`}
@@ -2003,7 +2114,7 @@ export function SettingsModal({
                             </span>
                           )}
                         </span>
-                        {modelPreference === model.id && <Check className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}
+                        {modelPreference.engine === "gemini" && modelPreference.model === model.id && <Check className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}
                       </button>
                     ))}
 
@@ -2024,11 +2135,69 @@ export function SettingsModal({
                 </p>
                 <button
                   type="button"
-                  onClick={() => onModelPreferenceChange("auto")}
+                  onClick={() => onModelPreferenceChange(AUTO_MODEL_PREFERENCE)}
                   className="shrink-0 rounded border border-amber-400/40 px-2 py-1 text-[10px] font-medium text-amber-300 hover:bg-amber-400/10"
                 >
                   เปลี่ยนเป็น Auto
                 </button>
+              </div>
+            )}
+
+            {modelPreference.engine === "local" && (
+              <div className="mt-2 rounded-lg border border-border/70 bg-background/60 p-2.5">
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <label htmlFor="settings-local-base-url" className="block text-[11px] font-medium text-muted">
+                    Local Engine (Ollama / llama.cpp)
+                  </label>
+                  <button
+                    type="button"
+                    aria-label="รีเฟรชสถานะ Local Engine"
+                    onClick={commitLocalBaseUrl}
+                    disabled={localEngineStatus.state === "checking"}
+                    className="rounded px-2 py-1 text-[10px] font-medium text-primary hover:bg-surface-hover disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {localEngineStatus.state === "checking" ? "กำลังตรวจสอบ..." : "รีเฟรช"}
+                  </button>
+                </div>
+                <input
+                  id="settings-local-base-url"
+                  type="text"
+                  value={localBaseUrlInput}
+                  onChange={(event) => setLocalBaseUrlInput(event.target.value)}
+                  onBlur={commitLocalBaseUrl}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      commitLocalBaseUrl();
+                    }
+                  }}
+                  placeholder={DEFAULT_LOCAL_BASE_URL}
+                  className="w-full rounded-md border border-surface-hover bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted/60 focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-muted">
+                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${localStatusView.dot}`} />
+                  <span className="truncate">{localStatusView.text}</span>
+                </div>
+                <select
+                  aria-label="โมเดลของ Local Engine"
+                  value={modelPreference.model}
+                  onChange={(event) =>
+                    onModelPreferenceChange({ ...modelPreference, model: event.target.value })
+                  }
+                  disabled={localEngineStatus.state !== "connected"}
+                  className="mt-2 w-full rounded border border-surface-hover bg-surface px-2 py-1 text-[11px] text-foreground disabled:opacity-60"
+                >
+                  {!modelPreference.model && <option value="">เลือกโมเดล...</option>}
+                  {localModelOptions.map((model) => (
+                    <option key={model.id} value={model.id}>{model.id}</option>
+                  ))}
+                </select>
+                {localEngineStatus.state !== "connected" && (
+                  <p className="mt-1 text-[10px] text-muted">กดรีเฟรชเพื่อโหลดรายการโมเดลจาก Local Engine</p>
+                )}
+                <p className="mt-1.5 text-[10px] leading-relaxed text-muted">
+                  Main image translation needs a vision-capable model (e.g. qwen2.5-vl, llama3.2-vision, gemma3). Text re-translation works with any model.
+                </p>
               </div>
             )}
 

@@ -26,7 +26,7 @@ function createDefaultProps(): WorkspaceModalsHostProps {
     onSourceLangChange: vi.fn(),
     textStyle: mockTextStyle,
     onTextStyleChange: vi.fn(),
-    modelPreference: "gemini-3.5-flash-lite",
+    modelPreference: { engine: "gemini", model: "gemini-3.5-flash-lite" },
     onModelPreferenceChange: vi.fn(),
     allowPreviewModels: false,
     onAllowPreviewModelsChange: vi.fn(),

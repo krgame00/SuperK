@@ -2,6 +2,7 @@ import { fireEvent, render, screen, act } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import WorkspacePage from "@/src/app/page";
 import { applyTranslationOverlay, type TranslatedBubble } from "@/lib/translationOverlay";
+import { AUTO_MODEL_PREFERENCE, type ModelPreference } from "@/lib/translation/modelPreference";
 
 vi.mock("react-hot-toast", () => ({
   default: Object.assign(vi.fn(), {
@@ -12,7 +13,7 @@ vi.mock("react-hot-toast", () => ({
 }));
 
 let mockTranslationResult: string | null = null;
-let mockModelPreference = "auto";
+let mockModelPreference: ModelPreference = AUTO_MODEL_PREFERENCE;
 const setModelPreferenceMock = vi.fn();
 const setTranslationResultMock = vi.fn((val: any) => {
   mockTranslationResult = typeof val === "function" ? val(mockTranslationResult) : val;
@@ -78,7 +79,7 @@ describe("WorkflowMessage Notification", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTranslationResult = null;
-    mockModelPreference = "auto";
+    mockModelPreference = AUTO_MODEL_PREFERENCE;
     (document as any).fonts = {
       load: vi.fn().mockResolvedValue([]),
     };
@@ -108,12 +109,12 @@ describe("WorkflowMessage Notification", () => {
   });
 
   it("offers an explicit Auto switch on a Manual translation failure", () => {
-    mockModelPreference = "gemini-manual";
+    mockModelPreference = { engine: "gemini", model: "gemini-manual" };
     mockTranslationResult = "แปลไม่สำเร็จ: โมเดลที่เลือกไม่พร้อมใช้งาน";
     render(<WorkspacePage />);
 
     fireEvent.click(screen.getByRole("button", { name: "เปลี่ยนเป็น Auto" }));
-    expect(setModelPreferenceMock).toHaveBeenCalledWith("auto");
+    expect(setModelPreferenceMock).toHaveBeenCalledWith(AUTO_MODEL_PREFERENCE);
   });
 
   it("does not emit stuck translation overlay messages during applyTranslationOverlay", async () => {

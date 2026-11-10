@@ -1,8 +1,9 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { SettingsModal, type SettingsModalProps } from "@/components/workspace/SettingsModal";
+import { AUTO_MODEL_PREFERENCE } from "@/lib/translation/modelPreference";
 import { TARGET_LANGUAGES } from "@/lib/languagePolicy";
-const props:SettingsModalProps={isOpen:true,onClose:vi.fn(),sourceLang:"auto",onSourceLangChange:vi.fn(),textStyle:{fontFamily:"Itim, sans-serif",fontSizeMultiplier:1,textColor:"#000000",textOutline:"#ffffff"},onTextStyleChange:vi.fn(),modelPreference:"auto",onModelPreferenceChange:vi.fn(),userApiKey:"",onUserApiKeyChange:vi.fn()};
+const props:SettingsModalProps={isOpen:true,onClose:vi.fn(),sourceLang:"auto",onSourceLangChange:vi.fn(),textStyle:{fontFamily:"Itim, sans-serif",fontSizeMultiplier:1,textColor:"#000000",textOutline:"#ffffff"},onTextStyleChange:vi.fn(),modelPreference:AUTO_MODEL_PREFERENCE,onModelPreferenceChange:vi.fn(),userApiKey:"",onUserApiKeyChange:vi.fn()};
 it("offers canonical target/script choices for the next translation job", () => {
   const onChange=vi.fn();
   render(<SettingsModal {...props} targetLang="Thai" onTargetLangChange={onChange}/>);

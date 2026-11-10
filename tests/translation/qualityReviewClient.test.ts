@@ -58,4 +58,15 @@ describe("page quality review client", () => {
     expect(result[63].translationReview?.status).toBe("ok");
     expect(result[64].translationReview?.status).toBe("ok");
   });
+  it.each([
+    ["local object",{engine:"local",baseUrl:"http://localhost:11434/v1",model:"qwen2.5-vl:7b"}],
+    ["bare local marker","local"],
+  ] as const)("never sends text to the cloud reviewer for a local preference (%s)",async(_name,modelPreference)=>{
+    const fetchImpl=vi.fn();
+    const deleted={...bubble,deleted:true};
+    const result=await reviewTranslatedBubbles([deleted,bubble],{targetLang:"Thai",modelPreference,fetchImpl});
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(result[0]).toBe(deleted);
+    expect(result[1].translationReview?.status).toBe("unavailable");
+  });
 });

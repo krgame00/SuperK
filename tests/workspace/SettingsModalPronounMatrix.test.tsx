@@ -39,7 +39,7 @@ const defaultProps: SettingsModalProps = {
     textOutline: "none",
   },
   onTextStyleChange: vi.fn(),
-  modelPreference: "gemini-3.5-flash-lite",
+  modelPreference: { engine: "gemini", model: "gemini-3.5-flash-lite" },
   onModelPreferenceChange: vi.fn(),
   userApiKey: "",
   onUserApiKeyChange: vi.fn(),

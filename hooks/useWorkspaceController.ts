@@ -29,6 +29,10 @@ import {
   doesPageRequireReview,
   missingTranslationSignature,
 } from "@/lib/export/reviewGate";
+import {
+  AUTO_MODEL_PREFERENCE,
+  modelPreferenceToString,
+} from "@/lib/translation/modelPreference";
 
 export interface WorkspaceControllerOutput {
   headerProps: WorkspaceHeaderHostProps;
@@ -340,7 +344,8 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
       pages,
       currentPage,
       userApiKey,
-      modelPreference,
+      // Extension sync stays string-encoded; the local config is browser-scoped.
+      modelPreference: modelPreferenceToString(modelPreference),
       allowPreviewModels,
       glossary,
       textStyle,
@@ -640,7 +645,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     onDismissTranslationResult: () => setTranslationResult(null),
     modelPreference,
     onSwitchToAutoModel: () => {
-      setModelPreference("auto");
+      setModelPreference(AUTO_MODEL_PREFERENCE);
       setTranslationResult("เปลี่ยนเป็น Auto แล้ว กดลองแปลอีกครั้ง");
     },
     toolbarPosition,

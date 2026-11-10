@@ -45,6 +45,7 @@ import { useTextLayers } from "@/hooks/useTextLayers";
 import type { ImageLayer, TextLayer, WarpEffect } from "@/lib/editing/commands";
 import type { TranslatedBubble } from "@/lib/translationOverlay";
 import type { GlossaryEntry } from "@/lib/translation/glossary";
+import type { ModelPreference } from "@/lib/translation/modelPreference";
 import type { BwContrastMode } from "@/lib/colorMatching/types";
 import type { PageCleaningResult, CleaningHookError } from "@/hooks/useCleaning";
 import type { CleaningProgress } from "@/lib/cleaning/types";
@@ -103,7 +104,7 @@ export interface WorkspaceCanvasHostProps {
   workflowMessage: string | null;
   translationResult: string | null;
   onDismissTranslationResult: () => void;
-  modelPreference: string;
+  modelPreference: ModelPreference;
   onSwitchToAutoModel: () => void;
 
   // Toolbar state & controls
@@ -441,7 +442,7 @@ export function WorkspaceCanvasHost({
         >
           <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse shrink-0" />
           <span className="truncate">{workflowMessage}</span>
-          {modelPreference !== "auto" &&
+          {modelPreference.engine !== "auto" &&
             translationResult?.startsWith("แปลไม่สำเร็จ") && (
               <button
                 type="button"
