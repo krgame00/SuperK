@@ -1,4 +1,5 @@
 // Export helpers and sanitization utilities for SuperK Manga Translator
+import { sortBubblesRTL } from "@/lib/translation/bubbleReadingOrder";
 
 export function sanitizeExportFilename(
   name: string,
@@ -142,7 +143,8 @@ export function generatePhotoshopBuildScript(
     deleted?: boolean;
   }>,
 ): string {
-  const safeBubbles = bubbles
+  const sortedBubbles = sortBubblesRTL(bubbles);
+  const safeBubbles = sortedBubbles
     .map((b, i) => ({
       index: i + 1,
       deleted: Boolean(b.deleted || (b as { hidden?: boolean }).hidden),

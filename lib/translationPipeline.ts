@@ -1,3 +1,5 @@
+import { sortBubblesRTL } from "@/lib/translation/bubbleReadingOrder";
+
 export type ImageDimensions = {
   width: number;
   height: number;
@@ -11,7 +13,8 @@ export function resolveTranslationOutcome<T>(
   aiBubbles: readonly T[],
   manualBubbles: readonly T[],
 ): TranslationOutcome<T> {
-  const bubbles = [...aiBubbles, ...manualBubbles];
+  const merged = [...aiBubbles, ...manualBubbles];
+  const bubbles = sortBubblesRTL(merged);
 
   return bubbles.length > 0
     ? { kind: "render", bubbles }

@@ -5,6 +5,7 @@ import {
   escapeXml,
   generateArchiveFilename,
   generateComicInfoXml,
+  generatePhotoshopBuildScript,
   generateStripFilename,
   sanitizeExportFilename,
 } from "@/lib/export/exportManager";
@@ -135,5 +136,28 @@ describe("generateComicInfoXml escaping", () => {
     expect(xml).toContain("<Number>1&lt;2</Number>");
     expect(xml).toContain("<Summary>a &gt; b</Summary>");
     expect(xml).toContain("<Translator>N&apos;CMS</Translator>");
+  });
+});
+
+describe("generatePhotoshopBuildScript RTL reading order", () => {
+  it("sorts bubbles into canonical RTL reading order so Photoshop layer #1 is top-right", () => {
+    const leftBubble = {
+      t: "ตอบกลับจากทางซ้าย",
+      box: [100, 100, 200, 300],
+    };
+    const rightBubble = {
+      t: "คำพูดเปิดจากทางขวา",
+      box: [100, 700, 200, 900],
+    };
+
+    // Provided in reverse order (left first, right second)
+    const script = generatePhotoshopBuildScript(1, "raw.png", "clean.png", [
+      leftBubble,
+      rightBubble,
+    ]);
+
+    // Check layer assignments in script
+    expect(script).toContain('{"index":1,"deleted":false,"text":"คำพูดเปิดจากทางขวา"');
+    expect(script).toContain('{"index":2,"deleted":false,"text":"ตอบกลับจากทางซ้าย"');
   });
 });

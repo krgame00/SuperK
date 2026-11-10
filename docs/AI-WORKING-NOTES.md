@@ -1,5 +1,46 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Feature: RTL Geometric Bubble Sorting (Right-to-Left Manga Reading Order Pipeline) — 2026-11-10
+
+### Status: VERIFIED WORKING (Implemented authentic Japanese Manga Reading Order Engine in `lib/translation/bubbleReadingOrder.ts`, integrated into API payload sanitization `lib/translation/sanitizer.ts`, translation outcome resolver `lib/translationPipeline.ts`, and Photoshop JSX export `lib/export/exportManager.ts` per principles: `model-the-domain`, `fix-root-causes`, `prove-it-works`, `laziness-protocol`):
+
+1) Problem & Domain Analysis:
+   - SuperK Architectural Blueprint Section 5.5 and REA reverse engineering revealed that naive Y-sorting or unordered LLM bubble sequences disrupt the dialogue flow for Japanese manga.
+   - Japanese manga is read Right-to-Left (RTL) horizontally and Top-to-Bottom (TTB) vertically.
+   - Naive top-down sorting breaks on staggered dialogue bubbles where the right-hand speaker starts slightly lower on the page than the left-hand respondent.
+   - Naive horizontal sorting breaks multi-panel pages by reading the right edge of the entire page before upper panels.
+
+2) Implementation & Architecture:
+   - Pure Domain Engine (`lib/translation/bubbleReadingOrder.ts`):
+     - `extractNormalizedBox`: Extracts and normalizes `[ymin, xmin, ymax, xmax]` coordinates, handling inverted coordinates, floats, and arbitrary pixel/1000 scales.
+     - `sortBubblesRTL`: Implements 3-tier geometric reading order:
+       1. Primary Y-level horizontal clustering into panel/dialogue bands (using overlap ratio >= 0.35 and center distance <= bandTolerance). Prevents transitive chaining via maximum band height constraints.
+       2. Secondary column clustering: Stacks multi-bubble speech from the same character vertically (Top-to-Bottom) so dialogue is read completely before moving left.
+       3. Tertiary X-descending (Right-to-Left within each horizontal band).
+       - Supports configurable `direction: 'rtl' | 'ltr'` for western comics / manhwa.
+       - Safely preserves unpositioned items without boxes at the end of the array.
+     - `assignReadingOrderIndices`: Assigns 1-based sequential `readingOrder` integers.
+     - `isRTLReadingOrder`: Validates whether a bubble list is in canonical RTL order.
+   - API & Pipeline Integration:
+     - `lib/translation/sanitizer.ts`: `sanitizeTranslationPayloadJson` applies `sortBubblesRTL` to all model response bubbles, guaranteeing that any consumer of `/api/translate` receives canonical manga dialogue flow.
+     - `lib/translationPipeline.ts`: `resolveTranslationOutcome` applies `sortBubblesRTL` so AI bubbles and manual bubbles merge seamlessly into authentic reading order.
+     - `lib/export/exportManager.ts`: `generatePhotoshopBuildScript` sorts bubbles with `sortBubblesRTL`, ensuring exported PSD text layers are numbered `#1`, `#2`, `#3`... in manga reading order.
+
+3) Verification Evidence:
+   - Unit Tests:
+     - `tests/translation/bubbleReadingOrder.test.ts`: 18/18 tests passed (100%), verifying single-panel RTL, staggered speakers, multi-bubble column stacks, 2x2 grid panels, 4-koma columns, 3-tier full-page layouts, 3-speaker wide panels, coordinate stability, and LTR direction override.
+     - `tests/translation/sanitizer.test.ts`: 7/7 tests passed (100%), verifying RTL sorting of translation JSON payloads.
+     - `tests/translation/translationPipeline.test.ts`: 6/6 tests passed (100%).
+     - `tests/export/exportManager.test.ts`: 15/15 tests passed (100%), verifying PSD layer order generation.
+     - Translation Test Suite: 61 test files passed, 583/583 tests passed (100%).
+   - Type Safety & Linting:
+     - `npx tsc --noEmit`: 0 errors.
+     - `npm run lint`: 0 errors (87 preexisting warnings in untouched tests).
+     - `ruff check .`: 0 errors in python `ocr-service`.
+   - Running Services Verified:
+     - Port 3000 (Next.js Standalone): HTTP 200 OK.
+     - Port 8765 (Uvicorn OCR Service): HTTP 200 OK `{"status":"ok"}`.
+
 ## Feature: Side-by-Side Split View Pane Centering & Synchronized Geometry Fix — 2026-11-09
 
 ### Status: VERIFIED WORKING (Resolved Side-by-Side Split View geometry misalignment where raw artwork was clipped on the right, translated artwork was pushed to the far right, and a giant black void appeared in the center with floating badge; implemented split-pane container dimension subdivision in `usePageZoom.ts`, synchronized pan/zoom/clamp calculations, and pane-relative focal point mapping per principles: `fix-root-causes`, `prove-it-works`, `model-the-domain`, `experience-first`, `laziness-protocol`):

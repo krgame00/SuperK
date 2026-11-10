@@ -47,4 +47,17 @@ describe("sanitizeMangaTranslation", () => {
     expect(parsed.bubbles[0].t).toBe("ลาก่อน");
     expect(parsed.bubbles[1].t).toBe("ยินดีที่ได้รู้จัก");
   });
+
+  it("sorts bubbles into authentic RTL reading order when coordinates are present", () => {
+    const input = JSON.stringify({
+      bubbles: [
+        { id: "left", t: "ซ้าย", box: [100, 100, 200, 300] },
+        { id: "right", t: "ขวา (พูดก่อน)", box: [100, 700, 200, 900] },
+      ],
+    });
+    const output = sanitizeTranslationPayloadJson(input, "th");
+    const parsed = JSON.parse(output);
+    expect(parsed.bubbles[0].id).toBe("right");
+    expect(parsed.bubbles[1].id).toBe("left");
+  });
 });
