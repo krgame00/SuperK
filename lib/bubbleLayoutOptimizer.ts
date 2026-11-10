@@ -9,6 +9,32 @@ import {
   fitTextForBubble,
   layoutBubbleAtFixedFont,
 } from "./translationOverlay";
+import {
+  isDoubleBubblePair,
+  splitConjoinedPairVoronoi,
+  type VoronoiSplitOptions,
+} from "./typeset/voronoiBubbleSplit";
+
+export {
+  computeVoronoiBisector,
+  clipRectByVoronoiPlane,
+  isDoubleBubblePair,
+  splitConjoinedPairVoronoi,
+  splitDoubleBubble,
+  splitSingleDoubleBubble,
+  generateVoronoiScanlineRatios,
+  type BoundingBoxRect,
+  type Point2D,
+  type VoronoiBisector,
+  type VoronoiSplitOptions,
+  type VoronoiSplitResult,
+} from "./typeset/voronoiBubbleSplit";
+
+export interface BubbleContour {
+  scanlineRatios: Array<{ y: number; minXRatio: number; maxXRatio: number }>;
+  isDoubleBubble: boolean;
+  centers?: Array<{ x: number; y: number }>;
+}
 
 export interface BubbleRect {
   id: string | number;
@@ -1096,6 +1122,83 @@ export function resolveBubbleCollisions(
   }
 
   return active;
+}
+
+/**
+ * Resolves conjoined twin bubbles in a page by partitioning their shared overlap
+ * along the Voronoi perpendicular bisector plane.
+ */
+export function resolveConjoinedDoubleBubbles(
+  bubbles: TranslatedBubble[],
+  iw: number,
+  ih: number,
+  options?: VoronoiSplitOptions,
+): TranslatedBubble[] {
+  if (!bubbles || bubbles.length < 2) return bubbles;
+  const result = bubbles.map((b) => ({ ...b }));
+
+  for (let i = 0; i < result.length; i++) {
+    for (let j = i + 1; j < result.length; j++) {
+      const bA = result[i];
+      const bB = result[j];
+      if (bA.deleted || bB.deleted) continue;
+
+      const rA = getBubbleGeometry(bA, iw, ih);
+      const rB = getBubbleGeometry(bB, iw, ih);
+
+      if (isDoubleBubblePair(rA, rB, options)) {
+        const split = splitConjoinedPairVoronoi(rA, rB, options);
+        const prevAdjA = bA.layoutAdjustment;
+        const prevAdjB = bB.layoutAdjustment;
+
+        result[i] = {
+          ...bA,
+          box: [
+            Math.round((split.boxA.y / ih) * 1000),
+            Math.round((split.boxA.x / iw) * 1000),
+            Math.round(((split.boxA.y + split.boxA.height) / ih) * 1000),
+            Math.round(((split.boxA.x + split.boxA.width) / iw) * 1000),
+          ],
+          layoutAdjustment: {
+            ...prevAdjA,
+            bx: split.boxA.x,
+            by: split.boxA.y,
+            bw: split.boxA.width,
+            bh: split.boxA.height,
+            iw,
+            ih,
+            userModified: false,
+            isAutoOptimized: true,
+            autoOptimizeVersion: AUTO_OPTIMIZE_VERSION,
+          },
+        };
+
+        result[j] = {
+          ...bB,
+          box: [
+            Math.round((split.boxB.y / ih) * 1000),
+            Math.round((split.boxB.x / iw) * 1000),
+            Math.round(((split.boxB.y + split.boxB.height) / ih) * 1000),
+            Math.round(((split.boxB.x + split.boxB.width) / iw) * 1000),
+          ],
+          layoutAdjustment: {
+            ...prevAdjB,
+            bx: split.boxB.x,
+            by: split.boxB.y,
+            bw: split.boxB.width,
+            bh: split.boxB.height,
+            iw,
+            ih,
+            userModified: false,
+            isAutoOptimized: true,
+            autoOptimizeVersion: AUTO_OPTIMIZE_VERSION,
+          },
+        };
+      }
+    }
+  }
+
+  return result;
 }
 
 /**

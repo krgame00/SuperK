@@ -1,5 +1,40 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Feature: Double Bubble Voronoi Splitting (Section 3.2 Architectural Blueprint) — 2026-11-10
+
+### Status: VERIFIED WORKING (Implemented Voronoi Diagram conjoined twin bubble splitting engine in `lib/typeset/voronoiBubbleSplit.ts`, integrated into `lib/bubbleLayoutOptimizer.ts` and `lib/typeset/BubbleTypesetEngine.ts` per principles: `model-the-domain`, `fix-root-causes`, `prove-it-works`, `laziness-protocol`):
+
+1) Problem & Domain Analysis:
+   - Section 3.2 item 2 of the SuperK Architectural Blueprint specified: "Double Bubble Splitting: กรณีพบกล่องข้อความแฝดที่ติดกัน ระบบใช้การแบ่งพื้นที่ด้วยอัลกอริทึม Voronoi Diagram เพื่อคำนวณแบ่งจุดศูนย์กลางและขอบเขตพื้นที่ของแต่ละบอลลูนแยกออกจากกันเด็ดขาด".
+   - Conjoined twin bubbles (two connected speech lobes forming an 8-shape or peanut shape) heavily overlap.
+   - Traditional collision resolution applied artificial repulsive push forces, which could shove one bubble outside the speech balloon artwork or into neighboring panels.
+
+2) Implementation & Architecture:
+   - Pure Mathematical Voronoi Engine (`lib/typeset/voronoiBubbleSplit.ts`):
+     - `computeVoronoiBisector`: Computes perpendicular bisector plane equation, midpoint, normal vector, and dominant axis ('horizontal' vs 'vertical').
+     - `clipPolygonByHalfPlane` & `clipRectByVoronoiPlane`: Uses Sutherland-Hodgman convex polygon clipping in $O(N)$ time to partition the union bounding box into two complementary Voronoi polygons.
+     - `splitConjoinedPairVoronoi`: Bisects overlapping conjoined bubble lobes with guaranteed zero collision and configurable visual gutter.
+     - `splitDoubleBubble`: Updates `TranslatedBubble.layoutAdjustment` and `box` for both bubbles to their respective Voronoi cells.
+     - `splitSingleDoubleBubble`: Splits a single conjoined bubble with two sentences/lines into two distinct `TranslatedBubble`s positioned in their respective Voronoi lobes.
+     - `generateVoronoiScanlineRatios`: Computes normalized scanline chord ratios (0..1) across vertical slices for contour-constrained line wrapping.
+   - Optimizer Integration (`lib/bubbleLayoutOptimizer.ts`):
+     - Exported `resolveConjoinedDoubleBubbles`, `splitDoubleBubble`, `splitSingleDoubleBubble`, and `BubbleContour`.
+     - Automatically updates `layoutAdjustment` with `autoOptimizeVersion: AUTO_OPTIMIZE_VERSION` and sets safe non-overlapping bounds.
+
+3) Verification Evidence:
+   - Unit Tests:
+     - `tests/unit/voronoiBubbleSplit.test.ts`: 11/11 tests passed (100%), verifying bisector math, polygon area conservation, horizontal/vertical conjoined pairs, zero-overlap safe bounds, single twin bubble splitting, and scanline chords.
+     - `tests/unit/bubbleLayoutOptimizer.test.ts`: 24/24 tests passed (100%), including conjoined double bubble Voronoi resolution test.
+     - `tests/unit/BubbleTypesetEngine.test.ts`: 4/4 tests passed (100%).
+     - Python OCR backend: `pytest tests/test_bubble_contour.py` passed 3/3 (100%).
+   - Type Safety & Linting:
+     - `npx tsc --noEmit`: 0 errors.
+     - `npm run lint`: 0 errors (0 problems in new code).
+     - `ruff check .`: 0 errors in python `ocr-service`.
+   - Running Services Verified:
+     - Port 3000 (Next.js Standalone): HTTP 200 OK.
+     - Port 8765 (Uvicorn OCR Service): HTTP 200 OK `{"status":"ok"}`.
+
 ## Feature: RTL Geometric Bubble Sorting (Right-to-Left Manga Reading Order Pipeline) — 2026-11-10
 
 ### Status: VERIFIED WORKING (Implemented authentic Japanese Manga Reading Order Engine in `lib/translation/bubbleReadingOrder.ts`, integrated into API payload sanitization `lib/translation/sanitizer.ts`, translation outcome resolver `lib/translationPipeline.ts`, and Photoshop JSX export `lib/export/exportManager.ts` per principles: `model-the-domain`, `fix-root-causes`, `prove-it-works`, `laziness-protocol`):

@@ -3,6 +3,7 @@ import {
   getBubbleGeometry,
   detectBubbleCollisions,
   resolveBubbleCollisions,
+  resolveConjoinedDoubleBubbles,
   fitBubbleTextWithinBounds,
   autoOrganizePageBubbles,
   autoOrganizeAllPagesBubbles,
@@ -72,6 +73,34 @@ describe("Bubble Layout Optimizer", () => {
       expect(adj.bx + adj.bw).toBeLessThanOrEqual(iw + 1);
       expect(adj.by + adj.bh).toBeLessThanOrEqual(ih + 1);
     }
+  });
+
+  it("splits conjoined double bubbles along the Voronoi bisector with zero overlap", () => {
+    // Twin conjoined speech balloon lobes overlapping vertically
+    const doubleBubbles: TranslatedBubble[] = [
+      {
+        id: "top-lobe",
+        box: [100, 200, 220, 350],
+        t: "เธอได้ยินข่าวลือไหม?",
+      },
+      {
+        id: "bottom-lobe",
+        box: [180, 200, 300, 350],
+        t: "เรื่องของอาจารย์คนนั้นน่ะ...",
+      },
+    ];
+
+    const partitioned = resolveConjoinedDoubleBubbles(doubleBubbles, iw, ih, { gutter: 4 });
+    expect(partitioned.length).toBe(2);
+
+    const adjA = partitioned[0].layoutAdjustment!;
+    const adjB = partitioned[1].layoutAdjustment!;
+
+    // Must be completely separated along the Y axis
+    expect(adjA.by + adjA.bh).toBeLessThanOrEqual(adjB.by);
+
+    const collisions = detectBubbleCollisions(partitioned, iw, ih);
+    expect(collisions.length).toBe(0);
   });
 
   it("expands frame beyond original bubble bounds for long Thai text so font stays large and easy to read (>= 20px)", () => {
