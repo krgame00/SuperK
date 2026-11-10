@@ -23,6 +23,8 @@ export class GeminiRequestError extends Error {
   readonly keySlot?: number;
   readonly keyOwner?: "user" | "server";
   readonly meta?: TranslationObservabilityMeta;
+  /** True when the failure happened before the upstream answered (connection refused, abort). */
+  readonly transport?: boolean;
 
   constructor(
     message: string,
@@ -33,6 +35,7 @@ export class GeminiRequestError extends Error {
     route?: Pick<GeminiRoute, "model" | "keyId" | "keySlot" | "keyOwner">,
     meta?: TranslationObservabilityMeta,
     nextRetryAt?: number,
+    transport?: boolean,
   ) {
     super(message);
     this.name = "GeminiRequestError";
@@ -41,6 +44,7 @@ export class GeminiRequestError extends Error {
     this.retryable = retryable;
     this.retryAfterMs = retryAfterMs;
     this.nextRetryAt = nextRetryAt;
+    this.transport = transport;
     this.model = route?.model;
     this.keyId = route?.keyId;
     this.keySlot = route?.keySlot;
@@ -890,12 +894,22 @@ export async function requestOpenAICompatible<T = unknown>(
           "GEMINI_TIMEOUT",
           504,
           true,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          true,
         );
       } else {
         firstHttpError ??= new GeminiRequestError(
           errorMessage(fetchOrBodyErr) || "OpenAI-compatible network transport error",
           "GEMINI_UPSTREAM",
           502,
+          true,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
           true,
         );
       }
