@@ -88,5 +88,11 @@ export function readPersistedModelPreference(storage?: Pick<Storage, "getItem">)
 
 export function writePersistedModelPreference(pref: ModelPreference, storage?: Pick<Storage, "setItem">): void {
   const store = storage ?? (typeof localStorage !== "undefined" ? localStorage : undefined);
-  store?.setItem(MODEL_PREFERENCE_STORAGE_KEY, JSON.stringify(pref));
+  if (!store) return;
+  try {
+    store.setItem(MODEL_PREFERENCE_STORAGE_KEY, JSON.stringify(pref));
+  } catch {
+    // Quota exceeded or blocked storage: the selection stays alive in memory
+    // for this session and simply will not survive a reload.
+  }
 }
