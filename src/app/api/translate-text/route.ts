@@ -3,8 +3,18 @@ import { NextResponse } from "next/server";
 import {
   GeminiRequestError,
   requestGemini,
+  requestOpenAICompatible,
 } from "@/lib/server/geminiRequest";
 import { requireLocalRequest } from "@/lib/server/localRequest";
+import {
+  localErrorBodyFrom,
+  localErrorStatus,
+  localFailedBody,
+  localNotConfiguredBody,
+} from "@/lib/server/localEngine";
+import {
+  parseModelPreference,
+} from "@/lib/translation/modelPreference";
 import {
   buildGlossaryDirectives,
   type FlexibleGlossaryEntry,
@@ -37,8 +47,8 @@ export async function POST(req: Request) {
   try {
     const denial = requireLocalRequest(req);
     if (denial) return denial;
-    const { bubbles, targetLang, modelPreference, policy, apiKey, glossary, pronounMatrix } = await req.json();
-    
+    const { bubbles, targetLang, modelPreference: modelPreferenceWire, policy, apiKey, glossary, pronounMatrix } = await req.json();
+
     if (!bubbles || !Array.isArray(bubbles)) {
       return NextResponse.json({ error: "Missing or invalid text data" }, { status: 400 });
     }
@@ -47,21 +57,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ text: JSON.stringify({ bubbles: [] }) });
     }
 
-    const parseKeyList = (raw: string | undefined) =>
-      typeof raw === "string"
-        ? raw.split(/[\s,;]+/).map((key) => key.trim()).filter(Boolean)
-        : [];
     const syncedSettings = getSyncedExtensionSettings();
-    const userApiKeyRaw = typeof apiKey === "string" && apiKey.trim()
-      ? apiKey
-      : syncedSettings.geminiApiKey;
-    const userKeys = Array.from(new Set(parseKeyList(userApiKeyRaw)));
-    const serverKeys = Array.from(new Set(parseKeyList(process.env.GEMINI_API_KEY)));
-    const apiKeys = Array.from(new Set([...userKeys, ...serverKeys]));
-    const rotationLength = userKeys.length > 0 ? userKeys.length : apiKeys.length;
-    if (apiKeys.length === 0) {
-      return NextResponse.json({ error: "Server missing API Key. Please add GEMINI_API_KEY to .env" }, { status: 500 });
-    }
 
     const sfxDirective = policy?.sfx === "ignore"
       ? "- IGNORE all Sound Effects (SFX). Do NOT translate them."
@@ -78,7 +74,7 @@ export async function POST(req: Request) {
     const glossaryDirective = buildGlossaryDirectives(effectiveGlossary);
     const pronounDirective = buildPronounMatrixDirectives(pronounMatrix);
 
-    const promptText = 
+    const promptText =
       `You are an expert manga translator. Translate the following JSON list of text blocks to ${targetLang || 'Thai'}.\n`+
       `- Use highly natural, conversational flow appropriate for comic books. Avoid rigid word-for-word translation.\n`+
       `- Arrange sentences beautifully according to native Thai idioms and phrasing (เรียบเรียงประโยคให้สละสลวยเหมือนคนไทยพูดกันในชีวิตจริง ไม่แปลตรงตัว).\n`+
@@ -98,6 +94,37 @@ export async function POST(req: Request) {
       `ALL translations MUST be in ${targetLang || 'Thai'}. Never use English unless target IS English.\n\n`+
       `INPUT DATA:\n`+
       JSON.stringify({ bubbles }, null, 2);
+
+    const parsedPreference = parseModelPreference(modelPreferenceWire);
+    if (!parsedPreference) {
+      return NextResponse.json({ error: "Invalid translation payload", code: "INVALID_REQUEST" }, { status: 400 });
+    }
+    if (parsedPreference.engine === "local") {
+      return handleLocalTextTranslate({
+        bubbles,
+        targetLang,
+        promptText,
+        preference: parsedPreference,
+        signal: req.signal,
+      });
+    }
+    // The Gemini flow keeps speaking model-id strings.
+    const modelPreference = parsedPreference.engine === "gemini" ? parsedPreference.model : "auto";
+
+    const parseKeyList = (raw: string | undefined) =>
+      typeof raw === "string"
+        ? raw.split(/[\s,;]+/).map((key) => key.trim()).filter(Boolean)
+        : [];
+    const userApiKeyRaw = typeof apiKey === "string" && apiKey.trim()
+      ? apiKey
+      : syncedSettings.geminiApiKey;
+    const userKeys = Array.from(new Set(parseKeyList(userApiKeyRaw)));
+    const serverKeys = Array.from(new Set(parseKeyList(process.env.GEMINI_API_KEY)));
+    const apiKeys = Array.from(new Set([...userKeys, ...serverKeys]));
+    const rotationLength = userKeys.length > 0 ? userKeys.length : apiKeys.length;
+    if (apiKeys.length === 0) {
+      return NextResponse.json({ error: "Server missing API Key. Please add GEMINI_API_KEY to .env" }, { status: 500 });
+    }
 
     const payload = {
       contents: [{
@@ -185,6 +212,86 @@ export async function POST(req: Request) {
 
   } catch (error) {
     console.error("API error:", error);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
+
+async function handleLocalTextTranslate({
+  bubbles,
+  targetLang,
+  promptText,
+  preference,
+  signal,
+}: {
+  bubbles: unknown[];
+  targetLang?: string;
+  promptText: string;
+  preference: { engine: "local"; baseUrl: string; model: string };
+  signal?: AbortSignal;
+}) {
+  if (!preference.baseUrl || !preference.model) {
+    return NextResponse.json(localNotConfiguredBody(), { status: 400 });
+  }
+
+  const payload = {
+    messages: [
+      {
+        role: "user",
+        content: promptText,
+      },
+    ],
+    max_tokens: 8192,
+    temperature: 0.3,
+    stream: false,
+    response_format: { type: "json_object" },
+  };
+
+  try {
+    const result = await requestOpenAICompatible<{
+      choices: Array<{
+        message: {
+          content: string;
+        };
+      }>;
+    }>({
+      baseUrl: preference.baseUrl,
+      apiKey: "",
+      model: preference.model,
+      payload,
+      // A cold daemon may need to load the model into VRAM before the first token.
+      attemptTimeoutMs: 120_000,
+      totalBudgetMs: 300_000,
+      signal,
+    });
+
+    const choice = result.data.choices?.[0];
+    if (!choice?.message?.content) {
+      return NextResponse.json(
+        localFailedBody("the local model returned no usable content"),
+        { status: 502 },
+      );
+    }
+
+    const cleanText = choice.message.content.replace(/```json/gi, '').replace(/```/g, '').trim();
+    try {
+      const parsed = JSON.parse(cleanText);
+      if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.bubbles)) {
+        return NextResponse.json({ error: "รูปแบบผลลัพธ์ JSON จาก AI ไม่ถูกต้อง (ไม่พบอาร์เรย์ bubbles)", engine: "local" }, { status: 502 });
+      }
+    } catch {
+      return NextResponse.json({ error: "ผลลัพธ์จาก AI ไม่ใช่ JSON ที่ถูกต้อง", engine: "local" }, { status: 502 });
+    }
+    const sanitizedText = sanitizeTranslationPayloadJson(cleanText, targetLang);
+    return NextResponse.json({ text: sanitizedText });
+  } catch (error) {
+    if (error instanceof GeminiRequestError) {
+      console.error(`Local engine error [${error.status}]:`, error.message);
+      return NextResponse.json(
+        localErrorBodyFrom(error),
+        { status: localErrorStatus(error) },
+      );
+    }
+    console.error("Local text translation error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

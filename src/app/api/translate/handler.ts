@@ -26,8 +26,18 @@ import type { TranslationObservabilityMeta } from "@/lib/translation/requestErro
 import { FIXED_IMAGE_MODELS } from "@/lib/translation/imageModelChoices";
 import { getSyncedExtensionSettings } from "@/src/app/api/extension/settings/handler";
 import { requireLocalRequest } from "@/lib/server/localRequest";
+import {
+  localErrorBodyFrom,
+  localErrorStatus,
+  localFailedBody,
+  localNotConfiguredBody,
+} from "@/lib/server/localEngine";
 import { writeServerLog } from "@/lib/logger/serverLogger";
 import { sanitizeTranslationPayloadJson } from "@/lib/translation/sanitizer";
+import {
+  parseModelPreference,
+  type ModelPreferenceWire,
+} from "@/lib/translation/modelPreference";
 
 export const MAX_TRANSLATION_BODY_BYTES = 30 * 1024 * 1024;
 export const MAX_TRANSLATION_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -39,7 +49,7 @@ interface TranslationRequestPayload {
   mimeType?: string;
   targetLang?: string;
   sourceLang?: string;
-  modelPreference?: string;
+  modelPreference?: ModelPreferenceWire;
   allowPreview?: boolean;
   apiKey?: string;
   isRetry?: boolean;
@@ -236,7 +246,7 @@ async function handleTranslationRequest(
       return NextResponse.json({ error: "Invalid translation payload", code: "INVALID_REQUEST" }, { status: 400 });
     }
     const fields = body as Record<string, unknown>;
-    const validStrings = ["targetLang", "sourceLang", "modelPreference", "apiKey", "context"]
+    const validStrings = ["targetLang", "sourceLang", "apiKey", "context"]
       .every((key) => fields[key] === undefined || typeof fields[key] === "string");
     const validBooleans = ["isRetry", "allowPreview"]
       .every((key) => fields[key] === undefined || typeof fields[key] === "boolean");
@@ -252,7 +262,7 @@ async function handleTranslationRequest(
       mimeType,
       targetLang = "Thai",
       sourceLang = "auto",
-      modelPreference,
+      modelPreference: modelPreferenceWire,
       allowPreview,
       apiKey: userApiKey,
       isRetry = false,
@@ -294,6 +304,28 @@ async function handleTranslationRequest(
         : syncedSettings.glossary.length > 0
           ? syncedSettings.glossary
           : glossary;
+
+    const parsedPreference = parseModelPreference(modelPreferenceWire);
+    if (!parsedPreference) {
+      return NextResponse.json({ error: "Invalid translation payload", code: "INVALID_REQUEST" }, { status: 400 });
+    }
+    if (parsedPreference.engine === "local") {
+      return handleLocalTranslate({
+        imageBase64,
+        mimeType,
+        targetLang,
+        sourceLang,
+        isRetry,
+        context,
+        policy,
+        glossary: effectiveGlossary,
+        pronounMatrix,
+        preference: parsedPreference,
+        signal,
+      });
+    }
+    // Cloud branches keep speaking model-id strings.
+    const modelPreference = parsedPreference.engine === "gemini" ? parsedPreference.model : "auto";
 
     // 9router (OpenAI-compatible) path — faster, no NSFW block
     const translateBaseUrl = process.env.SUPERK_TRANSLATE_BASE_URL;
@@ -648,6 +680,7 @@ async function handleOpenAICompatible({
     max_tokens: 8192,
     temperature: 0.3,
     stream: false,
+    response_format: { type: "json_object" },
   };
 
   // Model: prefer 11asd combo (best of openrouter + gemini), fallback to combo name from env
@@ -728,6 +761,143 @@ async function handleOpenAICompatible({
       level: "error",
       category: "translate",
       message: error instanceof Error ? error.message : "9router internal error",
+      details: error instanceof Error ? { stack: error.stack } : error,
+    });
+    return NextResponse.json(
+      { error: "Internal Server Error" },
+      { status: 500 },
+    );
+  }
+}
+
+async function handleLocalTranslate({
+  imageBase64,
+  mimeType,
+  targetLang,
+  sourceLang,
+  isRetry,
+  context,
+  policy,
+  glossary,
+  pronounMatrix,
+  preference,
+  signal,
+}: {
+  imageBase64: string;
+  mimeType: string;
+  targetLang: string;
+  sourceLang: string;
+  isRetry: boolean;
+  context: string | undefined;
+  policy?: Partial<TranslationPolicy>;
+  glossary?: FlexibleGlossaryEntry[];
+  pronounMatrix?: PronounRelation[];
+  preference: { engine: "local"; baseUrl: string; model: string };
+  signal?: AbortSignal;
+}) {
+  if (!preference.baseUrl || !preference.model) {
+    return NextResponse.json(localNotConfiguredBody(), { status: 400 });
+  }
+
+  const promptText = buildTranslationPrompt({
+    targetLang,
+    sourceLang,
+    isRetry,
+    context,
+    policy,
+    glossary,
+    pronounMatrix,
+  });
+
+  // OpenAI-compatible payload with vision (image_url with data URI)
+  const payload = {
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: promptText },
+          {
+            type: "image_url",
+            image_url: {
+              url: `data:${mimeType || "image/jpeg"};base64,${imageBase64}`,
+            },
+          },
+        ],
+      },
+    ],
+    max_tokens: 8192,
+    temperature: 0.3,
+    stream: false,
+    response_format: { type: "json_object" },
+  };
+
+  try {
+    const result = await requestOpenAICompatible<{
+      choices: Array<{
+        message: {
+          content: string;
+        };
+        finish_reason: string;
+      }>;
+    }>({
+      baseUrl: preference.baseUrl,
+      apiKey: "",
+      model: preference.model,
+      payload,
+      // A cold daemon must load a multi-GB vision model into VRAM before the
+      // first token, so the local budget sits far above the 9router's.
+      attemptTimeoutMs: 120_000,
+      totalBudgetMs: 300_000,
+      signal,
+    });
+
+    const choice = result.data.choices?.[0];
+    if (!choice?.message?.content) {
+      return NextResponse.json(
+        localFailedBody("the local model returned no usable content"),
+        { status: 502 },
+      );
+    }
+
+    if (
+      choice.finish_reason === "content_filter" ||
+      choice.finish_reason === "safety"
+    ) {
+      writeServerLog({
+        level: "warn",
+        category: "translate",
+        message: `Local engine content filter triggered (${choice.finish_reason})`,
+      });
+      return NextResponse.json(
+        { error: "เนื้อหาถูกแบนโดยระบบ Safety", engine: "local" },
+        { status: 400 },
+      );
+    }
+
+    const cleanText = choice.message.content
+      .replace(/```json/gi, "")
+      .replace(/```/g, "")
+      .trim();
+    const sanitizedText = sanitizeTranslationPayloadJson(cleanText, targetLang);
+    return NextResponse.json({ text: sanitizedText });
+  } catch (error) {
+    if (error instanceof GeminiRequestError) {
+      writeServerLog({
+        level: localErrorStatus(error) >= 500 ? "error" : "warn",
+        category: "translate",
+        message: `Local engine error [${error.status}]: ${error.message}`,
+        details: { code: error.code, retryable: error.retryable, retryAfterMs: error.retryAfterMs },
+      });
+      return NextResponse.json(
+        localErrorBodyFrom(error),
+        { status: localErrorStatus(error) },
+      );
+    }
+    console.error("Local Translation Error:", error);
+    writeServerLog({
+      level: "error",
+      category: "translate",
+      message: error instanceof Error ? error.message : "Local engine internal error",
       details: error instanceof Error ? { stack: error.stack } : error,
     });
     return NextResponse.json(

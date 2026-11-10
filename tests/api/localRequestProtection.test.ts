@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { POST as translateImage } from "@/src/app/api/translate/route";
 import { POST as translateText } from "@/src/app/api/translate-text/route";
 import { POST as translateModels } from "@/src/app/api/translate/models/route";
+import { POST as localModels } from "@/src/app/api/translate/local-models/route";
 import { POST as validateKey } from "@/src/app/api/translate/validate-key/route";
 import { POST as translationReview } from "@/src/app/api/translation-review/route";
 import { OPTIONS as extensionSettingsOptions } from "@/src/app/api/extension/settings/handler";
@@ -19,6 +20,7 @@ const protectedRoutes = [
   ["/api/translate", translateImage],
   ["/api/translate-text", translateText],
   ["/api/translate/models", translateModels],
+  ["/api/translate/local-models", localModels],
   ["/api/translate/validate-key", validateKey],
   ["/api/translation-review", translationReview],
 ] as const;
