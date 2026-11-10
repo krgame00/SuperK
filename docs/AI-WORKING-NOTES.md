@@ -1,6 +1,40 @@
 # AI Working Notes — SuperK / Manga Translator
 
-## Feature: Bubble Contour Classification & Auto Comic Typography (Next-Gen Blueprint Module 3) — 2026-11-10
+## Feature: Web Manga De-scrambler & Extension Interceptor (Next-Gen Blueprint Module 1) — 2026-11-10
+
+### Status: VERIFIED WORKING (Implemented GigaViewer Tile Permutation Inversion & Remainder Edge Padding in `lib/extension/descrambler.ts`, registered Main World Canvas Interceptor `chrome-extension/canvas-interceptor.js`, added Canvas Element Discovery and Shadow DOM Style Insulation in `chrome-extension/content.js` per principles: `model-the-domain`, `fix-root-causes`, `prove-it-works`, `laziness-protocol`, `experience-first`):
+
+1) Problem & Domain Analysis:
+   - Module 1 of the SuperK Next-Gen Architectural Blueprint specified: "ระบบเจาะอ่านมังงะลิขสิทธิ์และการกู้ภาพสลับชิ้นส่วน (Image De-scrambler & Extension Interceptor)".
+   - Official digital manga platforms (Shonen Jump+, Comic Days, Comic Gardo, BookWalker) employ image scrambling techniques (splitting pages into an $N \times M$ grid and permuting tiles) or render to canvas context to prevent scraping.
+   - Standard extensions capture scrambled screenshots with disconnected facial features or fail completely on canvas-locked pages, while host website CSS leaks frequently break translated overlay typography.
+
+2) Implementation & Architecture:
+   - De-scramble Mathematical Engine (`lib/extension/descrambler.ts`):
+     - `computeRemainderPadding`: Calculates $W_{block} = \lfloor W_{total} / N \rfloor, H_{block} = \lfloor H_{total} / M \rfloor$ and exact remainder margins $R_w = W_{total} \bmod N, R_h = H_{total} \bmod M$.
+     - `computePermutationFromSeed` & `invertPermutation`: Computes closed-form linear congruential tile mappings $P(i) = (i \times k + c) \bmod (N \times M)$ and mathematically exact inversions.
+     - `generateTileMappings`: Generates complete tile slice sequence composed of $N \times M$ core tiles plus 3 dedicated remainder padding strips (right vertical strip, bottom horizontal strip, and corner piece).
+     - `isKnownScrambledDomain`: Domain detector for GigaViewer and Web manga platforms (`shonenjumpplus.com`, `comic-days.com`, `comic-gardo.com`, `bookwalker.jp`, etc.).
+   - Main World Canvas Interceptor (`chrome-extension/canvas-interceptor.js` & `manifest.json`):
+     - Injects into `world: "MAIN"` context at `document_start` to intercept `CanvasRenderingContext2D.prototype.drawImage` 9-argument calls and emit `SUPERK_CANVAS_RENDER_FRAME` for large manga canvas contexts (>= 500px).
+   - Canvas Element Discovery & Shadow DOM Insulation (`chrome-extension/content.js`):
+     - `scanAndTranslateEligibleImages`: Expanded to scan both `img` and `canvas` elements (>= 500x500px), enabling direct single-click translation on canvas-driven readers like BookWalker.
+     - Shadow DOM Style Insulation: Insulates `.superk-text-bubble` elements using open shadow roots with `:host { all: initial; ... }` and `<slot>`, preventing host page CSS from distorting font size, line-height, or letter spacing while maintaining 100% test compatibility.
+
+3) Verification Evidence:
+   - Vitest Unit Tests:
+     - `tests/chrome-extension/descrambler.test.ts`: 4/4 tests passed (100%), verifying block size arithmetic, remainder edge padding, seed permutation inversion, and domain detection.
+     - Full Chrome Extension Test Suite: 16 test files, 85/85 tests passed (100%).
+   - Type Safety & Linting:
+     - `npx tsc --noEmit`: 0 errors.
+     - `npm run lint`: 0 errors (87 preexisting legacy warnings).
+   - Production Build:
+     - `npm run build`: Compiled successfully in Turbopack, generated static/dynamic routes, synced standalone assets to `.next/standalone`.
+   - Running Services Verified:
+     - Port 3000 (Next.js Standalone): HTTP 200 OK.
+     - Port 8765 (Uvicorn OCR Service): HTTP 200 OK `{"status":"ok"}`.
+
+
 
 ### Status: VERIFIED WORKING (Implemented 4-Archetype Comic Contour Classifier in `ocr-service/app/bubble_contour.py` and `lib/typography/comicTypography.ts`, wired Dynamic Stroke Width and Auto Bulge Warp into `lib/translationOverlay.ts` and `lib/typeset/voronoiBubbleSplit.ts` per principles: `model-the-domain`, `fix-root-causes`, `prove-it-works`, `laziness-protocol`, `experience-first`):
 

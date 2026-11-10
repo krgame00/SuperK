@@ -97,6 +97,31 @@ function scanAndTranslateEligibleImages(minSize = 500) {
       }
     }
   }
+
+  // Blueprint 1.2: Scan Canvas elements for WebGL / Canvas manga readers (BookWalker, etc.)
+  const canvases = Array.from(document.querySelectorAll("canvas"));
+  for (const cvs of canvases) {
+    const rect = cvs.getBoundingClientRect();
+    const w = Math.max(cvs.width || 0, rect.width || 0);
+    const h = Math.max(cvs.height || 0, rect.height || 0);
+    if (w >= minSize && h >= minSize) {
+      const cvsKey = `canvas_${Math.round(rect.top)}_${Math.round(rect.left)}_${w}x${h}`;
+      if (activeOverlays.has(cvsKey)) continue;
+      try {
+        const dataUrl = cvs.toDataURL("image/png");
+        if (dataUrl && dataUrl.length > 200) {
+          triggered++;
+          activeOverlays.set(cvsKey, true);
+          if (typeof chrome !== "undefined" && chrome?.runtime?.sendMessage) {
+            chrome.runtime.sendMessage({ action: "TRANSLATE_IMAGE_URL", imageUrl: dataUrl });
+          }
+        }
+      } catch {
+        // Tainted canvas or cross-origin security
+      }
+    }
+  }
+
   return triggered;
 }
 
@@ -662,6 +687,43 @@ function fitTextInBubble(text, width, height, fontFamily, fontSizeMultiplier = 1
 
     bubbleEl.textContent = fit.lines.join('\n');
     bubbleEl.contentEditable = "false";
+
+    // Blueprint 1.4: Insulate text bubble styles from host website CSS via Shadow DOM
+    if (typeof bubbleEl.attachShadow === 'function') {
+      try {
+        const shadow = bubbleEl.attachShadow({ mode: 'open' });
+        const shadowStyle = document.createElement('style');
+        shadowStyle.textContent = `
+          :host {
+            all: initial;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+            justify-content: center !important;
+            text-align: center !important;
+            color: ${bubbleTextColor} !important;
+            font-family: ${hasSnapshot ? snapshot.fontFamily : fontFamily} !important;
+            font-weight: bold !important;
+            font-size: ${fit.fontSize}px !important;
+            line-height: ${fit.lineHeight}px !important;
+            text-shadow: ${textShadowValue} !important;
+            word-break: break-word !important;
+            user-select: text !important;
+            white-space: pre-line !important;
+            pointer-events: auto !important;
+            box-sizing: border-box !important;
+          }
+          ::slotted(*) {
+            all: unset;
+          }
+        `;
+        shadow.appendChild(shadowStyle);
+        shadow.appendChild(document.createElement('slot'));
+      } catch {
+        // Fallback to light DOM if attachShadow is unavailable
+      }
+    }
+
     if (!hasSnapshot || !document.fonts?.check?.(`bold ${fit.fontSize}px ${snapshot.fontFamily}`)) bubbleEl.dataset.sourceSizeStatus = "fallback";
     else bubbleEl.dataset.sourceSizeStatus = "resolved-layout";
     if (bubbleEl.dataset.sourceSizeStatus === "fallback") bubbleEl.title = "ยังเทียบขนาดต้นฉบับไม่ได้ — เปิดใน SuperK เพื่อตรวจรูปแบบตัวอักษร";

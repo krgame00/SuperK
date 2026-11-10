@@ -5,6 +5,7 @@ import {reviewTranslatedBubbles} from '../translation/qualityReviewClient';
 import type {TranslatedBubble} from '../translationOverlay';
 import {backgroundEligibilityState,revisionKeyOf} from '../cleaning/backgroundInspectionContract';
 import type {BackgroundInspectionResult} from '../cleaning/backgroundRemnantInspection';
+export * from './descrambler';
 export {TARGET_LANGUAGES,LANGUAGE_POLICY_VERSION,resolveTargetLanguage,createPageTargetIdentity,reviewTranslatedBubbles};
 export interface ExtensionEvidence {bubbles:TranslatedBubble[];targetIdentity?:PageTargetIdentity;sourceRevision?:string;backgroundEvidence?:BackgroundInspectionResult;backgroundState?:BackgroundEligibilityState;backgroundRevision?:string}
 /** Raw renderer identity; do not trim/normalize before inspecting or reviewing. */
