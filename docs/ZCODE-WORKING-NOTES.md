@@ -5,8 +5,8 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 10 พ.ย. 23:19 · `08404601` · "https://github.com/morluto/rea.git ติดตั้งได้ไหม" · — · ↳ "https://github.com/morluto/rea.git ติดตั้งได้ไหม"
-- 10 พ.ย. 23:10 · `f7ef473c` · "แชตผมหายอะ" · ✅ · ↳ "1"
+- 11 พ.ย. 00:39 · `f7ef473c` · "แชตผมหายอะ" · ✅ · ↳ "โอเค"
+- 11 พ.ย. 00:38 · `08404601` · "ติดตั้งโปรเจกต์ rea จาก GitHub" · ✅ · ↳ "โอเค"
 - 7 พ.ย. 00:15 · `d62433fd` · "เปิด Fast Startup แก้ Windows Defender สแกน 4.8GB ทุกครั้ง" · ✅ · ↳ "ok"
 - 4 พ.ย. 01:39 · `f7c2c32c` · "แก้ระบบแปลจับข้อความไม่หมด (pstack-poteto-mode)" · ✅ · ↳ "com push"
 - 31 ต.ค. 00:22 · `dd65c0e3` · "GLM-5.3-Flash Empty Response Error" · ✅ · ↳ "เป็นไงบ้าง"
@@ -23,6 +23,19 @@
 บันทึกประวัติการทำงานของ ZCode ทุก session เรียงจาก **ใหม่ไปเก่า** (ไฟล์นี้แยกจาก `docs/AI-WORKING-NOTES.md` ซึ่งห้ามแตะตามกฎเดิม — ไฟล์นี้คือฉบับของ ZCode)
 
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
+
+---
+
+## Screentone fast-path 3 เฟส ตามพิมพ์เขียววิศวกรรมย้อนกลับ (poteto-mode, gate ตัวเลขทุกเฟส) — 2026-11-11
+
+### Status: ครบ 3 เฟส CI เขียว (98a2d12 + 7a992dd + 3d001fd, run 42866258198) — รอผู้ใช้พิสูจน์หน้าจริง
+
+- **ที่มา:** ผู้ใช้ส่งพิมพ์เขียว (Downloads/พิมพ์เขียววิศวกรรมย้อนกลับ_ระบบฟื้นฟูเม็ดสกรีนโทน...md) ให้รีวิว → รีวิวแล้วเสนอทำเป็น 3 เฟส gate ด้วยตัวเลขจริง → ผู้ใช้ไล่อนุมัติทีละเฟส
+- **Phase 1 detector (98a2d12):** `app/screentone.py` — Hanning+FFT+fftshift+กด DC+พีกคู่สมมาตร; เกณฑ์ σ>60 + prominence>55 (คั่นกลาง noise ceiling 8.14 / halftone floor 379.4); ฟื้น P คลาด ≤0.78% มุม ≤0.26° บน synthetic; ภาพจริง 80 patch (public/comparison) flag 17/35 บน clean_page_38 ด้วยลายเซ็น P=15.06px θ=180° ซ้ำเป๊ะ
+- **Phase 2 synthesis (7a992dd):** `app/screentone_synth.py` — คลื่น §3.1 + ค้น phase จากวงแหวน (สิ่งที่พิมพ์เขียวขาด) + density §3.2 + feather §3.3 บนช่อง LAB L; ผลลัพธ์ re-detect ได้ (P คลาด 2.90% มุม 0.50°), phase หาย้อนคลาด 0.25px, seam error เนียนกว่า zero-phase 5.2 เท่า, density delta 0.542 gray
+- **Phase 3 wiring (3d001fd):** เกตใน `tier_router.py` กิ่ง TIER_3_NEURAL — region ที่ยืนยันโทนใช้ "screentone_fast" (~7.2ms รวมทุกขั้น เทียบ neural 200-800ms ตาม claim เอกสาร) tier คง label เดิม, ไม่แตะ enum/route, mask ชิดขอบ (ring ว่าง) ตกกลับ Tier 3 เดิม; fixture เทสต์เดิม 2 ตัวที่ใช้ grid period-4/3 ถูก detector จับตามสัญญา จึงแก้ fixture เป็น noise ไม่มีคาบ (ยึดเจตนาเดิมของเทสต์)
+- **หลักฐาน:** suite เต็ม ocr-service 301 passed + ruff สะอาด + CI เขียวทั้งสอง job; ทุกเฟส delegate ให้ poteto-agent แล้วผู้คุมรีวิว+รันยืนยันเอง
+- **ข้อจำกัดรู้ตัว:** 1) seam step 56.61/60 ตัวจำกัดคือ bin quantization ของ FFT — ถ้าหน้าจริงเห็นรอยต่อ ให้เพิ่ม phase_search_steps หรือ refine มุม sub-bin 2) DC radius ตามเอกสารมองไม่เห็นโทนหยาบ P≳16px (ภาพจริงเจอ P=15.06 ใกล้ขอบ) 3) ยังไม่ได้พิสูจน์บนหน้าจริงทั้งเล่ม — rebuild ผ่าน launcher แล้วทดสอบรอบคลีนจริงคือขั้นยืนยันสุดท้าย 4) เอกสารอ้าง latency neural 200-800ms กับ fast 18-45ms เป็นตัวเลขผู้เขียนเอกสาร ยังไม่ได้วัดในระบบจริง (วัดได้เฉพาะ synth ~6.7ms บน fixture 100²)
 
 ---
 
