@@ -1,5 +1,44 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Feature: Manga Panel Segmentation & Topological Reading Flow DAG (Next-Gen Blueprint Module 2) — 2026-11-10
+
+### Status: VERIFIED WORKING (Implemented Two-Tier Hierarchical Reading Flow DAG with Spatial Dominance Matrix in `lib/translation/panelReadingFlowDAG.ts`, connected into `lib/translation/bubbleReadingOrder.ts` and `lib/translation/sanitizer.ts` per principles: `model-the-domain`, `fix-root-causes`, `prove-it-works`, `laziness-protocol`, `experience-first`):
+
+1) Problem & Domain Analysis:
+   - Module 2 of the SuperK Next-Gen Architectural Blueprint specified: "ระบบตรวจจับช่องมังงะและผังลำดับการอ่านตามทิศทางขวาไปซ้าย (Manga Panel Segmentation & Topological Reading Flow DAG)".
+   - Naive Y-axis (Top-to-Bottom) sorting fails on standard Japanese Manga layouts when dialogue bubbles in adjacent panels are vertically staggered. Specifically, an opening line in a lower portion of a right panel ($Y=150, X=750$) would be sorted after a reply in a higher portion of a left panel ($Y=110, X=250$), causing context desynchronization and dialogue interleaving.
+   - Standard geometric band clustering without panel dominance cannot prevent cross-panel dialogue jumping on complex multi-tier or splash-panel pages.
+
+2) Implementation & Architecture:
+   - Two-Tier Hierarchical DAG Engine (`lib/translation/panelReadingFlowDAG.ts`):
+     - Step 1: Panel Topological Sorting with Spatial Dominance Matrix ($P_i \succ P_j$):
+       - Strict Upper-Tier Dominance: $P_i.bottom \le P_j.top \implies P_i \succ P_j$ (guarantees top tiers are read in full before dropping to lower tiers).
+       - Intra-Tier Right-to-Left Dominance: For panels sharing a vertical band ($\text{Overlap}_Y(P_i, P_j) / \min(H_i, H_j) > \tau$), $P_i.left \ge P_j.right \implies P_i \succ P_j$ (authentic Japanese RTL flow).
+       - Diagonal Fallback: $P_i.bottom \le P_j.centerY \land P_i.centerX \ge P_j.centerX \implies P_i \succ P_j$.
+       - Cycle-Resilient Kahn's Algorithm: Detects and resolves cyclic dependencies with greedy RTL tie-breaking ($Score = 1.5(W-X) + 1.0Y$).
+     - Step 2: Intra-Panel Bubble Sub-DAG Sorting:
+       - Uses authentic Manga distance metric: $Score(B_k) = \alpha \cdot (W_{page} - X_k) + \beta \cdot Y_k$ with $\alpha=1.5, \beta=1.0$ to prioritize right-to-left within each panel.
+     - Auto-Clustering Fallback (`autoClusterPanelsFromBubbles`):
+       - Uses Disjoint-Set / Connected Components with adaptive conversational gutter margins ($8\% W, 8\% H$) to automatically cluster dialogue into virtual panel boxes when explicit panel annotations are absent.
+   - Pipeline Integration (`lib/translation/bubbleReadingOrder.ts` & `lib/translation/sanitizer.ts`):
+     - Exported `sortBubblesHierarchicalDAG` and spatial dominance utilities from `lib/translation/bubbleReadingOrder.ts`.
+     - Integrated `sortBubblesHierarchicalDAG` as the canonical transformer in `sanitizeTranslationPayloadJson` (`lib/translation/sanitizer.ts`).
+
+3) Verification Evidence:
+   - Vitest Unit Tests:
+     - `tests/translation/panelReadingFlowDAG.test.ts`: 14/14 tests passed (100%), verifying $\alpha / \beta$ weighting, spatial dominance, 4-koma 2x2 grid ordering, tall right splash + stacked left panels, tall left splash + stacked right panels, staggered dialogue anti-interleaving, and auto-clustering.
+     - `tests/translation/bubbleReadingOrder.test.ts`: 18/18 tests passed (100%).
+     - `tests/translation/sanitizer.test.ts`: 7/7 tests passed (100%).
+     - Total Translation Order Suite: 39/39 passed (100%).
+   - Type Safety & Linting:
+     - `npx tsc --noEmit`: 0 errors.
+     - `npm run lint`: 0 errors (87 preexisting legacy warnings).
+   - Production Build & Running Server:
+     - `npm run build`: Compiled successfully in Turbopack, static routes generated, standalone assets synced.
+     - Port 3000 (Next.js Standalone): HTTP 200 OK (`curl.exe -sI http://127.0.0.1:3000`).
+     - Port 8765 (Uvicorn OCR Service): HTTP 200 OK `{"status":"ok"}`.
+
+
 ## Feature: Web Manga De-scrambler & Extension Interceptor (Next-Gen Blueprint Module 1) — 2026-11-10
 
 ### Status: VERIFIED WORKING (Implemented GigaViewer Tile Permutation Inversion & Remainder Edge Padding in `lib/extension/descrambler.ts`, registered Main World Canvas Interceptor `chrome-extension/canvas-interceptor.js`, added Canvas Element Discovery and Shadow DOM Style Insulation in `chrome-extension/content.js` per principles: `model-the-domain`, `fix-root-causes`, `prove-it-works`, `laziness-protocol`, `experience-first`):

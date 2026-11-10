@@ -291,3 +291,15 @@ export function isRTLReadingOrder<T>(
   }
   return true;
 }
+
+export {
+  sortBubblesHierarchicalDAG,
+  computeIntraPanelScore,
+  panelSpatialDominates,
+  buildSpatialDominanceDAG,
+  topologicalSortPanels,
+  autoClusterPanelsFromBubbles,
+  type PanelBox,
+  type HierarchicalDAGOptions,
+} from "./panelReadingFlowDAG";
+

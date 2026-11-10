@@ -1,4 +1,4 @@
-import { sortBubblesRTL } from "@/lib/translation/bubbleReadingOrder";
+import { sortBubblesHierarchicalDAG } from "@/lib/translation/panelReadingFlowDAG";
 
 const CJK_REGEX = /[\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff]/g;
 
@@ -60,7 +60,7 @@ export function sanitizeTranslationPayloadJson(
       }
       return b;
     });
-    const orderedBubbles = sortBubblesRTL(sanitizedBubbles as Array<{ box?: unknown }>);
+    const orderedBubbles = sortBubblesHierarchicalDAG(sanitizedBubbles as Array<{ box?: unknown }>);
     return JSON.stringify({ ...parsed, bubbles: orderedBubbles });
   } catch {
     return rawJson;
