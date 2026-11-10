@@ -898,6 +898,26 @@ describe("Bubble Layout Optimizer", () => {
     );
     expect(midLayout.lines.length).toBeLessThanOrEqual(4);
   });
+
+  it("applies scanlineRatios to constrain bubble line wrapping to authentic contour shapes", () => {
+    const iw = 1000;
+    const ih = 1400;
+    const bubbleWithScanlines: TranslatedBubble = {
+      id: "scanline-test-1",
+      box: [200, 300, 400, 500],
+      t: "ยินดีต้อนรับสู่โลกของการแปลมังงะอัจฉริยะ",
+      // Slices: narrow at top/bottom (0.35), wide in middle (1.0)
+      scanlineRatios: [0.35, 0.5, 0.7, 0.9, 1.0, 1.0, 0.9, 0.7, 0.5, 0.35],
+    };
+
+    const res = autoOrganizePageBubbles([bubbleWithScanlines], iw, ih);
+    expect(res.adjustedCount).toBe(1);
+    const optimized = res.optimizedBubbles[0];
+    expect(optimized.layoutAdjustment).toBeDefined();
+    expect(optimized.scanlineRatios).toBeDefined();
+    expect(optimized.scanlineRatios!.length).toBe(10);
+    expect(optimized.targetFontSize).toBeGreaterThanOrEqual(14);
+  });
 });
 
 

@@ -1,6 +1,46 @@
 # AI Working Notes — SuperK / Manga Translator
 
-## Feature: 3-Tier Multi-Tier Inpainting Architecture (Section 3.1 & 5.1 Architectural Blueprint) — 2026-11-10
+## Feature: Contour-Constrained Line Wrapping & Scanline Chord Ratios (Section 3.2 Item 1 Architectural Blueprint) — 2026-11-10
+
+### Status: VERIFIED WORKING (Connected authentic Scanline Chord Ratios into `BubbleTypesetEngine.ts`, `translationOverlay.ts`, `bubbleLayoutOptimizer.ts`, and `voronoiBubbleSplit.ts` per principles: `model-the-domain`, `fix-root-causes`, `prove-it-works`, `laziness-protocol`):
+
+1) Problem & Domain Analysis:
+   - Section 3.2 Item 1 of the SuperK Architectural Blueprint specified: "Contour-Constrained Line Wrapping: ผูกความกว้างการตัดคำในแต่ละบรรทัด (Line Width) ตามความกว้างจริงของรูปทรงบอลลูน (Scanline Chords) แทนที่จะถือเป็นกล่องสี่เหลี่ยมสมบูรณ์".
+   - In manga speech balloons (oval, circular, or irregular conjoined shapes), treating the bubble as a uniform rectangle causes text on the top and bottom lines to clip or protrude outside the bubble contours.
+   - While `compute_bubble_contour` in Python and `BubbleTypesetEngine.layoutAtFontSize` supported vertical slice width constraints (`scanlineRatios`), the live translation pipeline previously lacked multiline (`\n`) support in `BubbleTypesetEngine` and did not wire `scanlineRatios` through `fitTextForBubble`, `layoutBubbleAtFixedFont`, `fixedLayout`, and `bubbleLayoutOptimizer`.
+
+2) Implementation & Architecture:
+   - Typeset Engine Multiline & Thai Tokenizer (`lib/typeset/BubbleTypesetEngine.ts`):
+     - `segmentThaiAwareTokens`: Preserves explicit newline characters (`\n` or `\r\n`) as dedicated newline tokens while keeping sticky punctuation attached to preceding words.
+     - `layoutAtFontSize`: Handles explicit newline tokens by immediately committing the current line and advancing vertical line index to the next scanline slice. Includes support for empty spacer lines.
+   - Full Pipeline Scanline Chord Integration (`lib/translationOverlay.ts`):
+     - Removed the `!text.includes("\n")` guard now that `BubbleTypesetEngine` natively handles multiline text across vertical scanline chords.
+     - Extended `layoutBubbleAtFixedFont` to accept `scanlineRatios?: number[]` and forward to `layoutTextAtFixedFont` in `lib/textBoxWidthLayout.ts`.
+     - Forwarded `b.scanlineRatios` in `fixedLayout` and fallback `measureBubbleRenderFit`.
+   - Layout Optimizer Contour Propagation (`lib/bubbleLayoutOptimizer.ts`):
+     - Wired `bubble.scanlineRatios` across all 6 `fitTextForBubble` calls for primary fit, clamp, expansion, and contraction bounds.
+     - Wired `bubble.scanlineRatios` into `layoutBubbleAtFixedFont` for exact rendered line measurement.
+   - Voronoi Split Bubble Integration (`lib/typeset/voronoiBubbleSplit.ts`):
+     - `splitDoubleBubble`: Populates `bubbleA.scanlineRatios` and `bubbleB.scanlineRatios` from `generateVoronoiScanlineRatios` of the split Voronoi polygons.
+     - `splitSingleDoubleBubble`: Populates `bubble1.scanlineRatios` and `bubble2.scanlineRatios` from Voronoi cell polygons and records `autoOptimizeVersion: 4`.
+
+3) Verification Evidence:
+   - Unit Tests:
+     - `tests/unit/BubbleTypesetEngine.test.ts`: 5/5 tests passed (100%), verifying single-line contour fitting and multiline scanline chord line wrapping.
+     - `tests/unit/voronoiBubbleSplit.test.ts`: 11/11 tests passed (100%), verifying Voronoi bisector math, polygon area conservation, and scanline chord ratios populated on split bubbles.
+     - `tests/unit/bubbleLayoutOptimizer.test.ts`: 25/25 tests passed (100%), verifying scanline chord ratio contour constraints and collision resolution.
+     - Total Vitest tests: 41/41 passed.
+     - Python OCR service: `tests/test_bubble_contour.py` and `test_bubble_contour_api.py` passed 5/5 (100%).
+   - Type Safety & Linting:
+     - `npx tsc --noEmit`: 0 errors.
+     - `npm run lint`: 0 errors (87 preexisting legacy warnings).
+   - Production Build:
+     - `npm run build`: Compiled successfully in Turbopack, generated static/dynamic routes, synced standalone assets to `.next/standalone`.
+   - Running Services Verified:
+     - Port 3000 (Next.js Standalone): HTTP 200 OK.
+     - Port 8765 (Uvicorn OCR Service): HTTP 200 OK `{"status":"ok"}`.
+
+
 
 ### Status: VERIFIED WORKING (Implemented Multi-Tier Inpainting in `ocr-service/app/cleaners/tier_router.py`, reconnected `FlatCleaner` and `GradientCleaner` in `app/api.py:_default_pipeline_factory`, and registered `RETRY_CLEANER_ALIASES` in `app/pipeline.py` per principles: `model-the-domain`, `fix-root-causes`, `prove-it-works`, `laziness-protocol`):
 

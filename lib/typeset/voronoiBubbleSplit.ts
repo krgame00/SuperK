@@ -361,8 +361,12 @@ export function splitDoubleBubble(
 
   const split = splitConjoinedPairVoronoi(rectA, rectB, options);
 
+  const scanlinesA = generateVoronoiScanlineRatios(split.polygonA);
+  const scanlinesB = generateVoronoiScanlineRatios(split.polygonB);
+
   const updatedA: TranslatedBubble = {
     ...bubbleA,
+    scanlineRatios: scanlinesA,
     box: [
       Math.round((split.boxA.y / ih) * 1000),
       Math.round((split.boxA.x / iw) * 1000),
@@ -385,6 +389,7 @@ export function splitDoubleBubble(
 
   const updatedB: TranslatedBubble = {
     ...bubbleB,
+    scanlineRatios: scanlinesB,
     box: [
       Math.round((split.boxB.y / ih) * 1000),
       Math.round((split.boxB.x / iw) * 1000),
@@ -458,12 +463,16 @@ export function splitSingleDoubleBubble(
 
   const split = splitConjoinedPairVoronoi(rectA, rectB, options);
 
+  const scanlinesA = generateVoronoiScanlineRatios(split.polygonA);
+  const scanlinesB = generateVoronoiScanlineRatios(split.polygonB);
+
   const baseId = bubble.id !== undefined ? String(bubble.id) : "double";
 
   const bubble1: TranslatedBubble = {
     ...bubble,
     id: `${baseId}-lobe1`,
     t: text1,
+    scanlineRatios: scanlinesA,
     box: [
       Math.round((split.boxA.y / ih) * 1000),
       Math.round((split.boxA.x / iw) * 1000),
@@ -479,6 +488,7 @@ export function splitSingleDoubleBubble(
       ih,
       userModified: false,
       isAutoOptimized: true,
+      autoOptimizeVersion: 4,
     },
   };
 
@@ -486,6 +496,7 @@ export function splitSingleDoubleBubble(
     ...bubble,
     id: `${baseId}-lobe2`,
     t: text2,
+    scanlineRatios: scanlinesB,
     box: [
       Math.round((split.boxB.y / ih) * 1000),
       Math.round((split.boxB.x / iw) * 1000),
@@ -501,6 +512,7 @@ export function splitSingleDoubleBubble(
       ih,
       userModified: false,
       isAutoOptimized: true,
+      autoOptimizeVersion: 4,
     },
   };
 

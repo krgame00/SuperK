@@ -701,7 +701,7 @@ export function measureBubbleRenderFit(
   if (typeof targetFontSize === "number" && targetFontSize > 0) {
     const effectiveFs = Math.max(8, Math.round(targetFontSize * globalMultiplier * bubbleMultiplier));
     const layout = layoutBubbleAtFixedFont(
-      text, width, effectiveFs, fontFamily, isOval, 0, height, locale, enableHyphenation,
+      text, width, effectiveFs, fontFamily, isOval, 0, height, locale, enableHyphenation, scanlineRatios,
     );
     return {
       fontSize: effectiveFs,
@@ -927,6 +927,7 @@ export function layoutBubbleAtFixedFont(
   availableHeightPx: number,
   locale = "th",
   enableHyphenation = false,
+  scanlineRatios?: number[],
 ): FixedFontWidthResult {
   const measureContext = getSharedMeasureCtx();
   if (measureContext) measureContext.font = `bold ${fontSizePx}px ${fontFamily}`;
@@ -940,6 +941,7 @@ export function layoutBubbleAtFixedFont(
     availableHeightPx,
     isOval,
     enableHyphenation,
+    scanlineRatios,
     measureText: measureContext
       ? (value) => measureContext.measureText(value).width
       : (value) => value.length * (fontSizePx * 0.6),
@@ -986,7 +988,7 @@ export function fitTextForBubble(
   const tempCtx = getSharedMeasureCtx();
 
   // If authentic contour scanlineRatios are provided, delegate to BubbleTypesetEngine
-  if (effectiveIsOval && Array.isArray(scanlineRatios) && scanlineRatios.length > 0 && !text.includes("\n")) {
+  if (effectiveIsOval && Array.isArray(scanlineRatios) && scanlineRatios.length > 0) {
     const measureFn = tempCtx
       ? (str: string, fs: number, fam: string) => {
           tempCtx.font = `bold ${fs}px ${fam}`;
@@ -1862,6 +1864,8 @@ export const applyTranslationOverlay = async (
                 savedManualMinimum,
                 availableHeight,
                 wordWrapLocale,
+                false,
+                b.scanlineRatios,
               );
           if (matchedAuto) {
             const neighbors = real.filter(other => other !== b && !other.deleted).flatMap(other => {
@@ -1990,6 +1994,8 @@ export const applyTranslationOverlay = async (
               !b.isInvalidBox,
               lockedFs,
               wordWrapLocale,
+              false,
+              b.scanlineRatios,
             );
         const fontSize = fit.fontSize;
         renderedFontSize = fontSize;

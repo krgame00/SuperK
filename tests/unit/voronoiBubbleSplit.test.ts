@@ -151,6 +151,10 @@ describe("voronoiBubbleSplit", () => {
       expect(adjA.by + adjA.bh).toBeLessThanOrEqual(adjB.by);
       expect(splitA.t).toBe("ข้อความบน");
       expect(splitB.t).toBe("ข้อความล่าง");
+      expect(splitA.scanlineRatios).toBeDefined();
+      expect(splitA.scanlineRatios!.length).toBe(20);
+      expect(splitB.scanlineRatios).toBeDefined();
+      expect(splitB.scanlineRatios!.length).toBe(20);
     });
   });
 
@@ -172,6 +176,10 @@ describe("voronoiBubbleSplit", () => {
       expect(bottomPart.id).toBe("twin-1-lobe2");
       expect(topPart.t).toBe("เธอจะไปไหนเหรอ?");
       expect(bottomPart.t).toBe("ฉันขอไปด้วยคนสิ!");
+      expect(topPart.scanlineRatios).toBeDefined();
+      expect(topPart.scanlineRatios!.length).toBe(20);
+      expect(bottomPart.scanlineRatios).toBeDefined();
+      expect(bottomPart.scanlineRatios!.length).toBe(20);
 
       const adjTop = topPart.layoutAdjustment!;
       const adjBottom = bottomPart.layoutAdjustment!;

@@ -51,7 +51,19 @@ export function segmentThaiAwareTokens(
   const tokens: string[] = [];
   for (const seg of rawSegments) {
     if (!seg) continue;
-    if (tokens.length > 0 && THAI_STICKY_PUNCTUATION.test(seg.trim())) {
+    if (seg.includes("\n")) {
+      const parts = seg.split(/(\r?\n)/);
+      for (const p of parts) {
+        if (!p) continue;
+        if (p === "\n" || p === "\r\n") {
+          tokens.push("\n");
+        } else {
+          tokens.push(p);
+        }
+      }
+      continue;
+    }
+    if (tokens.length > 0 && THAI_STICKY_PUNCTUATION.test(seg.trim()) && tokens[tokens.length - 1] !== "\n") {
       tokens[tokens.length - 1] += seg;
     } else {
       tokens.push(seg);
@@ -182,6 +194,14 @@ function layoutAtFontSize(
     let currentLine = "";
     while (tokenIdx < workingTokens.length) {
       const nextTok = workingTokens[tokenIdx];
+      if (nextTok === "\n") {
+        tokenIdx++;
+        if (!currentLine && linesText.length > 0) {
+          linesText.push("");
+          linesAllowedWidth.push(allowedWidth);
+        }
+        break;
+      }
       if (!currentLine && /^\s+$/.test(nextTok)) {
         tokenIdx++;
         continue;

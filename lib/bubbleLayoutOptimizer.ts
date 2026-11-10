@@ -457,6 +457,8 @@ export function fitBubbleTextWithinBounds(
     multiplier,
     preferredReadableFs,
     locale,
+    false,
+    bubble.scanlineRatios,
   );
 
   let finalWidth = curW;
@@ -482,6 +484,8 @@ export function fitBubbleTextWithinBounds(
         multiplier,
         minFs,
         locale,
+        false,
+        bubble.scanlineRatios,
       );
       if (fallbackFit.fits) {
         fit = fallbackFit;
@@ -499,6 +503,8 @@ export function fitBubbleTextWithinBounds(
           multiplier,
           minFs,
           locale,
+          false,
+          bubble.scanlineRatios,
         );
         finalWidth = enlargedW;
         finalHeight = enlargedH;
@@ -528,6 +534,8 @@ export function fitBubbleTextWithinBounds(
           multiplier,
           preferredReadableFs,
           locale,
+          false,
+          bubble.scanlineRatios,
         );
         finalWidth = candW;
         finalHeight = candH;
@@ -549,6 +557,8 @@ export function fitBubbleTextWithinBounds(
           multiplier,
           minFs,
           locale,
+          false,
+          bubble.scanlineRatios,
         );
         targetFontSize = fallbackFit.fontSize;
         fit = fallbackFit;
@@ -792,6 +802,8 @@ function refitFontInResolvedBox(
       multiplier,
       minFs,
       locale,
+      false,
+      bubble.scanlineRatios,
     );
     targetFontSize = fit.fontSize;
   }
@@ -805,6 +817,8 @@ function refitFontInResolvedBox(
     25,
     ih,
     locale,
+    false,
+    bubble.scanlineRatios,
   );
   while (
     targetFontSize > 8 &&
@@ -820,6 +834,8 @@ function refitFontInResolvedBox(
       25,
       ih,
       locale,
+      false,
+      bubble.scanlineRatios,
     );
   }
 

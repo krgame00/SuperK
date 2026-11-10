@@ -107,4 +107,28 @@ describe("BubbleTypesetEngine", () => {
     expect(result.lines.length).toBeGreaterThan(1);
     expect(result.lines.some((l) => l.text.endsWith("-"))).toBe(true);
   });
+
+  it("fits multiline text with explicit newlines across scanlines", () => {
+    const bubble: BubbleShapeInput = {
+      x: 0,
+      y: 0,
+      width: 180,
+      height: 120,
+      scanlineRatios: [0.8, 1.0, 1.0, 1.0, 0.8],
+    };
+    const measureFn = (text: string, fontSize: number) => text.length * fontSize * 0.4;
+
+    const result = fitTextToBubbleContour(
+      measureFn,
+      "บรรทัดแรก\nบรรทัดสอง",
+      bubble,
+      "Noto Sans Thai",
+      12,
+      20
+    );
+
+    expect(result.lines.length).toBe(2);
+    expect(result.lines[0].text).toBe("บรรทัดแรก");
+    expect(result.lines[1].text).toBe("บรรทัดสอง");
+  });
 });
