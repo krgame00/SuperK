@@ -29,6 +29,8 @@ describe("Thai Spellcheck & Normalizer", () => {
     expect(normalizeThaiText("กินข้าวกะเพรา หรือ กระเพรา")).toBe("กินข้าวกะเพรา หรือ กะเพรา");
     expect(normalizeThaiText("เวทย์มนต์แห่งความผูกพันธ์")).toBe("เวทมนตร์แห่งความผูกพัน");
     expect(normalizeThaiText("ปวดศรีษะมาก")).toBe("ปวดศีรษะมาก");
+    expect(normalizeThaiText("รสชาดอร่อย สังเกตเกตุ")).toBe("รสชาติอร่อย สังเกต");
+    expect(normalizeThaiText("โปรเจคและโปรเจ็ค")).toBe("โปรเจกต์และโปรเจกต์");
   });
 
   it("cleans redundant vowel & tone mark stacking", () => {
@@ -41,6 +43,7 @@ describe("Thai Spellcheck & Normalizer", () => {
     expect(cleanPunctuationAndSpacing("อะไร นะ ? ! !")).toBe("อะไร นะ?!!");
     expect(cleanPunctuationAndSpacing("รอเดี๋ยว.....")).toBe("รอเดี๋ยว...");
     expect(cleanPunctuationAndSpacing("เร็วๆเข้าสิ")).toBe("เร็วๆ เข้าสิ");
+    expect(cleanPunctuationAndSpacing("จริงเหรอ???")).toBe("จริงเหรอ?");
     expect(cleanPunctuationAndSpacing("บรรทัดหนึ่ง\nบรรทัดสอง")).toBe("บรรทัดหนึ่ง บรรทัดสอง");
   });
 

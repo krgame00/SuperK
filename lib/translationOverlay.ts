@@ -48,6 +48,12 @@ import {
   type BubbleCategory,
 } from "./typography/comicTypography";
 import { fitTextToBubbleContour } from "./typeset/BubbleTypesetEngine";
+import {
+  fitTextVertically,
+  isCJKLanguage,
+  shouldPreferVerticalTypesetting,
+  type VerticalTypesetResult,
+} from "./typeset/verticalTypography";
 import { readPageImageLayers } from "./editing/imageLayerStore";
 
 const ADJ_KEY = "superk:overlay-adjustments";
@@ -181,6 +187,8 @@ export interface TranslatedBubble {
   scanlineRatios?: number[];
   /** Comic bubble archetype (CAT-01 normal, CAT-02 shouting, CAT-03 thought, CAT-04 narration) */
   bubbleCategory?: BubbleCategory;
+  /** Vertical typesetting orientation (Tate-chū-gaki / 縦書き) */
+  vertical?: boolean;
   [key: string]: unknown;
 }
 
@@ -2017,7 +2025,26 @@ export const applyTranslationOverlay = async (
               false,
               b.scanlineRatios,
             );
-        const fontSize = fit.fontSize;
+        const isVerticalRequested = Boolean(
+          (b as { vertical?: boolean }).vertical ??
+          (isCJKLanguage(wordWrapLocale) && shouldPreferVerticalTypesetting(currentBw, currentBh, wordWrapLocale))
+        );
+        const verticalFit: VerticalTypesetResult | null = isVerticalRequested
+          ? fitTextVertically(
+              text,
+              {
+                x: 0,
+                y: 0,
+                width: currentBw,
+                height: currentBh,
+                scanlineRatios: b.scanlineRatios ?? [],
+              },
+              10,
+              Math.max(14, Math.round(Math.min(currentBh * 0.45, currentBw * 0.45, 96) * bubbleMult)),
+            )
+          : null;
+        const isVerticalActive = Boolean(verticalFit && verticalFit.columns.length > 0);
+        const fontSize = isVerticalActive && verticalFit ? verticalFit.fontSize : fit.fontSize;
         renderedFontSize = fontSize;
         const lines = fit.lines;
         const lineH = snapshotFit
@@ -2214,36 +2241,56 @@ export const applyTranslationOverlay = async (
           }
         };
 
-        lines.forEach((l, i) => {
-          const yPos = startY + (lineYOffsets[i] ?? i * lineH);
-          if (structuredRender) {
-            const trimmed = l.trim();
-            const isBulletStart = trimmed.startsWith("•") || trimmed.startsWith("-");
-            const isSectionHeader = !isBulletStart && (isStructuredSectionHeaderLine(trimmed) || !inBulletItem);
-            if (isBulletStart) {
-              inBulletItem = true;
-              activeCtx.textAlign = "left";
-              drawLineWithOptionalSlant(l, leftPad, yPos);
-            } else if (isSectionHeader) {
-              inBulletItem = false;
-              activeCtx.textAlign = "center";
-              drawLineWithOptionalSlant(l, currentBw / 2, yPos);
-            } else {
-              activeCtx.textAlign = "left";
-              drawLineWithOptionalSlant(l, indentPad, yPos);
+        if (isVerticalActive && verticalFit) {
+          activeCtx.textAlign = "center";
+          activeCtx.textBaseline = "middle";
+          for (const col of verticalFit.columns) {
+            for (const glyph of col.glyphs) {
+              const drawX = col.x + (glyph.offsetX ?? 0);
+              const drawY = glyph.y;
+              if (glyph.rotateDeg) {
+                activeCtx.save();
+                activeCtx.translate(drawX, drawY);
+                activeCtx.rotate((glyph.rotateDeg * Math.PI) / 180);
+                drawLineWithOptionalSlant(glyph.char, 0, 0);
+                activeCtx.restore();
+              } else {
+                drawLineWithOptionalSlant(glyph.char, drawX, drawY);
+              }
             }
-          } else {
-            const customAlign = (b as { align?: "left" | "center" | "right" }).align || "center";
-            activeCtx.textAlign = customAlign;
-            const alignX =
-              customAlign === "left"
-                ? leftPad
-                : customAlign === "right"
-                  ? currentBw - leftPad
-                  : currentBw / 2;
-            drawLineWithOptionalSlant(l, alignX, yPos);
           }
-        });
+        } else {
+          lines.forEach((l, i) => {
+            const yPos = startY + (lineYOffsets[i] ?? i * lineH);
+            if (structuredRender) {
+              const trimmed = l.trim();
+              const isBulletStart = trimmed.startsWith("•") || trimmed.startsWith("-");
+              const isSectionHeader = !isBulletStart && (isStructuredSectionHeaderLine(trimmed) || !inBulletItem);
+              if (isBulletStart) {
+                inBulletItem = true;
+                activeCtx.textAlign = "left";
+                drawLineWithOptionalSlant(l, leftPad, yPos);
+              } else if (isSectionHeader) {
+                inBulletItem = false;
+                activeCtx.textAlign = "center";
+                drawLineWithOptionalSlant(l, currentBw / 2, yPos);
+              } else {
+                activeCtx.textAlign = "left";
+                drawLineWithOptionalSlant(l, indentPad, yPos);
+              }
+            } else {
+              const customAlign = (b as { align?: "left" | "center" | "right" }).align || "center";
+              activeCtx.textAlign = customAlign;
+              const alignX =
+                customAlign === "left"
+                  ? leftPad
+                  : customAlign === "right"
+                    ? currentBw - leftPad
+                    : currentBw / 2;
+              drawLineWithOptionalSlant(l, alignX, yPos);
+            }
+          });
+        }
         activeCtx.textAlign = "center";
 
         if (isWarped && warpCanvas && effectiveWarp) {
@@ -4380,4 +4427,11 @@ export {
   fitBubbleTextWithinBounds,
   resolveBubbleCollisions,
 } from "./bubbleLayoutOptimizer";
+
+export {
+  fitTextVertically,
+  isCJKLanguage,
+  shouldPreferVerticalTypesetting,
+} from "./typeset/verticalTypography";
+
 

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { PageViewer } from "@/components/workspace/PageViewer";
 
@@ -127,5 +127,47 @@ describe("PageViewer Side-by-Side Split View", () => {
 
     expect(screen.getByTestId("split-view-original-pane")).toBeInTheDocument();
     expect(screen.getByTestId("split-view-translated-pane")).toBeInTheDocument();
+  });
+
+  it("toggles between side-by-side and interactive curtain compare slider", () => {
+    const onComparisonModeChange = vi.fn();
+    render(
+      <PageViewer
+        pages={pages}
+        currentPage={0}
+        viewLayout="single"
+        workspaceLayer="translated"
+        currentCleaningResult={null}
+        cleaningResultsByPage={new Map()}
+        brokenPages={new Set()}
+        onPageChange={vi.fn()}
+        onViewLayoutChange={vi.fn()}
+        onRemovePage={vi.fn()}
+        onImageError={vi.fn()}
+        isSplitView={true}
+        onComparisonModeChange={onComparisonModeChange}
+      />,
+    );
+
+    // Initial default is side-by-side
+    expect(screen.getByTestId("split-view-original-pane")).toBeInTheDocument();
+    expect(screen.getByTestId("split-view-translated-pane")).toBeInTheDocument();
+    expect(screen.queryByTestId("compare-slider-container")).not.toBeInTheDocument();
+
+    // Click slider button
+    const sliderBtn = screen.getByTestId("compare-mode-slider-btn");
+    fireEvent.click(sliderBtn);
+
+    expect(onComparisonModeChange).toHaveBeenCalledWith("slider");
+    expect(screen.getByTestId("compare-slider-container")).toBeInTheDocument();
+    expect(screen.queryByTestId("split-view-original-pane")).not.toBeInTheDocument();
+
+    // Click side-by-side button to return
+    const sbsBtn = screen.getByTestId("compare-mode-side-by-side-btn");
+    fireEvent.click(sbsBtn);
+
+    expect(onComparisonModeChange).toHaveBeenCalledWith("side-by-side");
+    expect(screen.getByTestId("split-view-original-pane")).toBeInTheDocument();
+    expect(screen.queryByTestId("compare-slider-container")).not.toBeInTheDocument();
   });
 });

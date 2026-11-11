@@ -1,5 +1,87 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Feature: Vertical Target Typography & Interactive Compare Slider (Torii Parity Items 3 & 4) — 2026-11-11
+
+### Status: VERIFIED WORKING (Implemented vertical typography engine in `lib/typeset/verticalTypography.ts`, wired into `lib/translationOverlay.ts`, and built interactive curtain compare slider in `components/workspace/CompareSlider.tsx` and `components/workspace/PageViewer.tsx` per principles: `model-the-domain`, `fix-root-causes`, `prove-it-works`, `experience-first`, `laziness-protocol`):
+
+1) Item 3 — Vertical Target Typography (Tate-chū-gaki / 縦書き):
+   - Created `lib/typeset/verticalTypography.ts`:
+     - Modeled `VerticalGlyph`, `VerticalColumn`, and `VerticalTypesetResult`.
+     - Right-to-Left column progression ($X_0 > X_1 > X_2$) and Top-to-Bottom intra-column flow ($Y_0 < Y_1 < Y_2$).
+     - Punctuation transformations: 90-degree clockwise rotation for prolonged sound mark `ー` (U+30FC), dashes `―`, `—`, `–`, brackets, and ellipsis `…`; top-right quadrant offset shift for Japanese commas `、` and periods `。`.
+     - Automatic aspect ratio gating via `shouldPreferVerticalTypesetting(w, h, lang)`: activates when $H/W \ge 1.35$ for CJK target languages (`ja`, `zh`, `ko`) or when `vertical === true` on `TranslatedBubble`.
+     - Binary search font fitting against speech bubble contour scanline chords.
+   - Integrated into `lib/translationOverlay.ts`:
+     - Wired `fitTextVertically` into `renderTranslatedTextBubble`.
+     - Renders vertical columns with glyph rotation and outline styling using existing shadow and outline paints.
+
+2) Item 4 — Interactive Curtain Compare Slider:
+   - Created `components/workspace/CompareSlider.tsx`:
+     - Interactive curtain splitter revealing original raw artwork vs translated/cleaned overlay via CSS `clipPath: polygon(0 0, pos% 0, pos% 100%, 0 100%)`.
+     - High-contrast divider line with circular thumb button (`ChevronsLeftRight`), double-click reset to 50%, pointer drag with pointer capture, touch support, and full ARIA keyboard accessibility (`role="slider"`, `ArrowLeft`/`ArrowRight`, `Home`/`End`).
+     - Synchronized with zoom and pan transform stage (`stageStyle`).
+   - Integrated into `components/workspace/PageViewer.tsx`:
+     - Added comparison mode toggle pill at top center of split view: "เทียบสองฝั่ง (Side-by-Side)" and "ตัวเลื่อนม่าน (Slider)".
+     - Allows instant dynamic switching between side-by-side dual panes and interactive curtain comparison slider.
+
+3) Verification Evidence:
+   - Unit Tests:
+     - `tests/typesetting/verticalTypography.test.ts`: 6/6 passed.
+     - `tests/typesetting/translationOverlayVertical.test.ts`: 3/3 passed.
+     - `tests/workspace/CompareSlider.test.tsx`: 6/6 passed.
+     - `tests/workspace/SplitViewComparison.test.tsx`: 4/4 passed.
+   - Full Test Suite: 283 test files passed, 2,325 tests passed with 0 failures in 88.1s.
+   - Typecheck: `npx tsc --noEmit` exited cleanly with code 0.
+   - Lint: ESLint exited cleanly with code 0 (0 errors).
+   - Production Build: Next.js standalone build succeeded in 11.9s.
+   - Live Daemons: Next.js on `http://127.0.0.1:3000` (HTTP 200 OK) and OCR service on `http://127.0.0.1:8765` (`{"status":"ok"}`).
+
+
+## Feature: End-to-End Live Workload System Verification (Real Manga Pages) — 2026-11-11
+
+### Status: VERIFIED WORKING (Executed full end-to-end workload verification against active Python daemon on port 8765 and Next.js server on port 3000 using real manga page files per principles: `prove-it-works`, `fix-root-causes`, `laziness-protocol`, `experience-first`):
+
+1) Verification Workload & Setup:
+   - Target Environment: Live Python OCR / Inpainting Daemon (`http://127.0.0.1:8765`, PID 10704) and Live Next.js Web Application (`http://127.0.0.1:3000`, PID 16368).
+   - Test Input: Real manga pages (`page_001.jpg` [521 KB], `page_003.jpg` [354 KB]) from active fixtures.
+   - Script: `scratch/test_live_system.py` covering 5 core operational layers.
+
+2) Verification Evidence (Measured 5/5 Passing):
+   - [1/5] Direct Python OCR Daemon (`POST /v1/jobs`):
+     - Job status: HTTP 202 accepted, completed in 3.62s.
+     - Detected 17 text & SFX regions (`narration`, `review/preserve`, `clean`).
+   - [2/5] Next.js Clean Inpainting Proxy (`POST /api/clean/v1/jobs`):
+     - Proxy status: HTTP 202 accepted, completed in 3.66s.
+     - Downloaded Clean PNG (3,443,615 bytes) and Mask PNG (24,993 bytes) through Next.js reverse proxy endpoint. Validated valid PNG signatures (`\x89PNG\r\n\x1a\n`).
+   - [3/5] Live Gemini Multimodal Translation (`POST /api/translate`):
+     - Target page: `page_003.jpg` (Japanese to Thai).
+     - Model: `gemini-3.5-flash-lite` in 4.48s.
+     - Result: Captured 16 translated Thai dialogue bubbles with complete bounding boxes and transcription.
+   - [4/5] Translation Quality Review Policy (`POST /api/translation-review`):
+     - Inspected 4 translated dialogue items in 1.12s.
+     - Review verdicts returned correctly (`status=ok` / `status=needs_review` / `status=suggested`).
+   - [5/5] Chrome Extension Pairing & Settings Synchronization:
+     - `GET /api/extension/pair`: HTTP 200, returned UUID pairing token.
+     - `GET /api/extension/settings`: HTTP 200, validated synced settings (`targetLang=Thai`, `font=Itim, sans-serif`).
+
+## Feature: Thai Proofreading Guard & Persona Linter Engine — 2026-11-11
+
+### Status: VERIFIED WORKING (Implemented Proofreading Linter and Character Persona Guard in `lib/proofreading/personaGuard.ts` and enhanced Thai spellcheck dictionary and punctuation normalizer in `lib/thaiSpellcheck.ts` per principles: `model-the-domain`, `boundary-discipline`, `laziness-protocol`, `prove-it-works`):
+
+1) Problem & Domain Modeling:
+   - Manga translations suffer from frequent Thai orthography typos (e.g. รสชาด -> รสชาติ, สังเกตเกตุ -> สังเกต, โปรเจค/โปรเจ็ค -> โปรเจกต์), repeated punctuation marks (?? -> ?), and character persona drift (polite honorifics leaking into aggressive characters or pronoun mismatches).
+   - Modeled `CharacterPersona` (characterId, primaryName, firstPersonPronouns, secondPersonPronouns, forbiddenPronouns, forbiddenHonorifics, toneRegister) and `ProofreadResult`.
+
+2) Implementation & Architecture:
+   - Enhanced `lib/thaiSpellcheck.ts`: Added common orthography dictionary entries for รสชาด, สังเกตเกตุ, โปรเจค, โปรเจ็ค and folded excessive repeated question marks (`\?{2,}` -> `?`) inside `cleanPunctuationAndSpacing()`.
+   - Created `lib/proofreading/personaGuard.ts`: Implemented `auditAndCorrectDialogue(text, persona)` providing dual-layer auditing: Phase 1 fast Thai orthography and punctuation normalization, Phase 2 character-level forbidden pronoun replacement and trailing forbidden honorific stripping with punctuation preservation.
+
+3) Verification Evidence:
+   - TDD Unit Tests `tests/proofreading/personaGuard.test.ts` (7/7 passed in 8ms).
+   - Existing Thai Spellcheck Tests `tests/unit/thaiSpellcheck.test.ts` (23/23 passed).
+   - Language Policy Tests `tests/translation/languagePolicy.test.ts` (92/92 passed).
+   - TypeScript Check `npx tsc --noEmit` exited cleanly with code 0.
+
 ## Feature: Cross-Page Context Pipeline (Torii Parity Rank 2) — 2026-11-11
 
 ### Status: VERIFIED WORKING (Implemented sliding window Cross-Page Context Aggregator in `lib/translation/crossPageContext.ts`, wired into `src/app/api/translate-text/route.ts` and `hooks/useTranslation.ts` per principles: `model-the-domain`, `fix-root-causes`, `prove-it-works`, `laziness-protocol`, `experience-first`):

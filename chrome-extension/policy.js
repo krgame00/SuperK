@@ -759,6 +759,10 @@ const THAI_SPELLCHECK_DICTIONARY = [
     [/พะแนง/g, "พะแนง"],
     [/แพนง/g, "พะแนง"],
     [/ผัดกระเพรา/g, "ผัดกะเพรา"],
+    [/รสชาด/g, "รสชาติ"],
+    [/สังเกตเกตุ/g, "สังเกต"],
+    [/โปรเจค/g, "โปรเจกต์"],
+    [/โปรเจ็ค/g, "โปรเจกต์"],
 ];
 /**
  * Clean up redundant Thai tone marks and vowel stacking.
@@ -792,6 +796,8 @@ function cleanPunctuationAndSpacing(text) {
         .replace(/\u30FC+/g, "—")
         // Replace multiple newlines inside a single bubble with a space
         .replace(/\r?\n+/g, " ")
+        // Collapse excessive repeated question marks (??+ -> ?)
+        .replace(/\?{2,}/g, "?")
         // Collapse 4+ periods into standard ellipsis (...)
         .replace(/\.{4,}/g, "...")
         .replace(/…+/g, "...")
