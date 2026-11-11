@@ -3,6 +3,7 @@ import {
   normalizeThaiText,
   cleanThaiVowelStacking,
   cleanPunctuationAndSpacing,
+  compressThaiSfx,
   normalizeTranslationPayload,
   countForeignScriptChars,
   describeForeignScripts,
@@ -45,6 +46,41 @@ describe("Thai Spellcheck & Normalizer", () => {
     expect(cleanPunctuationAndSpacing("เร็วๆเข้าสิ")).toBe("เร็วๆ เข้าสิ");
     expect(cleanPunctuationAndSpacing("จริงเหรอ???")).toBe("จริงเหรอ?");
     expect(cleanPunctuationAndSpacing("บรรทัดหนึ่ง\nบรรทัดสอง")).toBe("บรรทัดหนึ่ง บรรทัดสอง");
+  });
+
+  describe("SFX length compression & policy handling", () => {
+    it("compresses trailing repeated characters to 1 + ... or preserves trailing punctuation in translate mode", () => {
+      expect(compressThaiSfx("กรี๊ดดดดดด")).toBe("กรี๊ด...");
+      expect(compressThaiSfx("ว้ากกกก!")).toBe("ว้าก!");
+      expect(compressThaiSfx("อ๊ากกกกก...")).toBe("อ๊าก...");
+      expect(compressThaiSfx("ตู้มมมมม")).toBe("ตู้ม...");
+    });
+
+    it("does not compress SFX when sfxPolicy is 'preserve'", () => {
+      expect(compressThaiSfx("กรี๊ดดดดดด", "preserve")).toBe("กรี๊ดดดดดด");
+      expect(compressThaiSfx("ว้ากกกก!", "preserve")).toBe("ว้ากกกก!");
+    });
+
+    it("integrates SFX compression into normalizeThaiText with options", () => {
+      expect(normalizeThaiText("กรี๊ดดดดดด", { isSfx: true, sfxPolicy: "translate" })).toBe("กรี๊ด...");
+      expect(normalizeThaiText("กรี๊ดดดดดด", { isSfx: true, sfxPolicy: "preserve" })).toBe("กรี๊ดดดดดด");
+    });
+
+    it("respects sfxPolicy when normalizing a translation payload", () => {
+      const payload = {
+        bubbles: [
+          { id: 1, t: "กรี๊ดดดดดด", styleCategory: "sfx" },
+          { id: 2, t: "ขอบคุณนะค่ะ", styleCategory: "dialogue" },
+        ],
+      };
+      const preserved = normalizeTranslationPayload(payload, { sfxPolicy: "preserve" });
+      expect((preserved.bubbles as any)[0].t).toBe("กรี๊ดดดดดด");
+      expect((preserved.bubbles as any)[1].t).toBe("ขอบคุณนะคะ");
+
+      const translated = normalizeTranslationPayload(payload, { sfxPolicy: "translate" });
+      expect((translated.bubbles as any)[0].t).toBe("กรี๊ด...");
+      expect((translated.bubbles as any)[1].t).toBe("ขอบคุณนะคะ");
+    });
   });
 
   it("normalizes a full translation payload object", () => {

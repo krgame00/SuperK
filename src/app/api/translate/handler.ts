@@ -138,9 +138,10 @@ export function buildTranslationPrompt({
     `${thaiTargetDirective}` +
     `- Read order is usually Right-to-Left, Top-to-Bottom.\n` +
     `- Classify each detected text region as styleCategory: dialogue, narration, or sfx. This is metadata only and must not change translation wording.\n` +
+    `- Identify the speaker or speaker type in "speaker" (e.g. character name matching the pronoun matrix or glossary if recognized, or role/descriptor like "พระเอก", "นางเอก", or empty string "" if narrator/unspecified).\n` +
     `- If a text region is visibly tilted/angled (e.g., slanted shouting text, SFX, or tilted signs like "THE BULL... DEMON IS ANGRY!"), include "rotation" (tilt angle in degrees from -45 to 45; negative = tilted upward to the right, positive = tilted downward to the right, 0 = horizontal) and "italic": true when the letters are slanted/italicized.\n` +
     `Output ONLY valid JSON, no markdown, no explanation.\n` +
-    `Format: {"bubbles":[{"original_text": "text found in image", "t":"translated text in Thai","box":[ymin, xmin, ymax, xmax],"styleCategory":"dialogue","rotation":0,"italic":false}]}\n` +
+    `Format: {"bubbles":[{"original_text": "text found in image", "t":"translated text in Thai","box":[ymin, xmin, ymax, xmax],"speaker":"character name or role","styleCategory":"dialogue","rotation":0,"italic":false}]}\n` +
     `box: bounding box coordinates in 0-1000 scale (ymin, xmin = top-left, ymax, xmax = bottom-right). For multiline text in speech bubbles, the box MUST enclose ALL lines within that bubble from top to bottom.\n` +
     `ALL translations in 't' MUST be in ${targetLanguageLabel}.\n` +
     `If no text found: {"bubbles":[]}`
@@ -825,8 +826,9 @@ async function handleLocalTranslate({
         ],
       },
     ],
-    max_tokens: 8192,
-    temperature: 0.3,
+    max_tokens: 2048,
+    temperature: 0.2,
+    frequency_penalty: 0.3,
     stream: false,
     response_format: { type: "json_object" },
   };
@@ -846,8 +848,8 @@ async function handleLocalTranslate({
       payload,
       // A cold daemon must load a multi-GB vision model into VRAM before the
       // first token, so the local budget sits far above the 9router's.
-      attemptTimeoutMs: 120_000,
-      totalBudgetMs: 300_000,
+      attemptTimeoutMs: 300_000,
+      totalBudgetMs: 400_000,
       signal,
     });
 
@@ -882,14 +884,29 @@ async function handleLocalTranslate({
     return NextResponse.json({ text: sanitizedText });
   } catch (error) {
     if (error instanceof GeminiRequestError) {
+      const isMultimodalUnsupported =
+        error.message.toLowerCase().includes("multimodal data provided") ||
+        error.message.toLowerCase().includes("does not support multimodal");
+      const isTimeout = error.code === "GEMINI_TIMEOUT" || error.status === 504;
+      const friendlyDetail = isMultimodalUnsupported
+        ? `โมเดล '${preference.model}' เป็นโมเดลข้อความเท่านั้น ไม่สามารถอ่านภาพมังงะได้ กรุณาเลือกโมเดลสายวิชั่น เช่น 'qwen2.5vl:7b' ในหน้าตั้งค่า`
+        : isTimeout
+          ? `Local Engine (${preference.model}) ใช้เวลาประมวลผลนานเกินกำหนด กรุณาลองใหม่อีกครั้ง`
+          : error.message;
+
       writeServerLog({
         level: localErrorStatus(error) >= 500 ? "error" : "warn",
         category: "translate",
-        message: `Local engine error [${error.status}]: ${error.message}`,
+        message: `Local engine error [${error.status}]: ${friendlyDetail}`,
         details: { code: error.code, retryable: error.retryable, retryAfterMs: error.retryAfterMs },
       });
       return NextResponse.json(
-        localErrorBodyFrom(error),
+        isMultimodalUnsupported || isTimeout
+          ? {
+              ...localErrorBodyFrom(error),
+              error: `Local engine ${isTimeout ? "timeout" : "failed"}: ${friendlyDetail}. No cloud fallback was attempted.`,
+            }
+          : localErrorBodyFrom(error),
         { status: localErrorStatus(error) },
       );
     }

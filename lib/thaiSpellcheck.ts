@@ -161,12 +161,53 @@ function replaceAtWordBounds(
 }
 
 /**
+ * Compresses prolonged Thai sound effects (SFX) to prevent bubble overflow,
+ * e.g., 'กรี๊ดดดดดด' -> 'กรี๊ด...', 'ว้ากกกก!' -> 'ว้าก!'.
+ *
+ * Boundary condition: ONLY compresses when sfxPolicy is NOT 'preserve'.
+ * If sfxPolicy is 'preserve', the text remains completely untouched.
+ */
+export function compressThaiSfx(text: string, sfxPolicy?: string): string {
+  if (!text || typeof text !== "string" || sfxPolicy === "preserve") {
+    return text;
+  }
+
+  let result = text;
+
+  // 1. Prolonged letters followed by exclamation/question marks: ว้ากกกก! -> ว้าก!
+  result = result.replace(/([\u0E01-\u0E2E\u0E30-\u0E3A\u0E40-\u0E4E])\1{2,}([!?]+)/g, "$1$2");
+
+  // 2. Prolonged letters already followed by ellipsis: อ๊ากกกกก... -> อ๊าก...
+  result = result.replace(/([\u0E01-\u0E2E\u0E30-\u0E3A\u0E40-\u0E4E])\1{2,}(?:\.{3,}|…+)/g, "$1...");
+
+  // 3. Trailing prolonged letters at end of word or string: กรี๊ดดดดดด -> กรี๊ด...
+  result = result.replace(/([\u0E01-\u0E2E\u0E30-\u0E3A\u0E40-\u0E4E])\1{2,}(?=\s|$)/g, "$1...");
+
+  return result;
+}
+
+export interface NormalizeThaiTextOptions {
+  isSfx?: boolean;
+  sfxPolicy?: "translate" | "preserve" | "ignore" | string;
+}
+
+/**
  * Primary normalization function for a single translated Thai sentence.
  */
-export function normalizeThaiText(text: string): string {
+export function normalizeThaiText(text: string, options?: NormalizeThaiTextOptions): string {
   if (!text || typeof text !== "string") return "";
 
+  // If in preserve mode and this is an SFX bubble, return completely untouched
+  if (options?.isSfx && options?.sfxPolicy === "preserve") {
+    return text;
+  }
+
   let cleaned = text;
+
+  // If isSfx and sfxPolicy is not preserve, apply SFX length compression first
+  if (options?.isSfx) {
+    cleaned = compressThaiSfx(cleaned, options.sfxPolicy);
+  }
 
   // 1. Strip dialogue speaker prefix hallucinations e.g. "Cหึๆ", "C: ", "C1: ", "A: ", "B: "
   cleaned = cleaned.replace(/^[A-Za-z][0-9]*[:：\s]?\s*(?=[\u0E00-\u0E7F])/g, "");
@@ -244,7 +285,10 @@ export function countContaminatedBubbles(
 /**
  * Normalize and spell-check all bubble texts in a parsed translation object.
  */
-export function normalizeTranslationPayload<T extends { bubbles?: unknown[] }>(payload: T): T {
+export function normalizeTranslationPayload<T extends { bubbles?: unknown[] }>(
+  payload: T,
+  options?: NormalizeThaiTextOptions,
+): T {
   if (!payload || typeof payload !== "object") return payload;
 
   if (Array.isArray(payload.bubbles)) {
@@ -257,10 +301,13 @@ export function normalizeTranslationPayload<T extends { bubbles?: unknown[] }>(p
         if (typeof b !== "object" || b === null) {
           throw new Error("Malformed bubble element in translation response");
         }
-        const entry = b as { t?: unknown };
+        const entry = b as { t?: unknown; styleCategory?: unknown };
+        const isSfx = entry.styleCategory === "sfx" || options?.isSfx === true;
         return {
           ...entry,
-          t: typeof entry.t === "string" ? normalizeThaiText(entry.t) : entry.t,
+          t: typeof entry.t === "string"
+            ? normalizeThaiText(entry.t, { ...options, isSfx })
+            : entry.t,
         };
       }),
     };

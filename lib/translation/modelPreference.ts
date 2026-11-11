@@ -8,6 +8,23 @@ export type ModelPreferenceWire = string | ModelPreference;
 
 export const AUTO_MODEL_PREFERENCE: ModelPreference = { engine: "auto" };
 
+/**
+ * Detects whether a model identifier indicates multimodal / vision capabilities
+ * (e.g. qwen2.5vl, qwen2.5-vl, llama3.2-vision, minicpm-v, llava, pixtral).
+ * Text-only models like qwen2.5:7b or llama3:8b return false.
+ */
+export function isVisionModelName(modelName: string): boolean {
+  if (!modelName) return false;
+  const lower = modelName.toLowerCase();
+  return (
+    lower.includes("vl") ||
+    lower.includes("vision") ||
+    lower.includes("llava") ||
+    lower.includes("minicpm-v") ||
+    lower.includes("pixtral")
+  );
+}
+
 const MODEL_PREFERENCE_STORAGE_KEY = "superk:model-preference";
 
 /**

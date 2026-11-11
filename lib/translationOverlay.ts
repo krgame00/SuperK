@@ -189,6 +189,10 @@ export interface TranslatedBubble {
   bubbleCategory?: BubbleCategory;
   /** Vertical typesetting orientation (Tate-chū-gaki / 縦書き) */
   vertical?: boolean;
+  /** Character who spoke this bubble (e.g. character name or role) */
+  speaker?: string;
+  /** Whether the speaker was confirmed/edited by the user */
+  speakerConfirmed?: boolean;
   [key: string]: unknown;
 }
 
@@ -2961,6 +2965,12 @@ export const applyTranslationOverlay = async (
           }
           if (typeof updates.opacity === "number") {
             (b as { opacity?: number }).opacity = updates.opacity;
+          }
+          if (typeof updates.speaker === "string") {
+            b.speaker = updates.speaker.trim();
+          }
+          if (typeof updates.speakerConfirmed === "boolean") {
+            b.speakerConfirmed = updates.speakerConfirmed;
           }
           if (typeof updates.strokeWidth === "number") {
             (b as { strokeWidth?: number }).strokeWidth = updates.strokeWidth;

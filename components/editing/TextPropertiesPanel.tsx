@@ -12,6 +12,7 @@ import {
   Trash2,
   Type,
   Upload,
+  User,
 } from "lucide-react";
 import type { TextLayer } from "@/lib/editing/commands";
 import {
@@ -130,6 +131,37 @@ export function TextPropertiesPanel({
             </button>
           )}
         </div>
+      </div>
+
+      {/* Speaker / Character Recognition */}
+      <div className="flex flex-col gap-1.5 pb-2 border-b border-surface-hover/60">
+        <div className="flex items-center justify-between">
+          <label htmlFor="bubble-speaker-input" className="text-[11px] font-medium text-muted flex items-center gap-1">
+            <User className="w-3.5 h-3.5 text-primary" />
+            <span>ผู้พูด / ตัวละคร (Speaker)</span>
+          </label>
+          {layer.speaker ? (
+            <span
+              className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
+                layer.speakerConfirmed
+                  ? "bg-green-500/15 text-green-400 border border-green-500/30"
+                  : "bg-primary/15 text-primary border border-primary/30"
+              }`}
+            >
+              {layer.speakerConfirmed ? "ยืนยันแล้ว" : "AI ระบุ"}
+            </span>
+          ) : (
+            <span className="text-[9px] text-muted">ยังไม่ระบุ</span>
+          )}
+        </div>
+        <input
+          id="bubble-speaker-input"
+          type="text"
+          value={layer.speaker ?? ""}
+          onChange={(e) => onChange({ speaker: e.target.value, speakerConfirmed: true })}
+          placeholder="เช่น พระเอก, นางเอก, ซาโตรุ..."
+          className="bg-background border border-surface-hover rounded-md px-2 py-1 text-xs text-foreground placeholder:text-muted/50 focus:border-primary outline-none"
+        />
       </div>
 
       {/* 1-Click Typography Presets */}

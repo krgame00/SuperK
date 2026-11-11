@@ -35,6 +35,7 @@ import { probeLocalEngine } from "@/lib/server/localEngine";
 import { POST as translateImage } from "@/src/app/api/translate/route";
 import { POST as translateText } from "@/src/app/api/translate-text/route";
 import { POST as localModelsRoute } from "@/src/app/api/translate/local-models/route";
+import { isVisionModelName } from "@/lib/translation/modelPreference";
 
 const requestGeminiMock = vi.mocked(requestGemini);
 const executeGeminiTranslationMock = vi.mocked(executeGeminiTranslation);
@@ -285,4 +286,81 @@ test("the discovery route rejects missing or invalid base URLs and cross-origin 
   }));
   expect(forbidden.status).toBe(403);
   expect(probeLocalEngineMock).not.toHaveBeenCalled();
+});
+
+test("when local model fails with multimodal unsupported error, it returns friendly message pointing to vision models", async () => {
+  requestOpenAICompatibleMock.mockRejectedValue(
+    new GeminiRequestError(
+      "Multimodal data provided, but model does not support multimodal requests.",
+      "GEMINI_UPSTREAM",
+      400,
+      false,
+    ),
+  );
+
+  const response = await translateImage(
+    imageRequest({
+      modelPreference: { ...localPreference, model: "qwen2.5:7b" },
+    }),
+  );
+
+  expect(response.status).toBe(400);
+  const body = await response.json();
+  expect(body.error).toContain("qwen2.5:7b");
+  expect(body.error).toContain("โมเดลข้อความเท่านั้น");
+  expect(body.error).toContain("qwen2.5vl:7b");
+});
+
+test("isVisionModelName correctly differentiates vision models from text-only models", () => {
+  expect(isVisionModelName("qwen2.5vl:7b")).toBe(true);
+  expect(isVisionModelName("qwen2.5-vl:7b")).toBe(true);
+  expect(isVisionModelName("llama3.2-vision:11b")).toBe(true);
+  expect(isVisionModelName("minicpm-v:8b")).toBe(true);
+  expect(isVisionModelName("llava:7b")).toBe(true);
+  expect(isVisionModelName("pixtral:12b")).toBe(true);
+
+  expect(isVisionModelName("qwen2.5:7b")).toBe(false);
+  expect(isVisionModelName("llama3:8b")).toBe(false);
+  expect(isVisionModelName("mistral:7b")).toBe(false);
+  expect(isVisionModelName("gemma2:9b")).toBe(false);
+  expect(isVisionModelName("")).toBe(false);
+});
+
+test("the local image translation prompt requests speaker identification and preserves speaker in bubbles", async () => {
+  requestOpenAICompatibleMock.mockResolvedValue({
+    data: {
+      choices: [
+        {
+          message: {
+            content: '{"bubbles":[{"t":"ข้าไม่ยอมแพ้","box":[0,0,10,10],"speaker":"พระเอก"}]}',
+          },
+          finish_reason: "stop",
+        },
+      ],
+    },
+    model: "qwen2.5-vl:7b",
+    meta: { provider: "openai_compatible", model: "qwen2.5-vl:7b", attemptCount: 1, elapsedMs: 5, fallbackCount: 0 },
+  } as never);
+
+  const response = await translateImage(imageRequest({ modelPreference: localPreference }));
+  expect(response.status).toBe(200);
+  const { text } = await response.json();
+  const parsed = JSON.parse(text);
+  expect(parsed.bubbles[0].speaker).toBe("พระเอก");
+
+  expect(requestOpenAICompatibleMock).toHaveBeenCalledWith(
+    expect.objectContaining({
+      payload: expect.objectContaining({
+        messages: [
+          expect.objectContaining({
+            content: expect.arrayContaining([
+              expect.objectContaining({
+                text: expect.stringContaining("Identify the speaker"),
+              }),
+            ]),
+          }),
+        ],
+      }),
+    }),
+  );
 });

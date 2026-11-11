@@ -46,6 +46,8 @@ export interface TextLayer {
   isItalic?: boolean;
   padding?: number;
   warp?: WarpSettings;
+  speaker?: string;
+  speakerConfirmed?: boolean;
 }
 
 export interface MaskPoint {

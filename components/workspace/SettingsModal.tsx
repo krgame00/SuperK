@@ -9,7 +9,12 @@ import {
 } from "@/lib/translation/pronounMatrix";
 import { TARGET_LANGUAGES, resolveTargetLanguage, getAllowedThaiTokens, saveCustomAllowedThaiTokens, removeAllowedThaiTokens } from "@/lib/languagePolicy";
 import { MANUAL_IMAGE_MODEL_IDS } from "@/lib/translation/imageModelChoices";
-import { AUTO_MODEL_PREFERENCE, normalizeLocalBaseUrl, type ModelPreference } from "@/lib/translation/modelPreference";
+import {
+  AUTO_MODEL_PREFERENCE,
+  isVisionModelName,
+  normalizeLocalBaseUrl,
+  type ModelPreference,
+} from "@/lib/translation/modelPreference";
 import { workspaceResourceManager } from "@/lib/lifecycle/workspaceResourceManager";
 import { Plus, Trash2, BookText, Users, Flame, X, ChevronDown, Download, Folder, Search, Check, Sparkles, Power, AlertTriangle, Loader2, Upload, Type, ScrollText, Layers } from "lucide-react";
 import {
@@ -343,6 +348,11 @@ export function SettingsModal({
     [onTextStyleChange, textStyle.fontFamily],
   );
 
+  const modelPreferenceRef = useRef(modelPreference);
+  modelPreferenceRef.current = modelPreference;
+  const onModelPreferenceChangeRef = useRef(onModelPreferenceChange);
+  onModelPreferenceChangeRef.current = onModelPreferenceChange;
+
   const probeLocalEngineStatus = useCallback(async (rawBaseUrl: string) => {
     const seq = ++localProbeSeqRef.current;
     setLocalEngineStatus({ state: "checking" });
@@ -356,6 +366,17 @@ export function SettingsModal({
       if (seq !== localProbeSeqRef.current) return;
       if (response.ok && data.ok === true && Array.isArray(data.models)) {
         setLocalEngineStatus({ state: "connected", models: data.models });
+        const currentPref = modelPreferenceRef.current;
+        if (currentPref.engine === "local") {
+          const hasCurrentModel = data.models.some((m) => m.id === currentPref.model);
+          if (!hasCurrentModel || !currentPref.model) {
+            const preferred =
+              data.models.find((m) => isVisionModelName(m.id))?.id || data.models[0]?.id;
+            if (preferred) {
+              onModelPreferenceChangeRef.current({ ...currentPref, model: preferred });
+            }
+          }
+        }
       } else {
         setLocalEngineStatus({ state: "unreachable", message: data.error || "ตรวจสอบ Local Engine ไม่สำเร็จ" });
       }
@@ -2188,15 +2209,45 @@ export function SettingsModal({
                   className="mt-2 w-full rounded border border-surface-hover bg-surface px-2 py-1 text-[11px] text-foreground disabled:opacity-60"
                 >
                   {!modelPreference.model && <option value="">เลือกโมเดล...</option>}
-                  {localModelOptions.map((model) => (
-                    <option key={model.id} value={model.id}>{model.id}</option>
-                  ))}
+                  {localModelOptions.map((model) => {
+                    const isVision = isVisionModelName(model.id);
+                    return (
+                      <option key={model.id} value={model.id}>
+                        {model.id} {isVision ? "· [👁️ Vision/แปลภาพ]" : "· [📝 ข้อความเท่านั้น]"}
+                      </option>
+                    );
+                  })}
                 </select>
+                {modelPreference.engine === "local" && modelPreference.model && !isVisionModelName(modelPreference.model) && (
+                  <div className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 p-2 text-[10px] text-amber-500">
+                    <div className="font-semibold flex items-center gap-1">
+                      <AlertTriangle className="h-3 w-3 shrink-0" />
+                      โมเดลนี้เป็นโมเดลข้อความเท่านั้น (Text-only)
+                    </div>
+                    <p className="mt-0.5 text-foreground/80 leading-normal">
+                      ไม่สามารถแปลภาพมังงะทั้งหน้าได้ หากต้องการแปลภาพมังงะ กรุณาเลือกโมเดลสายวิชั่น เช่น <strong>qwen2.5vl:7b</strong>
+                    </p>
+                    {localModelOptions.some((m) => isVisionModelName(m.id)) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const visionModel = localModelOptions.find((m) => isVisionModelName(m.id));
+                          if (visionModel) {
+                            onModelPreferenceChange({ ...modelPreference, model: visionModel.id });
+                          }
+                        }}
+                        className="mt-1.5 inline-flex items-center gap-1 rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-medium text-amber-300 hover:bg-amber-500/30"
+                      >
+                        สลับไปใช้ {localModelOptions.find((m) => isVisionModelName(m.id))?.id} ทันที
+                      </button>
+                    )}
+                  </div>
+                )}
                 {localEngineStatus.state !== "connected" && (
                   <p className="mt-1 text-[10px] text-muted">กดรีเฟรชเพื่อโหลดรายการโมเดลจาก Local Engine</p>
                 )}
                 <p className="mt-1.5 text-[10px] leading-relaxed text-muted">
-                  Main image translation needs a vision-capable model (e.g. qwen2.5-vl, llama3.2-vision, gemma3). Text re-translation works with any model.
+                  การแปลภาพมังงะทั้งหน้าต้องใช้โมเดลสายวิชั่น (เช่น qwen2.5vl, llama3.2-vision) ส่วนโมเดลข้อความทั่วไปใช้ได้กับการแปลเฉพาะข้อความในบอลลูน
                 </p>
               </div>
             )}

@@ -1130,6 +1130,8 @@ export function WorkspaceCanvasHost({
                         ),
                         boxFill: (selectedBubbleBridge.bubble as { boxFill?: string }).boxFill,
                         opacity: (selectedBubbleBridge.bubble as { opacity?: number }).opacity ?? 1,
+                        speaker: selectedBubbleBridge.bubble.speaker,
+                        speakerConfirmed: selectedBubbleBridge.bubble.speakerConfirmed,
                       }}
                       scope={inspectorScope}
                       onScopeChange={setInspectorScope}

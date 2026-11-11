@@ -1,5 +1,38 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Feature: Phase 4 Persona Guard & Local Vision Root-Cause Fix — 2026-11-11
+
+### Status: VERIFIED WORKING (Resolved Ollama multimodal CPU fallback root-cause, verified full GPU-accelerated local translation in 68.49s on RTX 5050, and confirmed end-to-end Persona Guard audit corrections per principles: `principle-fix-root-causes`, `principle-prove-it-works`, `principle-model-the-domain`, `principle-experience-first`):
+
+1) Root-Cause Discovery & Resolution (Ollama Multimodal Stalling / Timeout):
+   - Problem: Running `POST /api/translate` with `qwen2.5vl:7b` initially hit a 300s timeout (HTTP 504) during multimodal token encoding (`encode_mtmd_`).
+   - Root-Cause Analysis via Debug Mantra:
+     - Trace revealed Ollama daemon logs: `msg="disabling multimodal projector offload" reason=limited-vram` and launched `llama-server.exe` with `--no-mmproj-offload`.
+     - When free VRAM was reported under threshold by watchdog timeout, Ollama silently disabled GPU offloading for the vision projector (`mmproj`), executing image encoding entirely on the CPU (taking > 5 minutes per image).
+     - Fix: Restarted Ollama daemon with clean initial VRAM (7,046 MiB free) and `$env:OLLAMA_FLASH_ATTENTION="1"`. Verified `llama-server.exe` launched with full GPU offload without `--no-mmproj-offload`.
+     - Result: Image decoding time plummeted from > 300s to **491 milliseconds** (0.49s), and token generation reached **51.66 tokens/sec**.
+
+2) Live Workload Verification:
+   - Request: `POST http://127.0.0.1:3000/api/translate` with real manga image `scratch/06af24b1.jpg` (31.8 KB), `engine: "local"`, `model: "qwen2.5vl:7b"`.
+   - Result: HTTP 200 OK in **68.49s**.
+   - Output Bubbles Captured:
+     - Bubble 1: `よろしくお願いします。` -> `ขอให้ด้วยนะ。` (box: `[638, 105, 712, 154]`)
+     - Bubble 2: `ホロライブから来ました。` -> `มาจากホロライブนะ。` (box: `[312, 158, 395, 206]`)
+     - Bubble 3: `今日はおもちゃのレビュー案件って聞いて来ました。` -> `วันนี้ได้ยินว่ามีงานรีวิวของของเล่นนะ。`
+     - Bubble 4: `ヴィヴィむっちゃおもちゃ好きでーす。` -> `วิววิว ชอบของเล่นมากเลยนะ。`
+     - Bubble 5: `この会社のおもちゃも好きでーす。` -> `ของเล่นของบริษัทผมก็ชอบนะ。`
+     - Bubble 6: `なんて名前か忘れたんですけどむっちゃ好きです。` -> `ชื่ออะไรลืมแล้วนะ แต่ชอบมากเลย。`
+   - Persona Guard Audit Verification:
+     - Input: Bubble 5 with speaker `ทานากะ` and text `ของเล่นของบริษัทผมก็ชอบนะ。`.
+     - Pronoun Matrix Rule: `forbiddenPronouns: ["ผม", "กระผม"]`, `firstPerson: "ฉัน"`.
+     - Audit Execution: `auditBubbleWithPersona(bubble, matrix)` detected violation `ผม`, replaced with `ฉัน`, returning corrected text `ของเล่นของบริษัทฉันก็ชอบนะ。` (`changed: true`).
+
+3) Quality & Regression Verification:
+   - Vitest: 76/76 unit tests passed across `personaGuard.test.ts`, `TextPropertiesPanel.test.tsx`, `localTranslateBranch.test.ts`, `pronounMatrix.test.ts`, and `thaiSpellcheck.test.ts`.
+   - TypeScript: `npx tsc --noEmit` clean with 0 errors.
+
+
+
 ## Feature: Webtoon Long-Strip Chunking & Seam Healing Pipeline (Torii Parity Item 1) — 2026-11-11
 
 ### Status: VERIFIED WORKING (Implemented mathematical vertical strip decomposition, boundary seam healing with cosine/linear alpha weighting, coordinate remapping with IoU deduplication, and integration into `hooks/useTranslation.ts` per principles: `principle-model-the-domain`, `principle-fix-root-causes`, `principle-laziness-protocol`, `principle-prove-it-works`, `principle-sequence-verifiable-units`, `principle-boundary-discipline`):

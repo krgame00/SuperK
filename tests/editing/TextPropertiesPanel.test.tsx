@@ -33,6 +33,31 @@ describe("TextPropertiesPanel", () => {
     expect(screen.getByLabelText("ขนาดฟอนต์")).toHaveValue(24);
   });
 
+  it("renders speaker input with AI/confirmed badge and updates on change", () => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <TextPropertiesPanel
+        layer={{ ...sampleLayer, speaker: "พระเอก", speakerConfirmed: false }}
+        onChange={onChange}
+      />,
+    );
+
+    const speakerInput = screen.getByLabelText("ผู้พูด / ตัวละคร (Speaker)");
+    expect(speakerInput).toHaveValue("พระเอก");
+    expect(screen.getByText("AI ระบุ")).toBeInTheDocument();
+
+    fireEvent.change(speakerInput, { target: { value: "ซาโตรุ" } });
+    expect(onChange).toHaveBeenCalledWith({ speaker: "ซาโตรุ", speakerConfirmed: true });
+
+    rerender(
+      <TextPropertiesPanel
+        layer={{ ...sampleLayer, speaker: "ซาโตรุ", speakerConfirmed: true }}
+        onChange={onChange}
+      />,
+    );
+    expect(screen.getByText("ยืนยันแล้ว")).toBeInTheDocument();
+  });
+
   it("triggers onChange when font size or text color is updated", () => {
     const onChange = vi.fn();
     render(
