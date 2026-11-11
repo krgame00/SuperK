@@ -45,6 +45,7 @@ import { sampleBubbleRegion } from "@/lib/colorMatching/canvasSampler";
 import { extractTextColors } from "@/lib/colorMatching/sampleTextColors";
 import { needsSourceOutlineRefresh, refreshSourceOutline } from "@/lib/colorMatching/outlineMigration";
 import { analyzeImageElementMonochrome } from "@/lib/colorMatching/monochromePage";
+import { auditBubbleWithPersona } from "@/lib/proofreading/personaGuard";
 import {
   applyNearbyStyleFallbacks,
   inferTextStyleCategory,
@@ -62,6 +63,13 @@ import {
   extendFailureGroupCooldown,
 } from "@/lib/translation/failureGroups";
 import { collectPreviousPagesContext } from "@/lib/translation/crossPageContext";
+import {
+  isWebtoonStrip,
+  planWebtoonChunking,
+  remapChunkBubbleToGlobal,
+  deduplicateGlobalBubbles,
+  type GlobalBubbleRecord,
+} from "@/lib/webtoon";
 import { logError, logWarn } from "@/lib/logger/clientLogger";
 
 export type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -135,6 +143,7 @@ export interface PreparedTranslationPage {
   maskUrl?: string;
   preparedIdentity?: string;
   awaitingReview?: boolean;
+  isLongStrip?: boolean;
 }
 
 interface UseTranslationProps {
@@ -1259,7 +1268,14 @@ export function useTranslation({
         return;
       }
 
-      const newBubbles = parsed.bubbles.map((b: TranslatedBubble) => {
+      const personaAuditedBubbles =
+        pronounMatrixRef.current && pronounMatrixRef.current.length > 0
+          ? (parsed.bubbles as TranslatedBubble[]).map(
+              (b) => auditBubbleWithPersona(b, pronounMatrixRef.current).bubble,
+            )
+          : (parsed.bubbles as TranslatedBubble[]);
+
+      const newBubbles = personaAuditedBubbles.map((b: TranslatedBubble) => {
         if (!b.box || b.box.length !== 4) return b;
         const cropYminPx = (b.box[0] / 1000) * cropBox.h;
         const cropXminPx = (b.box[1] / 1000) * cropBox.w;
@@ -1597,7 +1613,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         return {...recovered,bubbles:recovered.bubbles.filter(b=>!manual.includes(b))};
       };
 
-      if (nsfwBypassMode || forceNsfwBypass) {
+      if (preparedPage.isLongStrip || nsfwBypassMode || forceNsfwBypass) {
         let allBubbles: TranslatedBubble[] = [];
         let successCount = 0;
         let validPayloadCount = 0;
@@ -1644,7 +1660,107 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         }
         if (!fullPageUsed) {
         const imgEl = await waitForImageReady(recognitionUrl);
+        const isLongStrip = isWebtoonStrip(imgEl.naturalWidth, imgEl.naturalHeight);
 
+        if (isLongStrip) {
+          const chunkPlan = planWebtoonChunking(imgEl.naturalWidth, imgEl.naturalHeight);
+          const chunkSlices: { chunk: (typeof chunkPlan.chunks)[number]; base64: string }[] = [];
+
+          for (const chunk of chunkPlan.chunks) {
+            const canvas = document.createElement("canvas");
+            canvas.width = chunk.width;
+            canvas.height = chunk.height;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) {
+              throw new Error("Canvas 2D context is unavailable for Webtoon chunk slicing");
+            }
+            ctx.drawImage(imgEl, 0, chunk.sourceY, chunk.width, chunk.height, 0, 0, chunk.width, chunk.height);
+            const chunkBase64 = canvas.toDataURL("image/jpeg", 0.95).split(",")[1];
+            canvas.width = 0;
+            canvas.height = 0;
+            chunkSlices.push({ chunk, base64: chunkBase64 });
+          }
+
+          setTranslationResult(`กำลังแปลเว็บตูนขนาดยาวทั้งหมด ${chunkSlices.length} ชิ้นส่วนพร้อมกัน...`);
+          const chunkResults = await Promise.all(
+            chunkSlices.map(async ({ chunk, base64: chunkBase64 }) => {
+              try {
+                const res = await fetch("/api/translate", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    imageBase64: chunkBase64,
+                    mimeType: "image/jpeg",
+                    targetLang,
+                    sourceLang,
+                    modelPreference,
+                    apiKey: userApiKey,
+                    allowPreview: allowPreviewModels,
+                    glossary: glossaryRef.current,
+                    pronounMatrix: pronounMatrixRef.current,
+                    policy: { sfx: sfxModeRef.current },
+                    context: priorContext || undefined,
+                  }),
+                  signal,
+                });
+                const data = await readTranslationResponse<{ text: string }>(res);
+
+                let parsed = parseLLMJSON(data.text) as
+                  | { bubbles?: TranslatedBubble[] }
+                  | null;
+                if (!parsed || !Array.isArray(parsed.bubbles)) {
+                  throw new Error("Translation response malformed: bubbles array missing.");
+                }
+                parsed = normalizeTargetTranslationPayload(parsed, targetLang);
+                const sliceBubbles =
+                  pronounMatrixRef.current && pronounMatrixRef.current.length > 0 && Array.isArray(parsed.bubbles)
+                    ? parsed.bubbles.map((b) => auditBubbleWithPersona(b, pronounMatrixRef.current).bubble)
+                    : (parsed.bubbles ?? []);
+                return { ok: true as const, chunk, sliceBubbles };
+              } catch (err: unknown) {
+                console.warn(`Webtoon chunk ${chunk.index} failed:`, err);
+                return { ok: false as const, err };
+              }
+            }),
+          );
+
+          const rawGlobalBubbles: GlobalBubbleRecord[] = [];
+          for (const result of chunkResults) {
+            if (!result.ok) {
+              const err = result.err;
+              if (isUserCancelledError(err)) throw err;
+              if (getTranslationRetryDelay(err) !== null) {
+                throw err;
+              }
+              continue;
+            }
+            const { chunk, sliceBubbles } = result;
+            for (const b of sliceBubbles) {
+              const validBox: [number, number, number, number] =
+                b.box && b.box.length === 4
+                  ? [b.box[0], b.box[1], b.box[2], b.box[3]]
+                  : [0, 0, 1000, 1000];
+              const remapped = remapChunkBubbleToGlobal(
+                { ...b, box: validBox, chunkIndex: chunk.index },
+                chunk,
+                imgEl.naturalWidth,
+                imgEl.naturalHeight,
+              );
+              rawGlobalBubbles.push(remapped);
+            }
+            validPayloadCount++;
+            successCount++;
+          }
+
+          if (validPayloadCount === 0) {
+            throw new Error("Translation failed: no valid webtoon chunk responses.");
+          }
+
+          const dedupedGlobal = deduplicateGlobalBubbles(rawGlobalBubbles);
+          for (const b of dedupedGlobal) {
+            allBubbles.push(b as TranslatedBubble);
+          }
+        } else {
         const slices = [];
         const rows = 3;
         const cols = 2;
@@ -1708,7 +1824,11 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
               throw new Error("Translation response malformed: bubbles array missing.");
             }
             parsed = normalizeTargetTranslationPayload(parsed, targetLang);
-            return { ok: true as const, slice, sliceBubbles: parsed.bubbles ?? [] };
+            const sliceBubbles =
+              pronounMatrixRef.current && pronounMatrixRef.current.length > 0 && Array.isArray(parsed.bubbles)
+                ? parsed.bubbles.map((b) => auditBubbleWithPersona(b, pronounMatrixRef.current).bubble)
+                : (parsed.bubbles ?? []);
+            return { ok: true as const, slice, sliceBubbles };
           } catch (err: unknown) {
             console.warn(`Slice failed:`, err);
             return { ok: false as const, err };
@@ -1807,6 +1927,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           throw new Error("Translation failed: no valid NSFW slice responses.");
         }
         }
+        }
 
         allBubbles = applySfxPolicyToBubbles(deduplicateBubbleSFX(allBubbles, 3)).filter(b =>
           withinTranslationScope(b.box, textScope) || outsideProtectedAreas(b.box, textScope));
@@ -1868,6 +1989,13 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         modelPreference.engine === "auto"
       ) {
         setTranslationResult("กำลังแปลด้วย Auto · จะสลับโมเดลที่พร้อมใช้เมื่อจำเป็น…");
+      } else if (
+        activePageRef.current === pageUrl &&
+        modelPreference.engine === "local"
+      ) {
+        setTranslationResult(
+          `กำลังแปลด้วยโมเดลโลคอล ${modelPreference.model || "Ollama"} บนเครื่องของคุณ (อาจใช้เวลา 30-90 วินาที)…`,
+        );
       }
       const reportModelSwitch = (event: { model: string; fallbackCount: number }) => {
         if (activePageRef.current === pageUrl) {
@@ -2006,6 +2134,12 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           parsed = retryNormalized;
           pageBubbles = retryBubbles;
         }
+      }
+
+      if (pronounMatrixRef.current && pronounMatrixRef.current.length > 0) {
+        pageBubbles = pageBubbles.map((bubble) => {
+          return auditBubbleWithPersona(bubble, pronounMatrixRef.current).bubble;
+        });
       }
 
       const dedupedBubbles = deduplicateBubbleSFX(pageBubbles, 3);
@@ -2168,9 +2302,15 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       const preparedPage = await preparePageForTranslation(pageUrl, currentPage, signal);
       if (signal.aborted) throw signal.reason;
       setWorkflowPhase("translating");
-      setTranslationResult(
-        `กำลังแปลหน้า ${currentPage + 1}/${pages.length}`,
-      );
+      if (modelPreference.engine === "local") {
+        setTranslationResult(
+          `กำลังแปลหน้า ${currentPage + 1}/${pages.length} ด้วยโมเดลโลคอล ${modelPreference.model || "Ollama"} (อาจใช้เวลา 30-90 วินาที)...`,
+        );
+      } else {
+        setTranslationResult(
+          `กำลังแปลหน้า ${currentPage + 1}/${pages.length}`,
+        );
+      }
       return await performTranslation(
         preparedPage,
         pageUrl,
@@ -2200,7 +2340,12 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       translationOperationLockRef.current = false;
       setWorkflowPhase(null);
       setIsTranslating(false);
-      setTimeout(() => setTranslationResult(null), 4000);
+      setTimeout(() => {
+        setTranslationResult((prev) => (prev?.startsWith("❌ Error:") ? prev : null));
+      }, 4000);
+      setTimeout(() => {
+        setTranslationResult(null);
+      }, 15000);
     }
   };
 
@@ -2518,6 +2663,10 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             if (nsfwBypassMode || forceNsfw) {
               setTranslationResult(
                 `กำลังหั่นภาพเป็น 6 ส่วน (หน้า ${i + 1}) - รอบ ${retries + 1}/2`,
+              );
+            } else if (modelPreference.engine === "local") {
+              setTranslationResult(
+                `กำลังแปลหน้า ${i + 1}/${pages.length} ด้วยโมเดลโลคอล ${modelPreference.model || "Ollama"} (รอบ ${retries + 1}/2, อาจใช้เวลา 30-90 วินาที)...`,
               );
             } else {
               setTranslationResult(

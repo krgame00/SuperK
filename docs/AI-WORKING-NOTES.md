@@ -1,5 +1,100 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Feature: Webtoon Long-Strip Chunking & Seam Healing Pipeline (Torii Parity Item 1) — 2026-11-11
+
+### Status: VERIFIED WORKING (Implemented mathematical vertical strip decomposition, boundary seam healing with cosine/linear alpha weighting, coordinate remapping with IoU deduplication, and integration into `hooks/useTranslation.ts` per principles: `principle-model-the-domain`, `principle-fix-root-causes`, `principle-laziness-protocol`, `principle-prove-it-works`, `principle-sequence-verifiable-units`, `principle-boundary-discipline`):
+
+1) Problem & Scope:
+   - Ultra-long vertical webtoon/manhwa strips (e.g. 800x12,000px up to 60,000+px) cannot be processed atomically by LLM vision models or browser 2D canvases without massive resolution downscaling, OCR miss rates, and memory exhaustion crashes.
+   - Speech bubbles situated across chunk boundaries get split or duplicated without seam healing and overlap deduplication.
+
+2) Architecture & Engine Implementation (`lib/webtoon/`):
+   - `lib/webtoon/types.ts`:
+     - Modeled domain types `WebtoonChunk`, `WebtoonChunkPlan`, `ChunkBubbleRecord`, and `GlobalBubbleRecord`.
+   - `lib/webtoon/stripChunker.ts`:
+     - `isWebtoonStrip(width, height, threshold=4000, minAspectRatio=2.5)`: Identifies webtoon strips automatically.
+     - `planWebtoonChunking(width, height, options)`: Decomposes strips into overlapping chunks (target 2400px height, 240px overlap buffer). Computes exact `sourceY`, `height`, `overlapTop`, `overlapBottom`, `coreY`, and `coreHeight`.
+     - `snapToGutter(proposedY, gutterCandidates, searchWindow=180)`: Snaps slice boundaries to blank panel gutters when detected.
+   - `lib/webtoon/coordinateRemapper.ts`:
+     - `remapChunkBubbleToGlobal(bubble, chunk, stripWidth, stripHeight)`: Maps local chunk coordinates (0-1000) to global strip pixel space and 0-1000 strip-normalized coordinates.
+     - `calculateBoxIoU(boxA, boxB)`: Computes 2D Intersection-over-Union.
+     - `deduplicateGlobalBubbles(bubbles, iouThreshold=0.40)`: Deduplicates overlapping boundary bubbles, picking the candidate with more complete text.
+   - `lib/webtoon/seamHealer.ts`:
+     - `computeSeamBlendWeights(overlapHeight, curve)`: Computes smooth S-curve cosine blend weights ($0.5 \times (1 - \cos(\pi t))$) or linear feathering across horizontal seams.
+     - `blendSeamPixelRow(topRow, bottomRow, outputRow, weight)`: Closed-form alpha row blending for seamless inpainting stitch-back.
+   - `hooks/useTranslation.ts`:
+     - Wired webtoon chunking pipeline into `performTranslation` inside `if (!fullPageUsed)`: when `isLongStrip` is active, slices strip chunks via canvas, dispatches chunk translations concurrently, remaps coordinates to global, deduplicates seam zone bubbles, and overlays onto page.
+     - Added `isLongStrip?: boolean` to `PreparedTranslationPage` and enabled automatic webtoon chunking activation.
+
+3) Verification Evidence (288 Test Files Passed, 2,358 Tests Passing, 0 Type Errors, Build Clean):
+   - Unit Tests:
+     - `tests/webtoon/stripChunker.test.ts`: 6/6 passed. Verified strip aspect ratio detection, single chunk pass-through for normal pages, chunk partitioning math, and gutter snapping.
+     - `tests/webtoon/coordinateRemapper.test.ts`: 3/3 passed. Verified coordinate remapping, IoU calculation, and boundary bubble deduplication.
+     - `tests/webtoon/seamHealer.test.ts`: 4/4 passed. Verified S-curve cosine weights, linear feathering, edge endpoints, and pixel row blending.
+   - Integration Tests:
+     - `tests/integration/webtoonPipelineIntegration.test.ts`: 1/1 passed. Verified end-to-end multi-chunk partitioning, concurrent processing simulation, coordinate reconstruction, and deduplication.
+     - `tests/translation/useTranslation.webtoon.test.tsx`: 1/1 passed. Verified full React hook integration, concurrent chunk requests, global overlay rendering, and coverage reporting.
+   - Regression Gates:
+     - `tests/translation/useTranslation.imageLateEdges.test.tsx`: 5/5 passed. Verified image lifecycle safety and zero duplicate image loads.
+     - `tests/translation/useTranslation.imageLatency.test.tsx`: 5/5 passed.
+   - Quality Gates:
+     - Vitest: 288/288 test files passed (2,358 passed, 1 skipped).
+     - TypeScript: `npx tsc --noEmit` exited cleanly with code 0.
+     - ESLint: `npx eslint lib/webtoon/ tests/webtoon/ tests/translation/useTranslation.webtoon.test.tsx` exited with 0 errors and 0 warnings.
+     - Next.js Standalone Build: `npm run build` compiled cleanly, synced standalone assets, server running on port 3000 (HTTP 200).
+
+
+## Feature: SFX Compression & Pronoun Matrix Honorific Stripping (Phase 2 & 3) — 2026-11-11
+
+### Status: VERIFIED WORKING (Implemented SFX length compression respecting `sfxPolicy === 'preserve'`, extended `PronounRelation` with `forbiddenPronouns`/`forbiddenHonorifics`, and created pre-typesetting `stripForbiddenHonorifics` per principles: `laziness-protocol`, `sequence-verifiable-units`, `model-the-domain`, `boundary-discipline`, `prove-it-works`):
+
+1) Problem & Scope (Resolving Architectural Review & Blueprint):
+   - Blueprint requested SFX sound elongation compression (e.g. กรี๊ดดดดด -> กรี๊ด...) and character persona guard.
+   - Architectural Review Decision:
+     - Phase 2: Extend existing `lib/thaiSpellcheck.ts` without writing redundant modules. Ensure SFX compression strictly respects `sfxPolicy === 'preserve'` (never compress SFX in preserve mode).
+     - Phase 3: Extend existing `lib/translation/pronounMatrix.ts` with `forbiddenPronouns` and `forbiddenHonorifics`. Honorific stripping must be done BEFORE typesetting layout measurement so that text length changes recalculate font size and line wrapping accurately.
+
+2) Implementation Details:
+   - `lib/thaiSpellcheck.ts`:
+     - Added `compressThaiSfx(text, sfxPolicy)`: Compresses 3+ trailing repeated Thai characters to 1 + `...` (or preserves trailing punctuation like `!` or `?`). Gated so that `sfxPolicy === "preserve"` returns text completely untouched.
+     - Updated `normalizeThaiText(text, options)` and `normalizeTranslationPayload(payload, options)` to pass `isSfx` and `sfxPolicy`.
+   - `lib/translation/pronounMatrix.ts`:
+     - Added optional `forbiddenPronouns?: string[]` and `forbiddenHonorifics?: string[]` to `PronounRelation`.
+     - Updated `buildPronounMatrixDirectives` to append `FORBIDDEN pronouns: ...` and `FORBIDDEN honorifics: ...` to prompt directives.
+     - Implemented `stripForbiddenHonorifics(text, forbiddenHonorifics)`: Strips trailing forbidden honorifics (sorted by length descending, iterating up to 5 passes for stacked honorifics like `ครับผม`) while preserving trailing punctuation (`!`, `?`, `...`, `~`).
+
+3) Verification Evidence (142 Tests Passing, 0 Type Errors):
+   - `tests/unit/thaiSpellcheck.test.ts`: 27/27 passed. Verified SFX compression in translate mode, bypass in preserve mode, and payload normalization.
+   - `tests/translation/pronounMatrix.test.ts`: 12/12 passed. Verified forbidden prompt generation, merge deduplication, trailing honorific stripping with punctuation preservation, stacked honorifics, and word-boundary safety.
+   - Full Related Suites: `languagePolicy.test.ts` (92/92), `personaGuard.test.ts` (7/7), `SettingsModalPronounMatrix.test.tsx` (4/4).
+   - TypeScript Check: `npx tsc --noEmit` exited cleanly with code 0.
+
+## Feature: Local Model (Offline Ollama Engine) Live Verification — 2026-11-11
+
+### Status: VERIFIED WORKING (Verified 100% offline local translation with Ollama on NVIDIA GeForce RTX 5050 GPU via `POST /api/translate/local-models`, `POST /api/translate-text`, and `POST /api/translate` per principles: `prove-it-works`, `fix-root-causes`, `laziness-protocol`, `model-the-domain`):
+
+1) Problem & Setup Analysis:
+   - User requested testing the local model engine (`ที่ใช้ localmodel สิ`).
+   - Root Cause Discovered: Ollama was running on port 11434 (`ollama.exe serve`), but `ollama list` showed 0 models because `ollama app.exe` booted with default storage path `C:\Users\PC\.ollama\models` while the user had 10 GB+ models installed in `F:\OllamaModels` (`qwen2.5:7b` [4.36 GiB] and `qwen2.5vl:7b` [5.69 GiB]).
+   - Fix: Created transparent NTFS Directory Junction `C:\Users\PC\.ollama\models` -> `F:\OllamaModels`, and launched `ollama.exe serve` with `$env:OLLAMA_MODELS="F:\OllamaModels"`.
+
+2) Verification Evidence (Measured Passing on Live Hardware):
+   - Model Discovery (`POST /api/translate/local-models`):
+     - Connected to `http://localhost:11434/v1` in 20ms latency.
+     - Detected 2 local models: `qwen2.5:7b` and `qwen2.5vl:7b`.
+   - Text Dialogue Translation (`POST /api/translate-text` with `qwen2.5:7b`):
+     - Input Japanese text: `こんにちは！元気ですか？`
+     - Response status: HTTP 200 OK in 10.59s.
+     - Translated Thai output: `สวัสดีครับ คุณสบายดีไหม?` with format `{"bubbles":[{"t":"...","box":[0,0,0,0]}]}`.
+   - Multimodal Vision Manga Translation (`POST /api/translate` with `qwen2.5vl:7b`):
+     - Input: Real manga crop `scratch/06af24b1.jpg` as base64 data URI to `http://localhost:11434/v1/chat/completions`.
+     - Hardware: 100% offloaded (29/29 layers) to NVIDIA GeForce RTX 5050 (8 GB VRAM).
+     - Response status: HTTP 200 OK in 79.65s (warm load).
+     - OCR & Translated Thai output: `よろしくお願いしまーす` -> `ขออนุญาติครับ` with bounding box `[732, 103, 772, 163]` and style metadata.
+   - Privacy & Offline Guarantee:
+     - No cloud API key or Internet connection required.
+     - Zero token cost. Error paths explicitly guarantee `No cloud fallback was attempted` for sensitive/18+ content privacy.
+
 ## Feature: Live System Verification — Vertical Typography & Compare Slider (Real Workload) — 2026-11-11
 
 ### Status: VERIFIED WORKING (Executed full end-to-end workload verification against active Python daemon on port 8765 and Next.js server on port 3000 using real manga page files `page_001.jpg` and `page_003.jpg` per principles: `prove-it-works`, `fix-root-causes`, `laziness-protocol`, `experience-first`):
@@ -4655,3 +4750,71 @@ Verification evidence:
   - `tests/cleaning/aiMaskInspector.test.ts`: 12 passed (100%).
   - `tests/cleaning/maskRederive.test.ts`: 3 passed (100%).
   - Production Standalone Server rebuilt and restarted cleanly on port 3000 (HTTP 200).
+
+
+## Local Model Translation Diagnostics & Vision Model Safeguard — 2026-11-11
+
+### Status: VERIFIED WORKING (Vitest 15/15 passed in localTranslateBranch, 58/58 passed across all related suites, tsc --noEmit 0 errors)
+
+- **User Context & Symptom**:
+  - User reported: `"ผมใช้ local model แล้วมันไม่คืนอะ ช่วยด้วย"` (Translation hangs/fails to return when using local model).
+- **Root Cause Analysis (`principle-fix-root-causes`, `debug-mantra`)**:
+  1. **Text-only Model on Multimodal Image Route**:
+     - User had `qwen2.5:7b` selected (Text-only model) instead of `qwen2.5vl:7b` (Vision-Language model).
+     - When clicking "แปลหน้านี้", the frontend sends `imageBase64` to `POST /api/translate`. Ollama rejected it with HTTP 400: `Multimodal data provided, but model does not support multimodal requests.`.
+  2. **Runaway Repetitive Token Generation**:
+     - Local vision models running with unconstrained `max_tokens: 8192` and no frequency penalty could enter repeating token loops.
+  3. **Silent UX & Cold VRAM Swap Latency**:
+     - Swapping local models into VRAM takes 30-90 seconds. Without an explicit local progress cue, users perceived the app as frozen.
+     - Error messages were automatically cleared after 4 seconds, disappearing before users could read what model was missing.
+  4. **Settings Modal Ambiguity**:
+     - `SettingsModal.tsx` rendered raw model IDs without distinguishing Vision models from Text models.
+- **Architectural Solution (`principle-model-the-domain`, `principle-prove-it-works`)**:
+  1. **Vision Model Classification (`lib/translation/modelPreference.ts`)**:
+     - Exported `isVisionModelName(modelName)`: Accurately identifies vision-capable models (`vl`, `vision`, `minicpm-v`, `llava`, `pixtral`).
+  2. **API Route Hardening (`src/app/api/translate/handler.ts`)**:
+     - Capped `max_tokens` at 2048 and introduced `frequency_penalty: 0.3` to eliminate repetition loops.
+     - Caught Ollama's `multimodal data provided` error and returned an actionable Thai error message directing users to choose vision models like `qwen2.5vl:7b`.
+  3. **Settings Modal Ergonomics (`components/workspace/SettingsModal.tsx`)**:
+     - Labeled models in dropdown: `[👁️ Vision/แปลภาพ]` vs `[📝 ข้อความเท่านั้น]`.
+     - Added an alert banner and a one-click quick switch button if a text-only model is selected on the local engine.
+     - Auto-selects the first vision model upon probe if no model is set.
+  4. **Progress Cues & Extended Error Visibility (`hooks/useTranslation.ts`)**:
+     - Added explicit progress banners for local engine: `"กำลังแปลหน้า X/Y ด้วยโมเดลโลคอล ... (อาจใช้เวลา 30-90 วินาที)..."`.
+     - Extended error message visibility to 15 seconds so users can read diagnostic instructions.
+- **Verification Evidence**:
+  - `tests/api/localTranslateBranch.test.ts`: 15 passed (100%).
+  - Full suite check: 58 passed across `thaiSpellcheck`, `pronounMatrix`, `personaGuard`, `SettingsModalPronounMatrix`, and `localTranslateBranch`.
+  - `npx tsc --noEmit`: 0 errors.
+
+
+## Phase 4: AI-Assisted Speaker Source & Persona Guard Pipeline — 2026-11-11
+
+### Status: VERIFIED WORKING (Vitest 80/80 passed across 6 suites, tsc --noEmit 0 errors)
+
+- **Context & Design Decision**:
+  - User chose Option 2 (AI-Assisted Tagging): Let AI vision models detect dialogue speakers from context, while giving users full inspection and manual override capabilities in the UI.
+- **Architectural Implementation (`principle-model-the-domain`, `principle-experience-first`)**:
+  1. **Data Model Extensions (`lib/translationOverlay.ts`, `lib/editing/commands.ts`)**:
+     - Added `speaker?: string;` and `speakerConfirmed?: boolean;` to `TranslatedBubble` and `TextLayer`.
+     - Preserved in overlay rendering, undo manager, canvas bridge, and serialization.
+  2. **AI Vision Prompt & Schema (`src/app/api/translate/handler.ts`)**:
+     - Instructed translation models to identify dialogue speakers in `"speaker"` based on scene context, glossary, and pronoun matrix.
+     - Preserved in the JSON output schema: `{"original_text":"...","t":"...","box":[...],"speaker":"พระเอก",...}`.
+  3. **Persona Guard & Pronoun Matrix Integration (`lib/proofreading/personaGuard.ts`)**:
+     - Added `personaFromPronounMatrix(speaker, matrix)`: Resolves a character persona directly from pronoun relations.
+     - Added `auditBubbleWithPersona(bubble, matrix)`: Automatically checks dialogue against the speaker's persona, stripping forbidden honorifics (with 5-pass loop) and replacing forbidden pronouns.
+  4. **Workspace UI & Manual Override (`components/editing/TextPropertiesPanel.tsx`, `WorkspaceCanvasHost.tsx`)**:
+     - Added an interactive Speaker input in the Text Inspector with status badges: `[AI ระบุ]` (AI detected) and `[ยืนยันแล้ว]` (user confirmed/edited).
+     - Editing the speaker updates the bubble and automatically marks it as confirmed.
+  5. **Runtime Translation Pipeline Hook (`hooks/useTranslation.ts`)**:
+     - Automatically passes translated bubbles through `auditBubbleWithPersona` during full-page, slice, and point translation passes whenever a pronoun matrix is active.
+- **Verification Evidence**:
+  - `tests/proofreading/personaGuard.test.ts`: 11 passed (100%).
+  - `tests/editing/TextPropertiesPanel.test.tsx`: 10 passed (100%).
+  - `tests/api/localTranslateBranch.test.ts`: 16 passed (100%).
+  - `tests/translation/pronounMatrix.test.ts`: 12 passed (100%).
+  - `tests/unit/thaiSpellcheck.test.ts`: 27 passed (100%).
+  - `tests/workspace/SettingsModalPronounMatrix.test.tsx`: 4 passed (100%).
+  - Full suite check: 80 passed across all 6 test suites.
+  - `npx tsc --noEmit`: 0 errors.

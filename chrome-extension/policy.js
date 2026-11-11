@@ -706,6 +706,7 @@ function repairExcludedScriptText(rawText, targetLang) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.cleanThaiVowelStacking = cleanThaiVowelStacking;
 exports.cleanPunctuationAndSpacing = cleanPunctuationAndSpacing;
+exports.compressThaiSfx = compressThaiSfx;
 exports.normalizeThaiText = normalizeThaiText;
 exports.isThaiTargetLanguage = isThaiTargetLanguage;
 exports.foreignScriptCharacters = foreignScriptCharacters;
@@ -847,12 +848,40 @@ function replaceAtWordBounds(text, pattern, replacement, bounds, wordFinal) {
     return result + text.slice(last);
 }
 /**
+ * Compresses prolonged Thai sound effects (SFX) to prevent bubble overflow,
+ * e.g., 'กรี๊ดดดดดด' -> 'กรี๊ด...', 'ว้ากกกก!' -> 'ว้าก!'.
+ *
+ * Boundary condition: ONLY compresses when sfxPolicy is NOT 'preserve'.
+ * If sfxPolicy is 'preserve', the text remains completely untouched.
+ */
+function compressThaiSfx(text, sfxPolicy) {
+    if (!text || typeof text !== "string" || sfxPolicy === "preserve") {
+        return text;
+    }
+    let result = text;
+    // 1. Prolonged letters followed by exclamation/question marks: ว้ากกกก! -> ว้าก!
+    result = result.replace(/([\u0E01-\u0E2E\u0E30-\u0E3A\u0E40-\u0E4E])\1{2,}([!?]+)/g, "$1$2");
+    // 2. Prolonged letters already followed by ellipsis: อ๊ากกกกก... -> อ๊าก...
+    result = result.replace(/([\u0E01-\u0E2E\u0E30-\u0E3A\u0E40-\u0E4E])\1{2,}(?:\.{3,}|…+)/g, "$1...");
+    // 3. Trailing prolonged letters at end of word or string: กรี๊ดดดดดด -> กรี๊ด...
+    result = result.replace(/([\u0E01-\u0E2E\u0E30-\u0E3A\u0E40-\u0E4E])\1{2,}(?=\s|$)/g, "$1...");
+    return result;
+}
+/**
  * Primary normalization function for a single translated Thai sentence.
  */
-function normalizeThaiText(text) {
+function normalizeThaiText(text, options) {
     if (!text || typeof text !== "string")
         return "";
+    // If in preserve mode and this is an SFX bubble, return completely untouched
+    if (options?.isSfx && options?.sfxPolicy === "preserve") {
+        return text;
+    }
     let cleaned = text;
+    // If isSfx and sfxPolicy is not preserve, apply SFX length compression first
+    if (options?.isSfx) {
+        cleaned = compressThaiSfx(cleaned, options.sfxPolicy);
+    }
     // 1. Strip dialogue speaker prefix hallucinations e.g. "Cหึๆ", "C: ", "C1: ", "A: ", "B: "
     cleaned = cleaned.replace(/^[A-Za-z][0-9]*[:：\s]?\s*(?=[\u0E00-\u0E7F])/g, "");
     // 2. Clean Unicode & Vowel Stacking
@@ -912,7 +941,7 @@ function countContaminatedBubbles(bubbles) {
 /**
  * Normalize and spell-check all bubble texts in a parsed translation object.
  */
-function normalizeTranslationPayload(payload) {
+function normalizeTranslationPayload(payload, options) {
     if (!payload || typeof payload !== "object")
         return payload;
     if (Array.isArray(payload.bubbles)) {
@@ -926,9 +955,12 @@ function normalizeTranslationPayload(payload) {
                     throw new Error("Malformed bubble element in translation response");
                 }
                 const entry = b;
+                const isSfx = entry.styleCategory === "sfx" || options?.isSfx === true;
                 return {
                     ...entry,
-                    t: typeof entry.t === "string" ? normalizeThaiText(entry.t) : entry.t,
+                    t: typeof entry.t === "string"
+                        ? normalizeThaiText(entry.t, { ...options, isSfx })
+                        : entry.t,
                 };
             }),
         };
@@ -940,12 +972,28 @@ function normalizeTranslationPayload(payload) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AUTO_MODEL_PREFERENCE = void 0;
+exports.isVisionModelName = isVisionModelName;
 exports.normalizeLocalBaseUrl = normalizeLocalBaseUrl;
 exports.parseModelPreference = parseModelPreference;
 exports.modelPreferenceToString = modelPreferenceToString;
 exports.readPersistedModelPreference = readPersistedModelPreference;
 exports.writePersistedModelPreference = writePersistedModelPreference;
 exports.AUTO_MODEL_PREFERENCE = { engine: "auto" };
+/**
+ * Detects whether a model identifier indicates multimodal / vision capabilities
+ * (e.g. qwen2.5vl, qwen2.5-vl, llama3.2-vision, minicpm-v, llava, pixtral).
+ * Text-only models like qwen2.5:7b or llama3:8b return false.
+ */
+function isVisionModelName(modelName) {
+    if (!modelName)
+        return false;
+    const lower = modelName.toLowerCase();
+    return (lower.includes("vl") ||
+        lower.includes("vision") ||
+        lower.includes("llava") ||
+        lower.includes("minicpm-v") ||
+        lower.includes("pixtral"));
+}
 const MODEL_PREFERENCE_STORAGE_KEY = "superk:model-preference";
 /**
  * The "/v1" suffix matters because requestOpenAICompatible appends
