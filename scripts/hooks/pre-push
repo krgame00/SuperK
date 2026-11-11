@@ -1,0 +1,59 @@
+#!/bin/sh
+echo ""
+echo "========================================================"
+echo "  [SuperK Pre-Push Guard] Verifying quality gates...   "
+echo "========================================================"
+echo ""
+
+# 1. Warn if there are untracked TypeScript files in critical code directories
+UNTRACKED=$(git status --porcelain | grep '^\?\? \(lib\|components\|hooks\|src\)/.*\.tsx\?$')
+if [ -n "$UNTRACKED" ]; then
+    echo "⚠️  [WARNING] You have untracked TypeScript files in core folders:"
+    echo "$UNTRACKED"
+    echo "Ensure no committed files depend on these unstaged/untracked files."
+    echo ""
+fi
+
+# 2. TypeScript compilation check
+echo "[1/3] Checking TypeScript types (npx tsc --noEmit)..."
+npx tsc --noEmit
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "❌ [Pre-Push FAILED] TypeScript compilation errors found!"
+    echo "Push aborted. Fix type errors to prevent GitHub CI failure."
+    exit 1
+fi
+echo "✓ TypeScript compilation passed."
+echo ""
+
+# 3. ESLint check
+echo "[2/3] Checking ESLint rules (npm run lint)..."
+npm run lint
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "❌ [Pre-Push FAILED] ESLint errors found!"
+    echo "Push aborted. Fix lint errors before pushing."
+    exit 1
+fi
+echo "✓ ESLint passed."
+echo ""
+
+# 4. Backend Ruff check (if ocr-service virtualenv exists)
+if [ -f "ocr-service/.venv/Scripts/ruff.exe" ]; then
+    echo "[3/3] Checking Backend Python code (ocr-service ruff)..."
+    ocr-service/.venv/Scripts/ruff.exe check ocr-service/app ocr-service/scripts ocr-service/tests --quiet
+    if [ $? -ne 0 ]; then
+        echo ""
+        echo "❌ [Pre-Push FAILED] Python ruff lint errors found in ocr-service!"
+        echo "Push aborted."
+        exit 1
+    fi
+    echo "✓ Backend ruff check passed."
+    echo ""
+fi
+
+echo "========================================================"
+echo "  ✅ All Pre-Push Quality Gates Passed! Pushing...     "
+echo "========================================================"
+echo ""
+exit 0

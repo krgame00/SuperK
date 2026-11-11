@@ -1,5 +1,38 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Feature: Automated Pre-Push Quality Guard & Push Verification Pipeline — 2026-11-11
+
+### Status: VERIFIED WORKING (Configured native Git `pre-push` hook, installed tracked version in `scripts/hooks/pre-push`, added `npm run push:verify` automated GitHub CI + Gmail alert watcher, and verified dry-run interception per principles: `principle-fix-root-causes`, `principle-prove-it-works`, `principle-laziness-protocol`, `principle-experience-first`):
+
+1) Problem & Scope:
+   - User requested: "ทำให้เช็คทุกรอบที่ commit push ว่ามีปัญหาอะไรไหม"
+   - Whenever code is pushed, developers need absolute confidence that:
+     1. Uncommitted dependencies or untracked files are caught before leaving the local machine.
+     2. TypeScript compilation (`tsc --noEmit`), ESLint (`npm run lint`), and Backend linter (`ruff`) run automatically before Git allows any push to remote.
+     3. If any push reaches GitHub, the remote CI run is monitored and any failure alerts sent to Gmail can be fetched and diagnosed automatically.
+
+2) Architecture & Implementation:
+   - `scripts/hooks/pre-push` & `.git/hooks/pre-push`:
+     - Intercepts all `git push` operations automatically.
+     - Scans `git status --porcelain` for untracked TypeScript files in `lib/`, `components/`, `hooks/`, `src/` to prevent partial commit regressions.
+     - Runs `npx tsc --noEmit` (aborts push with exit code 1 on type error).
+     - Runs `npm run lint` (aborts push with exit code 1 on lint error).
+     - Runs `ocr-service/.venv/Scripts/ruff.exe check` on backend code if virtualenv exists.
+   - `scripts/install-hooks.mjs`:
+     - Copies `scripts/hooks/pre-push` to `.git/hooks/pre-push` during `npm run postinstall` to ensure hooks persist across environments.
+   - `scripts/push-and-verify.ps1` & `npm run push:verify`:
+     - Automated workflow script: stages/commits, pushes (triggering pre-push hook), monitors GitHub Actions CI run via `gh run watch`, and if CI fails, automatically pulls the failure log and queries Gmail via `gmail readonly search "from:github $runId"`.
+
+3) Verification Evidence:
+   - Dry-Run Execution: `git push --dry-run origin main` successfully executed `.git/hooks/pre-push`.
+     - `[1/3] Checking TypeScript types (npx tsc --noEmit)...` -> PASSED.
+     - `[2/3] Checking ESLint rules (npm run lint)...` -> PASSED (0 errors, 89 warnings).
+     - `[3/3] Checking Backend Python code (ocr-service ruff)...` -> PASSED.
+     - Push guard printed `✅ All Pre-Push Quality Gates Passed! Pushing...` and allowed push.
+   - Hook Installer: `node scripts/install-hooks.mjs` executed cleanly.
+   - Gmail integration: Tested and verified active for `missnlpp9@gmail.com`.
+
+
 ## Feature: GitHub Actions Remote CI Fix & Full Pipeline Verification — 2026-11-11
 
 ### Status: VERIFIED WORKING (Resolved remote CI TypeScript build failure on GitHub Actions, staged all pending persona guard & pronoun matrix files, and verified green CI run `43001438925` across backend and frontend suites per principles: `principle-fix-root-causes`, `principle-prove-it-works`, `principle-boundary-discipline`):

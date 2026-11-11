@@ -7,10 +7,11 @@
     "build": "node scripts/prebuild-check.mjs && node scripts/build-extension-policy.mjs && next build && node scripts/sync-standalone-assets.mjs",
     "start": "node .next/standalone/server.js",
     "start:next": "next start -H 127.0.0.1",
-    "postinstall": "node scripts/copy-pdf-worker.mjs",
+    "postinstall": "node scripts/copy-pdf-worker.mjs && node scripts/install-hooks.mjs",
     "lint": "eslint",
     "test": "vitest run --root .",
     "test:watch": "vitest --root .",
+    "push:verify": "powershell -ExecutionPolicy Bypass -File scripts/push-and-verify.ps1",
     "shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/create-desktop-shortcut.ps1"
   },
   "dependencies": {
