@@ -1,5 +1,48 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Feature: GitHub Actions Remote CI Fix & Full Pipeline Verification — 2026-11-11
+
+### Status: VERIFIED WORKING (Resolved remote CI TypeScript build failure on GitHub Actions, staged all pending persona guard & pronoun matrix files, and verified green CI run `43001438925` across backend and frontend suites per principles: `principle-fix-root-causes`, `principle-prove-it-works`, `principle-boundary-discipline`):
+
+1) Root-Cause Discovery & CI Failure Analysis:
+   - Problem: GitHub Actions run `42981340423` on commit `420dedb` failed during `Frontend (tsc + eslint + vitest)` with error:
+     `hooks/useTranslation.ts(48,10): error TS2305: Module '"@/lib/proofreading/personaGuard"' has no exported member 'auditBubbleWithPersona'.`
+   - Root Cause:
+     - Commit `420dedb` introduced imports from `@/lib/proofreading/personaGuard` in `hooks/useTranslation.ts`.
+     - The corresponding file `lib/proofreading/personaGuard.ts` and associated pronoun matrix files were modified locally but were left unstaged when committing `420dedb`.
+     - In remote CI, GitHub checked out only committed code, causing TypeScript compilation (`npx tsc --noEmit`) to fail on the missing export.
+
+2) Fix Applied:
+   - Staged all remaining verified production and test files:
+     - `lib/proofreading/personaGuard.ts` (with `auditBubbleWithPersona` export)
+     - `lib/translation/pronounMatrix.ts`
+     - `lib/thaiSpellcheck.ts`
+     - `lib/editing/commands.ts`
+     - `lib/translationOverlay.ts`
+     - `lib/translation/modelPreference.ts`
+     - `src/app/api/translate/handler.ts`
+     - `components/workspace/SettingsModal.tsx`
+     - `components/workspace/WorkspaceCanvasHost.tsx`
+     - `components/editing/TextPropertiesPanel.tsx`
+     - `tests/proofreading/personaGuard.test.ts`
+     - `tests/translation/pronounMatrix.test.ts`
+     - `tests/editing/TextPropertiesPanel.test.tsx`
+     - `tests/api/localTranslateBranch.test.ts`
+     - `tests/unit/thaiSpellcheck.test.ts`
+   - Committed as `db78227`: `fix(ci): include personaGuard auditBubbleWithPersona export and pronoun matrix integration`.
+   - Pushed cleanly to `origin/main`.
+
+3) Verification Evidence (GitHub Actions CI Run `43001438925` — All Jobs Green):
+   - Backend Job (ID 130458269084): Completed in 55s.
+     - Pytest (`pytest tests -q -m "not model"`): PASSED.
+     - Ruff check (`ruff check app scripts tests`): PASSED.
+   - Frontend Job (ID 130458269575): Completed in 4m52s.
+     - `npx tsc --noEmit`: PASSED (0 errors).
+     - `npm run lint`: PASSED (0 errors).
+     - `npm test` (Vitest): PASSED (288/288 test files passed, 2,358 passed, 1 skipped).
+   - Git Status: `F:\Projects\manga-translator` on branch `main`, working tree clean, synced with `origin/main`.
+
+
 ## Feature: Phase 4 Persona Guard & Local Vision Root-Cause Fix — 2026-11-11
 
 ### Status: VERIFIED WORKING (Resolved Ollama multimodal CPU fallback root-cause, verified full GPU-accelerated local translation in 68.49s on RTX 5050, and confirmed end-to-end Persona Guard audit corrections per principles: `principle-fix-root-causes`, `principle-prove-it-works`, `principle-model-the-domain`, `principle-experience-first`):
