@@ -1,5 +1,42 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Feature: Live System Verification — Vertical Typography & Compare Slider (Real Workload) — 2026-11-11
+
+### Status: VERIFIED WORKING (Executed full end-to-end workload verification against active Python daemon on port 8765 and Next.js server on port 3000 using real manga page files `page_001.jpg` and `page_003.jpg` per principles: `prove-it-works`, `fix-root-causes`, `laziness-protocol`, `experience-first`):
+
+1) Verification Workload & Setup:
+   - Target Environment: Live Python OCR / Inpainting Daemon (`http://127.0.0.1:8765`) and Live Next.js Web Application (`http://127.0.0.1:3000`).
+   - Test Input: Real manga pages (`page_001.jpg` [521 KB], `page_003.jpg` [354 KB]) from active fixtures.
+   - Script: `scratch/test_live_all_items.ts` executed via `npx tsx` and visual synthesis via `scratch/render_compare_visual.py`.
+
+2) Verification Evidence (5/5 Passing on Live Systems):
+   - [1/5] Daemon Health Checks:
+     - Python OCR Daemon: `status=ok` on `http://127.0.0.1:8765/health`.
+     - Next.js Web App: HTTP 200 OK on `http://127.0.0.1:3000`.
+   - [2/5] Neural Inpainting on Real Manga via Next.js Proxy (`POST /api/clean/v1/jobs`):
+     - Job `f9c1441df59e435f9350ba5a36593ac4` completed in 3.66s.
+     - Detected 17 text & SFX regions. Downloaded Clean PNG (3,443,615 bytes) saved to `scratch/live_cleaned_page_001.png`.
+   - [3/5] Live Gemini Multimodal Translation with Cross-Page Context (`POST /api/translate`):
+     - Executed against `page_003.jpg` with context string from `buildCrossPageContextString()`.
+     - Model: `gemini-3.5-flash-lite` completed in 6.77s.
+     - Captured 16 translated dialogue bubbles with bounding boxes.
+   - [4/5] Vertical Target Typography (Torii Parity Item 3):
+     - Tall Manga Balloon Rect: 134px x 275px ($H/W = 2.05 \ge 1.35$) -> gated `true` for Japanese, `false` for Thai.
+     - Wide Balloon Rect: 104px x 100px ($H/W = 0.96 < 1.35$) -> gated `false` for Japanese.
+     - Fitted font size: 26px across 3 vertical columns.
+     - Column 0 X: 100.8px (Right), Column 1 X: 67.0px (Left), confirming Right-to-Left progression ($X_0 > X_1$).
+     - Characters inside Column 0 flow Top-to-Bottom ($Y_0 < Y_1 < Y_2$).
+     - Prolonged sound mark `ー` (U+30FC): `rotateDeg = 90°`.
+     - Horizontal ellipsis `…`: `rotateDeg = 90°`.
+     - Japanese comma `、` and period `。`: `offsetX = +7.8px` (top-right shift).
+   - [5/5] Interactive Compare Curtain Slider (Torii Parity Item 4):
+     - Tested polygon clip-path calculations across positions: 0%, 25%, 50%, 75%, 100%.
+     - Double-click reset to 50% verified.
+     - Keyboard navigation step deltas (+2% / -2%) verified.
+   - Visual Evidence:
+     - Rendered real comparison visual `scratch/live_vertical_compare_demo.png` (2,645,421 bytes).
+
+
 ## Feature: Vertical Target Typography & Interactive Compare Slider (Torii Parity Items 3 & 4) — 2026-11-11
 
 ### Status: VERIFIED WORKING (Implemented vertical typography engine in `lib/typeset/verticalTypography.ts`, wired into `lib/translationOverlay.ts`, and built interactive curtain compare slider in `components/workspace/CompareSlider.tsx` and `components/workspace/PageViewer.tsx` per principles: `model-the-domain`, `fix-root-causes`, `prove-it-works`, `experience-first`, `laziness-protocol`):
