@@ -1,5 +1,39 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Feature: Cross-Page Context Pipeline (Torii Parity Rank 2) — 2026-11-11
+
+### Status: VERIFIED WORKING (Implemented sliding window Cross-Page Context Aggregator in `lib/translation/crossPageContext.ts`, wired into `src/app/api/translate-text/route.ts` and `hooks/useTranslation.ts` per principles: `model-the-domain`, `fix-root-causes`, `prove-it-works`, `laziness-protocol`, `experience-first`):
+
+1) Problem & Domain Analysis:
+   - Rank 2 in `docs/torii-competitive-analysis.md` identified: "ยิง context ข้ามหน้าจริง ฟิลด์ context รออยู่ใน contract แต่ไม่มีตัวเติม เขาขายฟีเจอร์นี้เป็นจุดต่างหลัก".
+   - Translating consecutive manga pages in isolation causes character pronoun drift (e.g. changing between นาย, ฉัน, แก, ท่าน), character name transliteration inconsistencies, and dialogue desynchronization across page turns.
+   - While `src/app/api/translate/handler.ts` already contained a `contextDirective` prompt template, the frontend never collected or supplied prior page dialogue, and `src/app/api/translate-text/route.ts` did not accept the field.
+
+2) Implementation & Architecture:
+   - Pure Domain Module (`lib/translation/crossPageContext.ts`):
+     - `extractPageDialogueSnapshot`: Extracts non-deleted, translated dialogue lines along with recognized source text, sorted in canonical manga reading order via `sortBubblesHierarchicalDAG`.
+     - `buildCrossPageContextString`: Formats up to `maxPreviousPages` (default 3) snapshots into a compact prompt string:
+       `[Page 1 (page_01.jpg)]\n- "Source text" -> "Translated text"`
+       Enforces `maxLinesPerPage` (default 12) and `maxContextChars` (default 1500) budgets to guard the LLM context window.
+     - `collectPreviousPagesContext`: Looks backward through preceding completed pages in `bubbleCacheRef` and builds prompt-ready context.
+   - Backend API Support (`src/app/api/translate-text/route.ts`):
+     - Added `context` parameter extraction and injected `contextDirective` into prompt text, ensuring direct text translation and extension callers share identical consistency behavior.
+   - Frontend Pipeline Wiring (`hooks/useTranslation.ts`):
+     - Wired `collectPreviousPagesContext` into `performTranslation` and `translatePoint`, feeding prior page dialogue into main translation, NSFW bypass, and retry calls.
+
+3) Verification Evidence:
+   - Vitest Unit & Translation Tests:
+     - `tests/translation/crossPageContext.test.ts`: 7/7 passed (100%), testing dialogue snapshot extraction, line truncation, character budget clamping, and sliding window lookup.
+     - Full Translation Suite: 65 test files, 633/633 passed (100%).
+   - Type Safety & Linting:
+     - `npx tsc --noEmit`: 0 errors.
+     - `npm run lint`: 0 errors (89 preexisting legacy warnings).
+   - Production Build & Running Server:
+     - `npm run build`: Compiled successfully in Turbopack in 10.2s, static routes generated, standalone assets synced.
+     - Port 3000 (Next.js Standalone): HTTP 200 OK (`curl.exe -sI http://127.0.0.1:3000`).
+     - Port 8765 (Uvicorn OCR Service): HTTP 200 OK (`curl.exe -s http://127.0.0.1:8765/health`).
+
+
 ## Feature: SuperK Next-Gen Unified Pipeline Integration (Blueprint Phase 4) — 2026-11-10
 
 ### Status: VERIFIED WORKING (Unified all 4 blueprint modules across Web De-scrambler, Panel Flow DAG, Comic Typography, and VN Monotonic IPC; connected sanitizer into `src/app/api/translate-text/route.ts`; verified with end-to-end integration test `tests/integration/nextGenUnifiedPipeline.test.ts` per principles: `model-the-domain`, `fix-root-causes`, `prove-it-works`, `laziness-protocol`, `experience-first`):

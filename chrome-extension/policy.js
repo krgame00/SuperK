@@ -930,6 +930,116 @@ function normalizeTranslationPayload(payload) {
     return payload;
 }
 
+},"lib/translation/modelPreference.ts":(module,exports,require)=>{
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.AUTO_MODEL_PREFERENCE = void 0;
+exports.normalizeLocalBaseUrl = normalizeLocalBaseUrl;
+exports.parseModelPreference = parseModelPreference;
+exports.modelPreferenceToString = modelPreferenceToString;
+exports.readPersistedModelPreference = readPersistedModelPreference;
+exports.writePersistedModelPreference = writePersistedModelPreference;
+exports.AUTO_MODEL_PREFERENCE = { engine: "auto" };
+const MODEL_PREFERENCE_STORAGE_KEY = "superk:model-preference";
+/**
+ * The "/v1" suffix matters because requestOpenAICompatible appends
+ * "/chat/completions" and Ollama/llama.cpp serve /v1/chat/completions —
+ * the normalized base plus that existing append yields the correct URL.
+ */
+function normalizeLocalBaseUrl(raw) {
+    const trimmed = raw.trim();
+    if (!trimmed)
+        return "";
+    let parsed;
+    try {
+        parsed = new URL(trimmed);
+    }
+    catch {
+        return null;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+        return null;
+    let path = parsed.pathname.replace(/\/+$/, "");
+    if (path.endsWith("/chat/completions")) {
+        path = path.slice(0, -"/chat/completions".length);
+    }
+    if (!path.endsWith("/v1")) {
+        path = `${path}/v1`;
+    }
+    return `${parsed.origin}${path}`;
+}
+/** null means the caller must reject the request (400 INVALID_REQUEST). */
+function parseModelPreference(raw) {
+    if (raw === undefined || raw === null)
+        return exports.AUTO_MODEL_PREFERENCE;
+    if (typeof raw === "string") {
+        const trimmed = raw.trim();
+        if (!trimmed || trimmed === "auto")
+            return exports.AUTO_MODEL_PREFERENCE;
+        // Extension sync stores the bare marker: local-selected but configured
+        // only in the browser, so it must surface as unconfigured, never cloud.
+        if (trimmed === "local")
+            return { engine: "local", baseUrl: "", model: "" };
+        return { engine: "gemini", model: trimmed };
+    }
+    if (typeof raw !== "object" || Array.isArray(raw))
+        return null;
+    const record = raw;
+    if (record.engine === "auto")
+        return exports.AUTO_MODEL_PREFERENCE;
+    if (record.engine === "gemini") {
+        const model = typeof record.model === "string" ? record.model.trim() : "";
+        if (!model)
+            return null;
+        return { engine: "gemini", model };
+    }
+    if (record.engine === "local") {
+        const baseUrl = typeof record.baseUrl === "string" ? record.baseUrl : "";
+        return {
+            engine: "local",
+            baseUrl: baseUrl.trim() ? normalizeLocalBaseUrl(baseUrl) ?? "" : "",
+            model: typeof record.model === "string" ? record.model.trim() : "",
+        };
+    }
+    return null;
+}
+/** String encoding for surfaces that still speak strings (extension sync, review client). */
+function modelPreferenceToString(pref) {
+    if (pref.engine === "auto")
+        return "auto";
+    if (pref.engine === "local")
+        return "local";
+    return pref.model;
+}
+function readPersistedModelPreference(storage) {
+    const store = storage ?? (typeof localStorage !== "undefined" ? localStorage : undefined);
+    const raw = store?.getItem(MODEL_PREFERENCE_STORAGE_KEY);
+    if (!raw)
+        return exports.AUTO_MODEL_PREFERENCE;
+    try {
+        return parseModelPreference(JSON.parse(raw)) ?? exports.AUTO_MODEL_PREFERENCE;
+    }
+    catch {
+        // A hand-edited key may hold the bare legacy string instead of JSON;
+        // JSON-shaped garbage is corruption, never a model id.
+        if (raw.trim().startsWith("{"))
+            return exports.AUTO_MODEL_PREFERENCE;
+        return parseModelPreference(raw) ?? exports.AUTO_MODEL_PREFERENCE;
+    }
+}
+function writePersistedModelPreference(pref, storage) {
+    const store = storage ?? (typeof localStorage !== "undefined" ? localStorage : undefined);
+    if (!store)
+        return;
+    try {
+        store.setItem(MODEL_PREFERENCE_STORAGE_KEY, JSON.stringify(pref));
+    }
+    catch {
+        // Quota exceeded or blocked storage: the selection stays alive in memory
+        // for this session and simply will not survive a reload.
+    }
+}
+
 },"lib/translation/pageEligibility.ts":(module,exports,require)=>{
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -974,6 +1084,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.reviewTranslatedBubbles = reviewTranslatedBubbles;
 const languagePolicy_1 = require("lib/languagePolicy.ts");
 const qualityReview_1 = require("lib/translation/qualityReview.ts");
+const modelPreference_1 = require("lib/translation/modelPreference.ts");
 class ReviewRequestFailed extends Error {
 }
 function chunkItems(items) {
@@ -990,6 +1101,21 @@ function chunkItems(items) {
 async function reviewTranslatedBubbles(bubbles, options) {
     if (options.signal?.aborted)
         throw new DOMException("Cancelled", "AbortError");
+    const parsedPreference = (0, modelPreference_1.parseModelPreference)(options.modelPreference);
+    if (parsedPreference?.engine === "local") {
+        // Review runs cloud-side, so a local selection must never send derived
+        // text to Gemini; every active point keeps an explicit unavailable snapshot.
+        return bubbles.map((bubble, index) => {
+            if (bubble.deleted)
+                return bubble;
+            const item = {
+                id: String(index),
+                sourceText: typeof bubble.original_text === "string" ? bubble.original_text : "",
+                translatedText: bubble.t || bubble.translated || "",
+            };
+            return { ...bubble, translationReview: (0, qualityReview_1.guardQualityReview)((0, qualityReview_1.withReviewIdentity)((0, qualityReview_1.unavailableReview)(item), options.targetLang, options.sourceRevision), options.targetLang) };
+        });
+    }
     const result = bubbles.slice();
     const entries = bubbles.flatMap((bubble, index) => {
         if (bubble.deleted)
@@ -1014,7 +1140,7 @@ async function reviewTranslatedBubbles(bubbles, options) {
             const response = await (options.fetchImpl ?? fetch)("/api/translation-review", {
                 method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
                 body: JSON.stringify({ items: chunk, targetLang: options.targetLang, apiKey: options.apiKey,
-                    modelPreference: options.modelPreference, allowPreview: options.allowPreview,
+                    modelPreference: parsedPreference ? (0, modelPreference_1.modelPreferenceToString)(parsedPreference) : undefined, allowPreview: options.allowPreview,
                     glossary: options.glossary ?? [], ...(mode ? { mode } : {}) }),
             });
             if (options.signal?.aborted)

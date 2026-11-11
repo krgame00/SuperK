@@ -47,7 +47,7 @@ export async function POST(req: Request) {
   try {
     const denial = requireLocalRequest(req);
     if (denial) return denial;
-    const { bubbles, targetLang, modelPreference: modelPreferenceWire, policy, apiKey, glossary, pronounMatrix } = await req.json();
+    const { bubbles, targetLang, modelPreference: modelPreferenceWire, policy, apiKey, glossary, pronounMatrix, context } = await req.json();
 
     if (!bubbles || !Array.isArray(bubbles)) {
       return NextResponse.json({ error: "Missing or invalid text data" }, { status: 400 });
@@ -73,6 +73,9 @@ export async function POST(req: Request) {
           : [];
     const glossaryDirective = buildGlossaryDirectives(effectiveGlossary);
     const pronounDirective = buildPronounMatrixDirectives(pronounMatrix);
+    const contextDirective = typeof context === "string" && context.trim()
+      ? `\nCONTEXT (translations from previous pages of this same manga):\n${context.trim()}\n\nCONSISTENCY RULES:\n- Use the exact same character names, pronouns (แก/ฉัน/นาย/ข้า/เอ็ง), and tone of address already established in the context above. Do NOT change them.\n- Keep speech patterns and slang consistent with earlier pages.\n- If a character is referred to by a name in context, keep using that name.\n- Context is ONLY for consistency reference: translate THIS page fresh; do not copy dialogue.\n`
+      : "";
 
     const promptText =
       `You are an expert manga translator. Translate the following JSON list of text blocks to ${targetLang || 'Thai'}.\n`+
@@ -83,6 +86,7 @@ export async function POST(req: Request) {
       `${sfxDirective}\n`+
       `${glossaryDirective}`+
       `${pronounDirective}`+
+      `${contextDirective}`+
       `- Read order is usually Right-to-Left, Top-to-Bottom.\n`+
       `The input format is {"bubbles":[{"t":"original text","box":[ymin,xmin,ymax,xmax]}]}.\n`+
       `Output ONLY valid JSON, no markdown, no explanation.\n`+

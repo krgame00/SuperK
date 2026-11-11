@@ -61,6 +61,7 @@ import {
   buildFailureGroups,
   extendFailureGroupCooldown,
 } from "@/lib/translation/failureGroups";
+import { collectPreviousPagesContext } from "@/lib/translation/crossPageContext";
 import { logError, logWarn } from "@/lib/logger/clientLogger";
 
 export type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -1223,6 +1224,11 @@ export function useTranslation({
       return;
     }
     const targetLang = jobTargetIdentity.targetId;
+    const pointContext = collectPreviousPagesContext(
+      pagesRef.current,
+      currentPage,
+      (url) => bubbleCacheRef.current.get(url),
+    );
     setIsTranslating(true);
     setTranslationResult("กำลังแปลเฉพาะจุดที่เลือก...");
     try {
@@ -1238,6 +1244,7 @@ export function useTranslation({
           apiKey: userApiKey,
           allowPreview: allowPreviewModels, isRetry: true, glossary: glossaryRef.current, pronounMatrix: pronounMatrixRef.current,
           policy: { sfx: sfxModeRef.current },
+          context: pointContext || undefined,
         }),
       });
       const data = await readTranslationResponse<{ text: string }>(res);
@@ -1499,6 +1506,11 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
     let discardOptimisticResidue = false;
     try {
       const targetLang = jobTargetIdentity.targetId;
+      const priorContext = collectPreviousPagesContext(
+        pagesRef.current,
+        pageIndex,
+        (url) => bubbleCacheRef.current.get(url),
+      );
       const { backgroundUrl, textScope } = preparedPage;
       if (preparedPage.sourceFingerprint) preparedSourceFingerprintsRef.current.set(pageUrl,preparedPage.sourceFingerprint);
       const recognitionUrl = preparedPage.recognitionUrl;
@@ -1569,7 +1581,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             // isRetry: the full-page pass already missed this region, so the
             // crop gets the high-precision retry prompt and model rotation.
             body:JSON.stringify({imageBase64:cropBase64,mimeType:"image/jpeg",
-              targetLang,sourceLang,modelPreference,apiKey:userApiKey,allowPreview:allowPreviewModels,glossary:glossaryRef.current,pronounMatrix:pronounMatrixRef.current,isRetry:true,policy:{sfx:sfxModeRef.current}}),
+              targetLang,sourceLang,modelPreference,apiKey:userApiKey,allowPreview:allowPreviewModels,glossary:glossaryRef.current,pronounMatrix:pronounMatrixRef.current,isRetry:true,policy:{sfx:sfxModeRef.current},context:priorContext || undefined}),
           });
           const data = await readTranslationResponse<{text:string}>(response);
           const parsed = parseLLMJSON(data.text) as {bubbles?:TranslatedBubble[]} | null;
@@ -1609,6 +1621,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
               apiKey: userApiKey,
               allowPreview: allowPreviewModels, glossary: glossaryRef.current, pronounMatrix: pronounMatrixRef.current,
               policy: { sfx: sfxModeRef.current },
+              context: priorContext || undefined,
             }),
             signal,
           });
@@ -1682,6 +1695,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
                 apiKey: userApiKey,
                 allowPreview: allowPreviewModels, glossary: glossaryRef.current, pronounMatrix: pronounMatrixRef.current,
                 policy: { sfx: sfxModeRef.current },
+                context: priorContext || undefined,
               }),
               signal,
             });
@@ -1877,6 +1891,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             apiKey: userApiKey,
             allowPreview: allowPreviewModels, glossary: glossaryRef.current, pronounMatrix: pronounMatrixRef.current,
             policy: { sfx: sfxModeRef.current },
+            context: priorContext || undefined,
           }),
           signal,
         });
@@ -1962,6 +1977,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
             apiKey: userApiKey,
             allowPreview: allowPreviewModels, isRetry: true, glossary: glossaryRef.current, pronounMatrix: pronounMatrixRef.current,
             policy: { sfx: sfxModeRef.current },
+            context: priorContext || undefined,
           }),
           signal,
         });
