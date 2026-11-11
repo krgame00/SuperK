@@ -30,7 +30,14 @@
      - `[3/3] Checking Backend Python code (ocr-service ruff)...` -> PASSED.
      - Push guard printed `✅ All Pre-Push Quality Gates Passed! Pushing...` and allowed push.
    - Hook Installer: `node scripts/install-hooks.mjs` executed cleanly.
-   - Gmail integration: Tested and verified active for `missnlpp9@gmail.com`.
+   - Live Push Execution & CI Run `43007355940` (Commit `bbb1e66`):
+     - Automatically invoked Pre-Push Hook: `tsc --noEmit`, ESLint, and Python ruff all passed.
+     - Pushed to `origin/main` cleanly.
+     - GitHub Actions CI Run `43007355940`:
+       - Backend (pytest + ruff): PASSED in 49s.
+       - Frontend (tsc + eslint + vitest): PASSED in 5m5s.
+       - Result: 100% Green checkmark.
+   - Gmail integration: Tested and verified active for `missnlpp9@gmail.com`. No failure emails generated.
 
 
 ## Feature: GitHub Actions Remote CI Fix & Full Pipeline Verification — 2026-11-11
