@@ -592,6 +592,7 @@ def create_app(
 
         def _process() -> dict[str, object]:
             import base64
+
             from app.textless_matcher import evaluate_textless_pair
 
             rgb_a = _decode_rgb(bytes_a)

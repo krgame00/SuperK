@@ -1,12 +1,11 @@
 import cv2
 import numpy as np
 
-from app.detector import DetectionResult, DetectedBlock, LetterboxTransform
+from app.detector import DetectedBlock, DetectionResult, LetterboxTransform
 from app.schemas import PixelRect
 from app.textless_matcher import (
     compute_visual_similarity,
     evaluate_textless_pair,
-    scale_image_to_match,
 )
 
 

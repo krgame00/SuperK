@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from app.api import create_app
-from app.detector import DetectionResult, DetectedBlock, LetterboxTransform
+from app.detector import DetectedBlock, DetectionResult, LetterboxTransform
 from app.schemas import PixelRect
 from app.settings import Settings
 

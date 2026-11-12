@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, Sequence
+from typing import Protocol
 
 import cv2
 import numpy as np
