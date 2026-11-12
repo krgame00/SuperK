@@ -480,3 +480,41 @@ function requireNumber(value: unknown, field: string): number {
   }
   return value;
 }
+
+export interface TextlessPairResult {
+  is_match: boolean;
+  text_role: "a_has_text" | "b_has_text" | "none";
+  similarity: number;
+  aspect_diff_ratio: number;
+  text_blocks_a: number;
+  text_blocks_b: number;
+  scaled_textless_base64: string | null;
+}
+
+export async function detectTextlessPair(
+  blobA: Blob,
+  blobB: Blob,
+  signal?: AbortSignal,
+): Promise<TextlessPairResult> {
+  const form = new FormData();
+  const typedA = blobA.type && blobA.type !== "application/octet-stream" ? blobA : new Blob([blobA], { type: "image/png" });
+  const typedB = blobB.type && blobB.type !== "application/octet-stream" ? blobB : new Blob([blobB], { type: "image/png" });
+  form.append("image_a", typedA, "page_a.png");
+  form.append("image_b", typedB, "page_b.png");
+
+  const payload = await requestJson(`${PROXY_BASE}/v1/detect/textless-pair`, {
+    method: "POST",
+    body: form,
+    ...(signal ? { signal } : {}),
+  });
+  const rec = requireRecord(payload, "textless pair");
+  return {
+    is_match: Boolean(rec.is_match),
+    text_role: rec.text_role === "a_has_text" || rec.text_role === "b_has_text" ? rec.text_role : "none",
+    similarity: typeof rec.similarity === "number" ? rec.similarity : 0,
+    aspect_diff_ratio: typeof rec.aspect_diff_ratio === "number" ? rec.aspect_diff_ratio : 1,
+    text_blocks_a: typeof rec.text_blocks_a === "number" ? rec.text_blocks_a : 0,
+    text_blocks_b: typeof rec.text_blocks_b === "number" ? rec.text_blocks_b : 0,
+    scaled_textless_base64: typeof rec.scaled_textless_base64 === "string" ? rec.scaled_textless_base64 : null,
+  };
+}

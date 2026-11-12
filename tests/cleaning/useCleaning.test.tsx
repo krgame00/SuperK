@@ -15,6 +15,7 @@ import {
 import {
   loadCleaningResultAssets,
   loadCleaningResultsMetadata,
+  saveCleaningAssets,
   saveCleaningResultMetadata,
 } from "@/lib/projectStore";
 
@@ -1237,4 +1238,165 @@ test.each([503, 404])(
     expect(Array.from(putImageDataCalls[0].data.slice(idx, idx + 4))).toEqual([12, 34, 56, 255]);
   },
 );
+
+const mockTextlessCanvas = () => {
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+    fillRect: vi.fn(),
+  } as unknown as CanvasRenderingContext2D);
+  vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation((callback) => {
+    callback(new Blob(["blank-mask"], { type: "image/png" }));
+  });
+};
+
+const mockPageFetch = (pages: Record<string, Blob>, missingUrls: string[] = []) => {
+  vi.mocked(globalThis.fetch).mockImplementation(async (input) => {
+    const url = String(input);
+    if (missingUrls.includes(url)) {
+      return { ok: false, status: 404, blob: async () => new Blob() } as Response;
+    }
+    const blob = pages[url];
+    if (blob) return { ok: true, status: 200, blob: async () => blob } as Response;
+    const asset = new Blob(["asset"], { type: "image/png" });
+    return { ok: true, status: 200, blob: async () => asset } as Response;
+  });
+};
+
+test("registerTextlessCleanResult adopts the textless art as the page's clean base", async () => {
+  const pageBlob = new Blob(["texted-page"], { type: "image/png" });
+  const cleanBlob = new Blob(["textless-art"], { type: "image/png" });
+  mockPageFetch({ "blob:page-1": pageBlob });
+  mockTextlessCanvas();
+  const close = vi.fn();
+  vi.stubGlobal(
+    "createImageBitmap",
+    vi.fn().mockImplementation(async () => ({ width: 8, height: 8, close })),
+  );
+  vi.mocked(URL.createObjectURL).mockReset().mockImplementation((blob) =>
+    blob === cleanBlob ? "blob:textless-clean" : "blob:textless-mask",
+  );
+  const { result } = renderHook(() =>
+    useCleaning({ pages: ["blob:page-1"], currentPage: 0 }),
+  );
+
+  let cleanUrl!: string;
+  await act(async () => {
+    cleanUrl = await result.current.registerTextlessCleanResult("blob:page-1", cleanBlob);
+  });
+
+  const stored = result.current.resultsByPage.get("blob:page-1");
+  expect(stored).toBeDefined();
+  expect(cleanUrl).toBe("blob:textless-clean");
+  expect(stored?.jobId).toMatch(/^textless:/);
+  expect(stored?.sourceHash).toBe(`${pageBlob.size}:image/png`);
+  expect(stored?.sourceFingerprint).toBe(`${pageBlob.size}:image/png`);
+  expect(stored?.width).toBe(8);
+  expect(stored?.height).toBe(8);
+  expect(stored?.regions).toEqual([]);
+  expect(stored?.timingsMs).toEqual({});
+  expect(stored?.maskUrl).toBe("blob:textless-mask");
+  expect(stored?.maskBlob).toBeDefined();
+  expect(stored?.preparedIdentity).toBe("textless-matched");
+  expect(stored).not.toHaveProperty("status");
+  expect(stored).not.toHaveProperty("stage");
+  expect(close).toHaveBeenCalledOnce();
+  expect(saveCleaningAssets).toHaveBeenCalledWith(
+    "blob:page-1",
+    expect.objectContaining({ cleanBlob, maskBlob: expect.any(Blob) }),
+    undefined,
+  );
+  expect(saveCleaningResultMetadata).toHaveBeenCalledWith(
+    expect.objectContaining({
+      pageUrl: "blob:page-1",
+      jobId: expect.stringMatching(/^textless:/),
+      sourceFingerprint: `${pageBlob.size}:image/png`,
+      maskFingerprint: expect.any(String),
+      width: 8,
+      height: 8,
+    }),
+  );
+
+  const reused = await result.current.cleanPage("blob:page-1", pageBlob);
+  expect(reused).toBe(stored);
+  expect(createCleaningJob).not.toHaveBeenCalled();
+});
+
+test("registerTextlessCleanResult refuses a page whose image is gone", async () => {
+  mockPageFetch({}, ["blob:page-1"]);
+  mockTextlessCanvas();
+  const { result } = renderHook(() =>
+    useCleaning({ pages: ["blob:page-1"], currentPage: 0 }),
+  );
+  await act(async () => {
+    await expect(
+      result.current.registerTextlessCleanResult(
+        "blob:page-1",
+        new Blob(["textless-art"], { type: "image/png" }),
+      ),
+    ).rejects.toMatchObject({ name: "TextlessRegistrationError" });
+  });
+  expect(result.current.resultsByPage.has("blob:page-1")).toBe(false);
+  expect(saveCleaningResultMetadata).not.toHaveBeenCalled();
+  expect(URL.createObjectURL).not.toHaveBeenCalled();
+});
+
+test("clearTextlessCleanResult removes the textless result and leaves real cleans alone", async () => {
+  const pageBlob = new Blob(["texted-page"], { type: "image/png" });
+  mockPageFetch({ "blob:page-1": pageBlob });
+  mockTextlessCanvas();
+  let objectUrlCounter = 0;
+  vi.mocked(URL.createObjectURL)
+    .mockReset()
+    .mockImplementation(() => `blob:generated-${objectUrlCounter++}`);
+  vi.mocked(createCleaningJob).mockResolvedValue(succeededJob);
+  vi.mocked(getCleaningResult).mockResolvedValue(cleaningResult);
+  const { result } = renderHook(() =>
+    useCleaning({ pages: ["blob:page-1", "blob:page-2"], currentPage: 0 }),
+  );
+
+  await act(async () => {
+    await result.current.registerTextlessCleanResult(
+      "blob:page-1",
+      new Blob(["textless-art"], { type: "image/png" }),
+    );
+    await result.current.cleanPage("blob:page-2", new Blob(["png"], { type: "image/png" }));
+  });
+  const textlessCleanUrl = result.current.resultsByPage.get("blob:page-1")?.cleanUrl;
+  expect(textlessCleanUrl).toBeDefined();
+
+  act(() => {
+    result.current.clearTextlessCleanResult("blob:page-2");
+    result.current.clearTextlessCleanResult("blob:page-1");
+  });
+
+  expect(result.current.resultsByPage.has("blob:page-1")).toBe(false);
+  expect(result.current.resultsByPage.has("blob:page-2")).toBe(true);
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith(textlessCleanUrl);
+});
+
+test("re-registering a textless page revokes the previous clean URL", async () => {
+  mockPageFetch({ "blob:page-1": new Blob(["texted-page"], { type: "image/png" }) });
+  mockTextlessCanvas();
+  const firstBlob = new Blob(["textless-art-1"], { type: "image/png" });
+  const secondBlob = new Blob(["textless-art-2"], { type: "image/png" });
+  vi.mocked(URL.createObjectURL)
+    .mockReset()
+    .mockImplementation((blob) =>
+      blob === firstBlob ? "blob:textless-clean-1" : "blob:textless-clean-2",
+    );
+  const { result } = renderHook(() =>
+    useCleaning({ pages: ["blob:page-1"], currentPage: 0 }),
+  );
+
+  let firstUrl!: string;
+  let secondUrl!: string;
+  await act(async () => {
+    firstUrl = await result.current.registerTextlessCleanResult("blob:page-1", firstBlob);
+    secondUrl = await result.current.registerTextlessCleanResult("blob:page-1", secondBlob);
+  });
+
+  expect(firstUrl).toBe("blob:textless-clean-1");
+  expect(secondUrl).toBe("blob:textless-clean-2");
+  expect(result.current.resultsByPage.get("blob:page-1")?.cleanUrl).toBe(secondUrl);
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith(firstUrl);
+});
 

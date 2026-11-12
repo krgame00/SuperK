@@ -69,6 +69,39 @@ const safeRestoredRegions = (regions: CleaningResult["regions"]): CleaningResult
     ? { ...region, maskApproved: false, approvalRevision: null }
     : region);
 
+const activeCleaningMode = (): CleaningMode => {
+  if (typeof window === "undefined" || typeof localStorage === "undefined") return "safe";
+  return localStorage.getItem("superk:sfx-policy") === "translate" ? "all-text" : "safe";
+};
+
+export class TextlessRegistrationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TextlessRegistrationError";
+  }
+}
+
+const TEXTLESS_PREPARED_IDENTITY = "textless-matched";
+
+/** An empty removal mask: the app already treats a missing mask as fill-black. */
+const createBlankMaskBlob = async (width: number, height: number): Promise<Blob> => {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  try {
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Cannot prepare the textless removal mask.");
+    context.fillStyle = "#000000";
+    context.fillRect(0, 0, width, height);
+    return await new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Cannot prepare the textless removal mask."))), "image/png"),
+    );
+  } finally {
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+};
+
 const regionAliasKey = (pageUrl: string, regionId: string) =>
   `${pageUrl}\u0000${regionId}`;
 
@@ -496,6 +529,83 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     void operation.then(() => { if (persistenceQueueRef.current.get(pageUrl) === operation) persistenceQueueRef.current.delete(pageUrl); });
     return operation;
   }, []);
+
+  /**
+   * Adopts a textless (no-text) sibling image as a page's clean base without a
+   * cleaning job. The result carries the real source fingerprint so the
+   * cleanPage cache keeps it across translation prepare, and a blank removal
+   * mask (persistence and restore both require one; blank equals "nothing to
+   * remove").
+   */
+  const registerTextlessCleanResult = useCallback(
+    async (pageUrl: string, cleanBlob: Blob): Promise<string> => {
+      const bitmap = await createImageBitmap(cleanBlob);
+      try {
+        const width = bitmap.width;
+        const height = bitmap.height;
+        const sourceResponse = await fetch(pageUrl, { cache: "no-store" });
+        if (!sourceResponse.ok) {
+          throw new TextlessRegistrationError("Original page image is unavailable for the textless match.");
+        }
+        const sourceBlob = await sourceResponse.blob();
+        const sourceFingerprintValue = fingerprintBlob(sourceBlob);
+        const sourceFingerprint = typeof sourceFingerprintValue === "string"
+          ? sourceFingerprintValue
+          : await sourceFingerprintValue;
+        const maskBlob = await createBlankMaskBlob(width, height);
+        const maskFingerprintValue = fingerprintBlob(maskBlob);
+        const maskFingerprint = typeof maskFingerprintValue === "string"
+          ? maskFingerprintValue
+          : await maskFingerprintValue;
+        const cleanUrl = URL.createObjectURL(cleanBlob);
+        const maskUrl = URL.createObjectURL(maskBlob);
+        const nextResult: PageCleaningResult = {
+          jobId: `textless:${Date.now()}`,
+          sourceHash: sourceFingerprint,
+          width,
+          height,
+          cleanAsset: "",
+          maskAsset: "",
+          reviewMaskAsset: "",
+          protectedMaskAsset: "",
+          regions: [],
+          timingsMs: {},
+          awaitingReview: false,
+          pipelineVersion: CURRENT_PIPELINE_VERSION,
+          cleaningMode: activeCleaningMode(),
+          cleanUrl,
+          maskUrl,
+          reviewMaskUrl: maskUrl,
+          protectedMaskUrl: maskUrl,
+          cleanBlob,
+          maskBlob,
+          sourceFingerprint,
+          maskFingerprint,
+          preparedIdentity: TEXTLESS_PREPARED_IDENTITY,
+        };
+        replaceResult(pageUrl, nextResult);
+        await persistCleaningResult(pageUrl, nextResult, pageTokensRef.current.get(pageUrl) ?? 0);
+        return cleanUrl;
+      } finally {
+        bitmap.close();
+      }
+    },
+    [persistCleaningResult, replaceResult],
+  );
+
+  const clearTextlessCleanResult = useCallback(
+    (pageUrl: string) => {
+      const existing = resultsRef.current.get(pageUrl);
+      if (!existing || existing.preparedIdentity !== TEXTLESS_PREPARED_IDENTITY) return;
+      revokeResult(existing);
+      const updated = new Map(resultsRef.current);
+      updated.delete(pageUrl);
+      resultsRef.current = updated;
+      setResultsByPage(updated);
+      setCacheRevision((revision) => revision + 1);
+    },
+    [revokeResult],
+  );
 
   /**
    * Explicitly confirm one candidate of the current inspection as artwork.
@@ -982,13 +1092,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
             ? sourceFingerprintValue
             : await sourceFingerprintValue;
         if (signal?.aborted) throw new DOMException("Cleaning cancelled", "AbortError");
-        const expectedMode =
-          typeof window !== "undefined" && typeof localStorage !== "undefined"
-            ? (() => {
-                const savedSfx = localStorage.getItem("superk:sfx-policy");
-                return savedSfx === "translate" ? "all-text" : "safe";
-              })()
-            : "safe";
+        const expectedMode = activeCleaningMode();
         if (
           cached &&
           cached.sourceFingerprint &&
@@ -1842,6 +1946,8 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       const result = resultsRef.current.get(pageUrl);
       if (result) await inspectPageRemnants(pageUrl, result);
     },
+    registerTextlessCleanResult,
+    clearTextlessCleanResult,
     remnantReviews,
     confirmArtworkCandidate,
     unconfirmArtworkCandidate,

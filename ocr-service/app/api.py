@@ -576,6 +576,52 @@ def create_app(
 
         return {"profiles": profiles_data}
 
+    @app.post(
+        "/v1/detect/textless-pair",
+        status_code=200,
+    )
+    async def detect_textless_pair(
+        image_a: Annotated[UploadFile, File()],
+        image_b: Annotated[UploadFile, File()],
+    ) -> dict[str, object]:
+        """Checks whether two adjacent uploaded pages form a with-text / textless pair."""
+        max_bytes = runtime_settings.max_upload_mb * 1024 * 1024
+        max_px = runtime_settings.max_image_megapixels * 1_000_000
+        bytes_a = await _validated_upload(image_a, max_upload_bytes=max_bytes, max_pixels=max_px)
+        bytes_b = await _validated_upload(image_b, max_upload_bytes=max_bytes, max_pixels=max_px)
+
+        def _process() -> dict[str, object]:
+            import base64
+            from app.textless_matcher import evaluate_textless_pair
+
+            rgb_a = _decode_rgb(bytes_a)
+            rgb_b = _decode_rgb(bytes_b)
+            pipeline = store._pipeline()
+            result = evaluate_textless_pair(rgb_a, rgb_b, pipeline.detector)
+
+            scaled_b64: str | None = None
+            if result.is_match and result.scaled_textless_rgb is not None:
+                bgr = cv2.cvtColor(result.scaled_textless_rgb, cv2.COLOR_RGB2BGR)
+                ok, buf = cv2.imencode(".png", bgr)
+                if ok:
+                    scaled_b64 = "data:image/png;base64," + base64.b64encode(buf.tobytes()).decode("ascii")
+
+            return {
+                "is_match": result.is_match,
+                "text_role": result.text_role,
+                "similarity": round(result.similarity, 4),
+                "aspect_diff_ratio": round(result.aspect_diff_ratio, 4),
+                "text_blocks_a": result.text_blocks_a,
+                "text_blocks_b": result.text_blocks_b,
+                "scaled_textless_base64": scaled_b64,
+            }
+
+        try:
+            return await asyncio.to_thread(_process)
+        except Exception as err:
+            LOGGER.exception("detect_textless_pair failed: %s", err)
+            raise HTTPException(status_code=500, detail=f"Textless pair detection failed: {err}")
+
     return app
 
 
