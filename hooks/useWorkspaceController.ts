@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, type DragEvent } from "react";
+import { useState, useRef, useCallback, useEffect, type DragEvent } from "react";
 import type { WorkspaceHeaderHostProps } from "@/components/workspace/WorkspaceHeaderHost";
 import type { WorkspaceCanvasHostProps } from "@/components/workspace/WorkspaceCanvasHost";
 import type { WorkspaceBottomStripHostProps } from "@/components/workspace/WorkspaceBottomStripHost";
@@ -81,6 +81,8 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     handleClearSavedSession,
     handleExportProjectFile,
     handleImportProjectFile,
+    pendingTextlessMatches,
+    setPendingTextlessMatches,
   } = useWorkspaceDocumentManager({
     exportSnapshotRef,
     sessionBridgeRef,
@@ -175,6 +177,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     preparePageForTranslation,
     getExpectedRemnantEvidence,
     syncCleaningEvidence,
+    registerTextlessCleanResult,
   } = useCleaningOrchestrator({
     pages,
     currentPage,
@@ -184,6 +187,33 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     setReviewedPageUrls,
     translationBridgeRef,
   });
+
+  // Detached textless pairs arrive as pending matches; each registers the
+  // no-text image as its text page's clean base, then leaves the batch queue.
+  const registeringTextlessRef = useRef(false);
+  useEffect(() => {
+    if (pendingTextlessMatches.length === 0 || registeringTextlessRef.current) return;
+    const batch = pendingTextlessMatches;
+    registeringTextlessRef.current = true;
+    void (async () => {
+      try {
+        for (const match of batch) {
+          try {
+            await registerTextlessCleanResult(match.textPageUrl, match.scaledCleanBlob);
+          } catch (error) {
+            console.warn("Failed to register the textless clean base:", error);
+            const toast = (await import("react-hot-toast")).default;
+            toast.error("ไม่สามารถใช้ภาพ no-text เป็นพื้นหลังของหน้านี้ได้");
+          }
+        }
+      } finally {
+        registeringTextlessRef.current = false;
+        setPendingTextlessMatches((current) =>
+          current.filter((match) => !batch.includes(match)),
+        );
+      }
+    })();
+  }, [pendingTextlessMatches, registerTextlessCleanResult, setPendingTextlessMatches]);
 
   const {
     isTranslating,

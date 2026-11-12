@@ -57,6 +57,12 @@ export interface UseWorkspaceDocumentManagerOptions {
   sessionBridgeRef: MutableRefObject<WorkspaceDocumentSessionBridge>;
 }
 
+/** A matched pair awaiting registration of the textless image as the page's clean base. */
+export interface PendingTextlessMatch {
+  textPageUrl: string;
+  scaledCleanBlob: Blob;
+}
+
 export async function fetchExtensionPairingToken(): Promise<string | null> {
   try {
     const res = await fetch("/api/extension/pair");
@@ -123,6 +129,11 @@ export function useWorkspaceDocumentManager({
 
   const [savedSessionData, setSavedSessionData] =
     useState<SavedSessionData | null>(null);
+
+  const [pendingTextlessMatches, setPendingTextlessMatches] = useState<
+    PendingTextlessMatch[]
+  >([]);
+  const textlessScanActiveRef = useRef(false);
 
   // Sync workspace resource manager navigation
   useEffect(() => {
@@ -212,6 +223,64 @@ export function useWorkspaceDocumentManager({
       }
     })();
   }, [sessionBridgeRef, setCurrentPage]);
+
+  /** Batch removal with the same blob-cleanup and pagination rules as handleDeletePage. */
+  const detachPagesByUrl = useCallback(
+    (urls: string[]) => {
+      if (exportSnapshotRef.current) return;
+      const removeUrls = new Set(urls);
+      for (const page of pagesRef.current) {
+        if (removeUrls.has(page.url) && page.id) {
+          pageBlobStore.delete(page.id);
+        }
+      }
+      setPages((prev) => {
+        const next = prev.filter((page) => !removeUrls.has(page.url));
+        let removedBeforeCurrent = 0;
+        for (let i = 0; i < prev.length && i < currentPageRef.current; i++) {
+          if (removeUrls.has(prev[i].url)) removedBeforeCurrent += 1;
+        }
+        const nextCurrent = Math.max(0, currentPageRef.current - removedBeforeCurrent);
+        if (next.length === 0) setCurrentPage(0);
+        else if (nextCurrent >= next.length) setCurrentPage(next.length - 1);
+        else setCurrentPage(nextCurrent);
+        return next;
+      });
+    },
+    [exportSnapshotRef, setCurrentPage],
+  );
+
+  const startTextlessPairScan = useCallback(
+    (candidates: { url: string; name: string }[]) => {
+      if (textlessScanActiveRef.current) return;
+      textlessScanActiveRef.current = true;
+      void (async () => {
+        try {
+          const { detectAndPairTextlessPages } = await import(
+            "@/lib/cleaning/textlessMatcher"
+          );
+          const outcome = await detectAndPairTextlessPages(candidates);
+          if (outcome.matchedPairs.length === 0) return;
+          detachPagesByUrl(outcome.matchedPairs.map((pair) => pair.textlessPage.url));
+          setPendingTextlessMatches(
+            outcome.matchedPairs.map((pair) => ({
+              textPageUrl: pair.textPage.url,
+              scaledCleanBlob: pair.scaledCleanBlob,
+            })),
+          );
+          const toast = (await import("react-hot-toast")).default;
+          toast.success(
+            `จับคู่หน้า textless ได้ ${outcome.matchedPairs.length} คู่ — ใช้ภาพ no-text เป็นพื้นหลังแล้ว`,
+          );
+        } catch {
+          // The matcher fails open; a crashed scan must never drop user pages.
+        } finally {
+          textlessScanActiveRef.current = false;
+        }
+      })();
+    },
+    [detachPagesByUrl],
+  );
 
   const processFiles = useCallback(
     async (files: File[]) => {
@@ -453,6 +522,7 @@ export function useWorkspaceDocumentManager({
           });
           const toast = (await import("react-hot-toast")).default;
           toast.success(`นำเข้าสำเร็จ ${newPages.length} หน้า`);
+          if (newPages.length >= 2) startTextlessPairScan(newPages);
         } else if (failureCount > 0) {
           const toast = (await import("react-hot-toast")).default;
           toast.error("ไม่สามารถนำเข้าไฟล์ที่เลือกได้ กรุณาตรวจสอบรูปแบบไฟล์");
@@ -462,7 +532,7 @@ export function useWorkspaceDocumentManager({
         setImportStatusMessage(null);
       }
     },
-    [isImporting, exportSnapshotRef, setCurrentPage, sessionBridgeRef],
+    [isImporting, exportSnapshotRef, setCurrentPage, sessionBridgeRef, startTextlessPairScan],
   );
 
   const handleImageUpload = useCallback(
@@ -698,6 +768,8 @@ export function useWorkspaceDocumentManager({
     processFiles,
     savedSessionData,
     setSavedSessionData,
+    pendingTextlessMatches,
+    setPendingTextlessMatches,
     handleImageUpload,
     handleDragOver,
     handleDragLeave,

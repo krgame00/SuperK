@@ -35,6 +35,8 @@ vi.mock("@/hooks/useWorkspaceDocumentManager", () => ({
     importStatusMessage: null,
     savedSessionData: null,
     setSavedSessionData: vi.fn(),
+    pendingTextlessMatches: [],
+    setPendingTextlessMatches: vi.fn(),
     handleImageUpload: vi.fn(),
     handleDragOver: vi.fn(),
     handleDragLeave: vi.fn(),
