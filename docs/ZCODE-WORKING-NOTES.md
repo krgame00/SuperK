@@ -5,8 +5,12 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 11 พ.ย. 02:22 · `b420e24c` · "rea ใช้ได้ยัง" · ✅ · ↳ "โอเค รวมให้หน่อย"
-- 11 พ.ย. 02:17 · `08404601` · "ติดตั้งโปรเจกต์ rea จาก GitHub" · ✅ · ↳ "=== SuperK Manga Translator System Diagnostic Report === Exported at: 2026-11-10T19:12:56.355Z Total Entries: 11 (Errors: 9, Warnings: 2) O…"
+- 13 พ.ย. 22:02 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ✅ · ↳ "เป็นไงบ้าง"
+- 12 พ.ย. 00:59 · `b57e3326` · "ออกแบบ UI ใหม่ Pstack Poteto Mode" · ⚠️ · ↳ "ไม่ มีแบบที่ทำไว้ก่อนหน้าอะ เอามาดูหน่อย ไม่ใช่ทำใหม่"
+- 12 พ.ย. 00:22 · `f53b0831` · "ตั้งค่าแชตให้อ่าน ZCODE-WORKING-NOTES.md" · ⚠️ · ↳ "ยังทำได้ไหม"
+- 12 พ.ย. 00:03 · `ca3c6f63` · ""F:\Projects\superk-ui-redesign-proto" ไปเปลี่ยนรูปก่อนอ่าน" · ⚠️ · ↳ ""F:\Projects\superk-ui-redesign-proto" ไปเปลี่ยนรูปก่อนอ่าน"
+- 11 พ.ย. 22:21 · `08404601` · "ติดตั้งโปรเจกต์ rea จาก GitHub" · ⚠️ · ↳ "เราลองออกแบบ ui ใหม่ทั้งหมดมาให้ผมดูหน่อย [$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\pstack-poteto-mode\\SKILL.md)"
+- 11 พ.ย. 22:08 · `b420e24c` · "rea ใช้ได้ยัง" · ✅ · ↳ "ต่อ"
 - 11 พ.ย. 00:53 · `f7ef473c` · "แชตผมหายอะ" · ✅ · ↳ "com oush"
 - 7 พ.ย. 00:15 · `d62433fd` · "เปิด Fast Startup แก้ Windows Defender สแกน 4.8GB ทุกครั้ง" · ✅ · ↳ "ok"
 - 4 พ.ย. 01:39 · `f7c2c32c` · "แก้ระบบแปลจับข้อความไม่หมด (pstack-poteto-mode)" · ✅ · ↳ "com push"
@@ -26,6 +30,145 @@
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
 
 ---
+
+## Feature build: หน้าตรวจซับ video-translator-app เป็นโครง C ขั้น 4 จริง (poteto-mode, playbook Feature) — 2026-11-12
+
+### Status: เขียว gate 25 ไฟล์ + build + พิสูจน์บนหน้าจอจริง (inject วิดีโอจริง + ซับจริง) — ยังไม่ commit
+
+- **ที่มา:** ผู้ใช้ยืนยันท้ายรอบต้นแบบ "ทำให้เป็นหน้าจริงเลย ไม่ต้องมี stepper" → playbook Feature รื้อ workspace เดิมของ video-translator-app มาเป็นโครง C ขั้น 4 ตามต้นแบบที่อนุมัติ (หัวแถวกระจกคงเดิมเพราะภาพจริงของแอปอยู่แล้ว)
+- **ที่ทำ:** (1) pipeline เพิ่ม `onChunkStatus` รายท่อนสถานะ terminal เท่านั้น (ลองผิดระหว่างทางไม่ยิง — เทสต์กำหนดพฤติกรรมนี้) (2) `page.tsx` รื้อ grid เดิม: head-row h1+ไฟล์+สรุปสวิตช์, strip ท่อนจริงรายชิ้น (queued/done/failed พร้อม title tooltip), stage card เดียวรวม VideoPlayer+Timeline, คอลัมน์ขวาเป็น task cards (ไฟล์ใหญ่/error/ท่อนล้มเหลว+ปุ่มแปลซ้ำ) แล้วตามด้วย SubtitleEditor ในกรอบ cue-panel, footer ปุ่ม primary เข้า ExportModal; stepper ไม่มีตามสั่ง (3) ปรับสี SubtitleEditor/การ์ด cue เข้าพาเลตต์ C
+- **บั๊กที่จับได้:** เทสต์ร่างของผมคาด [0,'failed'] จาก attempt ระหว่างทาง — ดีไซน์ยิงเฉพาะ terminal จึงแก้เทสต์ไม่ใช่โค้ด; dev server :3001 ตัวเก่า stale (PID 29324) และมีตัวรีสตาร์ทใหม่ (33752) กลับมาเอง — Next 16 ล็อกห้ามรันสองตัวต่อโปรเจกต์ ยืนยันบน :3001 ที่โค้ดใหม่แทน
+- **หลักฐาน (หน้าจริง):** สร้าง mp4 ด้วย ffmpeg testsrc 40s → ยิงเข้า IndexedDB `video_translator_db` + ซับจริง 6 cues ลง localStorage ผ่าน evaluate บน :3001 → แอปกู้คืนเอง (auto-restore + keepSubtitles) และหน้าใหม่เรนเดอร์ครบ: stage card มีวิดีโอ+ซับ overlay คาราโอเกะ, Timeline ในการ์ด, การ์ด แปลภาษาอื่นปน (1) + ซ่อมช่วงที่ขาด (1) มาจากข้อมูลจริง, strip ซ่อนเพราะยังไม่รัน (run-state UI), มือถือ 390×844 กอดกันสวยไม่มีล้น; gate 25 ไฟล์ผ่าน + next build ผ่าน
+- **ข้อสังเกตรอตรวจ:** hasLanguageLeakage ติดป้ายภาษาอื่นปนบนซับไทยล้วน (false positive?) — งานเก่า ไม่ใช่ regression รอบนี้
+- **ยังไม่ commit:** ผู้ใช้เป็นคนกำหนดจังหวะ; รายละเอียด: F:\Projects\video-translator-app\docs\AI-WORKING-NOTES.md
+
+---
+
+## Feature build: textless pair matcher จากแพตช์ภายนอก แก้ F1-F3 + wire ครบ + E2E ผ่าน (poteto-mode, playbook Feature) — 2026-11-12
+
+### Status: push แล้ว b59280e..c167e34 (3 commits รวม ruff import-order fix c167e34) — CI run 43268492908 เขียวหลัง rerun 1 ครั้ง (เทสต์จับเวลา workspaceExportEligibility flake บน CI: 202ms vs ท้องถิ่น 430ms, ท้องถิ่นผ่าน 18/18 ซ้ำ); :3000 standalone build เก่ายังไม่มีฟีเจอร์นี้จนกว่าจะ npm run build ใหม่
+
+- **ที่มา:** ผู้ใช้ส่งแพตช์ E:\VDOHEN\superk-textless-pair-matcher.patch ให้รีวิว (รอบก่อนพบ F1 endpoint NameError / F2 register ผิด spec / F3 ไม่มีสายเรียก) แล้วสั่ง "เริ่มทำได้" — ทำตาม playbook Feature: how-explorer (import flow) + trace เอง (result lifecycle, translationScope, scopedRecognitionImage, projectStore) → delegate poteto-agent เจ้าเดียว → รีวิว + gate + E2E เอง
+- **แก้ F1:** api.py:599 เป็น `store._pipeline()` (pattern บ้าน 437) — TestClient ยิงยืนยัน 200 + match true ด้วย detector จริง
+- **แก้ F2:** registerTextlessCleanResult ใหม่ (useCleaning.ts) — ใช้ replaceResult (ไม่ leak blob เดิม), fingerprintBlob ของบ้าน, blank removal mask (restore path บังคับมี mask; ว่าง=fill-black ตามสัญชาติญาณแอป), ครบ required 6 field, ลบ status/stage, persist ด้วย revision ของ pageToken; clear ใช้ revokeResult + guard preparedIdentity
+- **แก้ F3 (wire):** processFiles จบ import → สแกนคู่ background ref-guarded (dynamic import matcher, fail-open, abort rethrow) → ถอดหน้า textless ด้วยกฎ pagination/blob-cleanup ของ handleDeletePage (batch) → queue pendingTextlessMatches → controller effect register + toast ไทย (`จับคู่หน้า textless ได้ N คู่ — ใช้ภาพ no-text เป็นพื้นหลังแล้ว`); translation prepare โดน cleanPage cache (fingerprint ตรง) จึงใช้ textless base โดยไม่ยิง job จริง; scope ว่าง = แปลได้ทุกจุด (trade-off: เสียการคุม SFX เฉพาะหน้า matched — รับไว้)
+- **การ์ด E2E (dev :3001 + ocr-service 8765 โค้ดใหม่):** drop คู่สังเคราะห์ (ศิลป์เดียวกัน มี/ไม่มีบับเบิล "OHAYO!!" — สร้างด้วย sharp ใน scratch/textless-e2e) → import toast 2 หน้า → fetch interceptor เห็น POST /v1/detect/textless-pair 200 → หน้า 2→1 (textless ถอด) → แท็บ Clean แสดงภาพไร้บับเบิล ✓ ไม่มี console error
+- **บทเรียน debug:** :3000 คือ `.next/standalone/server.js` (build เก่า ไม่มี hot reload) — ครั้งแรกเทสต์บน :3000 จึงเงียบทั้งรอบ ต้องแยกด้วย fetch interceptor (fetches: [] = สแกนไม่ถูกเรียก) แล้วเปิด next dev -p 3001 แทน; IAB locator click ยังติด actionability (ใช้ CUA พิกัด), screenshot timeout ครั้งแรก (รอแล้วยิงใหม่)
+- **writer คู่ขนานรายไฟล์:** ระหว่าง delegate ทำงาน มีอีกแชตเขียน lib/bubbleLayoutOptimizer.ts, lib/languagePolicy.ts, lib/translationOverlay.ts, src/app/api/translate/handler.ts, tests/translation/languagePolicy.test.ts, docs/AI-WORKING-NOTES.md — ไฟล์ไม่ทับกับฟีเจอร์นี้เลย จึง commit เฉพาะ 12 ไฟล์ของฟีเจอร์ ปล่อยชุดอื่น uncommitted ตามเดิม
+- **หลักฐาน:** tsc 0 error, eslint 0 error (3 warning pre-existing — delegate ยืนยันด้วยการ lint git show HEAD), vitest 289 ไฟล์ 2368 เทสต์ผ่าน (รวม hook register/clear/cache-hit/leak ใหม่ 4 + abort rethrow), pytest 306 ผ่าน 3 skip (รวม endpoint test ใหม่ 2 ด้วย stub pipeline_factory)
+- **ค้าง/เปิด:** push รอผู้ใช้ (ตามจังหวะเดิม); :3000 ต้อง rebuild จึงเห็นฟีเจอร์; คู่ที่ข้ามรอบ import (texted มาก่อน textless คนละรอบ) ยังไม่จับ; เกณฑ์ 0.72/4% ยังไม่พิสูจน์บนคู่เล่มจริง; clearTextlessCleanResult ยังไม่มี caller และ guard ไม่ match ผลที่ restore แล้ว (ทิ้งไว้ตามรายงาน delegate)
+
+## ต้นแบบ UI ใหม่ Subtitle Studio (video-translator-app) 3 แนว + switcher (poteto-mode, playbook Prototype) — 2026-11-12
+
+### Status: จับภาพจริงผ่านทั้ง 3 แนวบนจอใหญ่ 1440×900 และมือถือ 390×844 — รอผู้ใช้เลือกแนวเพื่อส่งเข้า Feature build (ต้นแบบ throwaway)
+
+- **ที่มา:** ผู้ใช้ขอ "ออกแบบ ui ทั้งหมดใหม่" ในแชต video-translator-app (ต่างจากงาน superk-ui-redesign-proto ของแชตอื่น) — เขียนเองทั้งหมดตามบทเรียนลิมิตคอนเคอเรนซี, ไฟล์อยู่ใน repo `scratch/ui-redesign-video-2026-11-12/` (index + variant-a/b/c, single-file HTML, ฉาก demo เป็น SVG ฝังในไฟล์ ไม่มี dependency)
+- **3 แนว:** A Cinema Immersion (ผืนภาพเต็มจอ คอนโทรลลอย capsule รางซับขวา ยุบเป็น bottom sheet บนมือถือ), B Pro Console (NLE หนาแน่น: ลิสต์-เวที-inspector 3 ช่อง + timeline เต็มความกว้างมี cue blocks/gap blocks/waveform + status bar โชว์ chunks/ETA/workers/failed + mobile tabs), C Guided Flow (stepper 5 ขั้น แสดงขั้นตรวจซับ: task cards สำหรับ gap/failed chunk + ลิสต์การ์ดใหญ่ + primary ถัดไป)
+- **ทุกแนวโชว์ฟีเจอร์จริงของแอป:** การ์ดซับไทยพร้อม badge OCR/ภาษาหลุด, ปุ่ม split/merge/wand retranslate/delete, gap banner, failed-chunk retry, กริดท่อน 12 ชิ้น (done/active/failed), waveform, style controls, export SRT/VTT/ASS/TXT/hardsub
+- **ผู้ใช้ชอบแนว C → ขยายเต็มสาย:** variant-c คลิก stepper ได้ทั้ง 5 ขั้น (เลือกไฟล์+ไฟล์ค้าง / ตั้งค่าการ์ด OCR-คาราโอเกะ / แปลด้วย AI กริดใหญ่รายท่อนมี cue count กับ 429 + ETA ปรับตัว / ตรวจซับ / ส่งออก 4 ฟอร์แมต + hardsub สรุปสไตล์) จับภาพยืนยันทุกขั้นบนจอใหญ่แล้ว
+- **การตัดสินใจสุดท้ายของผู้ใช้ (ส่งภาพมายืนยันรูปแบบ): "เอาแบบนี้อะ"** = โครงหน้า 4 ของ C เป็นหลัก + แถบปุ่มกระจกของ A (ภาษา/OCR/คาราโอเกะ/แปล/Export/ย้อน/ทำซ้ำ/คีย์ลัด) → รีไรท์ `variant-d.html` ให้ตรงภาพ (ผืนภาพลอยของ D รอบก่อนเลิกใช้) จับภาพยืนยัน 1440×900 + 390×844 แล้ว — ผู้ใช้ยังไม่ยืนยัน Feature build (หยุดการสร้างไว้ก่อนหน้าแล้ว)
+- **บั๊กที่ภาพจับจับได้แล้วแก้:** A caption โดน banner บัง + rail ชน topbar (เลื่อน banners ขึ้น, rail top 52px); A/B มือถือ toolbar ชนกัน → wrap + ซ่อน file; B มือถือล้นแนวนอน → wrap toolbar/status + mobile-tabs; B inspector มี scrollbar แนวนอน → overflow-x hidden; C ภาพดำครั้งแรกคือจับก่อน iframe เรนเดอร์ทัน (ยืนยันด้วยการเปิดตรง ว่าไม่ใช่บั๊ก); Playwright click บนสวิตเชอร์ติด actionability หลัง goto 2 ครั้ง แก้ด้วย CUA keypress 1/2/3 ตรงตามบทเรียนรอบมังงะ
+- **หลักฐาน:** ภาพจับจริง 6 ภาพ (1440×900 + 390×844 × 3 แนว) ผ่าน browser-use IAB; เซิร์ฟเวอร์จิ๋ว port 8147 รันอยู่ (ตายพร้อม session) — เปิดเองได้ด้วย `npx serve scratch/ui-redesign-video-2026-11-12` หรือดับเบิลคลิก index.html
+- **ค้างให้ผู้ใช้:** ยืนยันแนว D (A×C หน้าเดียว) เพื่อเข้า Feature playbook สร้างของจริงบนหน้าตรวจซับ; ไฟล์ต้นแบบ uncommitted อยู่ใน scratch/ ตัดสินใจ commit เองตามจังหวะ
+
+## แก้ deploy Vercel พัง: maxDuration 600 เกินเพดาน Hobby (poteto-mode, bug-fix) — 2026-11-12
+
+### Status: แก้แล้ว deploy กลับมา success (ยืนยันจาก GitHub deployment statuses จริง) — commit 9ab769b push แล้ว
+
+- **อาการ (ภาพจากผู้ใช้):** "All checks have failed — Vercel Deployment has failed" บน 86a09a1; log ของผู้ใช้ระบุ "Builder returned invalid maxDuration value for Serverless Function api/video-translate ... between 1 and 300 for plan hobby"
+- **Root cause:** commit 3d76e56 ตั้ง `maxDuration = 600` ใน api/video-translate นานกว่าเพดาน Hobby (300s) และ commit นั้นเพิ่งถูก deploy จริงครั้งแรกเมื่อผม push d0a989d+86a09a1 เลยพังตอน builder
+- **แก้:** 600 → 300 พร้อมคอมเมนต์เพดาน; grep ยืนยัน route อื่นเป็น 300 หมด; ข้อจำกัด runtime: OCR วิดีโอเต็มแบบ fallback บน Vercel จะโดนตัดที่ 300s — ใช้ทาง chunked แทน หรืออัปเกรดแพลน
+- **หลักฐาน:** gate 25 ไฟล์ผ่าน → push `9ab769b` → `gh api deployments/<id>/statuses` ของ SHA นั้นคืน "success | Deployment has completed" (เห็นของจริงบน surface)
+
+## รีวิวแพตช์ textless-pair-matcher (E:\VDOHEN\superk-textless-pair-matcher.patch) — 2026-11-12
+
+### Status: รีวิวจบ พบบั๊กที่ตัดสินฟังก์ชัน 2 จุด + ไม่มีสายเรียก ไม่ได้ apply — tree กลับสถานะเดิมเป๊ะ
+
+- **สิ่งที่แพตช์ทำ:** จับคู่หน้ามีข้อความกับหน้า textless ที่อัปโหลดติดกัน (7 ไฟล์ +568): endpoint `/v1/detect/textless-pair` (similarity 64×64 gray MAD+NCC ≥0.72 + aspect diff ≤4% + ฝั่งหนึ่งมี text blocks อีกฝั่ง 0) + `lib/cleaning/textlessMatcher.ts` สแกนคู่ (i, i+1) fail-open + hook เพิ่ม register/clear textless clean result + เทสต์ 2 ชุด
+- **F1 endpoint ตายทันที (พิสูจน์แล้ว):** `ocr-service/app/api.py` ใช้ `jobs._pipeline_instance or jobs.pipeline_factory()` แต่ไม่มี import `jobs` และ `_pipeline_instance` เป็น instance attr ของ JobStore → TestClient POST จริงได้ HTTP 500 `NameError: name 'jobs' is not defined` ทุกครั้ง; ที่ถูกคือ `store._pipeline()` ตาม api.py:437; อันตรายกว่าคือ client fail-open กลืน 500 เงียบ → ฟีเจอร์ตายโดยไม่มีใครเห็น
+- **F2 registerTextlessCleanResult ผิด spec type (พิสูจน์แล้ว):** tsc TS2353 `status` + `stage` (ไม่มีใน PageCleaningResult) และขาด required 6 field: sourceHash, cleanAsset, maskAsset, reviewMaskAsset, protectedMaskAsset, timingsMs (TS2740)
+- **F3 ไม่มีสายเรียก:** ก่อนแพตช์ grep textless ใน repo ว่างเปล่า และแพตช์ไม่ wire caller (ไม่มีใครเรียก detectAndPairTextlessPages / register / clear) → ทั้งหมด dead code จนมี patch ถัดไป
+- **ผลทดสอบ:** git apply --check ผ่าน; vitest 2/2 ผ่าน; pytest 3/3 ผ่าน (เทสต์ครอบเฉพาะ pure module — endpoint พังหนี CI); สิ่งที่ผ่านจริง: client parse ระวัง, proxy catch-all /v1/ รองรับเส้นทางใหม่, fail-open ดี (ยกเว้น abort กลืนแล้วหน้าท้ายเล่มหายจาก filteredPages — จุดระวังตอน wire)
+- **ข้อเก็บย่อย:** register ทับโดยไม่ revoke blob เก่า (leak), เกณฑ์ 0.72/4% ยังไม่พิสูจน์บนคู่จริง, scan sequential N-1 คู่อัปโหลดเต็มขนาด (ช้าเล่มใหญ่), jobId Date.now() ชน same-ms ได้
+- **ค้างให้ผู้ใช้:** อย่า apply ตามดิบ — แก้ F1 (บรรทัดเดียวเป็น store._pipeline()) + F2 (ลบ 2 field ใส่ 6 field ต้องดู consumer ของ cleanAsset/maskAsset ก่อน) และตัดสินใจ F3 (ให้ผมทำ patch สายเรียกหรือขอจากผู้โปรดิวซ์); tree revert แล้วเหลือแค่ของค้างเดิมของผู้ใช้ (DESIGN.md, notes, public/demo)
+
+## ต่อ video-translator-app รอบ 3: truncation flag + repair เคารพ OCR + เลือกฟอนต์ hardsub (poteto-mode) — 2026-11-12
+
+### Status: gate เขียว 25 ไฟล์ + next build ผ่าน — commit แล้ว 86a09a1 + push แล้ว (12 พ.ย.)
+
+- **Truncation flag เดินสายครบ:** `processVideoSubtitlesFromStream` คืน `{ subtitles, truncated }` (MAX_TOKENS บน response ที่ถูกยอมรับ รวมกิ่ง timing-guard retry) → route chunk + route เต็ม relay → `ChunkResult.truncated` → toast สำเร็จแนบจำนวนท่อนที่โดนตัด + ชี้ปุ่มซ่อมช่วงที่ขาด; NDJSON path แจ้งผ่าน progress event อยู่แล้ว; script สองตัวใน scripts/ ที่ยังคาย SubtitleItem[] แก้ให้ destructure ใหม่ (typecheck จับให้เอง)
+- **สวิตช์ OCR เรียงใหม่ทุกทาง:** gap repair (`handleFillGaps`) กับ auto-heal สแกนเฟรมเฉพาะเมื่อ includeOnScreenText เป็นจริง (เดิม `|| isVideo` ทำให้ทุกวิดีโอสแกนเสมอ) ป้ายปุ่มปรับตามโหมด อีก writer เปลี่ยน OCR default เป็น ON แล้ว พฤติกรรมเริ่มต้นจึงเหมือนเดิม ปิดสวิตช์จึงลดต้นทุนจริง
+- **เลือกฟอนต์ hardsub:** registry ใหม่ `fontRegistry.ts` สแกน public/fonts (ชื่อ family จากไฟล์ เลือกไฟล์ -Regular, Itim อยู่หน้าแรก) + GET `/api/fonts`; `buildAss` ใช้ `style.fontName` (เดิมตรึง Itim ใน template); route burn ตรวจฟอนต์กับ registry ถ้าไม่มีจริง fallback Itim; ExportModal + พาเนลพรีวิวใน VideoPlayer มี Font select; page ยิง @font-face ให้พรีวิวตรงกับ burn; บันทึกใน subStyle ต่อ localStorage; ปัจจุบัน public/fonts มี Itim เดียว — เพิ่มฟอนต์ด้วยการทิ้ง .ttf ลงโฟลเดอร์นั้น
+- **หลักฐาน:** npm run gate 25 ไฟล์ผ่าน (subtitleStyle.test รอบ round-trip เพิ่ม fontName) + next build ผ่าน
+- **commit+push แล้ว (12 พ.ย.):** `86a09a1` รวมงานรอบ decode-cache กับรอบนี้เป็น commit เดียว (21 ไฟล์ +424/-69) push ถึง origin/main แล้ว; รายละเอียด: F:\Projects\video-translator-app\docs\AI-WORKING-NOTES.md
+
+## ทำต้นแบบ B (Split Studio) ใน superk-ui-redesign-proto ตามคำขอ "แบบ b ละ" (poteto-mode, playbook Prototype) — 2026-11-12
+
+### Status: B ใช้งานได้ ตรวจภาพจริง + interaction ผ่าน — สวิตเชอร์กลับมาครบ A/B/C; input จริง (CUA/locator) ค้างบนแท็บพื้นหลัง IAB เป็นคิวร์ก harness ไม่ใช่ต้นแบบ
+
+- **ที่มา:** ผู้ใช้ตอบ "แบบ b ละ" ต่อจากรอบ rewire — variant-b.html ไม่เคยมีบนดิสก์ จึงสร้างใหม่ตามคอนเซ็ปต์ที่จดใน DESC เดิม "โต๊ะทำงานสามส่วน เห็นสถานะทุกหน้าและทุกเครื่องมือพร้อมกัน"
+- **ดีไซน์ B:** ซ้าย = ลิสต์ 40 หน้า (แถวละสถานะ done/warn/none, รูปจริงเฉพาะ 11-14, หน้าอื่นเป็น tile เทา) กลาง = เวที + แถบเครื่องมือจอด (← → ซูม 5 ระดับ ลากไฟล์วาง) ขวา = ทุกเครื่องมือเห็นพร้อมกัน (แปล/จัดหน้า/ส่งออก/สถานะระบบ) + แถบสถานะล่างแบบลำดับขั้น — ข้อมูลหลักเป็นอาร์เรย์ PAGES ชุดเดียว ลิสต์/แคนวาส/หัวบาร์ดึงจากมันทั้งหมด (Model the Domain)
+- **บั๊กที่จับได้จากภาพจับแล้วแก้:** สวิตช์ toggle เหลือจุดขาวลอยชนขอบ (span.toggle เป็น inline อยู่ใน span.v ทำให้ width ไม่ทำงาน — แก้ด้วย .v{display:flex}) และเลข 12/40 จาก .progress .bar::after ลอยทับพาเนลขวา (ลบ rule ทิ้ง เพราะแถบสถานะล่างมีข้อมูลเดียวกันอยู่แล้ว)
+- **หลักฐาน:** ภาพจับ 1440×900 เห็นครบทั้งสามส่วน + สวิตช์เป็นแคปซูลถูกต้อง; interaction ผ่าน synthetic events: click แถวหน้า 12 → หัวบาร์ 12/40 + แคนวาส demo/2.webp + จุดไฮไลต์ย้าย, ArrowRight → 13 (4.webp) → 14 (5.webp) → 15 = สถานะว่าง "ยังไม่มีไฟล์หน้านี้ในต้นแบบ" (อ่าน DOM ยืนยันทุกจุด) — CUA click/keypress และ locator click timeout บนแท็บพื้นหลังของ IAB (เคยเวิร์กตอนแท็บ foreground ในแนว A/C) เป็นข้อจำกัดการส่งอินพุตของ harness; สวิตเชอร์จับภาพยืนยันปุ่ม B + คีย์ 1/2/3 กลับมาครบ
+- **ค้างให้ผู้ใช้:** เทียบ A/B/C บนหน้าจริงแล้วเลือกแนว → Feature build สร้างของจริง; ไฟล์อยู่นอก repo ไม่เกี่ยว commit
+
+## Rewire ต้นแบบ UI ใหม่ใช้รูปชุดใหม่ F:\Projects\superk-ui-redesign-proto + เจอ writer คู่ขนาน (poteto-mode, playbook Prototype) — 2026-11-12
+
+### Status: ต้นแบบ A + C ใช้รูป 4 หน้าใหม่ครบ ตรวจภาพจริง + ขับ interaction ผ่านทั้งสองต้นแบบ — ชนกับอีกแชตที่แก้ไฟล์เดียวกัน จัดรวมแล้ว, ไม่แตะ repo manga-translator
+
+- **ที่มา:** ผู้ใช้ส่ง path `F:\Projects\superk-ui-redesign-proto` (ต่อจากแชต ca3c6f63 ข้อความ "ไปเปลี่ยนรูปก่อนอ่าน") — demo/ ถูกเปลี่ยนเป็น webp 4 หน้าของผู้ใช้ (1,2,4,5.webp 1280×1811, ลบ 3.webp ทิ้ง) แต่ต้นแบบ A/C ยังอ้าง demo/3.webp เป็นหน้าปัจจุบัน
+- **ที่แก้ (แชตนี้):** A: หน้าปัจจุบัน→4.webp, แถบธัมบ์เหลือ 4 หน้า (11-14) cur+warn ที่ 13; C: PAGES 4 หน้า ปีกซ้ายขวา 2/5.webp; index: ตัดปุ่ม B และคีย์ 2 (variant-b.html ไม่มีบนดิสก์); ลบบับเบิลไทยปลอมที่วาดทับทั้งสองต้นแบบ เพราะหน้าจริงมีข้อความไทยในบับเบิลอยู่แล้ว (Laziness Protocol: ลบแทนจัดวางใหม่)
+- **writer คู่ขนาน:** ระหว่างตรวจ พบ variant-a.html ถูกเขียนนอกแชตนี้ (mtime 00:11:30/00:11:55/00:12:04 ไม่เรียงตามลำดับแก้ของแชตนี้; เนื้อหาบนจอตอนจับภาพไม่ตรงดิสก์ช่วงเดียวกัน) — อีกฝั่งเพิ่ม JS คลิกธัมบ์เปลี่ยนหน้า + ลากรูปวางบนเวที + หัวบาร์ "11/40 แปลแล้ว 11 รอตรวจ 1" สภาพไฟล์ปนกันไม่สม่ำเสมอ (หัวบาร์ 11 แต่ธัมบ์ไฮไลต์ 13); น่าจะเป็นแชต ca3c6f63 ที่ยังเดิน playbook (อัปเดต DB ล่าสุด 00:03) — หยุดแก้ทันทีตาม Separate Before Serializing Shared State ถามผู้ใช้ (AskUserQuestion) ไม่มีคำตอบ จึงรับต่อเอง: เก็บ JS ใหม่ของอีกฝั่งทั้งหมด แก้หัวบาร์เป็น 13/12/2 ให้ตรงธัมบ์ไฮไลต์ (จุดเดียว) หลังยืนยันไฟล์เงียบ 15 นาที
+- **หลักฐาน (IAB 1440×900):** A เริ่มต้น 13/40 แคนวาส 4.webp; คลิกธัมบ์ 14 → แคนวาส demo/5.webp + หัวบาร์ "หน้า 14/40" (อ่าน DOM ยืนยัน); C: กลาง 4.webp ปีก 2/5.webp จุดไฟหน้า 13; ArrowRight → กลาง 5.webp ปีกซ้าย 4.webp ปีกขวาซ่อน (DOM), Tab → ชั้นคำสั่งครบ 11 คำสั่ง; สวิตเชอร์เหลือ A/C + คีย์ 1/3 — server.mjs เดิมยังรันที่ http://127.0.0.1:4173 (PID 28572)
+- **ข้อจำกัดรู้ตัว:** ต้นแบบ throwaway ไม่มี state จริง; ถ้าแชตเดิมกลับมาเขียนอีกรอบจะชนกันอีก (ผู้ใช้ควร stop แชตเดิมถ้าไม่ใช้); ภาพ 1.webp เป็น pinup เซ็นเซอร์ คงไว้เฉพาะแถบธัมบ์ ไม่ยกเป็นหน้าปัจจุบัน; ในแชตนี้ goto ภายในแท็บเดิมเงียบไป 1 ครั้ง (แก้ด้วยแท็บใหม่) และ Playwright click ติด actionability 2 ครั้ง (แก้ด้วย CUA พิกัด)
+- **ค้างให้ผู้ใช้:** เลือกแนว A หรือ C (หรือขอ B คืน) → แนวที่เลือกเข้า Feature build สร้างของจริง; ไฟล์อยู่นอก repo ไม่เกี่ยว commit
+
+## ต่อ video-translator-app: memoize decode + abort gap repair + ปุ่มแปลใหม่รายบรรทัด (poteto-mode) — 2026-11-12
+
+### Status: gate เขียว 25 ไฟล์ + next build ผ่าน — commit แล้วใน 86a09a1 (push แล้ว)
+
+- **ต่อคิวที่ defer ไว้ 3 ข้อ:** (1) cache AudioBuffer ต่อ File ใน `audioExtractor.ts` (WeakMap, cap 2h ≈ 460MB 16kHz mono) — เดิม gap repair/auto-heal ทุกจุดถอดรหัสไฟล์ทั้งก้อนใหม่ งาน auto-heal 4 จุดบนไฟล์ 1GB คือถอดรหัส 4 รอบ ตอนนี้ decode ครั้งเดียวใช้ร่วมทั้ง translation run และทุก repair; (2) AbortController ให้ gap-repair fetch + abort ตอน unmount — ปิดหน้าไม่ทิ้งคำขอค้าง 5 นาที และผลที่เสร็จก่อน abort ยังถูก merge (งานที่จ่าย token ไปแล้วไม่หาย); (3) ปุ่มใหม่ในการ์ด "ให้ AI แปลคิวนี้ใหม่" (Wand2) — ส่งคิวเป้าหมาย ±2 เป็นบริบทเข้า `/api/translate-srt` เดิม (ตอบกลับคง id) แล้ว apply เฉพาะคิวเป้าหมาย ไม่แตะ server, karaoke words ถูก drop เพราะข้อความเปลี่ยน
+- **integrate กับ writer คู่ขนานอีกครั้ง:** SubtitleEditor ถูกยกระดับเป็น `handleFillGaps` ซ่อมหลายจุดขนาน (allSettled, concurrency 3, ปุ่ม "ซ่อมทุกจุดพร้อมกัน") ระหว่างที่ทำงาน จึงใส่ abort ที่ระบบใหม่นั้นตรง ๆ และลบ `extractAudioFromVideo` ที่ไม่มีผู้เรียกเหลือ (grep ยืนยัน)
+- **หลักฐาน:** npm run gate 25 ไฟล์ผ่าน (เพิ่ม `audioExtractor.test.ts` 3 เคส: decode ครั้งเดียวต่อ File, แยก key ต่อ File, ข้าม cache เมื่อเกิน cap) + next build ผ่าน; ปุ่ม retranslate ยังไม่มีเทสต์ component เพราะ repo ไม่มี DOM harness (ยึด pattern เดิม lib-only) ให้พิสูจน์บน UI จริง
+- **commit แล้ว:** รวมอยู่ใน `86a09a1` (push แล้ว); รายละเอียด: F:\Projects\video-translator-app\docs\AI-WORKING-NOTES.md
+
+## ทำ video-translator-app: OCR แบบท่อน + ปุ่มแปลซ้ำท่อนค้าง + ETA ปรับตัว + อัปเกรดตัวแก้/export (poteto-mode) — 2026-11-11
+
+### Status: ครบ 4 เฟส + แก้ตามรีวิวอิสระ, gate เขียว 24 ไฟล์ 73 เทสต์ + next build ผ่าน — commit แล้ว d0a989d, รอผู้ใช้พิสูจน์ OCR บนคลิปจริง
+
+- **โจทย์:** ผู้ใช้ขอ "เริ่มตามลำดับ" จากลิสต์ 11 ข้อที่ตรวจพบจากการอ่านโค้ดหลักราว 4,500 บรรทัด 14 ไฟล์ของ video-translator-app
+- **Phase A (OCR ท่อน):** ลบกิ่งอัปโหลดวิดีโอเต็มที่พังแล้วเริ่มใหม่ทั้งรอบ เปลี่ยนเป็นแนบ frames ต่อ chunk ผ่าน `prepareChunk` (24 เฟรม/ท่อน 150s) ทุก chunk เป็น WAV จึงต่อ duration anchor + timing guard ต่อท่อนอัตโนมัติ กิ่งเต็มไฟล์คงไว้เป็น fallback เฉพาะไฟล์ที่เบราว์เซอร์ถอดเสียงไม่ได้ (AC3/DTS MKV) — reviewer ชี้ว่าการลบทิ้งหมดคือ regression
+- **Phase B:** เก็บ failed chunks ทำปุ่ม "แปลเฉพาะท่อนที่ค้าง" dedupe ด้วย `isNearBoundaryDuplicate` (เปิด export ใหม่) และคง undo stack ด้วย `preserveHistory` flag ใหม่ใน reducer
+- **Phase C:** ETA ปรับตัวจาก wall-clock ต่อท่อนจริง (`onEta`) แก้สูตร dur*0.05+8 ที่ประเมิน 74s เทียบของจริง 240s
+- **Phase D:** ปุ่ม merge cue (รวมกับซับถัดไป เตือนถ้ายาว >6s เพราะ export re-split), export .ass/.txt, เฟรม gap repair 1/3s cap 30, pad 1s, toast เตือนโควตา IndexedDB, เตือน MAX_TOKENS, Ctrl+Y
+- **เหตุการณ์พิเศษ:** มี writer คู่ขนานเพิ่ม `autoAuditAndHealGaps` ใน page.tsx ระหว่างที่เฟสกำลังเดิน (ไฟล์โต 749→1013 บรรทัด) จึง integrate แทน revert: ใส่ `skipWindows` ให้ auto-heal ข้ามช่วง chunk ที่ล้มเหลว กันแปลซ้ำซ้อนกับปุ่ม retry
+- **หลักฐาน:** npm run gate (tsc+eslint+vitest) 24 files 73 tests ผ่าน, npx next build ผ่านทุก route, poteto-agent รีวิวอิสระ (รัน gate เองด้วย) แล้วผู้คุม triage: แก้ F1-F4+F6+F8; defer F5 (truncation flag: chunk 150s ผลิตราว 6-10k output tokens เทียบเพดาน 65536 จึงหายาก), F7 (repair สแกนภาพเสมอตามป้ายปุ่มที่ประกาศไว้แล้ว), decode memoization, abort gap-repair
+- **commit แล้ว (12 พ.ย.):** `d0a989d` บน main เป็น checkpoint เดียวรวมงานค้างเดิมของผู้ใช้ + auto-heal ของ writer คู่ขนาน + ฟีเจอร์ session นี้ (22 ไฟล์ +2122/-300); รายละเอียด: F:\Projects\video-translator-app\docs\AI-WORKING-NOTES.md
+
+## UI redesign prototype 3 แนว + switcher (poteto-mode, playbook Prototype) — 2026-11-11
+
+### Status: ต้นแบบใช้งานได้ทั้ง 3 แนว ตรวจด้วยภาพจริงบนเบราว์เซอร์แล้ว — รอผู้ใช้เลือกแนวเพื่อส่งเข้า Feature build
+
+- **ที่มา:** ผู้ใช้ขอ "ออกแบบ ui ใหม่ทั้งหมดมาให้ดู" (รอบนี้ใช้หน้า synthetic SFW ที่ `public/demo/page.png` ตามกฎ Demo & Mockup Imagery ที่วางไว้ตอนเช้า — ไม่แตะภาพคลังจริงอีก) ไฟล์ mockup รอบก่อนหายจากดิสก์ จึงสร้างใหม่ทั้งชุดใน `scratch/ui-redesign-2026-11-11/` (อยู่ในรีโป ไม่หายซ้ำ)
+- **3 แนวทาง:** A ผืนภาพเต็มจอ (canvas immersion — คอนโทรลลอย จอสะอาด), B คอนโซลมืออาชีพ (statusbar+tool rail+inspector+filmstrip ครบ), C ไกด์ขั้นตอน (stepper 5 ขั้น + ปุ่มใหญ่ชี้ทาง) — ทั้งหมด HTML เดี่ยวไม่มี dependency ใช้ภาพ demo + บับเบิลไทยทับบับเบิลญี่ปุ่นจริงตามพิกัด
+- **การแบ่งงาน:** ปล่อย 3 poteto-agent → ลิมิตคอนเคอเรนซีตัด B, C (รอบก่อนตัด A) → ผมเขียน B+C เอง, A ให้ delegate เขียน (รายงานจบแล้ว: ตรวจ interaction เองด้วย DOM+screenshot — คลิกบับเบิลเปิด editor, บันทึกเปลี่ยนข้อความจริง, Esc ปิด, dock ยุบ/กาง, batch กาง/ปิด — และเจอ-แก้บั๊ก overflow ชนิดเดียวกับที่ผมเจอใน B/C)
+- **หลักฐาน (ภาพจริง 1440×900 + 1280×720):** B ครบทุกโซน + ไม่พังที่ 720p; C ครบ stepper/ปุ่มใหญ่/การ์ดความคืบหน้า; A คอนเซ็ปต์ชัด (dock ลอย, pill โควตา, กำลังแปล); switcher กดเลข 1-3 สลับ iframe จริง (จับภาพหลังกด 2); baseline :3001 = หน้าว่างกล่องลากไฟล์ ตรงโน้ตรอบก่อน
+- **บั๊กที่เจอระหว่างทำ:** pagewrap ใน grid auto-row ทำ height:100% ไม่ resolve รูปเลยล้นจอ → แก้เป็น flex centering + object-fit:contain (แก้ใน B, C)
+- **วิธีดู:** เซิร์ฟเวอร์จิ๋วที่ http://127.0.0.1:8123/ (switcher รวม) หรือเปิดไฟล์ตรง scratch/ui-redesign-2026-11-11/{index,a,b,c}/index.html
+- **ข้อจำกัดรู้ตัว:** ต้นแบบทิ้งได้ตาม playbook — ไม่มี responsive จริง ไม่มี state จริง; ข้อความไทยในบับเบิลแคบของ A ถูกตัดเป็นบรรทัดสั้นซ้อน (ข้อความแนวนอนในกล่องแคบ ไม่ใช่ typesetting แนวตั้งจริง) เป็นคำถามเปิดตอน Feature; ข้อมูลใน A (โควตา 128/200, knight_ch04_*.png) แต่งขึ้น
+- **เก็บกวาด:** delegate เปิด static server ซ้ำที่ :8931 ค้าง → ปิดแล้ว (kill PID ยืนยัน listener หาย) เหลือ :8123 ตัวเดียว; จับภาพแนว A ไฟล์สุดท้ายบน :8123 ยืนยันหน้าเต็มพอดีจอ (ไฟล์ดีกว่าตอนจับกลางคัน)
+- **ค้างให้ผู้ใช้:** เลือกแนว A/B/C → แนวที่เลือกเข้า Feature playbook สร้างของจริง; ไฟล์ใน scratch/ + ไม่มีอะไรแตะ production ให้ commit เองตามจังหวะ
+
+## สืบสาย "ทำไมยังเลือกภาพผิดกฎใน mockup UI" + วางกฎภาพสาธิต (poteto-mode) — 2026-11-11
+
+### Status: ตอบสาเหตุแล้ว + เขียนกฎลง DESIGN.md (uncommitted) + หน้า synthetic อยู่ที่ public/demo/page.png แล้ว
+
+- **ที่มา:** ผู้ใช้ถามต่อจาก session ออกแบบ UI ใหม่ (`f53b0831`) ว่า "ทำไมยังไปเลือกภาพที่ผิดกฏอยู่ละ" → สืบสายแล้วเจอว่า mockup หยิบหน้าจาก `public/translated_finish_firefly/` (เล่ม doujinshi 18+ 40 หน้า 1280×1811 หน้า 1 เป็น pinup ชุดกระต่าย ไม่มีบับเบิล — เปิดดูภาพจริงด้วย PIL แล้ว)
+- **Root cause:** session ก่อนต้องการ "หน้ามังงะจริง" มาใส่ mockup จึงหยิบไฟล์แรกที่เจอใน public/ โดยไม่มีขั้นตอนเช็กเนื้อหา เพราะกฎเรื่องภาพสาธิตไม่เคยถูกเขียนไว้ที่ใด (ค้น DESIGN.md/PRODUCT.md/CONTEXT.md/memories ไม่มี — searched) จึงเกิดซ้ำได้ทุก session
+- **แก้ที่โครงสร้าง:** เพิ่มหัวข้อ "Demo & Mockup Imagery" ใน `DESIGN.md` — mockup/ภาพลงโน้ต/PR ใช้เฉพาะ `public/demo/page.*` ที่ผู้ใช้อนุมัติ หรือ synthetic ที่สร้างเอง ห้ามยึดคลังจริง; บันทึกความจำ `mockup-demo-image-policy.md` (feedback) แล้ว
+- **รอบต่อ (ผู้ใช้ตอบ "โอเค" = ไปตามค่าเริ่ม):** สร้างหน้า synthetic เสร็จ — `public/demo/page.png` 1280×1811 4 แผง บับเบิลญี่ปุ่นแนวตั้ง 5 จุด (2+1 บับเบิล + โน้ตบท + SFX) SFW ทั้งหมด; generator อยู่ `scratch/make_demo_page.py` (แก้รอบ 2: panel fill ทับศิลป์ + บับเบิลล้นกรอบ — วาดศิลป์ใน sub-canvas ต่อแผงแล้ว paste + คำนวณบับเบิลให้พอดีกรอบ) ตรวจด้วยสายตาบน thumbnail แล้ว
+- **หลักฐาน:** ตรวจด้วยสายตาบนภาพ thumbnail (scratch/firefly_peek/) + log session `f53b0831` ระบุโฟลเดอร์และขนาดภาพตรงกัน; ไฟล์ mockup 3 แนวจาก session ก่อนหายจากดิสก์แล้ว (ค้น repo + Temp ไม่เจอ) จะทำงาน UI ต่อต้องสร้างใหม่ด้วยภาพที่อนุมัติ
+- **ค้างให้ผู้ใช้:** ถ้าจะเปลี่ยนเป็นหน้าจริง วางที่ `public/demo/page.jpg` แล้วลบ page.png ทิ้ง; DESIGN.md + ไฟล์ใหม่ยังไม่ commit ให้ผู้ใช้เลือกจังหวะเอง
 
 ## Screentone fast-path 3 เฟส ตามพิมพ์เขียววิศวกรรมย้อนกลับ (poteto-mode, gate ตัวเลขทุกเฟส) — 2026-11-11
 
