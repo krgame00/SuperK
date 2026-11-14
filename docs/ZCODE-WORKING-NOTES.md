@@ -5,7 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 15 พ.ย. 02:17 · `2b8116b8` · "ทำต่อหน่อย" · —
+- 15 พ.ย. 02:19 · `2b8116b8` · "ทำต่อหน่อย" · ✅
 - 15 พ.ย. 01:40 · `2b7e562b` · "ทำให้ระบบตรวจดีขึ้นอีกได้ไหมครับ ยังจับได้ไม่ครบ" · ⚠️
 - 15 พ.ย. 01:03 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ⚠️ · ↳ "เราทำให้ระบบตรวจมันจับให้ได้หมดเลยได้ไหม พอมีวิธีไหม"
 - 12 พ.ย. 00:59 · `b57e3326` · "ออกแบบ UI ใหม่ Pstack Poteto Mode" · ⚠️ · ↳ "ไม่ มีแบบที่ทำไว้ก่อนหน้าอะ เอามาดูหน่อย ไม่ใช่ทำใหม่"
@@ -35,7 +35,7 @@
 
 ## ทำ fix ให้มีชีวิตบนแอปจริง + พบและแก้ mask-quality ของ hybrid detector (poteto-mode, playbook Bug fix ต่อ) — 2026-11-15
 
-### Status: commit `3d24560` (test) + `a530853` (fix detector) + `2c270ff` (regen policy.js) local ยังไม่ push — pytest 310 ผ่าน (เพิ่ม 1 เทสต์ failing-first) — **พิสูจน์บน live :8765 แล้ว: บับเบิลผู้ใช้ = repaired/clean conf 0.9116 (เดิม preserve 0.498)** + :3000 build ใหม่แล้ว (chrome fix มีชีวิต)
+### Status: **push แล้ว** `a93e3ca..cf48fd9` (8 commits: 313c1f0+3d46fe2 เดิม + 3d24560 test / a530853 fix detector / 2c270ff regen policy / 67d7d4c+9849bd0 docs / cf48fd9 ruff sort) — CI run 43631706071 **success** — pytest 310 ผ่าน (เพิ่ม 1 เทสต์ failing-first) — **พิสูจน์บน live :8765 แล้ว: บับเบิลผู้ใช้ = repaired/clean conf 0.9116 (เดิม preserve 0.498)** + :3000 build ใหม่แล้ว (chrome fix มีชีวิต); ครั้งแรก push ถูก pre-push hook ตัน (ruff I001 sort import ในเทสต์ใหม่) แก้แล้วผ่าน
 
 - **ต่อจาก entry ด้านล่าง (bubble rescue `313c1f0`):** งานแรก = restart uvicorn (`scratch/detect-recall/restart-ocr.ps1`) + rebuild :3000 (standalone) — แล้ว**ตรวจซ้ำบน live service ด้วย POST /v1/jobs จริง** พบว่าบับเบิลผู้ใช้**ยัง preserve (conf 0.498)** ทั้งที่ probe รอบก่อนบอกว่า rescue ได้
 - **Root cause ชั้นสอง (พิสูจน์ด้วยการวัด):** production ใช้ `HybridTextDetector` (api.py `_default_pipeline_factory`) แต่ probe รอบก่อนวัดด้วย `TextDetector` (plain) — probe โหมด hybrid (`out-user-hybrid`) ตรงกับ live เป๊ะ (conf 0.498, rect เดียวกัน) = fix เดิมวัดผิด surface; บน hybrid mask ของบับเบิลอ้วนเป็น blob 18.3k px ครอบบับเบิล + คูศิลป์รอบขอบ (rect โต 91x177→101x196) — feature ทั้งหมดวัดจาก "backing ring นอก mask" (padding 18px) จึงเลื่อนไปอยู่บนศิลป์อึด → u 0.91→0.46, light 0.71→0.64 → guard ไม่ผ่าน และ feature ของบับเบิลผู้ใช้ทับซ้อนกับศิลป์จริง (p2r10 "Ain't no way" u=0.44/light=0.61) = การผ่อนเกณฑ์ eligibility แก้ไม่ได้ ต้องแก้ mask
