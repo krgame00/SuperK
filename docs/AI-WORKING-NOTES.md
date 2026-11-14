@@ -1,5 +1,30 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Bug Fix: Vertical Speech Bubble Sideways Rotation Artifact Elimination — 2026-11-12
+
+### Status: VERIFIED WORKING (Eliminated 90-degree sideways text rotation artifact on vertical manga speech bubbles across Prompt, Payload Sanitizer, Layout Optimizer, and Overlay Renderer per principles: `principle-fix-root-causes`, `principle-prove-it-works`, `principle-model-the-domain`, `principle-laziness-protocol`):
+
+1) Symptom & Root Cause Analysis:
+   - Symptom: When translating manga with vertical Japanese speech balloons (tategaki / 縦書き), the translated Thai text rendered rotated 90 degrees sideways on the canvas and DOM overlay (`transform: rotate(-90deg)` / `rotate(90deg)`), making text unreadable.
+   - Root Cause: Vision LLMs (e.g. Gemini) mistake vertical CJK reading order for 2D geometric rotation of the text container, outputting `rotation: 90` or `rotation: -90`. The application ingested this value without sanitization and applied `ctx.rotate()` and `wrapper.style.transform = rotate(±90deg)`.
+   - Real-World Domain Rule: In authentic licensed Thai manga typesetting, vertical Japanese balloons are rendered using upright horizontal lines of text wrapped into narrow vertical bubble shapes (`rotation = 0`). 90-degree character rotation is an invalid state for Thai and non-CJK dialogue.
+
+2) Fix & Architecture:
+   - Prompt Hardening (`src/app/api/translate/handler.ts`):
+     - Added explicit directive: "CRITICAL: For standard vertical Japanese text in speech balloons (tategaki / 縦書き), ALWAYS set "rotation": 0. Do NOT output rotation as 90 or -90 for vertical dialogue or narration, because translated text is formatted horizontally across wrapped lines."
+   - Target Payload Sanitizer (`lib/languagePolicy.ts`):
+     - In `normalizeTargetTranslationPayload`: for horizontal writing targets (non-CJK, including Thai `th`), sanitized near-quarter turns (within ±20° of 90° or 270°) and excessive rotations (> 45° on non-SFX) back to `rotation: 0`.
+   - Auto-Layout Optimizer (`lib/bubbleLayoutOptimizer.ts`):
+     - In `optimizeBubbleLayout`: prevented auto-optimizer from baking non-user-modified 90° rotations into `layoutAdjustment`.
+   - Overlay Renderer Defense-in-Depth (`lib/translationOverlay.ts`):
+     - Auto-heals existing saved bubbles with near-90° rotation on render if `!adj?.userModified`, straightening previously rotated text without requiring re-translation.
+
+3) Verification Evidence:
+   - TDD Failure Repro: Added unit tests in `tests/translation/languagePolicy.test.ts`. Confirmed failure on `rotation: 90`, `rotation: -90`, `rotation: 270`, `rotation: 88`, and `rotation: 60` (`AssertionError: expected 90 to be +0`).
+   - TDD Passing: Re-ran `npx vitest run tests/translation/languagePolicy.test.ts` -> 95/95 passed.
+   - Translation Suite Regression Guard: Ran `npx vitest run tests/translation/` -> 65 test files passed, 642/642 tests passed in 21.7s.
+   - Type Safety: Ran `npx tsc --noEmit` -> 0 errors.
+
 ## Feature: Automated Pre-Push Quality Guard & Push Verification Pipeline — 2026-11-11
 
 ### Status: VERIFIED WORKING (Configured native Git `pre-push` hook, installed tracked version in `scripts/hooks/pre-push`, added `npm run push:verify` automated GitHub CI + Gmail alert watcher, and verified dry-run interception per principles: `principle-fix-root-causes`, `principle-prove-it-works`, `principle-laziness-protocol`, `principle-experience-first`):
@@ -4934,3 +4959,27 @@ Verification evidence:
   - `tests/workspace/SettingsModalPronounMatrix.test.tsx`: 4 passed (100%).
   - Full suite check: 80 passed across all 6 test suites.
   - `npx tsc --noEmit`: 0 errors.
+
+
+---
+
+## System State Audit & Root-Cause Fixes — 2026-11-14
+
+### Status: VERIFIED WORKING (All 3 core services online, models loaded, build synced)
+
+- **Issues Diagnosed & Resolved (`principle-fix-root-causes`, `principle-prove-it-works`)**:
+  1. **Ollama Local Model Disappearance (`models: []`)**:
+     - *Root Cause*: Ollama on Windows running through an NTFS Junction (`C:\Users\PC\.ollama\models` -> `F:\OllamaModels`) triggered Go standard library `ERROR_PATH_NOT_FOUND` in `manifest.go` (`msg="bad manifest" error="The system cannot find the path specified."`).
+     - *Fix*: Set user environment variable `OLLAMA_MODELS` directly to `F:\OllamaModels`. Verified Ollama daemon now directly loads and serves both models: `qwen2.5:7b` (4.7 GB) and `qwen2.5vl:7b` (6.0 GB).
+  2. **Thai Manga Text Sideways/Rotated 90° (`principle-fix-root-causes`)**:
+     - *Root Cause*: AI model set `rotation: 90` when encountering vertical Japanese tategaki text, causing Thai horizontal text to be rendered sideways. Standalone server build had not been refreshed with the sanitizer.
+     - *Fix*:
+       - `src/app/api/translate/handler.ts`: Hardened prompt to forbid `rotation: 90` or `-90` for vertical tategaki bubbles.
+       - `lib/languagePolicy.ts`: Added sanitizer resetting near-90°/270° angles to 0 for Thai/horizontal scripts.
+       - `lib/bubbleLayoutOptimizer.ts`: Prevented auto-optimizer from baking unedited 90° rotations into layout adjustments.
+       - `lib/translationOverlay.ts`: Added defense-in-depth auto-healing for legacy 90° bubbles.
+     - *Rebuild*: Next.js standalone build compiled with updated sources.
+  3. **Service Supervision & Health Verification**:
+     - Port 3000 (Next.js Standalone): HTTP 200 OK
+     - Port 8765 (Python OCR/Inpainting): HTTP 200 OK (`{"status":"ok"}`)
+     - Port 11434 (Ollama): HTTP 200 OK (`qwen2.5:7b`, `qwen2.5vl:7b` loaded)

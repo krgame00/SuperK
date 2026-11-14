@@ -137,5 +137,45 @@ describe("strict script eligibility", () => {
     expect(jaInspection.offendingCharacters).toEqual([]);
     expect(jaInspection.normalizedText).toBe("ダメですよー");
   });
+
+  describe("normalizeTargetTranslationPayload rotation sanitization", () => {
+    it("sanitizes near-90-degree and near-270-degree rotation artifacts to 0 for Thai dialogue", () => {
+      const payload = {
+        bubbles: [
+          { t: "ทุกคนคงมองว่าผมแปลกสินะ", rotation: 90, styleCategory: "dialogue" },
+          { t: "ถ้ามีอะไรเดือดร้อนบอกได้เสมอ", rotation: -90, styleCategory: "dialogue" },
+          { t: "ข้อความมุม 270 องศา", rotation: 270, styleCategory: "dialogue" },
+          { t: "ข้อความมุม 88 องศา", rotation: 88, styleCategory: "dialogue" },
+        ],
+      };
+      const normalized = normalizeTargetTranslationPayload(payload, "th");
+      expect((normalized.bubbles[0] as { rotation: number }).rotation).toBe(0);
+      expect((normalized.bubbles[1] as { rotation: number }).rotation).toBe(0);
+      expect((normalized.bubbles[2] as { rotation: number }).rotation).toBe(0);
+      expect((normalized.bubbles[3] as { rotation: number }).rotation).toBe(0);
+    });
+
+    it("preserves legitimate subtle tilt angles on dialogue", () => {
+      const payload = {
+        bubbles: [
+          { t: "ข้อความเอียงนิดหน่อย", rotation: 12, styleCategory: "dialogue" },
+          { t: "ข้อความเอียงซ้าย", rotation: -15, styleCategory: "dialogue" },
+        ],
+      };
+      const normalized = normalizeTargetTranslationPayload(payload, "th");
+      expect((normalized.bubbles[0] as { rotation: number }).rotation).toBe(12);
+      expect((normalized.bubbles[1] as { rotation: number }).rotation).toBe(-15);
+    });
+
+    it("clamps excessive rotation > 45 on non-sfx bubbles to 0", () => {
+      const payload = {
+        bubbles: [
+          { t: "ข้อความเอียงเกิน", rotation: 60, styleCategory: "dialogue" },
+        ],
+      };
+      const normalized = normalizeTargetTranslationPayload(payload, "th");
+      expect((normalized.bubbles[0] as { rotation: number }).rotation).toBe(0);
+    });
+  });
 });
 

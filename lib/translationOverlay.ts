@@ -1567,6 +1567,10 @@ export const applyTranslationOverlay = async (
       let currentBh = adj ? adj.bh * adjSy : (rawH / 100) * ih;
       let currentRotation = adj?.rotation !== undefined ? adj.rotation : ((b.rotation as number) || 0);
       if (currentRotation > 180) currentRotation -= 360;
+      if (!adj?.userModified && (Math.abs(Math.abs(currentRotation) - 90) <= 20 || Math.abs(Math.abs(currentRotation) - 270) <= 20)) {
+        currentRotation = 0;
+        b.rotation = 0;
+      }
       let currentIsItalic = Boolean(
         adj?.isItalic ?? legacyAdj?.isItalic ?? b.isItalic ?? b.italic ?? false,
       );

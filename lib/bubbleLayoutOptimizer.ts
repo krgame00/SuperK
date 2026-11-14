@@ -744,7 +744,13 @@ export function fitBubbleTextWithinBounds(
     bh: finalHeight,
     iw,
     ih,
-    rotation: bubble.layoutAdjustment?.rotation ?? (bubble.rotation as number) ?? 0,
+    rotation: (() => {
+      const rot = bubble.layoutAdjustment?.rotation ?? (bubble.rotation as number) ?? 0;
+      if (!bubble.layoutAdjustment?.userModified && (Math.abs(Math.abs(rot) - 90) <= 20 || Math.abs(Math.abs(rot) - 270) <= 20)) {
+        return 0;
+      }
+      return rot;
+    })(),
     targetFontSize,
     fontSizeMultiplier: bubble.fontSizeMultiplier,
     ...(preservedStyle ? { styleProfile: preservedStyle } : {}),

@@ -48,3 +48,8 @@
 - No glassmorphism as a default.
 - No heavy drop shadows on cards.
 - No "cream/warm" background tint.
+
+## Demo & Mockup Imagery
+- **Approved asset only**: Mockups, design deliverables, and screenshots for notes/PRs use the demo page at `public/demo/page.*`. Never source pages from `public/translated_finish_firefly/`, user libraries, or test fixtures. They contain adult content.
+- **Representative**: The demo page carries real dialogue bubbles so translation UI (overlays, handles, toolbars) reads truthfully in mockups.
+- **When no approved asset exists**: Build a synthetic placeholder page first. Do not grab the nearest real page.

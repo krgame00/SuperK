@@ -5,7 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 13 พ.ย. 22:02 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ✅ · ↳ "เป็นไงบ้าง"
+- 15 พ.ย. 00:56 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ✅ · ↳ "เป็นไงบ้าง"
 - 12 พ.ย. 00:59 · `b57e3326` · "ออกแบบ UI ใหม่ Pstack Poteto Mode" · ⚠️ · ↳ "ไม่ มีแบบที่ทำไว้ก่อนหน้าอะ เอามาดูหน่อย ไม่ใช่ทำใหม่"
 - 12 พ.ย. 00:22 · `f53b0831` · "ตั้งค่าแชตให้อ่าน ZCODE-WORKING-NOTES.md" · ⚠️ · ↳ "ยังทำได้ไหม"
 - 12 พ.ย. 00:03 · `ca3c6f63` · ""F:\Projects\superk-ui-redesign-proto" ไปเปลี่ยนรูปก่อนอ่าน" · ⚠️ · ↳ ""F:\Projects\superk-ui-redesign-proto" ไปเปลี่ยนรูปก่อนอ่าน"
@@ -28,6 +28,77 @@
 บันทึกประวัติการทำงานของ ZCode ทุก session เรียงจาก **ใหม่ไปเก่า** (ไฟล์นี้แยกจาก `docs/AI-WORKING-NOTES.md` ซึ่งห้ามแตะตามกฎเดิม — ไฟล์นี้คือฉบับของ ZCode)
 
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
+
+---
+
+## แก้จุดจับบับเบิลลอยไม่ตรงกรอบ (translationOverlay chrome re-anchor) (poteto-mode, playbook Bug fix) — 2026-11-15
+
+### Status: push แล้ว `02b1731` — CI run 43623045857 เขียว (Frontend 5m6s); พิสูจน์บน dev :3001 ด้วยการวัดตำแหน่งจุดจับ vs กรอบ selection สองจังหวะ
+
+- **อาการ (ภาพจากผู้ใช้):** บับเบิลแปลแล้วตอนคลิกเข้าแก้ไข จุดจับวงกลมชมพู + แถบเครื่องมือลอยไม่ตรงกับกรอบข้อความ ("มันไม่เท่ากัน")
+- **Root cause (พิสูจน์ด้วย instrumentation + วัด DOM จริง):** จุดจับ/toolbar วางตามมุมของ selection box ใน chrome layer (unscaled) แต่ chrome ถูก re-anchor เฉพาะเมื่อ stage-level เปลี่ยน (MutationObserver บน container เท่านั้น) — เมื่อ selection ขยับภายในกล่องเอง (auto-fit หลังแปลย่อกล่อง 202→57px, font swap, re-measure) จุดจับค้างที่เรขาคณิตเก่า (วัดได้: จุดจับ y=180/262 = ขอบกล่องเก่าเป๊ะ ขณะ wrapper จริง 211-234)
+- **แก้:** `updateSelectionFrame` เรียก chrome sync ตาม (rAF-debounced scheduleChromeSync ผ่าน ref ประกาศก่อน bubble loop กัน TDZ — ครั้งแรกก่อน assign เป็น no-op)
+- **การ์ดหน้างาน:** ใช้บับเบิลจำลองผ่าน fetch shim (mock /api/translate) บน :3001 — บับเบิลเรนเดอร์ผ่าน pipeline จริงของแอป, คลิกเข้า edit ผ่าน pointer dispatch, วัด handles vs frame สองจังหวะ: ก่อน fix = drift (662,195 หลัง 10s จาก 662,227), หลัง fix = เกาะกรอบเป๊ะทั้งสองจังหวะ (662,230/767,230/767,240/672,250 = มุมกรอบจริง)
+- **เจอเพิ่ม (ยังไม่แก้ จดไว้):** (1) restore บางรอบ canvas หน้าดำ + แท็บ Translated/Mask disable (asset โหลดไม่ครบ — บั๊กแยก pre-existing เกิดก่อน fix นี้ ทำให้ chrome ลอยบน geometry พังได้) (2) TDZ `Cannot access 'left' before initialization` ยิงเป็นครั้งคราวตอน restore (intermittent ~1/5 รอบ, harness จับ stack วางไว้แล้ว ยังไม่ตอกย้ำได้) (3) IAB locator click ติด actionability บ่อย — ใช้ evaluate click/CUA พิกัดจาก DOM จริงแทนเสมอ
+- **ข้อจำกัด:** :3000 (standalone build เก่า) ต้อง `npm run build` ใหม่จึงเห็น fix; เทสต์อัตโนมัติสำหรับจุดนี้เป็น DOM timing หนัก — ยืนยันด้วยการวัดบนหน้าจริงตาม playbook (ข้าม failing-test-first ตามข้อยกเว้น integration-heavy)
+
+## ดึงเซฟ My Hentai Fantasy จากมือถือ (poteto-mode) — 2026-11-15
+
+### Status: เสร็จ — adb pull 146 ไฟล์ 213MB ลง `E:\Phone_Backup\MyHentaiFantasy_Saves_2026-11-15\myhentaifantasy_files` นับตรงมือถือ 146/146 — **ต่อ: ย้ายเข้าเวอร์ชัน PC แล้ว (slot + หน้า 11, persistent ค้างรอปิดเกม)**
+
+- เกม = Ren'Py (My Hentai Fantasy / EmiyaSanz) บนมือถือมี 2 packages: `com.myhentaifantasy` (เก่า, มีเซฟจริง 146 ไฟล์ เซฟใหม่สุด 2026-11-01 21:46) และ `com.emiyasanz.myhentaifantasy` (ใหม่, ยังไม่มีเซฟ มีแค่ log + acceptance marker) — /data/data (shared_prefs) อ่านไม่ได้ (non-root) แต่เซฟอยู่ /sdcard ครบ
+- ของที่ได้: `saves/sync/*.save` (slot 1-1..10-4 + auto-1..10 + _tracesave รวม) + `persistent` (276KB, Ren'Py zlib binary) + security_keys.txt + upgraded.txt + log/traceback
+- **ย้ายเข้า PC (ต่อรอบเดียวกัน):** PC = `F:\Downloads_Archive\Games\emiyasanz.com MyHentaiFantasy-0.18.1-win\...` (Ren'Py 8.2.3, portable saves ใน `game/saves` + mirror ที่ `AppData\RenPy\MyHentaiFantasy-1667092547` เขียนคู่กันทุกไฟล์) — **เซฟมือถือทุกไฟล์เป็นเกมเวอร์ชัน 0.13, PC เป็น 0.18.1** (อ่าน `_version` จาก json entry ใน zip save; script version ตรงกัน (8,2,3) ทั้งคู่) — ผู้ใช้เล่น PC สดตอน import (saves เปลี่ยนระหว่าง cp ตัวแรกพัง 1 ครั้ง) → วิธี: backup ครบก่อน (`F:\Downloads_Archive\Games\_unlock_backup\myhentai_pc_saves_backup_20261115\` game 14 + appdata 26 ไฟล์) แล้วใส่ slot 1-1..10-4 (50 ไฟล์, ทับ PC 1-1 ที่เซฟเมื่อกี้) + phone auto-1..10 เปลี่ยนชื่อเป็น **หน้า 11** (`11-N-LT1.save`) ไม่ทับ autos ที่เกมกำลังเขียน → ยืนยันทั้ง 2 ที่เก็บ 68 ไฟล์ตรงกัน ไม่มี tracesave หลุด
+- **ค้าง:** persistent ของมือถือ (276KB unlock เยอะกว่า PC 12KB) **ยังไม่สลับ** เพราะเกมเปิดอยู่จะเขียนทับเองตอนออก — รอผู้ใช้ปิดเกมแล้วค่อยสลับ (backup มีครบ)
+- **เปิด:** เซฟ 0.13 โหลดใน 0.18.1 อาจเตือน/โหลดไม่ขึ้นบาง slot (คนละเอนจิน 8.4/8.2.3 แต่ script version ตรง) ถ้าพังทางเลือก = หา PC build 0.13 มาติดตั้งคู่กัน
+- **ต่อ (ผู้ใช้บอกมือถือมีเวอร์ใหม่):** dumpsys ยืนยัน — ตัวเก่า versionName **0.13** (เซฟจริงทั้งหมด), ตัวใหม่ `com.emiyasanz.myhentaifantasy` versionName **1.0** (ติดตั้ง 2 พ.ย., Ren'Py 8.2.3 เหมือน PC, ยังไม่มีเซฟ) → push เซฟ 0.13 ทั้งชุด 144 ไฟล์ (slots ถึงหน้า 13 + autos + persistent + security_keys + upgraded) เข้า `Android/data/com.emiyasanz.myhentaifantasy/files/saves/` ยืนยันบน remote ครบ — ทดสอบโหลดในเกม 1.0 ค้างที่ผู้ใช้ (กลับคืน = ลบโฟลเดอร์ saves ของ package ใหม่) ข้อพบ: phone slots จริงถึงหน้า 13 ทับกับ autos-เปลี่ยนชื่อ-หน้า 11 บางตัว → PC หน้า 11 = phone autos (ล่าสุด), หน้า 12-13 = phone slots เดิม
+
+---
+
+## ปลดล็อก CG + โกงเกม 5 ตัวใน F:\Downloads_Archive\Games (poteto-mode) — 2026-11-13
+
+### Status: เสร็จ 4/5 เกมแบบเต็ม + เกม 5 (Unity) โกงเงินถาวรแบบ patch binary — CG รวม 2,406 ภาพดึงออกที่ `_CG_Unlocked\` — เครื่องมือ+backup ทั้งหมด `C:\Users\PC\Downloads\_unlock_tools` (อ่าน README.md)
+
+- **ที่ทำ:** (1) สำรวจเอนจินทั้ง 5 เกม: MZ 2, MV 2, Unity IL2CPP 1 (2) **Stranded with You** แก้เซฟโดยตรง (mz_save.js — MZ save = pako.deflate เขียนเป็น UTF-8 ของ binary string ไม่ใช่ raw deflate): สร้าง file1 + patch autosave, เปิดสวิตช์ 241-260+341-345 = 回想 1-25 (ที่มา: CE 507 "回想全開放用イベント" ในเกมเอง) + โกง 体力/精神力/好感度999/関係性4/ของ 999 — verify decode ครบ 25 สวิตช์ (3) **RJ01661359** ผ่าน NW.js CDP: `commandNewGame()` จริง → เปิดสวิตช์ gallery 8 เซ็ต (12,14,15,16,17,21,22,24 อ่านจาก CE_17_Gallery) + BadendUnlocked + Corruption=100 → saveGame(1) → verify decode (4) **RJ01555414 + SexLife** NW.js รีแพ็กเก่าตัด remote debugging (ลองทั้ง flag และ chromium-args) → เปลี่ยนไปเขียนปลั๊กอิน `_ZCheatStart.js` hook setupNewGame (เงิน/รัก/เลเวลเต็ม/loan=0/rank6, หา var id จากชื่อ) + register ใน plugins.js + JSON validate (5) ดึง CG ทุกเกม ≥800x600: 643+570 (png เปล่า) + 155 (ถอดรหัส MZ .png_ ด้วย encryptionKey ใน System.json — verify PNG 1920x1080) + 1038 (recursive incl. Kaisou_ thumbnail) (6) **Peeping Dorm Manager (Unity IL2CPP)**: เซฟ SystemSave.dat = base64 custom crypto (ไม่ใช่ MM Encrypt/Rijndael/AesTransform/bcrypt — hook แล้วไม่ยิง) → เปลี่ยนยุทธ์: REA inspect_il2cpp_metadata ผูก binary หา `LuXuan.Character.CharacterWallet` → อ่าน machine code ยืนยันเงินเป็น float @field 0xD8 → **patch GameAssembly.dll**: get_OwnMoney คืน 999999.0f + IsAffordable คืน true → เปิดเกมจริงหลัง patch ไม่ crash
+- **backup ครบ:** stranded file0, package.json, plugins.js ทั้ง 2 เกม, GameAssembly.dll.orig (คืนของเดิม = copy ทับ), ปิดโกง MV = ลบ entry _ZCheatStart ใน plugins.js
+- **บทเรียน:** MZ save codec UTF-8 binary-string / NW.js เก่าตัด devtools ให้ใช้ปลั๊กอินแทน / Unity เซฟเข้ารหัสเองให้ patch runtime method แทนการถอดเซฟ / REA metadata binding ให้ address ครบ 120k methods — ไม่ต้องรอ Ghidra (DLL 51MB วิเคราะห์เป็นชั่วโมง) / Frida ของ REA เป็น API ใหม่ (ไม่มี Module.findExportByName static, ไม่มี btoa) / hook WriteFile+backtrace ใช้ Backtracer.FUZZY ได้ frame มั่ว อย่าเชื่อ
+- **รายละเอียด:** C:\Users\PC\Downloads\_unlock_tools\README.md
+
+### เพิ่มรอบ 2026-11-14: เร่งความเร็วเกม + เหตุโฟลเดอร์เครื่องมือถูกลบ
+
+- **Fast-forward:** เขียนปลั๊กอิน `_ZFastForward.js` (กด F ค้าง = 4 เท่า, override SceneManager.updateMain รองรับ MV/MZ) ติดตั้งครบ 4 เกม RPG Maker + validate JSON — **พิสูจน์บนเกมจริง** RJ01661359 ผ่าน CDP: keyMapper mapped, wrapper ทำงาน, 1 call = 4 ticks / 3 calls = 12 ticks (frameCount delta ตรง design)
+- **เหตุการณ์ถูกลบ:** โฟลเดอร์ `C:\Users\PC\Downloads\_unlock_tools` (เครื่องมือ+backup ทั้งหมด) **ถูกลบทั้งก้อน** ระหว่างสองรอบแชต — สาเหตุไม่ทราบ (ต่อเนื่องกับปริศนาการลบไฟล์ใน Downloads_Archive\Games ที่แชต backup มือถือจดไว้) ของบน F: ทั้งหมดยังอยู่ครบ (ตรวจซ้ำจริง: เซฟ/ปลั๊กอิน/patch bytes/CG) — **ย้าย backup ไป `F:\Downloads_Archive\Games\_unlock_backup`** พร้อม `revert_gameassembly.js` (คืน DLL จากไบต์ต้นฉบับที่จดไว้ใน context เพราะ backup เดิมหาย) + README ใหม่; อย่าวางของถาวรใน Downloads อีก
+- **Bash tool พังทั้ง session** (`spawn bash.exe ENOENT` แม้ bash.exe ยังอยู่บนดิสก์และ cwd มีจริง) — ทำงานต่อด้วย node_repl + Read/Write/Edit; node_repl = kernel ใหม่ทุก call (state ไม่คงข้าม call), ไม่มี global WebSocket (เขียน MiniWS บน net socket), worker ตายถ้า evaluate `process.exit` ของ game page แบบ sync (ให้เกม setTimeout exit เอง)
+
+---
+
+## รีวิว superk-textless-pair-matcher-fixed.patch (Downloads) — 2026-11-13
+
+### Status: สรุปคือ **ไม่เอา** — แก้แล้ว 2 จุดย่อย แต่จุดตาย 2 จุดยังอยู่ครบ พิสูจน์ซ้ำบน worktree สะอาดที่ b59280e; main มีของที่สมบูรณ์กว่าอยู่แล้ว (ebc104d+7cdec96+c167e34, CI เขียว)
+
+- **ที่เขาแก้ได้จริง (ยืนยันผ่านเทสต์):** (1) register ครั้งใหม่ revoke cleanUrl เก่าก่อนทับ — ปิด leak (2) matcher รอบ abort ผลักหน้าที่เหลือกลับ filteredPages ทั้งหมด + เพิ่มเทสต์ abort (vitest 3/3 ผ่านบน worktree)
+- **ที่ยังพัง (พิสูจน์ซ้ำจริง):** (F1) api.py ยังใช้ `jobs._pipeline_instance` — `jobs` ยังไม่ถูก import เพิ่มแต่ครอบ threading.Lock ที่ไร้ประโยชน์ → TestClient ได้ HTTP 500 `NameError: name 'jobs' is not defined` ซ้ำเป๊ะ; (F2) literal ยังมี status/stage เกิน + ขาด required 6 field → tsc TS2353 ยืนยันซ้ำ; (F3) ยังไม่มีสายเรียก; ยังไม่ persist (reload หลุด clean) ยังไม่มี fingerprint (prepare จะรัน clean จริงทับ textless base); ruff 9 errors (pre-push จะตัน)
+- **วิธีทดสอบ:** `git worktree add --detach scratch/fixed-patch-check b59280e` + apply แพตช์ + junction node_modules → tsc / TestClient / vitest / ruff ตรงจุด แล้วเก็บ worktree (ลบ junction node_modules ก่อน recursive delete กันไล่ลบ node_modules จริงของ main; metadata `.git/worktrees/manga-translator1` ค้างจาก handle ก็เก็บแล้ว)
+- **สรุปให้ผู้ใช้:** แพตช์ตัวนี้ทิ้งได้ — ของใน main ครอบทุกอย่างที่เขาแก้และกว้านั้น (persistence + fingerprint + wiring + เทสต์ endpoint/hook + CI เขียว) ถ้าจะบอกผู้โปรดิวซ์ ให้ชี้ commit ebc104d..c167e34 เป็นคำตอบ
+
+## Backup มือถือ Redmi Note 11 → E:\Phone_Backup + สแกนไฟล์ซ้ำทั้งก้อน (poteto-mode) — 2026-11-13
+
+### Status: เสร็จ — คัดลอกของใหม่เข้าโครงเดิมครบ + รายงานซ้ำ 395 กลุ่ม/135.7MB ถูกเก็บไว้ ผู้ใช้ตัดสินใจ **ไม่ลบอะไรทั้งสิ้น**
+
+- **ที่มา:** ผู้ใช้ถามว่าเห็นมือถือไหม → เสียบ Redmi Note 11 แบบ MTP เดิม คัดลอกผ่าน Shell COM ช้าและค้างที่ Download ผู้ใช้กดเร่งความเร็ว → สรุปเปิด USB Debugging แล้วใช้ adb แทน
+- **ที่ทำ:** (1) ติดตั้ง platform-tools ที่ `F:\tools\platform-tools` (adb 37.0.1) (2) `adb pull` DCIM/Download/Pictures/Documents = 1,205 ไฟล์ 255MB ใน 17.8 วิ (13.7 MB/s — เทียบ MTP ค้าง 20+ นาที) (3) merge เข้าช่องโครงเดิมด้วย robocopy /MT: Internal_Screenshots 235 ไฟล์ (+17), Internal_Download +26, Internal_Documents (ใหม่), Pictures แยกแอปเข้า 03_Social 23 โฟลเดอร์ (4) ลบ staging (_stage_2026-11-13, _adb_2026-11-13) เหลือโครงจริงสะอาด (5) สแกนซ้ำ SHA256 ทั้ง 17,826 ไฟล์แบบ tier: จัดกลุ่มขนาดก่อนแล้วแฮชเฉพาะ collision (1,546 ไฟล์)
+- **ผลสแกนซ้ำ:** 395 กลุ่ม เสียพื้นที่ 135.7MB — ใหญ่สุด `coffee time.m4a` ซ้ำ 40.9MB ใน 08_งานเก่า, รองลงมา LINE jpg 3.6MB + facebook zip 3.5MB, ส่วนใหญ่คือ FB_IMG บันทึกซ้ำคนละชื่อ (590 ไฟล์ใน 03_Social) และเซฟเกม saves\sync ตามระบบเกม (ห้ามแตะ) — รายงานฉบับเต็ม `E:\Phone_Backup\dup-report-2026-11-13.txt`
+- **บทเรียน:** (a) .ps1 เขียนด้วย Write tool ไม่มี BOM → PowerShell 5.1 อ่านเป็น ANSI ตัวอักษรไทยในพาธเพี้ยนหมด — แก้ด้วยหาปลายทางผ่านชื่อไฟล์ ASCII ลูก (Internal_Screenshots ฯลฯ) ห้ามฝัง literal ไทย (b) Git Bash แปลง `/sdcard` เป็น `C:/Program Files/Git/sdcard` — ต้อง `MSYS_NO_PATHCONV=1` หน้า adb (c) แพตเทิร์น `@($map[$k]) + $v` นับ $null ตัวแรกซ้ำทั้งสองจุด (bySize และ hashes) ทำให้คิดว่าต้องแฮช 34,327 ไฟล์ — guard ContainsKey ก่อนเสมอ (d) Sort-Object ชื่อ property บน hashtable เงียบผ่าน ใช้ script-block `{ $_.waste }`
+- **ของที่ผมเห็นบนมือถือ (รูปล่าสุด):** สกรีนช็อตวันนี้ 12:12 แคปโฆษณา Manga UP! (Boyish Girlfriend) บน YouTube, 7 พ.ย. แคปหน้าเตือนเข้าสู่ระบบ Facebook, ใบงาน 2-3 พ.ย. ใน Download
+- **ค้าง/เปิด:** ไม่ลบซ้ำตามคำตัดสินผู้ใช้; กล้อง DCIM/Camera ว่าง; scrcpy ยังไม่ได้ติดตั้ง (ดูหน้าจอมือถือยังไม่เปิดใช้)
+- **เพิ่มรอบ 14 พ.ย.:** ผู้ใช้ขอ snaptube + My Phone เพิ่ม — มือถือหลุด adb หลังถอดสาย (ยัง MTP OK) ใช้ watcher loop รอกลับมา → adb pull snaptube 78 ไฟล์ 987MB + My Phone 250 ไฟล์ 1.3GB (15-17MB/s) → merge กฎ name-skip เข้า `04_Snaptube\SD_snaptube` และ `05_มีเดียอื่นๆ_แอปและเกม\My Phone_SD` (ตั้งชื่อ _SD แยกแหล่งที่มาตามแนว Facebook_SD) นับยืนยัน 78/250 เป๊ะ staging เหลือ 0 — แบ็กอัป SD จบหมด เหลือเจตนาข้ามอย่างเดียวคือ Android 21.5GB
+- **ตรวจซ้ำรอบสอง + ลบตัวสำเนาวันนี้ (ผู้ใช้เลือกลบ):** สแกน SHA256 แยกของดึงวันนี้ vs ของเก่า 3 ขอบเขต พบซ้ำที่เกี่ยวข้อง ~14GB — Phone_Backup 291 กลุ่ม (snaptube/งานเก่า ซ้ำแบ็กอัป 19 ก.ย.), F:\Doujin 4,757 กลุ่ม (SD ZIP/Doujin/PDF = re-download ของที่จัดใน 01_Games/04/Pixiv_Fanbox_Originals ไปแล้ว + rar Tropical Chase ผมดึงซ้ำเองสองรอบ), VDOHEN 1 กลุ่มจริง 204MB — ลบตามกฎ **เก็บตัวที่เก่าที่สุดในกลุ่มเสมอ + ลบเฉพาะไฟล์ในหน้าต่างเวลาที่ pipeline เขียนจริง** (กันโดนไฟล์ user ที่ mtime อนาคต เช่น Pixiv_Fanbox_Originals 11-24) ผ่าน trash ย้ายก่อนทิ้ง + log คู่ DELETED/KEPT ทุกไฟล์ → **ลบไป 5,310 ไฟล์ คืน ~14GB** (Phone_Backup 328 ไฟล์ 2.4GB, DoujinF 4,981 ไฟล์ 11.3GB, VDOHEN 1 ไฟล์ 204MB) trash ยืนยันจำนวนเป๊ะแล้วเท ไม่มีของค้าง — log เต็ม `E:\Phone_Backup\deleted-dupes-2026-11-14.txt`
+- **บทเรียนรอบลบซ้ำ:** (k) PowerShell คลี่ array ซ้อนชั้นเดียว `@(@('a','b'))` เมื่อ bind เข้า param → หน้าต่างเวลาเดี่ยวพัง (อ่านได้ 0001-01-01) ใช้ unary comma `,@('a','b')` (l) อย่าชี้ trash path เดียวกันจากสอง scope เพราะนับซ้ำจน mismatch หยุดเทถัง (m) กลุ่มที่ทุกตัวเป็นของ pipeline (rar ดึงซ้ำเอง) เก็บ oldest ลบที่เหลือ (n) ไฟล์ user มี mtime อนาคตได้จาก zip ต้นทาง — ห้ามใช้ mtime ล้วนตัดสินใจลบ
+- **SD card (ต่อท้ายรอบเดียวกัน):** สำรวจ `/storage/E77F-FCCA` ~93GB (Download 61GB = videos 24.9 + PDF 9.8 + ZIP 7.9 + MEGA 5.3 + แปลไทย 3.1 + Doujin 2.4, Android 21.5GB, DCIM 8.7GB) — ผู้ใช้เลือกสำรองเฉพาะกล้อง/Facebook/สกรีนช็อต → adb pull 11,474 ไฟล์ ~8.5GB (Camera 922 ไฟล์ 6.4GB 374 วิ, Screenshots 482 ไฟล์, Facebook 10,070 ไฟล์ 1.8GB) เข้าช่อง `SD_Camera` (988 ไฟล์), `SD_Screenshots` (482), `Facebook_SD` (10,070 ไฟล์ + อัลบั้ม "ของดีย์~~" ตามเดิม)
+- **SD Download 61GB → เข้าโครงที่ผู้ใช้จัดไว้ (ผู้ใช้เลือก 3 fork):** videos→E:\VDOHEN, เกม/APK→01_Games, MEGA Downloads→03_VTuber โดยกฎที่ผู้ใช้กำหนด = **"เก็บของ F: เดิมทั้งหมด" → robocopy /E /XC /XN /XO คัดลอกเฉพาะชื่อที่ปลายทางยังไม่มี ไม่เขียนทับ/ไม่ลบเด็ดขาด** ที่เหลือ mapping มั่นใจเอง: PDF+PDF หลวม→06, ZIP+zip หลวม→07, แปลไทย→05, Doujin→04, Nh→_Torrents, P/gif17/Zani/Minecraft→_Loose_Images, xml→_System_Presets, d03→07, งานเก่า+Supachai pdf→Phone_Backup Internal_Documents
+- **ผลจริง (นับยืนยันทุกด่าน):** 06 1,107, 07 2,226, 05 2,189 (pull 2,077 ไฟล์), 04 9,112, 03 756, 01_Games 7,923, _Loose_Images 419, _System_Presets 15, _Torrents 449, VDOHEN 472 ไฟล์ (+195 คลิป 25.5GB 16.4MB/s), ไฟล์หลวม 192/192 สำเร็จหลังแก้ CRLF, staging บน F:/E: เหลือ 0, /sdcard/_tmp_stage เก็บกวาด — **ต้นทางบน SD ไม่ถูกลบ/ย้าย (copy เท่านั้น)**
+- **ปริศนา desktop.ini 83 ตัว (ปิดจบ):** หลัง merge พบ Tropical Chase ขาด desktop.ini 83 ตัวเท่านั้น (เนื้อหาเกมครบ 100% — ogg_ 604/604 ตรงมือถือ) — Defender พ้นข้อกล่าวหา (event log ไม่มี 1116/1117), ทดสอบ adb pull+robocopy แยกตัวเก็บ desktop.ini ได้ปกติ, โครงซ้อนสองชั้นบน F: = โครงจริงบนมือถือเป๊ะ, ผู้ลบหาตัวไม่ได้จากหลักฐาน (recycle bin มีรายการลบโฟลเดอร์เกม sha512 จาก Downloads_Archive\Games ช่วง 22:46 ตรงกับช่วงที่แชตคู่ขนานทำงานปลดล็อก CG) — **ดึง desktop.ini กลับจากมือถือครบ 83/83 → Tropical Chase ตอนนี้ 1,739/1,739 เท่าต้นทางเป๊ะ**
+- **บทเรียนเพิ่มรอบนี้:** (e) ฟังก์ชัน bash ที่เรียกต้องนิยามจริง — รอบแรกลืมนิยาม M ทำ merge หลุดทุกด่าน (pull ไม่พัง แก้ merge-only ต่อได้) (f) adb shell คืน exit 0 แม้คำสั่ง device ล้ม — ต้องตรวจด้วย du/นับไฟล์จริง (g) ผล adb shell มี \r ต่อท้าย → tr -d '\r' ก่อนใช้เป็นรายชื่อ (h) MSYS_NO_PATHCONV ต้อง export ทั้ง script ไม่ใช่แค่ inline (i) GCI -File ไม่ใส่ -Force ข้าม hidden (j) โฟลเดอร์ "sha512_archive" = เกม Ren'Py ห่อตัวตรวจสอบ, desktop.ini ในนั้นเป็นมาร์กเกอร์ ไม่ใช่ไฟล์เกม
 
 ---
 
