@@ -26,6 +26,7 @@ STORY_BACKING_THRESHOLD = 0.55
 SFX_RECTANGLE_CEILING = 0.85
 SFX_FEATURE_THRESHOLD = 0.35
 BACKING_STD_NORMALIZER = 96.0
+BACKING_LIGHT_THRESHOLD = 0.70
 
 
 class EligibilityFeatures(BaseModel):
@@ -35,6 +36,11 @@ class EligibilityFeatures(BaseModel):
     artwork_edge_density: float = Field(ge=0, le=1)
     stroke_irregularity: float = Field(ge=0, le=1)
     margin_fraction: float = Field(ge=0, le=1)
+    # Share of non-text backing pixels at near-white luminance. Balloon and
+    # caption interiors are light; lettering printed on smooth fabric or art
+    # can be just as uniform while sitting on any tone, so lightness is what
+    # separates "replaceable bubble interior" from "backing worth keeping".
+    backing_light_fraction: float = Field(default=0.0, ge=0, le=1)
 
 
 class EligibilityDecision(BaseModel):
@@ -115,6 +121,17 @@ def classify_eligibility(
         features.artwork_edge_density >= SFX_FEATURE_THRESHOLD
         or features.stroke_irregularity >= SFX_FEATURE_THRESHOLD
     )
+    # Plain lettering inside a speech balloon or on a light caption card:
+    # uniform light backing plus regular strokes is balloon evidence, so
+    # artwork edges around the text (webtoon panels place balloons against
+    # dense art) must not push readable dialogue into the preserve buckets.
+    # Lettering on smooth-but-not-light backing (fabric, art) keeps the
+    # conservative path because its backing is worth keeping.
+    bubble_like = (
+        features.backing_uniformity >= STORY_BACKING_THRESHOLD
+        and features.stroke_irregularity < SFX_FEATURE_THRESHOLD
+        and features.backing_light_fraction >= BACKING_LIGHT_THRESHOLD
+    )
 
     narration_score = max(
         features.backing_uniformity,
@@ -127,7 +144,11 @@ def classify_eligibility(
     #    not sitting on a dominant caption card. Erasing artwork is irreversible
     #    while erasing a missed caption is recoverable, so SFX evidence outranks
     #    a weak rectangle; a strong card still wins the caption branch.
-    if has_sfx_features and features.rectangular_backing < SFX_RECTANGLE_CEILING:
+    if (
+        has_sfx_features
+        and not bubble_like
+        and features.rectangular_backing < SFX_RECTANGLE_CEILING
+    ):
         return _sfx_decision(sfx_score, features)
 
     # 2. Bounded rectangular caption card
@@ -140,7 +161,7 @@ def classify_eligibility(
         )
 
     # 3. Text embedded in artwork / clothing / sound effects without caption backing
-    if has_sfx_features:
+    if has_sfx_features and not bubble_like:
         return _sfx_decision(sfx_score, features)
 
     # 4. Borderless caption on margin or clean uniform space
@@ -234,6 +255,11 @@ def extract_eligibility_features(
         enclosure, rectangle, uniformity = closed_backing
     irregularity = _stroke_irregularity(region_mask[y1:y2, x1:x2])
     margin_fraction = _margin_fraction(rect, width, height)
+    light_fraction = (
+        float(np.count_nonzero(backing >= 220)) / backing.size
+        if backing.size
+        else 0.0
+    )
     return EligibilityFeatures(
         enclosure_score=enclosure,
         backing_uniformity=uniformity,
@@ -241,6 +267,7 @@ def extract_eligibility_features(
         artwork_edge_density=edge_density,
         stroke_irregularity=irregularity,
         margin_fraction=margin_fraction,
+        backing_light_fraction=light_fraction,
     )
 
 

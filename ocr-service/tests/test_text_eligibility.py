@@ -71,6 +71,7 @@ def _features(
     rectangular: float = 0,
     artwork_edges: float = 0,
     irregularity: float = 0,
+    light: float = 0,
 ) -> EligibilityFeatures:
     return EligibilityFeatures(
         enclosure_score=enclosure,
@@ -79,6 +80,7 @@ def _features(
         artwork_edge_density=artwork_edges,
         stroke_irregularity=irregularity,
         margin_fraction=0,
+        backing_light_fraction=light,
     )
 
 
@@ -212,6 +214,60 @@ def test_stylized_sfx_over_uniform_backing_is_preserved() -> None:
 
     assert decision.action is AutomaticAction.PRESERVE
     assert decision.text_role in (TextRole.SFX, TextRole.REVIEW)
+    assert decision.text_role is not TextRole.NARRATION
+
+
+def test_plain_bubble_text_next_to_busy_artwork_is_cleaned() -> None:
+    # Webtoon speech balloons routinely sit against dense artwork (characters,
+    # screentone). Those edges belong to the surroundings, not to the lettering:
+    # regular strokes on a uniform LIGHT backing are a balloon/caption, so the
+    # SFX suspicion branches must not capture it and leave readable dialogue
+    # preserved forever. Feature values are the ones measured on a real missed
+    # balloon (user report 2026-11-15).
+    decision = _classify(
+        _features(
+            uniformity=0.91,
+            artwork_edges=0.67,
+            irregularity=0.28,
+            light=0.71,
+        ),
+    )
+
+    assert decision.text_role is TextRole.NARRATION
+    assert decision.action is AutomaticAction.CLEAN
+
+
+def test_plain_text_on_dark_uniform_backing_stays_conservative() -> None:
+    # Uniformity alone cannot separate a balloon interior from lettering printed
+    # on smooth fabric or art: lightness is the tone discriminator, so a dark
+    # uniform backing keeps the artwork-irreversibility path.
+    decision = _classify(
+        _features(
+            uniformity=0.85,
+            artwork_edges=0.60,
+            irregularity=0.20,
+            light=0.10,
+        ),
+    )
+
+    assert decision.action is AutomaticAction.PRESERVE
+    assert decision.text_role in (TextRole.SFX, TextRole.REVIEW)
+    assert decision.text_role is not TextRole.NARRATION
+
+
+def test_medium_irregular_strokes_on_uniform_backing_stay_conservative() -> None:
+    # The bubble rescue is narrow: once the strokes themselves look stylized,
+    # the artwork-irreversibility rule still wins over the uniform backing.
+    decision = _classify(
+        _features(
+            uniformity=0.95,
+            artwork_edges=0.50,
+            irregularity=0.46,
+            light=0.95,
+        ),
+    )
+
+    assert decision.action is AutomaticAction.PRESERVE
     assert decision.text_role is not TextRole.NARRATION
 
 
