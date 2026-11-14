@@ -657,6 +657,9 @@ function inspectTargetText(text, target) {
 function normalizeTargetTranslationPayload(payload, target) {
     if (!payload || !Array.isArray(payload.bubbles))
         return payload;
+    const isHorizontalTarget = target.trim().toLowerCase() !== "ja" &&
+        target.trim().toLowerCase() !== "zh" &&
+        target.trim().toLowerCase() !== "ko";
     return {
         ...payload,
         bubbles: payload.bubbles.map((bubble) => {
@@ -664,13 +667,32 @@ function normalizeTargetTranslationPayload(payload, target) {
                 throw new Error("Malformed bubble element in translation response");
             }
             const row = bubble;
-            if (typeof row.t !== "string")
-                return { ...row };
+            let rotation = row.rotation;
+            if (typeof rotation === "number" && Number.isFinite(rotation) && isHorizontalTarget) {
+                const absRot = Math.abs(rotation);
+                const normRot = ((rotation % 360) + 360) % 360;
+                const isNearQuarterTurn = Math.abs(normRot - 90) <= 20 ||
+                    Math.abs(normRot - 270) <= 20 ||
+                    Math.abs(absRot - 90) <= 20;
+                if (isNearQuarterTurn) {
+                    rotation = 0;
+                }
+                else if (absRot > 45 && row.styleCategory !== "sfx") {
+                    rotation = 0;
+                }
+            }
+            if (typeof row.t !== "string") {
+                return { ...row, ...(rotation !== undefined ? { rotation } : {}) };
+            }
             const inspection = inspectTargetText(row.t, target);
             const text = inspection.status === "eligible" && inspection.targetId === "th"
                 ? (0, thaiSpellcheck_1.normalizeThaiText)(inspection.normalizedText)
                 : row.t;
-            return { ...row, t: text };
+            return {
+                ...row,
+                t: text,
+                ...(rotation !== undefined ? { rotation } : {}),
+            };
         }),
     };
 }
