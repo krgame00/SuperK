@@ -429,6 +429,44 @@ def test_hybrid_detector_edge_dense_crop_uses_seed_only() -> None:
     )
 
 
+def test_hybrid_detector_trusts_dense_ctd_seed_without_stroke_stamps() -> None:
+    """A densely seeded crop keeps CTD's own probability map.
+
+    Stamping extracted strokes over a dense seed fattens the probability past
+    the glyph boundary; the refiner's hole-filling then swallows the balloon
+    border and neighbouring artwork, which poisons every eligibility feature
+    measured on the backing ring outside the mask.
+    """
+    from app.detector import DetectionResult, DetectedBlock, HybridTextDetector, LetterboxTransform
+    from app.schemas import PixelRect
+
+    probability = np.zeros((120, 120), dtype=np.float32)
+    probability[50:70, 50:70] = 0.80
+
+    class DenseSeedCTD:
+        def detect(self, img):
+            h, w = img.shape[:2]
+            return DetectionResult(
+                mask_probability=probability,
+                blocks=[
+                    DetectedBlock(
+                        rect=PixelRect(x=40, y=40, width=40, height=40),
+                        confidence=0.9,
+                    )
+                ],
+                scale=LetterboxTransform(w, h, 1024, 1.0, 0, 0),
+            )
+
+    image = np.full((120, 120, 3), 250, dtype=np.uint8)
+    image[30:90, 30:32] = (20, 20, 20)
+    image[30:32, 30:90] = (20, 20, 20)
+    image[50:70, 50:70] = (60, 60, 60)
+
+    result = HybridTextDetector(DenseSeedCTD(), paddle_engine=None).detect(image)
+
+    assert np.array_equal(result.mask_probability, probability)
+
+
 def test_glow_candidate_restricted_to_seed_vicinity() -> None:
     """Glow detection should not reach into artwork far from seed pixels."""
     from app.detector import _restrict_to_seed_vicinity
