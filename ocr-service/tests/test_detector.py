@@ -437,7 +437,7 @@ def test_hybrid_detector_trusts_dense_ctd_seed_without_stroke_stamps() -> None:
     border and neighbouring artwork, which poisons every eligibility feature
     measured on the backing ring outside the mask.
     """
-    from app.detector import DetectionResult, DetectedBlock, HybridTextDetector, LetterboxTransform
+    from app.detector import DetectedBlock, DetectionResult, HybridTextDetector, LetterboxTransform
     from app.schemas import PixelRect
 
     probability = np.zeros((120, 120), dtype=np.float32)
