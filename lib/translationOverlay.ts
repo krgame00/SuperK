@@ -1316,6 +1316,9 @@ export const applyTranslationOverlay = async (
     };
     const chromeControlsByWrapper = new WeakMap<HTMLElement, BubbleChromeControls>();
     const cancelDragPreviews: Array<() => void> = [];
+    // Set once scheduleChromeSync exists (it is declared after the bubble
+    // builders); selection updates that happen before it are harmless no-ops.
+    let scheduleChromeSyncRef: ((frames?: number) => void) | null = null;
 
     let fallbackY2 = 10;
 
@@ -1670,6 +1673,11 @@ export const applyTranslationOverlay = async (
         selectionFrame.style.top = `${bounds.y / currentBh * 100}%`;
         selectionFrame.style.width = `${bounds.width / currentBw * 100}%`;
         selectionFrame.style.height = `${bounds.height / currentBh * 100}%`;
+        // The handles/toolbar hang on the selection corners in the unscaled
+        // chrome layer; a re-render that moves the selection (auto-fit after
+        // translation, font swap, box resize) must re-anchor them or they stay
+        // pinned to the pre-resize geometry.
+        scheduleChromeSyncRef?.(4);
       };
       const overflowNotice = document.createElement("span");
       overflowNotice.className = "bubble-layout-overflow";
@@ -4346,6 +4354,7 @@ export const applyTranslationOverlay = async (
       chromeSyncFramesRemaining = Math.max(chromeSyncFramesRemaining, frames);
       if (chromeSyncFrame === null) chromeSyncFrame = requestAnimationFrame(runChromeSyncFrame);
     };
+    scheduleChromeSyncRef = scheduleChromeSync;
 
     const stageObserver = chromeRoot && typeof MutationObserver !== "undefined"
       ? new MutationObserver(() => scheduleChromeSync(12))
