@@ -408,6 +408,32 @@ def _fuse_strokes_with_text_seed(
     ).astype(np.uint8)
 
 
+def _overlay_text_evidence(
+    combined_prob: np.ndarray,
+    y1: int,
+    y2: int,
+    x1: int,
+    x2: int,
+    evidence: np.ndarray,
+    ctd_prob: np.ndarray,
+    ctd_blind_threshold: float = 0.05,
+) -> None:
+    """Write hybrid stroke evidence only where CTD is effectively blind.
+
+    CTD probability is the calibrated seed the refiner thresholds, so stamping
+    0.95 over it fattens the seed past the glyph boundary and lets the
+    refiner's hole-filling swallow the balloon border and the surrounding
+    artwork. Soft-contrast text (CTD 0.05-0.35) stays on CTD's own values for
+    the refiner's adaptive cut; stamps land only where CTD saw nothing.
+    """
+    fresh = np.where(
+        (evidence > 0) & (ctd_prob < ctd_blind_threshold),
+        np.float32(0.95),
+        np.float32(0.0),
+    )
+    combined_prob[y1:y2, x1:x2] = np.maximum(combined_prob[y1:y2, x1:x2], fresh)
+
+
 def _estimate_candidate_growth_radius(
     candidate: np.ndarray,
 ) -> int:
@@ -678,6 +704,15 @@ class HybridTextDetector:
                         )
                     continue
 
+                if np.count_nonzero(seed) >= 0.10 * seed.size:
+                    # CTD already seeds this crop densely; trust its probability
+                    # instead of stamping extracted strokes over it.
+                    combined_prob[by1:by2, bx1:bx2] = np.maximum(
+                        combined_prob[by1:by2, bx1:bx2],
+                        local_prob,
+                    )
+                    continue
+
                 candidate = _extract_strokes_from_crop(crop)
 
                 # Check for bright text core and colored glow (e.g. cyan, magenta, warm gold)
@@ -694,14 +729,39 @@ class HybridTextDetector:
                 # SAFETY CHECK: Tightened from 55% → 40% — artwork leaks earlier
                 if np.count_nonzero(fused) > 0:
                     if np.count_nonzero(fused) / fused.size > 0.40:
+                        # Stroke fusion saturated the crop, so the strokes carry
+                        # no trustworthy shape; keep the CTD seed plus glow.
                         fused = np.maximum(seed, glow_candidate)
-                    radius = min(3, _estimate_candidate_growth_radius(fused))
-                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (radius * 2 + 1, radius * 2 + 1))
-                    grown = cv2.dilate(fused, kernel, iterations=1)
-                    combined_prob[by1:by2, bx1:bx2] = np.maximum(
-                        combined_prob[by1:by2, bx1:bx2],
-                        (grown > 0).astype(np.float32) * 0.95,
-                    )
+                        combined_prob[by1:by2, bx1:bx2] = np.maximum(
+                            combined_prob[by1:by2, bx1:bx2],
+                            local_prob,
+                        )
+                        _overlay_text_evidence(
+                            combined_prob,
+                            by1,
+                            by2,
+                            bx1,
+                            bx2,
+                            glow_candidate,
+                            local_prob,
+                        )
+                    else:
+                        radius = min(3, _estimate_candidate_growth_radius(fused))
+                        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (radius * 2 + 1, radius * 2 + 1))
+                        grown = cv2.dilate(fused, kernel, iterations=1)
+                        combined_prob[by1:by2, bx1:bx2] = np.maximum(
+                            combined_prob[by1:by2, bx1:bx2],
+                            local_prob,
+                        )
+                        _overlay_text_evidence(
+                            combined_prob,
+                            by1,
+                            by2,
+                            bx1,
+                            bx2,
+                            grown,
+                            local_prob,
+                        )
                 elif np.count_nonzero(seed) > 0:
                     combined_prob[by1:by2, bx1:bx2] = np.maximum(
                         combined_prob[by1:by2, bx1:bx2],
@@ -751,7 +811,16 @@ class HybridTextDetector:
                                     grown = cv2.dilate(fused, kernel, iterations=1)
                                     combined_prob[by1:by2, bx1:bx2] = np.maximum(
                                         combined_prob[by1:by2, bx1:bx2],
-                                        (grown > 0).astype(np.float32) * 0.95,
+                                        local_prob,
+                                    )
+                                    _overlay_text_evidence(
+                                        combined_prob,
+                                        by1,
+                                        by2,
+                                        bx1,
+                                        bx2,
+                                        grown,
+                                        local_prob,
                                     )
                             else:
                                 filtered = _filter_paddle_only_components(candidate)
