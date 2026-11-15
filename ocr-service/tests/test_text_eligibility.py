@@ -271,6 +271,66 @@ def test_medium_irregular_strokes_on_uniform_backing_stay_conservative() -> None
     assert decision.text_role is not TextRole.NARRATION
 
 
+def test_typeset_dialogue_at_the_regularity_boundary_is_rescued() -> None:
+    # Measured real pages: a vertical disclaimer at 0.405 and a hand-set
+    # balloon at 0.351 sit between the SFX feature threshold (0.35) and the
+    # bubble ceiling (0.42); with uniform light backing they are dialogue,
+    # not stylized lettering.
+    decision = _classify(
+        _features(
+            uniformity=0.93,
+            artwork_edges=0.60,
+            irregularity=0.405,
+            light=0.77,
+        ),
+    )
+
+    assert decision.action is AutomaticAction.CLEAN
+    assert decision.text_role is TextRole.NARRATION
+
+
+def test_dark_card_merged_with_artwork_lines_still_yields_enclosure() -> None:
+    # A solid dark dialogue card hugging the text with thin artwork lines
+    # touching it: RETR_EXTERNAL merges card and lines into a window-filling
+    # blob, so the raw pass finds nothing; the opened retry must recover the
+    # card under the same area bar.
+    from app.text_eligibility import _backing_shape_scores
+
+    window = np.full((315, 546), 235, np.uint8)
+    window[40:120, 100:420] = 45  # dark dialogue card wrapping the text rect
+    window[20:135, 300:303] = 30  # thin artwork line crossing the card
+    window[60:63, 80:440] = 30  # second thin line touching the other edge
+    window[130:180, 200:460] = 70  # unrelated dark block below the card
+
+    enclosure, rectangle = _backing_shape_scores(
+        window,
+        rect_center=(260.0, 80.0),
+        minimum_area=325 * 87 * 1.10,
+    )
+
+    assert (enclosure, rectangle) == (0.90, 0.0)
+
+
+def test_thin_artwork_slash_never_yields_enclosure() -> None:
+    # A diagonal brush stroke crossing the text rect is bounded but not a
+    # card: its opened contour stays far below the text rect's own area.
+    from app.text_eligibility import _backing_shape_scores
+
+    window = np.full((105, 106), 235, np.uint8)
+    for i in range(38):
+        window[31 + i, 0 + i] = 30
+        window[32 + i, 0 + i] = 30
+        window[31 + i, 1 + i] = 30
+
+    enclosure, rectangle = _backing_shape_scores(
+        window,
+        rect_center=(53.0, 52.0),
+        minimum_area=62 * 61 * 1.10,
+    )
+
+    assert (enclosure, rectangle) == (0.0, 0.0)
+
+
 def test_confident_sfx_over_rectangular_backing_is_labeled_sfx() -> None:
     # Highly stylized lettering with a weak rectangle gets the SFX label, so
     # it is protected and kept out of the translation scope on purpose.

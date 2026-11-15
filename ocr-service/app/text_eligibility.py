@@ -25,6 +25,10 @@ DIALOGUE_ENCLOSURE_THRESHOLD = 0.72
 STORY_BACKING_THRESHOLD = 0.55
 SFX_RECTANGLE_CEILING = 0.85
 SFX_FEATURE_THRESHOLD = 0.35
+# Typeset dialogue strokes measure up to 0.41 irregularity on real pages
+# (vertical disclaimer 0.405, hand-set balloon 0.351) while every SFX-like
+# region in the measured corpus at that backing quality sits above 0.42.
+BUBBLE_REGULARITY_CEILING = 0.42
 BACKING_STD_NORMALIZER = 96.0
 BACKING_LIGHT_THRESHOLD = 0.70
 
@@ -129,7 +133,7 @@ def classify_eligibility(
     # conservative path because its backing is worth keeping.
     bubble_like = (
         features.backing_uniformity >= STORY_BACKING_THRESHOLD
-        and features.stroke_irregularity < SFX_FEATURE_THRESHOLD
+        and features.stroke_irregularity < BUBBLE_REGULARITY_CEILING
         and features.backing_light_fraction >= BACKING_LIGHT_THRESHOLD
     )
 
@@ -369,13 +373,12 @@ def _protection_reasons(
     return reasons or [fallback]
 
 
-def _backing_shape_scores(
-    gray: np.ndarray,
+def _dark_contour_scores(
+    dark: np.ndarray,
     *,
     rect_center: tuple[float, float],
     minimum_area: float,
 ) -> tuple[float, float]:
-    dark = np.where(gray < 180, 255, 0).astype(np.uint8)
     contours, _ = cv2.findContours(
         dark,
         cv2.RETR_EXTERNAL,
@@ -383,7 +386,7 @@ def _backing_shape_scores(
     )
     enclosure = 0.0
     rectangle = 0.0
-    crop_area = gray.shape[0] * gray.shape[1]
+    crop_area = dark.shape[0] * dark.shape[1]
     for contour in contours:
         area = cv2.contourArea(contour)
         if area < minimum_area:
@@ -392,7 +395,7 @@ def _backing_shape_scores(
             continue
         x, y, width, height = cv2.boundingRect(contour)
         if (
-            (x <= 1 and x + width >= gray.shape[1] - 1 and y <= 1 and y + height >= gray.shape[0] - 1)
+            (x <= 1 and x + width >= dark.shape[1] - 1 and y <= 1 and y + height >= dark.shape[0] - 1)
             or (crop_area > 0 and area / crop_area >= 0.85)
         ):
             continue
@@ -402,6 +405,39 @@ def _backing_shape_scores(
             rectangle = max(rectangle, 0.92)
         else:
             enclosure = max(enclosure, 0.90)
+    return enclosure, rectangle
+
+
+def _backing_shape_scores(
+    gray: np.ndarray,
+    *,
+    rect_center: tuple[float, float],
+    minimum_area: float,
+) -> tuple[float, float]:
+    dark = np.where(gray < 180, 255, 0).astype(np.uint8)
+    enclosure, rectangle = _dark_contour_scores(
+        dark,
+        rect_center=rect_center,
+        minimum_area=minimum_area,
+    )
+    if enclosure == 0.0 and rectangle == 0.0:
+        # Artwork lines touching a dialogue card merge the card into a
+        # window-filling blob under RETR_EXTERNAL, and the window-border skip
+        # then discards it. Opening breaks the thin connections so a solid
+        # card can testify for itself under the same area bar, which real
+        # artwork slashes and glasses frames (measured 0.3-0.7x the text
+        # rect on 638800 p12/p30) never reach.
+        opened = cv2.morphologyEx(
+            dark,
+            cv2.MORPH_OPEN,
+            np.ones((3, 3), np.uint8),
+            iterations=2,
+        )
+        enclosure, rectangle = _dark_contour_scores(
+            opened,
+            rect_center=rect_center,
+            minimum_area=minimum_area,
+        )
     return enclosure, rectangle
 
 
