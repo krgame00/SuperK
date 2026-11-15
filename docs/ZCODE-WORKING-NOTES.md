@@ -5,7 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 15 พ.ย. 02:19 · `2b8116b8` · "ทำต่อหน่อย" · ✅
+- 15 พ.ย. 19:55 · `2b8116b8` · "ทำต่อหน่อย" · ✅ · ↳ "ทำครบแล้วใช่ไหม"
 - 15 พ.ย. 01:40 · `2b7e562b` · "ทำให้ระบบตรวจดีขึ้นอีกได้ไหมครับ ยังจับได้ไม่ครบ" · ⚠️
 - 15 พ.ย. 01:03 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ⚠️ · ↳ "เราทำให้ระบบตรวจมันจับให้ได้หมดเลยได้ไหม พอมีวิธีไหม"
 - 12 พ.ย. 00:59 · `b57e3326` · "ออกแบบ UI ใหม่ Pstack Poteto Mode" · ⚠️ · ↳ "ไม่ มีแบบที่ทำไว้ก่อนหน้าอะ เอามาดูหน่อย ไม่ใช่ทำใหม่"
@@ -32,6 +32,19 @@
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
 
 ---
+
+## ไล่คิวงานค้าง: การ์ดดำ + ขอบ irreg + สรุปโฟลว์ Gemini (poteto-mode, playbook Bug fix ต่อ) — 2026-11-15
+
+### Status: push แล้ว `18dd0be` — pytest 313 ผ่าน (เพิ่ม 3 เทสต์) — **พิสูจน์ live: การ์ดดำ p1 ทั้ง 3 ใบ = repaired/clean conf 0.900** (ก่อนหน้านี้ preserve ทั้งหมด) — คิวข้อย่อยที่เหลือจากรายการ "ที่ยังไม่ครบ" จบตามรายการด้านล่าง
+
+- **บับเบิลพื้นมืด/การ์ดดำ (วัดก่อนเขียนโค้ด):** โค้ดปัจจุบันล้างได้แล้ว 2/3 ใบผ่าน enclosure branch (e=0.90) — ใบที่พลาด (p1 region-15) ไม่ได้เพราะขาด feature แต่เพราะเส้นศิลป์บาง ๆ ที่แตะการ์ด ทำ dark mask รวมกันเป็น blob เต็มหน้าต่าง → โดนเกณฑ์ touches_edges ตัด (ยืนยันด้วย enclosure_diag.py ทีละ gate); เพื่อนบ้านที่ได้เพราะ blob บังเอิญไม่แตะขอบ = หลักฐานเปราะ ไม่ใช่ดีไซน์
+- **แก้ `_backing_shape_scores`:** raw pass ไม่เจอ → retry บน opened dark mask (MORPH_OPEN 3x3 ×2 ตัดเส้นบาง) **ด้วย minimum_area เดิม** — เวอร์ชันแรกลองลดเกณฑ์พื้นที่เป็น 0.30×rect แล้ววัดเจอ false positive 3 จุด (p30 เส้นพู่กัน, p12 กรอบแว่น, p12 ดำ ゴゴゴ — ดูภาพ crop ยืนยัน) จึงตัดกลับ: คอนทัวร์การ์ดจริงวัดได้ 33,376 ≥ เกณฑ์เดิม 31,103 อยู่แล้ว ส่วน slash/แว่น/ゴゴゴ = 0.3-0.7×rect ถูกกันเองตามธรรมชาติ
+- **ขอบ irreg 0.35:** สแกน band [0.35-0.42] ทั้ง corpus (u≥0.55, light≥0.70, preserve) เจอ 2 region = ข้อความจริงทั้งคู่ (disclaimer แนวตั้ง irreg 0.405 + บับเบิล "Wait!" 0.351), ไม่มี SFX ใน band → เพิ่ม `BUBBLE_REGULARITY_CEILING = 0.42` ให้ bubble_like ใช้แทน SFX_FEATURE_THRESHOLD — fixture เดิมไม่ทับ (irreg 0.46 เหนือเพดาน, clothing ถูก light gate คุม)
+- **ผล v4 matrix (เทียบสถานะที่ push แล้ว, จับคู่ rect-overlap):** +3 ตามเป้าหมายพอดี (การ์ดดำ p1 → dialogue 0.9, disclaimer p2 → narration 0.931, Wait! p20 → narration 0.95), 0 false positive, 0 lost, ไม่มี SFX flip — pytest 313 (เพิ่มเทสต์: boundary rescue / card recovery / slash rejection)
+- **โฟลว์ review → Gemini (สรุปจากการอ่านโค้ด):** /api/translate รับภาพเดียว (imageBase64) — Gemini หาข้อความเองบนภาพนั้น ข้อมูล region/mask ของ ocr-service ไม่ถูกส่งไปด้วย (มีแต่ policy.sfx, glossary, pronounMatrix) → ข้อความบนงานศิลป์ (p20 แนวตั้ง) จะได้แปลก็ต่อเมื่อ Gemini box เอง; **ข้อเสนอขั้นถัดไป (ยังไม่ทำ รอเกตผู้ใช้):** ยิง rect ของ region ที่ preserve ไปใส่ prompt เป็น hint ("มีข้อความที่เราเก็บไว้ตรงนี้ ลอง detect ด้วย") — เปลี่ยนพฤติกรรม Gemini ทุกหน้า ต้อง validate แยก
+- **scopedRecognitionImage:** ยืนยันด้วย grep ทั้ง repo + `git log -S` — **สัญลักษณ์ไม่มีอยู่จริงทั้ง working tree และ history** (โน้ตรอบก่อนเขียนชื่อไม่ตรง หรืออ้างของที่ไม่เคย commit) — ไม่มีอะไรต้องลบ ลบ item ทิ้ง
+- **เก็บกวาด:** ลบ `scratch/detect-recall/app-prefix` + `probe_prefix.py` (โค้ด pre-fix copy หมดอายุ); เหลือ probe/matrix scripts + reports ล่าสุดไว้เป็นหลักฐาน
+- **ค้าง/เปิด:** (1) ข้อเสนอ region-hints ให้ Gemini (ข้างบน) (2) บั๊กเก่า frontend: restore canvas ดำ + TDZ intermittent — แยก session (3) บับเบิลดำอื่น ๆ ที่ยัง preserve เพราะ blob ยังแตะขอบจริง ๆ (ไม่ใช่เส้นบาง) ยังไม่ครอบ
 
 ## ทำ fix ให้มีชีวิตบนแอปจริง + พบและแก้ mask-quality ของ hybrid detector (poteto-mode, playbook Bug fix ต่อ) — 2026-11-15
 
