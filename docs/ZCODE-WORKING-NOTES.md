@@ -5,7 +5,8 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 15 พ.ย. 20:14 · `2b8116b8` · "ทำต่อหน่อย" · ✅
+- 17 พ.ย. 23:53 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · —
+- 17 พ.ย. 22:31 · `2b8116b8` · "ทำต่อหน่อย" · ⚠️ · ↳ "ระบบตรวจ ai locel มันยังจับได้ไม่หมด และยังมีรอยจุดๆๆๆ เราพอจะแก้ได้ไหม [$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\pstack-poteto-…"
 - 15 พ.ย. 01:40 · `2b7e562b` · "ทำให้ระบบตรวจดีขึ้นอีกได้ไหมครับ ยังจับได้ไม่ครบ" · ⚠️
 - 15 พ.ย. 01:03 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ⚠️ · ↳ "เราทำให้ระบบตรวจมันจับให้ได้หมดเลยได้ไหม พอมีวิธีไหม"
 - 12 พ.ย. 00:59 · `b57e3326` · "ออกแบบ UI ใหม่ Pstack Poteto Mode" · ⚠️ · ↳ "ไม่ มีแบบที่ทำไว้ก่อนหน้าอะ เอามาดูหน่อย ไม่ใช่ทำใหม่"
@@ -32,6 +33,18 @@
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
 
 ---
+
+## เปิดสาย paddle evidence แบบ surgical (poteto-mode, playbook Bug fix ต่อ 2) — 2026-11-18
+
+### Status: **push แล้ว** (commits d977b80 เทสต์ล้มก่อน / 926f821 fix) — pytest **319 ผ่าน** (เพิ่ม 2 เทสต์) — matrix 12 หน้า paddle-on vs paddle-off: **+5 clean ใหม่ล้วน, 0 regression, 0 SFX flip** — live ยืนยัน: หน้า A 5 region ที่ผู้ใช้ repair เองยัง clean ครบ, หน้าร้องเรียน 9 clean ไม่แปรปรวน — paddle มีชีวิตบน service แล้ว (detect 2.0-2.7s/หน้า CPU)
+
+- **ต่อจาก entry ด้านล่าง (balloon rescue):** ผู้ใช้เลือก "ทดลองติดตั้ง paddle" จาก 4 ทางเลือก (AskUserQuestion) — วัดก่อนเสนอ: CTD prob ใน rect ก้อน SFX ถูก mask ครอบหมด (uncovered=0) จึงตัดทาง "ลด threshold" ทิ้ง; mask ในก้อน = blob ยักษ์ 2 ก้อนไม่ใช่ glyph ขัง → ทาง split-region ก็อ่อน
+- **การติดตั้ง (บทเรียนสำคัญ):** `pip install paddleocr` พยายาม **แทนที่ numpy (2.5.1→1.26.4) + cv2** ของ venv production (paddleocr 2.8.1 pin numpy<1.27 + opencv-contrib) — รอบแรกโดน cv2.pyd lock ของ service ช่วยไว้ แต่ numpy โดนลดรุ่นค้าง (pytest 317 ยังผ่านใต้ 1.26.4); ต้องติดตั้งแบบ `--no-deps` แล้วเติม deps เอง: ลำดับจบสาย = **paddlepaddle 2.6.2** (3.3.1 = OneDNN `fused_conv2d` error คู่กับ paddleocr 2.8 บน Windows) + paddleocr 2.8.1 + shapely/pyclipper/scikit-image/imageio/imgaug/decorator/astor + **protobuf 3.20.3** (7.35 ชนกับ proto ของ paddle 2.6); smoke test อ่าน "HELLO WORLD" conf 0.99
+- **ผลวัด paddle ตามที่เขียนเดิม (invasive):** block 23→96/หน้า (ยิงทุก line box เป็น block ไม่มีเงื่อนไข) → region เดิมรวมใหม่ทั้งหน้า → **+10 clean แลก −4 regression** รวม region ที่ผู้ใช้ repair เอง (714,164) กลับไป review — ไม่รับ
+- **แก้ surgical (detector.py, delegate poteto-agent):** paddle box ที่ทับ CTD evidence ≥50% ของพื้นที่ box = **corroborate อย่างเดียว** (upgrade source=BOTH + conf) ไม่ stamp prob ไม่เพิ่ม block/region; box ในพื้นที่ที่ CTD มองไม่เห็น = พฤติกรรมเดิม (stamp + region + block); ลบ `matched` dead flag; เทสต์ failing-first pin 2 พฤติกรรม (covered=ไม่ stamp/เพิ่ม block, uncovered=ได้ evidence) — ทำได้ปลอดภัยเพราะ paddle เพิ่งมีชีวิต ไม่มีพฤติกรรมเดิมให้พัง
+- **ผลวัดหลัง patch (12 หน้า, fixballoon→paddleon):** region เดิมนิ่งทุกหน้า (หน้า A 12→12, p2 18→18, p1 13→13) + **region ใหม่ล้วน +5** (p30 +3 dialogue/narration, p20 +1 narration, 00f68243 +1 narration) ไม่มีแถว sfx ใน diff เลย
+- **สภาพ venv ปัจจุบัน (ต่างจากก่อนทดลอง):** numpy 1.26.4 (pytest 319 ผ่าน), protobuf 3.20.3, +8 แพ็กเกจ paddle ชุด; ไม่ได้ประกาศใน pyproject (fresh venv/CI = paddle-off แบบ graceful ผ่าน try/except เดิม) — ถ้าจะทำให้ทุกเครื่องมี paddle ต้องเขียน install doc/extra แยก (รอเกต)
+- **ค้าง/เปิด:** (1) หน้าร้องเรียน "THEN..." ยังไม่ถูกแยก (paddle-on แบบ surgical: 00c3bd01 9→9 ไม่ขยับ) — คลาสนี้เหลือทางวิเคราะห์เชิงลึกต่อ เช่น ยิง paddle เฉพาะ crop ของก้อน preserve (คล้ายผล crop-test ที่เจอบับเบิลเมื่อ crop เดี่ยว) (2) venv ต่างจาก fresh-install: จดไว้แล้ว อย่าลืมตอนย้ายเครื่อง (3) region-hints ให้ Gemini ยังรอเกต
 
 ## ต่องาน "ตรวจไม่หมด + รอยจุดๆๆๆ": balloon rescue ผ่านเกณฑ์ interior วัดจริง (poteto-mode, playbook Bug fix ต่อ) — 2026-11-17
 
