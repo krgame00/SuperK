@@ -31,6 +31,16 @@ SFX_FEATURE_THRESHOLD = 0.35
 BUBBLE_REGULARITY_CEILING = 0.42
 BACKING_STD_NORMALIZER = 96.0
 BACKING_LIGHT_THRESHOLD = 0.70
+# Relaxed balloon rescue behind the strict pass: oval balloons fill ~pi/4 of
+# their bounding rect (under the 1.10x area bar) and open balloons reach the
+# crop edge on white panels. Measured over 11 real pages: rescued interiors
+# sit at uniformity >= 0.85 while every SFX region stays <= 0.79; irregularity
+# reuses BUBBLE_REGULARITY_CEILING above.
+RELAXED_BALLOON_THRESHOLDS = (200, 215, 220)
+RELAXED_BALLOON_MIN_COVER = 0.85
+RELAXED_BALLOON_MIN_UNIFORMITY = 0.85
+RELAXED_BALLOON_MIN_LIGHT = 0.70
+MIN_BALLOON_INTERIOR_PIXELS = 400
 
 
 class EligibilityFeatures(BaseModel):
@@ -449,7 +459,8 @@ def _closed_light_backing_features(
 ) -> tuple[float, float, float] | None:
     """Measure a bounded light balloon/caption without sampling outside its border.
 
-    A bright area reaching the crop edge is not evidence of an enclosure.
+    A bright area reaching the crop edge is not evidence of an enclosure in
+    the strict pass; the relaxed rescue below accepts it under measured gates.
     The closed contour must contain the text mask; this cannot establish text
     identity on its own, which remains the pipeline's separate evidence gate.
     """
@@ -481,6 +492,39 @@ def _closed_light_backing_features(
         perimeter = cv2.arcLength(contour, True)
         vertices = len(cv2.approxPolyDP(contour, 0.03 * perimeter, True))
         return (0.0, 0.92, uniformity) if vertices <= 4 else (0.90, 0.0, uniformity)
+    # Relaxed rescue when the strict pass finds nothing: the measured blind
+    # spots (oval balloons under the 1.10x area bar, open balloons reaching
+    # the crop edge) are covered by the gates documented at RELAXED_BALLOON_*.
+    irregularity = _stroke_irregularity(text_mask)
+    for thresh in RELAXED_BALLOON_THRESHOLDS:
+        contours, _ = cv2.findContours(
+            (gray >= thresh).astype(np.uint8) * 255,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE,
+        )
+        # The tightest covering contour is the balloon, not the panel around it.
+        for contour in sorted(contours, key=cv2.contourArea):
+            if cv2.contourArea(contour) < RELAXED_BALLOON_MIN_COVER * text_pixels:
+                continue
+            interior = np.zeros_like(gray)
+            cv2.drawContours(interior, [contour], -1, 255, cv2.FILLED)
+            cover = np.count_nonzero((interior > 0) & text_mask) / text_pixels
+            if cover < RELAXED_BALLOON_MIN_COVER:
+                continue
+            eroded = cv2.erode(interior, np.ones((3, 3), np.uint8))
+            backing = gray[(eroded > 0) & ~text_mask]
+            if backing.size < MIN_BALLOON_INTERIOR_PIXELS:
+                continue
+            uniformity = float(np.clip(1.0 - np.std(backing) / BACKING_STD_NORMALIZER, 0, 1))
+            if uniformity < RELAXED_BALLOON_MIN_UNIFORMITY:
+                continue
+            if np.count_nonzero(backing >= 220) / backing.size < RELAXED_BALLOON_MIN_LIGHT:
+                continue
+            if irregularity > BUBBLE_REGULARITY_CEILING:
+                continue
+            perimeter = cv2.arcLength(contour, True)
+            vertices = len(cv2.approxPolyDP(contour, 0.03 * perimeter, True))
+            return (0.0, 0.92, uniformity) if vertices <= 4 else (0.90, 0.0, uniformity)
     return None
 
 
