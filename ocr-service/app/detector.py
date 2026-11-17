@@ -783,6 +783,24 @@ class HybridTextDetector:
                         bx2 = min(w, bx + bw + pad)
                         by2 = min(h, by + bh + pad)
 
+                        # Covered boxes only corroborate existing evidence. Stamping and
+                        # re-blocking them flooded blocks 23->96 with paddle on (2026-11-18
+                        # page sweep) and flipped a user-repaired region back to review.
+                        # Uncovered areas keep the additive stamps, regions, and blocks below.
+                        box_area = max((bx2 - bx1) * (by2 - by1), 1)
+                        covered = 0
+                        for ev in evidence_regions:
+                            ox1 = max(bx1, ev.rect.x)
+                            oy1 = max(by1, ev.rect.y)
+                            ox2 = min(bx2, ev.rect.x + ev.rect.width)
+                            oy2 = min(by2, ev.rect.y + ev.rect.height)
+                            if ox2 > ox1 and oy2 > oy1:
+                                ev.source = EvidenceSource.BOTH
+                                ev.confidence = max(ev.confidence, float(conf))
+                                covered += (ox2 - ox1) * (oy2 - oy1)
+                        if covered * 2 >= box_area:
+                            continue
+
                         crop = image_rgb[by1:by2, bx1:bx2]
                         if crop.size > 0:
                             local_prob = ctd_res.mask_probability[by1:by2, bx1:bx2]
@@ -833,19 +851,7 @@ class HybridTextDetector:
                                     )
 
                         poly = [(int(p[0]), int(p[1])) for p in pts] if pts is not None and len(pts) > 0 else None
-                        matched = False
-                        for ev in evidence_regions:
-                            ox1 = max(bx1, ev.rect.x)
-                            oy1 = max(by1, ev.rect.y)
-                            ox2 = min(bx2, ev.rect.x + ev.rect.width)
-                            oy2 = min(by2, ev.rect.y + ev.rect.height)
-                            if ox2 > ox1 and oy2 > oy1:
-                                ev.source = EvidenceSource.BOTH
-                                ev.confidence = max(ev.confidence, float(conf))
-                                # Recognition confirms its own polygon, not an
-                                # entire overlapping detector rectangle.
-                                matched = False
-                        if not matched and float(conf) >= 0.35:
+                        if float(conf) >= 0.35:
                             evidence_regions.append(
                                 TextEvidenceRegion(
                                     id=f"paddle-{len(evidence_regions)}",
