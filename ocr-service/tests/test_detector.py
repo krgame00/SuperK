@@ -701,4 +701,80 @@ def test_hybrid_detector_recovers_narrow_sparse_text_cluster() -> None:
     assert np.any(res.mask_probability[30:130, 80:95] > 0)
 
 
+def test_paddle_box_over_ctd_region_does_not_stamp_or_add_block() -> None:
+    from app.detector import DetectedBlock, DetectionResult, HybridTextDetector, LetterboxTransform
+    from app.schemas import EvidenceSource, PixelRect
+
+    class SeededCTD:
+        def detect(self, img):
+            h, w = img.shape[:2]
+            probability = np.zeros((h, w), dtype=np.float32)
+            probability[40:60, 50:80] = 0.9
+            return DetectionResult(
+                mask_probability=probability,
+                blocks=[DetectedBlock(rect=PixelRect(x=40, y=30, width=60, height=40), confidence=0.9)],
+                scale=LetterboxTransform(w, h, 1024, 1.0, 0, 0),
+            )
+
+    class OverlapPaddle:
+        def ocr(self, img, cls=True):
+            # Padded box (44,34)-(87,72) overlaps the CTD block (40,30)-(100,70)
+            # by ~95% of the box area.
+            return [[
+                [[[50.0, 40.0], [80.0, 40.0], [80.0, 65.0], [50.0, 65.0]], ("TEXT", 0.97)]
+            ]]
+
+    image = np.full((100, 100, 3), 255, dtype=np.uint8)
+    image[45:55, 55:75] = 15
+
+    with_paddle = HybridTextDetector(SeededCTD(), paddle_engine=OverlapPaddle()).detect(image)
+    without_paddle = HybridTextDetector(SeededCTD(), paddle_engine=None).detect(image)
+
+    assert [b.rect for b in with_paddle.blocks] == [b.rect for b in without_paddle.blocks]
+    assert np.array_equal(with_paddle.mask_probability, without_paddle.mask_probability)
+    assert len(with_paddle.evidence_regions) == 1
+    # The covered box still corroborates the existing region.
+    assert with_paddle.evidence_regions[0].source == EvidenceSource.BOTH
+    assert with_paddle.evidence_regions[0].confidence == 0.97
+
+
+def test_paddle_box_in_uncovered_area_still_gains_evidence() -> None:
+    from app.detector import DetectedBlock, DetectionResult, HybridTextDetector, LetterboxTransform
+    from app.schemas import EvidenceSource, PixelRect
+
+    class FarCTD:
+        def detect(self, img):
+            h, w = img.shape[:2]
+            probability = np.zeros((h, w), dtype=np.float32)
+            probability[20:40, 20:50] = 0.9
+            return DetectionResult(
+                mask_probability=probability,
+                blocks=[DetectedBlock(rect=PixelRect(x=15, y=15, width=45, height=35), confidence=0.85)],
+                scale=LetterboxTransform(w, h, 1024, 1.0, 0, 0),
+            )
+
+    class CornerPaddle:
+        def ocr(self, img, cls=True):
+            # Box far from the CTD block; padded rect lands at (194,194) 53x33
+            # because boundingRect counts inclusive extents.
+            return [[
+                [[[200.0, 200.0], [240.0, 200.0], [240.0, 220.0], [200.0, 220.0]], ("HOLD", 0.96)]
+            ]]
+
+    image = np.full((300, 300, 3), 40, dtype=np.uint8)
+    image[200:220, 200:240, 0] = 210
+    image[200:220, 200:240, 1] = 45
+    image[200:220, 200:240, 2] = 205
+
+    res = HybridTextDetector(FarCTD(), paddle_engine=CornerPaddle()).detect(image)
+
+    paddle_blocks = [b for b in res.blocks if b.rect.x == 194 and b.rect.y == 194]
+    assert len(paddle_blocks) == 1
+    assert paddle_blocks[0].rect.width == 53
+    assert paddle_blocks[0].rect.height == 33
+    assert np.any(res.mask_probability[200:220, 200:240] > 0.5)
+    assert len(res.evidence_regions) == 2
+    assert res.evidence_regions[1].source == EvidenceSource.PADDLE
+
+
 
