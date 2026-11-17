@@ -5,7 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 15 พ.ย. 19:55 · `2b8116b8` · "ทำต่อหน่อย" · ✅ · ↳ "ทำครบแล้วใช่ไหม"
+- 15 พ.ย. 20:14 · `2b8116b8` · "ทำต่อหน่อย" · ✅
 - 15 พ.ย. 01:40 · `2b7e562b` · "ทำให้ระบบตรวจดีขึ้นอีกได้ไหมครับ ยังจับได้ไม่ครบ" · ⚠️
 - 15 พ.ย. 01:03 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ⚠️ · ↳ "เราทำให้ระบบตรวจมันจับให้ได้หมดเลยได้ไหม พอมีวิธีไหม"
 - 12 พ.ย. 00:59 · `b57e3326` · "ออกแบบ UI ใหม่ Pstack Poteto Mode" · ⚠️ · ↳ "ไม่ มีแบบที่ทำไว้ก่อนหน้าอะ เอามาดูหน่อย ไม่ใช่ทำใหม่"
@@ -32,6 +32,48 @@
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
 
 ---
+
+## ต่องาน "ตรวจไม่หมด + รอยจุดๆๆๆ": balloon rescue ผ่านเกณฑ์ interior วัดจริง (poteto-mode, playbook Bug fix ต่อ) — 2026-11-17
+
+### Status: pytest **317 ผ่าน** (เพิ่ม 4 เทสต์ failing-first) — matrix 12 หน้า before/after: **+18 clean, 0 SFX flip, 0 region lost** — พิสูจน์ live แล้ว: บับเบิลผู้ใช้ (712,1130) = dialogue/clean 0.93 (เดิม preserve), หน้า A 5 region ที่ผู้ใช้ต้องกด repair เอง = clean อัตโนมัติครบ 5/5, crop ผู้ใช้ = clean — ผู้ใช้สั่ง "ห้ามดูภาพเดิม" = งานรอบนี้วัดด้วยตัวเลข/OCR-cache ล้วนไม่เปิดภาพเลย
+
+- **ต่อจากแชต `2b8116b8` ที่ถูกตัดกลางคัน 17 พ.ย.:** ผู้ใช้รายงาน "ตรวจไม่หมด + จุดๆๆๆ" — วิเคราะห์จาก 111 jobs ใน cache คืนนั้น: rect คงที่ทุก run แต่ clean พลิก = มาจากปุ่ม repair/restore ของผู้ใช้ (`pipeline.py` retry path stamp conf 0.95) ไม่ใช่ nondeterminism; **เศษ dark ที่เหลือหลังล้าง = ศิลป์นอก mask ทั้งหมด** (NEW_dark≈0 ทุก region ทั้ง 2 หน้า) = "จุดๆๆๆ" คือข้อความเล็กที่ preserve ค้าง ไม่ใช่ความเสียหายจาก cleaner
+- **Root cause (วัดระดับ contour):** บับเบิลจริง 2 คลาสโดน rescue path เดิมตัด — (1) `minimum_area=rect×1.10` ตัดบับเบิลกลม (พื้นที่วงรี = 0.785×rect; บับเบิลผู้ใช้วัดได้ 0.92-1.02×rect) (2) กฎ "แตะขอบหน้าต่าง = ไม่นับ" ตัดบับเบิลเปิดบนพื้นขาว (4 region จริง cover 0.85-1.00 แต่โดน guard ตัวเดียว)
+- **ตัวแยกที่วัดได้จาก 11 หน้า:** interior uniformity ของบับเบิลจริง ≥0.85, ของ SFX ทุกตัว ≤0.79 (gap 0.07) + irreg ceiling 0.42 เดิมกัน fixture เส้นพู่กัน/แว่น/ゴゴゴ (irreg 0.59-1.00)
+- **แก้ (`text_eligibility.py` +44):** relaxed pass ต่อท้าย strict pass ใน `_closed_light_backing_features` — sweep T∈{200,215,220}, เลือก contour แนบ text ที่สุด, อนุญาตแตะขอบ, gate: cover≥0.85 / interior≥400px / uniformity≥0.85 / light≥0.70 / irreg≤BUBBLE_REGULARITY_CEILING — strict pass เดิม byte-identical, เพิ่ม pre-filter contour เล็กกว่า 0.85×mask (perf)
+- **เทสต์เดิม 1 ตัว flip ตามนโยบายใหม่:** `test_open_white_area_...` (68a50a4) เดิมกัน open-white ไม่ให้ได้ evidence — ตอนนี้ typeset บนขาว = กู้ได้ตามการวัด, SFX ยังถูกกันด้วย gate ใหม่ (ยืนยันจาก matrix)
+- **ผล matrix (12 หน้า: 6 corpus 638800 + หน้าร้องเรียน + หน้า A + 3 หน้า cache อื่น):** preserve→clean 18 จุด (ทุกจุด interior-u ≥0.85, irreg ≤0.43), บทบาท narration↔dialogue พลิกบางส่วน (ป้ายอย่างเดียว action ยัง clean), SFX ทุกก้อนรวม region-8 หน้า A (u0.78/irreg1.00) ยัง preserve
+- **ข้อจำกัดที่จดไว้:** (1) ข้อความที่ detector จับไม่ได้เลย (เช่น "THEN..." ใน rect ของก้อน SFX บนหน้าร้องเรียน — CTD ไม่เห็น, paddle branch ตายเพราะ `paddleocr` ไม่ได้ติดตั้งใน venv และ api.py กลืน ImportError เงียบ ๆ) = อีกคลาส ยังไม่แก้ รอเกต (ติดตั้ง paddleocr เสี่ยง numpy 2.x compat หรือทำ bubble-driven secondary detection) (2) probe vs live ต่าง segmentation เล็กน้อยบน 1 region (refine หลัง protection) — ไม่กระทบเป้าหมาย (3) script before/after รอบแรกโดน zombie shell จาก TaskStop ขโมย stash → 5 หน้าท้าย rerun แยกแล้ว (TaskStop บน Git Bash ไม่ฆ่า process tree จริง)
+- **สคริปต์หลักฐาน:** scratch/detect-recall/ (`_dot_probe2.py` เศษ dark, `_balloon_why.py` per-contour เหตุผล, `_rescue_sweep.py` กฎ 3 แบบ 11 หน้า, `out-baseballoon-*/out-fixballoon-*` matrix, `live-after-*.json` ผล live)
+
+## แอปแปลซับวิดีโอ: UI ครึ่งจอ immersive + slim bar เสร็จ → checkpoint commit + push (poteto-mode, video-translator-app) — 2026-11-15
+
+### Status: **push แล้ว** `9ab769b..9ee9ec5` (commit `9ee9ec5` 13 ไฟล์ +675/−97) — gate เขียว 2 รอบ (pre-commit + pre-push hook: tsc/eslint/vitest 25 ไฟล์ 79 เทสต์) + `npm run build` เขียว — ผู้ใช้ยืนยันทดสอบครบ ("ครบหมดแล้วนะ") ก่อน commit
+
+- **ของที่ลง commit (งาน UI ของ session นี้):** (1) หน้าแก้ซับแบบครึ่งจอ immersive — VideoPlayer `fill` prop (วิดีโอกลายเป็นพื้นหลังเวที), vignette + banners + chunk strip ลอยเฉพาะจอใหญ่ `xl:`, rail กระจกขวา 340px (Timeline + SubtitleEditor), จอเล็กเรียง flow ปกติไม่ทับวิดีโอ (แก้ตามรายงานผู้ใช้ "ซ้อนกัน") (2) slim control bar ใต้ซับตาม crop ที่ผู้ใช้ส่ง — play/pause, เวลา fmtClock, seek track ลากด้วย pointer capture, ปุ่มเสียง, ซับยกขึ้น +50px, ซ่อน native controls ใน fill mode (3) Timeline ย้ายจาก capsule ลอยเข้าไปไว้บนสุดของ rail ทุก viewport
+- **งานคู่ขนานที่ถูก fold เข้า commit เดียวกัน:** hardsub 4 ชุดที่ค้าง not committed ใน working tree เดียวกัน — NVENC auto-probe + `FFMPEG_VIDEO_ENCODER` env, anamorphic SAR normalize (`scale,setsar=1` ก่อน `ass`), CQ 30 VBR ลดขนาดไฟล์, portrait stretch fix (`probeVideoDimensions`) — เกตครอบรวมทั้งหมด 79/79 ก่อน push, `.env.local` gitignored จึงอยู่ในเครื่องเท่านั้น
+- **ตรวจหน้าแอปจริงก่อน commit:** screenshot 1440×900 + 390×844 ด้วย demo video ฉีดเข้า IndexedDB + 6 fake cues — slim bar อยู่ใต้ซับตรง crop, rail/kare ไม่ทับวิดีโอทั้งสอง viewport (รายละเอียดใน docs/AI-WORKING-NOTES.md ของ video-translator-app)
+- **ค้าง/เปิด:** `scratch/` โปรโตไทป์ UI (variant a-d) ยัง untracked รอผู้ใช้เลือกเก็บหรือทิ้ง; deferred เดิม — truncation flag response plumbing, OCR toggle เป็นตัวเลือก repair pass, ฟอนต์ hardsub เพิ่มชุด, `hasLanguageLeakage` ติด false positive บน cue ไทยล้วน, toolbar แก้ซับตัดบรรทัดแนวตั้งใน rail 340px
+
+## จัดคิวเหลือของงานเคลียร์ C:: ย้าย Roblox ปิดจ็อบค้าง (poteto-mode, disk cleanup ต่อเนื่อง) — 2026-11-15
+
+### Status: **Roblox ย้ายเสร็จ** — C: เหลือว่าง 54.73GB (จาก 16GB ตอนเริ่มเซสชันนี้ = คืนไปรวม ~38GB) — ไม่มี commit (งานจัดไฟล์เครื่อง ไม่ใช่โค้ด repo)
+
+- **Roblox 5.8GB ย้ายด้วย junction ตามแบบ hermes:** เช็กก่อนว่า `RobloxPlayerBeta` ปิดแล้ว (tasklist ไม่เจอ roblox/prism/minecraft) → `robocopy /E /MOVE /MT:8` จาก `AppData\Local\Roblox` ไป `F:\MovedFromC\Roblox` → สร้าง junction คืนที่เดิม — นับไฟล์ 3 จุดตรงกัน 61,635 = 61,635 = 61,635 (script `move-roblox.ps1` ใน Temp มี guard ป้องกัน dst ซ้ำ + ไม่ลบ src ถ้ายังมีของเหลือ)
+- **ของค้างที่ตรวจแล้วจบไปเอง:** orphaned Prism installed copy บน C: **ไม่มีแล้ว** (ไม่มี `Program Files/PrismLauncher`, `%APPDATA%\PrismLauncher`, `%LOCALAPPDATA%\PrismLauncher` — ตรวจ du ทั้ง 4 path) และ Start Menu shortcut `Prism Launcher.lnk` ถูกชี้มาที่ `F:\Prism Minecraft\PrismLauncher\prismlauncher.exe` ถูกต้อง (อ่าน target จาก .lnk ด้วย WScript.Shell) = ใครบางคน (ผู้ใช้หรือเซสชันขนาน) เคลียร์ไปแล้ว ลบข้อค้างทิ้งได้
+- **เหลือเป็นทางเลือกให้ผู้ใช้ (ยังไม่ทำ):** (1) SD `Android` 21.5GB app data บนมือถือ = เกมเซฟของแอป ย้ายไม่ได้ไม่ปลอดภัย แนะ backup ด้วย adb ถ้าอยากเก็บ (2) `C:\Users\PC\Downloads` ยังไม่ได้จัด (du นับไม่จบภายใน 120s = ไฟล์เยอะ ยังไม่รู้ขนาดจริง) (3) Temp มีสคริปต์ทำงาน 15 ไฟล์ (เล็ก เก็บไว้เป็นหลักฐานได้)
+- **Recycle bin บน C: ว่างเกือบสนิท** (du อ่านได้ 1KB — ตัวสำเนาที่ลบใน dup cleanup ใช้ trash ที่ E: แยกต่างหาก ไม่ได้ทิ้ง bin)
+- **บทเรียน:** `du -sh` บน Git Bash กับโฟลเดอร์ไฟล์เยอะ (Roblox 61k files, Downloads) ลากเกิน 120s timeout และตอน background kill แล้ว stdout ว่าง (du -s พิมพ์ตอนจบเท่านั้น) — ใช้ robocopy /L วัดแทนตาม memory เดิม
+
+---
+
+## ตรวจธีม Ventoy Acheron v2 บนแฟลชไดรฟ์ (poteto-mode, Investigation ตรวจของจริง) — 2026-11-15
+
+### Status: **ธีมถูกต้องพร้อมใช้** — ตรวจของจริงบน H: ทุกจุดผ่าน (งานนี้ทำโดยแชต Gemini/antigravity มาก่อน ผมมาตรวจยืนยัน) — ยังไม่ได้รีบูตพิสูจน์บนเครื่องจริง (ผู้ใช้ทดสอบเอง)
+
+- **ผลตรวจผ่าน (หลักฐานวัดจริง):** (1) ไฟล์ครบ 21 ชิ้นที่ `H:\ventoy\theme\Acheron\` (H: = partition Ventoy exFAT 57.7GB, I: = VTOYEFI) (2) `H:\ventoy\ventoy.json` JSON valid, theme.file ชี้ `/ventoy/theme/Acheron/theme.txt`, gfxmode 1920x1080, display_mode GUI (3) background.png = 1920x1080 ตรง gfxmode, ดูภาพจริงแล้วเส้นเรียบไม่มีรอยหยัก (4) กล่องกระจกฝังจริง: สแกนขอบแดงเจอ x 130-680, y 450-940; กล่องเมนู theme.txt (145,496 + 520x410 → ถึง 665,906) อยู่ในกล่องนี้พอดีมีระยะเผื่อขอบ (5) `item_*.png` 9-patch ครบ 9 ชิ้น พิกเซลจริง = ดำโปร่ง RGBA(24,20,30,alpha 200) + ขอบแดงเข้ม (120,35,55,230) = ทุกรายการมีแถบพื้นหลังจริง (6) `select_*.png` = แดงสด RGBA(187,11,48,255) ขอบขาว (7) แหล่ง 4K มีจริง: `acheron eidelon image2.webp` วัดจาก header = 4096x2048 (8) SHA256 ไฟล์บน H: ตรงกับ `F:\Downloads_Archive\Tools\Ventoy_Acheron_Theme` ทั้ง 21 ไฟล์ + zip 2.15MB อยู่ (9) เอกสาร `acheron_ventoy_theme.md` อยู่ที่ `C:\Users\PC\.gemini\antigravity\brain\38931bb7-…\`, ภาพจำลองในนั้นตรงกับของจริง
+- **ข้อสังเกต (ไม่ต้องแก้):** (1) `H:\ventoy\theme\Acheron\ventoy.json` เป็นไฟล์ซ้ำของตัวบน `/ventoy/` — Ventoy อ่านเฉพาะตัวบน ตัวในธีมเฉย ๆ (2) boot_menu สูง 410px รับ ~9 แถว (item 36+spacing 6) แต่รากมี ISO ~11 ไฟล์ → เกินจะมี scroll ในเมนู ใช้ได้แต่ต้องเลื่อน (3) timeout label top=905 ทับขอบล่าง boot_menu (906) 1px มองไม่เห็น (4) โฟลเดอร์ icons ใน backup ไม่ถูกอ้างใน theme.txt (5) ข้อความรายงานเดิมว่า "ภาพ WebP เดิม 1024x512" ไม่ตรงไฟล์ที่เหลือ (image.webp = 2048x1024) — จำผิดเล็กน้อย ไม่กระทบผล
+- **บทเรียน:** PowerShell inline ผ่าน Git Bash โดน bash ขยาย `$` พังซ้ำอีก — เขียนเป็นไฟล์ .ps1 แล้วรันด้วย `-File` เท่านั้น (ยืนยันกฎเดิมใน memory); PowerShell 5.1 System.Drawing ไม่อ่าน WebP — อ่านขนาดจาก RIFF/VP8 header ด้วย node script แทน; สคริปต์ตรวจทั้งหมดอยู่ `C:\Users\PC\Downloads\_ventoy_check\` (check_theme.ps1, dump_pixels.ps1, scan_panel.ps1, compare_backup.ps1, webp_dims.js)
 
 ## ไล่คิวงานค้าง: การ์ดดำ + ขอบ irreg + สรุปโฟลว์ Gemini (poteto-mode, playbook Bug fix ต่อ) — 2026-11-15
 
