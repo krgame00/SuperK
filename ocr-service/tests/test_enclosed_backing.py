@@ -54,11 +54,13 @@ def test_closed_backing_preserves_text_evidence_gate_and_outside_pixels(supporte
         assert np.array_equal(output.clean_image, image)
 
 
-def test_open_white_area_does_not_gain_closed_backing_evidence():
+def test_open_white_area_gains_relaxed_rectangular_backing_evidence():
     image, mask, region = _caption()
-    # White reaches the image border, so there is no bounded balloon/caption.
+    # White reaches the image border, so the strict bounded contour finds
+    # nothing; the crop-clipped light region is a 4-vertex rectangle, so the
+    # relaxed rescue yields rectangular evidence for regular text on it.
     image[:130, 60:] = 255
     image[mask > 0] = 0
     decision = classify_eligibility(image, mask, region, _comic_page(), _empty_protection(image, None, None))
     assert decision.features.enclosure_score == 0
-    assert decision.features.rectangular_backing == 0
+    assert decision.features.rectangular_backing == 0.92

@@ -331,6 +331,119 @@ def test_thin_artwork_slash_never_yields_enclosure() -> None:
     assert (enclosure, rectangle) == (0.0, 0.0)
 
 
+def test_light_balloon_touching_window_edge_still_yields_enclosure() -> None:
+    # User-reported bubble class: an oval balloon clipped by the crop edge
+    # fails only the strict bounded-edge guard, so the relaxed rescue must
+    # accept the edge-touching contour on interior quality.
+    from app.text_eligibility import (
+        BUBBLE_REGULARITY_CEILING,
+        _closed_light_backing_features,
+        _stroke_irregularity,
+    )
+
+    rng = np.random.default_rng(7)
+    window = rng.integers(40, 71, (200, 200)).astype(np.uint8)
+    cv2.ellipse(window, (100, 6), (70, 70), 0, 0, 360, 240, -1)
+    text_mask = np.zeros((200, 200), bool)
+    for x in range(70, 131, 12):
+        text_mask[40:56, x:x + 6] = True
+    assert _stroke_irregularity(text_mask) <= BUBBLE_REGULARITY_CEILING
+
+    enclosure, rectangle, uniformity = _closed_light_backing_features(
+        window,
+        text_mask,
+        minimum_area=67 * 16 * 1.10,
+    )
+
+    assert (enclosure, rectangle) == (0.90, 0.0)
+    assert uniformity >= 0.85
+
+
+def test_tight_round_balloon_below_area_bar_still_yields_enclosure() -> None:
+    # A round balloon fills ~pi/4 of its bounding rect, so the strict 1.10x
+    # area bar rejects a balloon the text nearly fills; the relaxed rescue
+    # must judge it on interior quality instead.
+    from app.text_eligibility import (
+        BUBBLE_REGULARITY_CEILING,
+        _closed_light_backing_features,
+        _stroke_irregularity,
+    )
+
+    rng = np.random.default_rng(5)
+    window = rng.integers(40, 71, (200, 200)).astype(np.uint8)
+    cv2.ellipse(window, (100, 100), (95, 95), 0, 0, 360, 255, -1)
+    text_mask = np.zeros((200, 200), bool)
+    for x0 in (6, 55, 104, 153):
+        text_mask[96:104, x0:x0 + 40] = True
+    for y0 in (6, 55, 155):
+        text_mask[y0:y0 + 38, 96:104] = True
+    assert _stroke_irregularity(text_mask) <= BUBBLE_REGULARITY_CEILING
+
+    enclosure, rectangle, uniformity = _closed_light_backing_features(
+        window,
+        text_mask,
+        minimum_area=187 * 187 * 1.10,
+    )
+
+    assert (enclosure, rectangle) == (0.90, 0.0)
+    assert uniformity >= 0.85
+
+
+def test_dark_brush_strokes_on_white_panel_stay_unrescued() -> None:
+    # Thin diagonal brush strokes on a white panel pass every light-backing
+    # gate; the irregularity ceiling is what keeps stylized lettering out.
+    from app.text_eligibility import (
+        BUBBLE_REGULARITY_CEILING,
+        _closed_light_backing_features,
+        _stroke_irregularity,
+    )
+
+    window = np.full((120, 160), 235, np.uint8)
+    text_mask = np.zeros((120, 160), bool)
+    for i in range(50):
+        text_mask[30 + i, 20 + i] = True
+        text_mask[30 + i, 21 + i] = True
+    for i in range(50):
+        text_mask[30 + i, 90 + i] = True
+        text_mask[31 + i, 90 + i] = True
+    assert _stroke_irregularity(text_mask) > BUBBLE_REGULARITY_CEILING
+
+    assert (
+        _closed_light_backing_features(
+            window,
+            text_mask,
+            minimum_area=120 * 51 * 1.10,
+        )
+        is None
+    )
+
+
+def test_screentone_bubble_interior_stays_unrescued() -> None:
+    # A bubble whose interior carries screentone fails the uniformity gate
+    # (measured SFX interiors sit at uniformity <= 0.79) even though its
+    # cover and light fraction clear the relaxed gates.
+    from app.text_eligibility import _closed_light_backing_features
+
+    rng = np.random.default_rng(11)
+    window = rng.integers(40, 71, (200, 200)).astype(np.uint8)
+    cv2.ellipse(window, (100, 6), (70, 70), 0, 0, 360, 255, -1)
+    for row in range(12, 72, 8):
+        for col in range(36, 168, 8):
+            window[row:row + 4, col:col + 4] = 60
+    text_mask = np.zeros((200, 200), bool)
+    for x in range(70, 131, 12):
+        text_mask[40:56, x:x + 6] = True
+
+    assert (
+        _closed_light_backing_features(
+            window,
+            text_mask,
+            minimum_area=67 * 16 * 1.10,
+        )
+        is None
+    )
+
+
 def test_confident_sfx_over_rectangular_backing_is_labeled_sfx() -> None:
     # Highly stylized lettering with a weak rectangle gets the SFX label, so
     # it is protected and kept out of the translation scope on purpose.
