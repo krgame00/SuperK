@@ -35,7 +35,7 @@
 
 ## ต่องาน "ตรวจไม่หมด + รอยจุดๆๆๆ": balloon rescue ผ่านเกณฑ์ interior วัดจริง (poteto-mode, playbook Bug fix ต่อ) — 2026-11-17
 
-### Status: pytest **317 ผ่าน** (เพิ่ม 4 เทสต์ failing-first) — matrix 12 หน้า before/after: **+18 clean, 0 SFX flip, 0 region lost** — พิสูจน์ live แล้ว: บับเบิลผู้ใช้ (712,1130) = dialogue/clean 0.93 (เดิม preserve), หน้า A 5 region ที่ผู้ใช้ต้องกด repair เอง = clean อัตโนมัติครบ 5/5, crop ผู้ใช้ = clean — ผู้ใช้สั่ง "ห้ามดูภาพเดิม" = งานรอบนี้วัดด้วยตัวเลข/OCR-cache ล้วนไม่เปิดภาพเลย
+### Status: **push แล้ว** `4b7a305..ac14c89` (3 commits: d834a97 เทสต์ล้มก่อน / c976fba fix / ac14c89 docs) — CI run 44129693561 **success** — pytest **317 ผ่าน** (เพิ่ม 4 เทสต์ failing-first) — matrix 12 หน้า before/after: **+18 clean, 0 SFX flip, 0 region lost** — พิสูจน์ live แล้ว: บับเบิลผู้ใช้ (712,1130) = dialogue/clean 0.93 (เดิม preserve), หน้า A 5 region ที่ผู้ใช้ต้องกด repair เอง = clean อัตโนมัติครบ 5/5, crop ผู้ใช้ = clean — ผู้ใช้สั่ง "ห้ามดูภาพเดิม" = งานรอบนี้วัดด้วยตัวเลข/OCR-cache ล้วนไม่เปิดภาพเลย
 
 - **ต่อจากแชต `2b8116b8` ที่ถูกตัดกลางคัน 17 พ.ย.:** ผู้ใช้รายงาน "ตรวจไม่หมด + จุดๆๆๆ" — วิเคราะห์จาก 111 jobs ใน cache คืนนั้น: rect คงที่ทุก run แต่ clean พลิก = มาจากปุ่ม repair/restore ของผู้ใช้ (`pipeline.py` retry path stamp conf 0.95) ไม่ใช่ nondeterminism; **เศษ dark ที่เหลือหลังล้าง = ศิลป์นอก mask ทั้งหมด** (NEW_dark≈0 ทุก region ทั้ง 2 หน้า) = "จุดๆๆๆ" คือข้อความเล็กที่ preserve ค้าง ไม่ใช่ความเสียหายจาก cleaner
 - **Root cause (วัดระดับ contour):** บับเบิลจริง 2 คลาสโดน rescue path เดิมตัด — (1) `minimum_area=rect×1.10` ตัดบับเบิลกลม (พื้นที่วงรี = 0.785×rect; บับเบิลผู้ใช้วัดได้ 0.92-1.02×rect) (2) กฎ "แตะขอบหน้าต่าง = ไม่นับ" ตัดบับเบิลเปิดบนพื้นขาว (4 region จริง cover 0.85-1.00 แต่โดน guard ตัวเดียว)
