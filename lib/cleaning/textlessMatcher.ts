@@ -1,8 +1,20 @@
-import { detectTextlessPair, type TextlessPairResult } from "./client";
+import {
+  detectTextlessPair,
+  type TextlessPairBox,
+  type TextlessPairResult,
+} from "./client";
 
 export interface MatchablePage {
   url: string;
   name: string;
+}
+
+export interface PageFingerprint {
+  index: number;
+  hash: bigint;
+  aspect: number;
+  normalizedStem: string;
+  hasCleanKeyword: boolean;
 }
 
 export interface TextlessMatchedPair<T extends MatchablePage = MatchablePage> {
@@ -11,6 +23,8 @@ export interface TextlessMatchedPair<T extends MatchablePage = MatchablePage> {
   scaledCleanBlob: Blob;
   similarity: number;
   textBlocksCount: number;
+  backgroundVariant?: "with_bubbles" | "bubbleless" | "none";
+  detectedBoxes?: TextlessPairBox[];
 }
 
 export interface TextlessBatchMatchResult<T extends MatchablePage = MatchablePage> {
@@ -26,15 +40,130 @@ export interface DetectTextlessBatchOptions {
   onProgress?: (completed: number, total: number) => void;
 }
 
+const CLEAN_FILENAME_REGEX = /(?:^|[_\-\s.])(textless|clean|notext|no_text|blank|raw|mojinashi)(?:$|[_\-\s.])/i;
+
+export function parseFilenameHint(name: string): { normalizedStem: string; hasCleanKeyword: boolean } {
+  const withoutExt = name.replace(/\.[^/.]+$/, "").trim();
+  const hasCleanKeyword = CLEAN_FILENAME_REGEX.test(withoutExt);
+  const normalizedStem = withoutExt
+    .replace(CLEAN_FILENAME_REGEX, "")
+    .replace(/[_\-\s]+/g, "")
+    .toLowerCase();
+  return { normalizedStem, hasCleanKeyword };
+}
+
+export function hammingDistance64(a: bigint, b: bigint): number {
+  let xor = a ^ b;
+  let dist = 0;
+  const zero = BigInt(0);
+  const one = BigInt(1);
+  while (xor > zero) {
+    xor &= xor - one;
+    dist += 1;
+  }
+  return dist;
+}
+
+export async function computeBrowserDHash(
+  blob: Blob,
+): Promise<{ hash: bigint; aspect: number } | null> {
+  if (typeof createImageBitmap !== "function") {
+    return null;
+  }
+  try {
+    const bmp = await createImageBitmap(blob);
+    try {
+      const aspect = bmp.width / Math.max(1, bmp.height);
+      let cvs: HTMLCanvasElement | OffscreenCanvas;
+      let ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null = null;
+      if (typeof OffscreenCanvas !== "undefined") {
+        cvs = new OffscreenCanvas(9, 8);
+        ctx = cvs.getContext("2d", { willReadFrequently: true });
+      } else if (typeof document !== "undefined") {
+        cvs = document.createElement("canvas");
+        cvs.width = 9;
+        cvs.height = 8;
+        ctx = cvs.getContext("2d", { willReadFrequently: true });
+      }
+      if (!ctx) return null;
+
+      ctx.drawImage(bmp, 0, 0, 9, 8);
+      const { data } = ctx.getImageData(0, 0, 9, 8);
+      let hash = BigInt(0);
+      const one = BigInt(1);
+      const zero = BigInt(0);
+      for (let y = 0; y < 8; y += 1) {
+        for (let x = 0; x < 8; x += 1) {
+          const left = (y * 9 + x) * 4;
+          const right = (y * 9 + x + 1) * 4;
+          const lumaL = data[left] * 0.299 + data[left + 1] * 0.587 + data[left + 2] * 0.114;
+          const lumaR = data[right] * 0.299 + data[right + 1] * 0.587 + data[right + 2] * 0.114;
+          hash = (hash << one) | (lumaL > lumaR ? one : zero);
+        }
+      }
+      return { hash, aspect };
+    } finally {
+      bmp.close?.();
+    }
+  } catch {
+    return null;
+  }
+}
+
+export function findCandidatePairs(
+  fingerprints: PageFingerprint[],
+  maxHamming = 12,
+  maxAspectDiff = 0.04,
+): Array<[number, number]> {
+  const used = new Set<number>();
+  const candidates: Array<[number, number]> = [];
+
+  for (let i = 0; i < fingerprints.length; i += 1) {
+    if (used.has(i)) continue;
+    const fpA = fingerprints[i];
+    let bestJ = -1;
+    let bestScore = Infinity;
+
+    for (let j = i + 1; j < fingerprints.length; j += 1) {
+      if (used.has(j)) continue;
+      const fpB = fingerprints[j];
+      const aspectDiff = Math.abs(fpA.aspect - fpB.aspect) / Math.max(fpA.aspect, 1e-6);
+      if (aspectDiff > maxAspectDiff) continue;
+
+      const dist = hammingDistance64(fpA.hash, fpB.hash);
+      const sameStemBonus =
+        fpA.normalizedStem.length > 0 &&
+        fpA.normalizedStem === fpB.normalizedStem &&
+        fpA.hasCleanKeyword !== fpB.hasCleanKeyword
+          ? -6
+          : 0;
+      const adjacentBonus = j === i + 1 ? -2 : 0;
+      const effectiveScore = dist + sameStemBonus + adjacentBonus;
+
+      if (dist <= maxHamming && effectiveScore < bestScore) {
+        bestScore = effectiveScore;
+        bestJ = j;
+      }
+    }
+
+    if (bestJ !== -1) {
+      used.add(i);
+      used.add(bestJ);
+      candidates.push([i, bestJ]);
+    }
+  }
+
+  return candidates;
+}
+
 async function dataUrlToBlob(dataUrl: string, fetcher: typeof fetch): Promise<Blob> {
   const res = await fetcher(dataUrl);
   return await res.blob();
 }
 
 /**
- * Scans adjacent uploaded pages `(i, i+1)` to pair with-text pages with their
- * textless clean counterparts, scaling the textless image to match dimensions.
- * Fails open on offline/network errors so user pages are never dropped.
+ * Scans uploaded pages to pair with-text pages with their textless clean counterparts.
+ * Supports Zero-Copy blob reuse when dimensions match, and fails open on errors.
  */
 export async function detectAndPairTextlessPages<T extends MatchablePage>(
   pages: T[],
@@ -85,14 +214,18 @@ export async function detectAndPairTextlessPages<T extends MatchablePage>(
 
       if (
         detection.is_match &&
-        detection.scaled_textless_base64 &&
+        (detection.scaled_textless_base64 || detection.needs_resize === false) &&
         (detection.text_role === "a_has_text" || detection.text_role === "b_has_text")
       ) {
         const textPage = detection.text_role === "a_has_text" ? pageA : pageB;
         const textlessPage = detection.text_role === "a_has_text" ? pageB : pageA;
         const textBlocksCount =
           detection.text_role === "a_has_text" ? detection.text_blocks_a : detection.text_blocks_b;
-        const scaledCleanBlob = await dataUrlToBlob(detection.scaled_textless_base64, fetcher);
+
+        // Zero-copy: if needs_resize is false, reuse original textless blob without re-encoding
+        const scaledCleanBlob = detection.scaled_textless_base64
+          ? await dataUrlToBlob(detection.scaled_textless_base64, fetcher)
+          : (detection.text_role === "a_has_text" ? blobB : blobA);
 
         matchedPairs.push({
           textPage,
@@ -100,6 +233,8 @@ export async function detectAndPairTextlessPages<T extends MatchablePage>(
           scaledCleanBlob,
           similarity: detection.similarity,
           textBlocksCount,
+          backgroundVariant: detection.background_variant,
+          detectedBoxes: detection.detected_boxes,
         });
         detachedByTextPageUrl.set(textPage.url, textlessPage);
         filteredPages.push(textPage);
@@ -108,9 +243,7 @@ export async function detectAndPairTextlessPages<T extends MatchablePage>(
         continue;
       }
     } catch (error) {
-      // A caller-cancelled scan must stop, not silently continue pairing.
       if (error && typeof error === "object" && "name" in error && error.name === "AbortError") throw error;
-      // Fail open: keep original page if cleaner service is offline or times out.
     }
 
     filteredPages.push(pageA);

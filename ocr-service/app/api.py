@@ -598,10 +598,16 @@ def create_app(
             rgb_a = _decode_rgb(bytes_a)
             rgb_b = _decode_rgb(bytes_b)
             pipeline = store._pipeline()
-            result = evaluate_textless_pair(rgb_a, rgb_b, pipeline.detector)
+            result = evaluate_textless_pair(
+                rgb_a,
+                rgb_b,
+                pipeline.detector,
+                bytes_a=bytes_a,
+                bytes_b=bytes_b,
+            )
 
             scaled_b64: str | None = None
-            if result.is_match and result.scaled_textless_rgb is not None:
+            if result.is_match and result.needs_resize and result.scaled_textless_rgb is not None:
                 bgr = cv2.cvtColor(result.scaled_textless_rgb, cv2.COLOR_RGB2BGR)
                 ok, buf = cv2.imencode(".png", bgr)
                 if ok:
@@ -610,10 +616,16 @@ def create_app(
             return {
                 "is_match": result.is_match,
                 "text_role": result.text_role,
+                "background_variant": result.background_variant,
+                "needs_resize": result.needs_resize,
                 "similarity": round(result.similarity, 4),
                 "aspect_diff_ratio": round(result.aspect_diff_ratio, 4),
                 "text_blocks_a": result.text_blocks_a,
                 "text_blocks_b": result.text_blocks_b,
+                "detected_boxes": [
+                    {"x": b.x, "y": b.y, "width": b.width, "height": b.height}
+                    for b in result.detected_boxes
+                ],
                 "scaled_textless_base64": scaled_b64,
             }
 

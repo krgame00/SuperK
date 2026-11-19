@@ -136,3 +136,22 @@ def test_textless_pair_endpoint_rejects_unrelated_pages(tmp_path) -> None:
 
     assert body["is_match"] is False
     assert body["scaled_textless_base64"] is None
+
+
+def test_textless_pair_endpoint_zero_copy_when_same_resolution(tmp_path) -> None:
+    app = create_app(
+        settings=Settings(cache_dir=tmp_path),
+        pipeline_factory=_StubDetectorPipeline,
+    )
+    with TestClient(app) as client:
+        body = _detect_pair(
+            client,
+            _png_bytes(_make_scene(800, 1200, with_text=True)),
+            _png_bytes(_make_scene(800, 1200, with_text=False)),
+        )
+
+    assert body["is_match"] is True
+    assert body["needs_resize"] is False
+    assert body["scaled_textless_base64"] is None
+    assert body["background_variant"] in ("with_bubbles", "bubbleless")
+    assert isinstance(body["detected_boxes"], list)

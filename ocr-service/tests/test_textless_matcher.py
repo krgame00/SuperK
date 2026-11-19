@@ -106,3 +106,28 @@ def test_rejects_unrelated_pages_and_mismatched_aspect_ratios():
     assert aspect_diff > 0.5
     res_diff_aspect = evaluate_textless_pair(page_a, page_wide, _StubDetector())
     assert res_diff_aspect.is_match is False
+
+
+def test_zero_copy_flag_when_dimensions_match():
+    img_text = _make_scene(800, 1200, with_text=True)
+    img_textless = _make_scene(800, 1200, with_text=False)
+    res = evaluate_textless_pair(img_text, img_textless, _StubDetector())
+    assert res.is_match is True
+    assert res.needs_resize is False
+    assert res.background_variant in ("with_bubbles", "bubbleless")
+    assert len(res.detected_boxes) > 0
+
+
+def test_sha1_memoization_cache_hit():
+    from app.textless_matcher import _DETECTION_CACHE
+
+    img = _make_scene(800, 1200, with_text=True)
+    raw_bytes = b"fake-raw-image-bytes-12345"
+    detector = _StubDetector()
+
+    count1, boxes1 = _DETECTION_CACHE.get_or_detect(raw_bytes, img, detector)
+    assert count1 == 1
+
+    count2, boxes2 = _DETECTION_CACHE.get_or_detect(raw_bytes, img, None)
+    assert count2 == count1
+    assert boxes2 == boxes1

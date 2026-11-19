@@ -481,13 +481,23 @@ function requireNumber(value: unknown, field: string): number {
   return value;
 }
 
+export interface TextlessPairBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface TextlessPairResult {
   is_match: boolean;
   text_role: "a_has_text" | "b_has_text" | "none";
+  background_variant?: "with_bubbles" | "bubbleless" | "none";
+  needs_resize?: boolean;
   similarity: number;
   aspect_diff_ratio: number;
   text_blocks_a: number;
   text_blocks_b: number;
+  detected_boxes?: TextlessPairBox[];
   scaled_textless_base64: string | null;
 }
 
@@ -508,13 +518,29 @@ export async function detectTextlessPair(
     ...(signal ? { signal } : {}),
   });
   const rec = requireRecord(payload, "textless pair");
+  const rawBoxes = Array.isArray(rec.detected_boxes) ? rec.detected_boxes : [];
+  const detected_boxes: TextlessPairBox[] = rawBoxes
+    .filter((b): b is Record<string, unknown> => typeof b === "object" && b !== null)
+    .map((b) => ({
+      x: Number(b.x) || 0,
+      y: Number(b.y) || 0,
+      width: Number(b.width) || 0,
+      height: Number(b.height) || 0,
+    }));
+
   return {
     is_match: Boolean(rec.is_match),
     text_role: rec.text_role === "a_has_text" || rec.text_role === "b_has_text" ? rec.text_role : "none",
+    background_variant:
+      rec.background_variant === "bubbleless" || rec.background_variant === "with_bubbles"
+        ? rec.background_variant
+        : "none",
+    needs_resize: typeof rec.needs_resize === "boolean" ? rec.needs_resize : undefined,
     similarity: typeof rec.similarity === "number" ? rec.similarity : 0,
     aspect_diff_ratio: typeof rec.aspect_diff_ratio === "number" ? rec.aspect_diff_ratio : 1,
     text_blocks_a: typeof rec.text_blocks_a === "number" ? rec.text_blocks_a : 0,
     text_blocks_b: typeof rec.text_blocks_b === "number" ? rec.text_blocks_b : 0,
+    detected_boxes,
     scaled_textless_base64: typeof rec.scaled_textless_base64 === "string" ? rec.scaled_textless_base64 : null,
   };
 }

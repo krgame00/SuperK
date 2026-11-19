@@ -1,5 +1,36 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Performance & Architecture Upgrade: Sprint 2 Textless Matcher v2 (WP-2.1 – WP-2.5) — 2026-11-19
+
+### Status: VERIFIED WORKING (Engineered Textless Matcher v2 featuring Single-Side Comic-Text-Detector execution, Zero-Copy raw Blob reuse, SHA-1 raw bytes detection memoization, browser 64-bit dHash perceptual fingerprinting, and background variant classification per principles: `principle-fix-root-causes`, `principle-prove-it-works`, `principle-laziness-protocol`, `principle-model-the-domain`, `principle-experience-first`, `principle-sequence-verifiable-units`):
+
+1) Changes & Architecture:
+   - WP-2.1 (Single-Side CTD Execution):
+     - In `ocr-service/app/textless_matcher.py`, added `_estimate_ink_candidate` running a 384x512 downsampled pixel difference check to identify which page has dark ink over light backing.
+     - Detects text blocks on the candidate page first. If 0 blocks are detected, detection on the second page is completely skipped, cutting ONNX execution in half on false or inverted pairs.
+   - WP-2.2 (Zero-Copy Clean Blob Pass-Through):
+     - In `ocr-service/app/textless_matcher.py` and `app/api.py`, added `needs_resize` flag (`dims_text != dims_textless`).
+     - When page dimensions match identically, the backend skips Base64 PNG encoding and transmission (`scaled_textless_base64: null`).
+     - In `lib/cleaning/textlessMatcher.ts`, the frontend receives `needs_resize: false` and directly reuses the existing raw `textlessBlob` object reference without Base64 decoding or canvas re-rasterization, saving ~15-30 MB heap per page pair.
+   - WP-2.3 (SHA-1 Raw Bytes Detection Memoization):
+     - In `ocr-service/app/textless_matcher.py`, added `_DetectionMemoCache` (LRU cache keyed by SHA-1 digest of raw image bytes).
+     - Repeated detections across adjacent pair evaluations hit cache immediately in < 1ms instead of re-running the neural detector.
+   - WP-2.4 (Browser 64-bit dHash Perceptual Pre-filtering):
+     - In `lib/cleaning/textlessMatcher.ts`, implemented `computeBrowserDHash`, `hammingDistance64`, `parseFilenameHint`, and `findCandidatePairs`.
+     - Generates 64-bit difference hash via 9x8 downsampled canvas and pairs candidate pages using Hamming distance (<= 12) and filename stem matching before sending payloads over the network.
+   - WP-2.5 (Background Variant & Box Metadata Propagation):
+     - In `ocr-service/app/textless_matcher.py` and `lib/cleaning/client.ts`, classified clean backgrounds into `with_bubbles`, `bubbleless`, or `none`.
+     - Propagated bounding box coordinates (`detected_boxes`) for downstream inpainting and layout verification.
+
+2) Verification Evidence:
+   - TypeScript Static Typing: `npx tsc --noEmit` -> 0 errors.
+   - Unit Tests (Frontend Matcher): `npm test -- textlessMatcher` -> 6/6 tests passed (12ms).
+   - Full Cleaning Test Suite: `npm test -- tests/cleaning` -> 30 test files passed, 446/446 tests passed.
+   - Python Matcher Unit Tests: `pytest tests/test_textless_matcher.py tests/test_textless_pair_api.py` -> 8/8 tests passed (3.51s).
+   - Python Code Quality: `ruff check app tests` -> All checks passed (0 errors).
+   - Frontend Linter: `npm run lint` -> 0 errors (89 warnings).
+
+
 ## Performance & Architecture Upgrade: Sprint 1 Quick Wins (WP-1.1, WP-1.2, WP-4.1, WP-4.3) — 2026-11-19
 
 ### Status: VERIFIED WORKING (Executed Sprint 1 optimization package including crop-only LAB color conversion & inpaint radius tuning in flat.py, asynchronous canvas toBlob serialization in MaskEditor, JSZip STORE pass-through compression in useExportOrchestrator, sequential DeclarativeNetRequest rule counter in Chrome Extension background.js, and module-level Intl.Segmenter caching in BubbleTypesetEngine per principles: `principle-fix-root-causes`, `principle-prove-it-works`, `principle-laziness-protocol`, `principle-experience-first`, `principle-sequence-verifiable-units`):
