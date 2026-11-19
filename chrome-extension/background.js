@@ -16,6 +16,37 @@ chrome.runtime.onInstalled?.addListener?.(() => {
 
 const pending = new Set();
 
+// Translation concurrency queue: whole-page translation fires one job per
+// image, and unlimited parallel Gemini calls hit 429 Rate Limit. Two at a
+// time keeps each request alive without serializing slow pages forever.
+const queuedOrActive = new Set();
+const translationQueue = [];
+let activeTranslations = 0;
+const MAX_CONCURRENT_EXTENSION_JOBS = 2;
+
+function enqueueTranslation(tabId, frameId, imageUrl) {
+  const key = JSON.stringify([tabId, frameId, imageUrl]);
+  if (queuedOrActive.has(key)) return;
+  queuedOrActive.add(key);
+  translationQueue.push({ tabId, frameId, imageUrl, key });
+  void pumpTranslationQueue();
+}
+
+async function pumpTranslationQueue() {
+  while (activeTranslations < MAX_CONCURRENT_EXTENSION_JOBS && translationQueue.length > 0) {
+    const job = translationQueue.shift();
+    if (!job) continue;
+    activeTranslations += 1;
+    runTranslationFlow(job.tabId, job.frameId, job.imageUrl)
+      .catch(() => {})
+      .finally(() => {
+        queuedOrActive.delete(job.key);
+        activeTranslations -= 1;
+        void pumpTranslationQueue();
+      });
+  }
+}
+
 async function runTranslationFlow(tabId, frameId, imageUrl) {
   if (tabId == null || !imageUrl) return;
   const key = JSON.stringify([tabId, frameId, imageUrl]);
@@ -167,7 +198,7 @@ async function runTranslationFlow(tabId, frameId, imageUrl) {
 chrome.contextMenus?.onClicked?.addListener?.(async (info, tab) => {
   if (tab?.id == null) return;
   if (info.menuItemId === "superk-translate-image" && info.srcUrl) {
-    await runTranslationFlow(tab.id, info.frameId ?? 0, info.srcUrl);
+    await enqueueTranslation(tab.id, info.frameId ?? 0, info.srcUrl);
   } else if (info.menuItemId === "superk-translate-page") {
     chrome.tabs.sendMessage(tab.id, { action: "AUTO_TRANSLATE_PAGE" }, { frameId: info.frameId ?? 0 }).catch(() => {});
   } else if (info.menuItemId === "superk-capture-viewport") {
@@ -175,7 +206,7 @@ chrome.contextMenus?.onClicked?.addListener?.(async (info, tab) => {
       if (typeof chrome.tabs?.captureVisibleTab === "function") {
         const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
         if (dataUrl) {
-          await runTranslationFlow(tab.id, info.frameId ?? 0, dataUrl);
+          await enqueueTranslation(tab.id, info.frameId ?? 0, dataUrl);
         }
       }
     } catch (err) {
@@ -188,14 +219,14 @@ chrome.runtime.onMessage?.addListener?.(async (message, sender) => {
   if (message.action === "SYNC_PUBLISHED_UPDATES") {
     await checkPublishedUpdates();
   } else if ((message.action === "RETRY_TRANSLATE" || message.action === "TRANSLATE_IMAGE_URL") && sender.tab?.id && message.imageUrl) {
-    await runTranslationFlow(sender.tab.id, sender.frameId ?? 0, message.imageUrl);
+    await enqueueTranslation(sender.tab.id, sender.frameId ?? 0, message.imageUrl);
   } else if (message.action === "CAPTURE_VIEWPORT_TRANSLATE" && (message.tabId || sender.tab?.id)) {
     const targetTabId = message.tabId || sender.tab?.id;
     try {
       if (typeof chrome.tabs?.captureVisibleTab === "function") {
         const dataUrl = await chrome.tabs.captureVisibleTab(sender.tab?.windowId, { format: "png" });
         if (dataUrl) {
-          await runTranslationFlow(targetTabId, sender.frameId ?? 0, dataUrl);
+          await enqueueTranslation(targetTabId, sender.frameId ?? 0, dataUrl);
         }
       }
     } catch (err) {
