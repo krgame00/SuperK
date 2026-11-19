@@ -1042,3 +1042,52 @@ def test_pipeline_attaches_scanline_ratios_to_regions() -> None:
         assert isinstance(r.scanline_ratios, list)
         assert len(r.scanline_ratios) > 0
 
+
+def test_neural_circuit_breaker_trips_and_blocks():
+    from app.pipeline import NeuralCircuitBreaker
+
+    cb = NeuralCircuitBreaker(failure_threshold=2)
+    assert cb.can_execute() is True
+
+    cb.record_failure(RuntimeError("fail 1"))
+    assert cb.can_execute() is True
+    assert cb.consecutive_failures == 1
+
+    cb.record_success()
+    assert cb.can_execute() is True
+    assert cb.consecutive_failures == 0
+
+    cb.record_failure(RuntimeError("fail 1"))
+    cb.record_failure(RuntimeError("fail 2"))
+    assert cb.can_execute() is False
+    assert cb.is_open is True
+    assert "2 consecutive failures" in (cb.reason or "")
+
+
+def test_stage_timeout_raises_timeout_error():
+    import time
+
+    from app.pipeline import StageTimeoutError, StageTimeouts
+
+    class _SlowDetector:
+        def detect(self, image: np.ndarray) -> DetectionResult:
+            time.sleep(0.05)
+            h, w = image.shape[:2]
+            return DetectionResult(
+                np.zeros((h, w), np.float32),
+                [],
+                LetterboxTransform(w, h, max(w, h), 1, 0, 0),
+            )
+
+    pipeline = CleaningPipeline(
+        detector=_SlowDetector(),
+        cleaners={},
+        stage_timeouts=StageTimeouts(detect_seconds=0.01),
+    )
+    with pytest.raises(StageTimeoutError) as exc_info:
+        pipeline.run(np.zeros((20, 20, 3), dtype=np.uint8))
+
+    assert exc_info.value.stage == "detect"
+    assert "timed out after" in str(exc_info.value)
+
+

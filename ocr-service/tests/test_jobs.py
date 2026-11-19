@@ -578,3 +578,51 @@ def test_project_lifetime_retention_and_cascade_deletion(tmp_path: Path) -> None
         assert store.get(beta_id) is not None
     finally:
         store.shutdown()
+
+
+def test_queue_position_and_wait_time(tmp_path: Path) -> None:
+    unblock = threading.Event()
+
+    class _BlockingPipeline:
+        def run(self, image_rgb: np.ndarray, progress_callback=None) -> PipelineOutput:
+            unblock.wait(timeout=5)
+            h, w = image_rgb.shape[:2]
+            return PipelineOutput(
+                source_image=image_rgb,
+                clean_image=image_rgb,
+                mask=np.zeros((h, w), dtype=np.uint8),
+                review_mask=np.zeros((h, w), dtype=np.uint8),
+                protected_mask=np.zeros((h, w), dtype=np.uint8),
+                regions=[],
+                timings_ms={},
+            )
+
+        def retry_region(self, *args, **kwargs) -> PipelineOutput:
+            return None
+
+    store = JobStore(
+        pipeline_factory=lambda: _BlockingPipeline(),
+        max_workers=1,
+        cache_dir=tmp_path,
+    )
+    try:
+        png_bytes = _make_png()
+        store.submit(png_bytes, "job1.png")
+        time.sleep(0.05)
+        job2_id = store.submit(png_bytes, "job2.png")
+        job3_id = store.submit(png_bytes, "job3.png")
+
+        snap2 = store.get_snapshot(job2_id)
+        snap3 = store.get_snapshot(job3_id)
+
+        assert snap2 is not None
+        assert snap3 is not None
+        assert snap2["queue_position"] == 2
+        assert snap3["queue_position"] == 3
+        assert snap2["progress"]["queue_position"] == 2
+        assert snap3["progress"]["queue_position"] == 3
+        assert snap2["progress"]["elapsed_ms"] >= 0
+    finally:
+        unblock.set()
+        store.shutdown()
+

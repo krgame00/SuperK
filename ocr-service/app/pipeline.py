@@ -33,6 +33,7 @@ from app.schemas import (
     ManualRegionAction,
     RegionRecord,
     RegionStatus,
+    StageTimeouts,
     TextRole,
 )
 from app.solid_symbols import peel_solid_symbols
@@ -113,6 +114,45 @@ class _BatchItem:
 LOGGER = logging.getLogger(__name__)
 
 
+class StageTimeoutError(RuntimeError):
+    def __init__(self, stage: str, timeout_seconds: float, elapsed_seconds: float) -> None:
+        super().__init__(
+            f"Stage '{stage}' timed out after {elapsed_seconds:.1f}s (budget: {timeout_seconds:.1f}s)"
+        )
+        self.stage = stage
+        self.timeout_seconds = timeout_seconds
+        self.elapsed_seconds = elapsed_seconds
+
+
+class NeuralCircuitBreaker:
+    """Circuit breaker for neural inference steps (DirectML / LaMa / AOT).
+
+    If neural inference fails consecutively or exceeds time budget, the breaker
+    trips and forces fallback to deterministic non-neural cleaners (flat/gradient).
+    """
+    def __init__(self, failure_threshold: int = 2) -> None:
+        self.failure_threshold = failure_threshold
+        self.consecutive_failures = 0
+        self.is_open = False
+        self.reason: str | None = None
+
+    def trip(self, reason: str) -> None:
+        self.is_open = True
+        self.reason = reason
+        LOGGER.warning("Neural circuit breaker TRIPPED: %s", reason)
+
+    def record_success(self) -> None:
+        self.consecutive_failures = 0
+
+    def record_failure(self, exc: Exception | None = None) -> None:
+        self.consecutive_failures += 1
+        if self.consecutive_failures >= self.failure_threshold:
+            self.trip(f"{self.consecutive_failures} consecutive failures ({exc})")
+
+    def can_execute(self) -> bool:
+        return not self.is_open
+
+
 class _ZeroResidualProbe:
     def score(self, _crop: RgbImage, _mask: BinaryMask) -> float:
         return 0.0
@@ -129,6 +169,7 @@ class CleaningPipeline:
         page_classifier: PageClassifier = classify_page,
         protection_detector: ProtectionDetector = detect_protection,
         eligibility_classifier: EligibilityClassifier = classify_eligibility,
+        stage_timeouts: StageTimeouts | None = None,
     ) -> None:
         self.detector = detector
         self.refiner = refiner
@@ -140,6 +181,7 @@ class CleaningPipeline:
         self.page_classifier = page_classifier
         self.protection_detector = protection_detector
         self.eligibility_classifier = eligibility_classifier
+        self.stage_timeouts = stage_timeouts or StageTimeouts()
 
     def unload(self) -> None:
         """Release all model sessions and underlying execution provider allocations."""
@@ -166,11 +208,15 @@ class CleaningPipeline:
         stage_started = started
         detection = self.detector.detect(image_rgb)
         detect_ms = _elapsed_ms(stage_started)
+        if detect_ms > self.stage_timeouts.detect_seconds * 1000:
+            raise StageTimeoutError("detect", self.stage_timeouts.detect_seconds, detect_ms / 1000)
         _progress(progress_callback, JobStage.REFINING, 0, 0)
 
         stage_started = perf_counter()
         refined = self.refiner(image_rgb, detection)
         refine_ms = _elapsed_ms(stage_started)
+        if refine_ms > self.stage_timeouts.refine_seconds * 1000:
+            raise StageTimeoutError("refine", self.stage_timeouts.refine_seconds, refine_ms / 1000)
         page = self.page_classifier(image_rgb, refined.regions)
         protection = self.protection_detector(
             image_rgb,
@@ -503,35 +549,45 @@ class CleaningPipeline:
             if adaptive_scope is not None
             else ("legacy-full-page" if np.any(eligible) else "none")
         )
-        if full_lama is not None and np.any(eligible):
+        circuit_breaker = NeuralCircuitBreaker()
+        clean_stage_started = perf_counter()
+        if full_lama is not None and np.any(eligible) and circuit_breaker.can_execute():
             _progress(progress_callback, JobStage.CLEANING, 0, total)
             stage_started = perf_counter()
-            if not adaptive_roi_enabled and hasattr(full_lama, "clean_full_image"):
-                scoped_clean = full_lama.clean_full_image(image_rgb, eligible)
-                lama_inference_count = 1
-                adaptive_route = "legacy-full-page"
-            elif adaptive_roi_enabled and adaptive_scope.mode == "roi":
-                scoped_clean = image_rgb.copy()
-                clean_roi = getattr(full_lama, "clean_roi", None)
-                for cluster in adaptive_scope.clusters:
-                    active = cluster_mask(eligible, cluster)
-                    if not np.any(active):
-                        continue
-                    if callable(clean_roi):
-                        scoped_clean = clean_roi(scoped_clean, active, cluster.rect)
-                    else:
-                        region = next(
-                            item for item in refined.regions if item.id in cluster.region_ids
-                        )
-                        scoped_clean = full_lama.clean(scoped_clean, active, region)
-                    lama_inference_count += 1
-            elif adaptive_scope.mode != "none" and hasattr(full_lama, "clean_full_image"):
-                scoped_clean = full_lama.clean_full_image(image_rgb, eligible)
-                lama_inference_count = 1
+            try:
+                if not adaptive_roi_enabled and hasattr(full_lama, "clean_full_image"):
+                    scoped_clean = full_lama.clean_full_image(image_rgb, eligible)
+                    lama_inference_count = 1
+                    adaptive_route = "legacy-full-page"
+                elif adaptive_roi_enabled and adaptive_scope.mode == "roi":
+                    scoped_clean = image_rgb.copy()
+                    clean_roi = getattr(full_lama, "clean_roi", None)
+                    for cluster in adaptive_scope.clusters:
+                        active = cluster_mask(eligible, cluster)
+                        if not np.any(active):
+                            continue
+                        if callable(clean_roi):
+                            scoped_clean = clean_roi(scoped_clean, active, cluster.rect)
+                        else:
+                            region = next(
+                                item for item in refined.regions if item.id in cluster.region_ids
+                            )
+                            scoped_clean = full_lama.clean(scoped_clean, active, region)
+                        lama_inference_count += 1
+                elif adaptive_scope.mode != "none" and hasattr(full_lama, "clean_full_image"):
+                    scoped_clean = full_lama.clean_full_image(image_rgb, eligible)
+                    lama_inference_count = 1
+                circuit_breaker.record_success()
+            except Exception as exc:
+                circuit_breaker.record_failure(exc)
+                LOGGER.warning("Global LaMa inpainting pass failed (%s); tripped circuit breaker", exc)
+                scoped_clean = None
             clean_ms += _elapsed_ms(stage_started)
 
         for index, region in enumerate(refined.regions):
             _progress(progress_callback, JobStage.CLEANING, index, total)
+            if (perf_counter() - clean_stage_started) > self.stage_timeouts.clean_seconds:
+                circuit_breaker.trip(f"Clean stage timeout ({self.stage_timeouts.clean_seconds}s)")
             refined_region_mask = _region_mask(refined.mask, region)
             region_mask = _region_mask(eligible, region)
             route = route_region(image_rgb, refined_region_mask, region, self.cleaners)
@@ -551,7 +607,24 @@ class CleaningPipeline:
             if scoped_clean is not None:
                 repaired = scoped_clean
             else:
-                repaired = cleaner.clean(clean_image, region_mask, region)
+                neural_cleaner = cleaner is full_lama or cleaner is self.cleaners.get("aot")
+                is_neural = route.route in (CleanerRoute.ARTWORK, CleanerRoute.GRADIENT) and neural_cleaner
+                if is_neural and not circuit_breaker.can_execute():
+                    cleaner = self.cleaners.get("flat", cleaner)
+                try:
+                    repaired = cleaner.clean(clean_image, region_mask, region)
+                    if is_neural:
+                        circuit_breaker.record_success()
+                except Exception as exc:
+                    if is_neural:
+                        circuit_breaker.record_failure(exc)
+                        flat_cleaner = self.cleaners.get("flat")
+                        if flat_cleaner and flat_cleaner is not cleaner:
+                            repaired = flat_cleaner.clean(clean_image, region_mask, region)
+                        else:
+                            raise
+                    else:
+                        raise
             feather = 0 if cleaning_mode is CleaningMode.ALL_TEXT else _feather_radius_for_route(route.route)
             candidate, support = compose(clean_image, repaired, region_mask, feather_radius=feather)
             _restore_protected(
@@ -581,6 +654,7 @@ class CleaningPipeline:
             )
 
         _progress(progress_callback, JobStage.VERIFYING, 0, total)
+        verify_stage_started = perf_counter()
         stage_started = perf_counter()
         score_items = [
             (item.region, item.mask)
@@ -614,7 +688,8 @@ class CleaningPipeline:
                     retry_mask[refined.envelope == 0] = 0
                 # Attempt 2 expands the selected cluster's context while
                 # retaining the original authorized mask support.
-                if quality_attempts >= 3:
+                verify_timed_out = (perf_counter() - verify_stage_started) > self.stage_timeouts.verify_seconds
+                if quality_attempts >= 3 or not circuit_breaker.can_execute() or verify_timed_out:
                     if cleaning_mode is CleaningMode.SAFE:
                         clean_image[item.support > 0] = image_rgb[item.support > 0]
                     records.append(
@@ -657,14 +732,28 @@ class CleaningPipeline:
                     else None
                 )
                 clean_roi = getattr(fallback_cleaner, "clean_roi", None)
-                if expanded is not None and callable(clean_roi):
-                    repaired = clean_roi(retry_base, retry_mask, expanded.rect)
-                else:
-                    repaired = fallback_cleaner.clean(
-                        retry_base,
-                        retry_mask,
-                        item.region,
-                    )
+                is_neural_fallback = fallback_cleaner is full_lama or fallback_cleaner is self.cleaners.get("aot")
+                try:
+                    if expanded is not None and callable(clean_roi):
+                        repaired = clean_roi(retry_base, retry_mask, expanded.rect)
+                    else:
+                        repaired = fallback_cleaner.clean(
+                            retry_base,
+                            retry_mask,
+                            item.region,
+                        )
+                    if is_neural_fallback:
+                        circuit_breaker.record_success()
+                except Exception as exc:
+                    if is_neural_fallback:
+                        circuit_breaker.record_failure(exc)
+                        flat_cleaner = self.cleaners.get("flat")
+                        if flat_cleaner:
+                            repaired = flat_cleaner.clean(retry_base, retry_mask, item.region)
+                        else:
+                            raise
+                    else:
+                        raise
                 feather = 0 if cleaning_mode is CleaningMode.ALL_TEXT else _feather_radius_for_route(item.route)
                 candidate, retry_support = compose(
                     retry_base,
@@ -699,17 +788,25 @@ class CleaningPipeline:
                 if accepted:
                     clean_image = candidate
                 else:
-                    if (
+                    can_full_lama = (
                         quality_attempts < 3
+                        and circuit_breaker.can_execute()
+                        and (perf_counter() - verify_stage_started) <= self.stage_timeouts.verify_seconds
                         and full_lama is not None
                         and hasattr(full_lama, "clean_full_image")
-                    ):
+                    )
+                    if can_full_lama:
                         # Third and final quality attempt uses full-image model context.
                         escalation_attempts += 1
                         quality_attempts += 1
                         lama_inference_count += 1
                         stage_started = perf_counter()
-                        full_repaired = full_lama.clean_full_image(retry_base, retry_mask)
+                        try:
+                            full_repaired = full_lama.clean_full_image(retry_base, retry_mask)
+                            circuit_breaker.record_success()
+                        except Exception as exc:
+                            circuit_breaker.record_failure(exc)
+                            full_repaired = retry_base
                         feather = 0 if cleaning_mode is CleaningMode.ALL_TEXT else _feather_radius_for_route(item.route)
                         full_candidate, full_support = compose(
                             retry_base,

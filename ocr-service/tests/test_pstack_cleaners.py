@@ -1,4 +1,5 @@
 import numpy as np
+
 from app.cleaners.flat import FlatCleaner
 from app.mask_refiner import MaskRegion
 from app.schemas import PixelRect
@@ -27,9 +28,9 @@ def test_flat_cleaner_textured_bubble_operates_on_local_crop_only():
 
 
 def test_cleaner_and_pipeline_unload_releases_resources():
-    from app.cleaners.lama_large import LamaLargeCleaner
     from app.cleaners.aot import AotCleaner
-    from app.detector import TextDetector, HybridTextDetector
+    from app.cleaners.lama_large import LamaLargeCleaner
+    from app.detector import HybridTextDetector, TextDetector
     from app.pipeline import CleaningPipeline
 
     class MockSession:
