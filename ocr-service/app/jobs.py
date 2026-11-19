@@ -155,7 +155,7 @@ class JobStore:
         max_workers: int = 1,
         retention_hours: float = 24.0,
         job_timeout_seconds: float = 900.0,
-        model_idle_timeout_seconds: float = 300.0,
+        model_idle_timeout_seconds: float = 15.0,
     ) -> None:
         self.pipeline_factory = pipeline_factory
         self.cache_dir = cache_dir / "jobs"
@@ -602,7 +602,7 @@ class JobStore:
             if trim_working_set:
                 self.trim_memory()
             else:
-                _trim_process_memory(aggressive=False)
+                _trim_process_memory(aggressive=True)
             return True
 
     def _schedule_idle_unload_if_idle(self) -> None:

@@ -109,6 +109,12 @@ class TextDetector:
         self._cpu_session_factory = cpu_session_factory
         self._cpu_fallback_used = False
 
+    def unload(self) -> None:
+        """Release ONNX session and DirectML D3D12 allocations."""
+        self.session = None
+        self._cpu_session_factory = None
+        self._cpu_fallback_used = False
+
     @property
     def providers(self) -> list[str]:
         get_providers = getattr(self.session, "get_providers", None)
@@ -561,6 +567,15 @@ class HybridTextDetector:
         self.ctd_detector = ctd_detector
         self.paddle_engine = paddle_engine
         self.enable_color_sweep = enable_color_sweep
+
+    def unload(self) -> None:
+        """Release detector sessions and engines."""
+        if self.ctd_detector and hasattr(self.ctd_detector, "unload"):
+            try:
+                self.ctd_detector.unload()
+            except Exception:
+                pass
+        self.paddle_engine = None
 
     @classmethod
     def from_model_store(

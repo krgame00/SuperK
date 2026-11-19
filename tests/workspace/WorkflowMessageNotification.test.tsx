@@ -14,6 +14,8 @@ vi.mock("react-hot-toast", () => ({
 
 let mockTranslationResult: string | null = null;
 let mockModelPreference: ModelPreference = AUTO_MODEL_PREFERENCE;
+let mockIsTranslating = false;
+const cancelTranslateAllMock = vi.fn();
 const setModelPreferenceMock = vi.fn();
 const setTranslationResultMock = vi.fn((val: any) => {
   mockTranslationResult = typeof val === "function" ? val(mockTranslationResult) : val;
@@ -48,7 +50,7 @@ vi.mock("@/hooks/useTranslation", () => ({
     setTextStyle: vi.fn(),
     nsfwBypassMode: false,
     setNsfwBypassMode: vi.fn(),
-    isTranslating: false,
+    isTranslating: mockIsTranslating,
     setIsTranslating: vi.fn(),
     translationResult: mockTranslationResult,
     setTranslationResult: setTranslationResultMock,
@@ -70,6 +72,7 @@ vi.mock("@/hooks/useTranslation", () => ({
     handleTranslate: vi.fn(),
     handleTranslateAll: vi.fn(),
     cancelTranslation: vi.fn(),
+    cancelTranslateAll: cancelTranslateAllMock,
     saveRevision: 0,
     downloadTranslatedImage: vi.fn(),
   }),
@@ -80,6 +83,7 @@ describe("WorkflowMessage Notification", () => {
     vi.clearAllMocks();
     mockTranslationResult = null;
     mockModelPreference = AUTO_MODEL_PREFERENCE;
+    mockIsTranslating = false;
     (document as any).fonts = {
       load: vi.fn().mockResolvedValue([]),
     };
@@ -108,13 +112,33 @@ describe("WorkflowMessage Notification", () => {
     expect(toast.className).toMatch(/top-24|top-20|bottom-32/);
   });
 
-  it("offers an explicit Auto switch on a Manual translation failure", () => {
-    mockModelPreference = { engine: "gemini", model: "gemini-manual" };
+  it("offers an explicit Auto switch on a Manual translation failure", () => {    mockModelPreference = { engine: "gemini", model: "gemini-manual" };
     mockTranslationResult = "แปลไม่สำเร็จ: โมเดลที่เลือกไม่พร้อมใช้งาน";
     render(<WorkspacePage />);
 
     fireEvent.click(screen.getByRole("button", { name: "เปลี่ยนเป็น Auto" }));
     expect(setModelPreferenceMock).toHaveBeenCalledWith(AUTO_MODEL_PREFERENCE);
+  });
+
+  it("shows a cancel button while a translation or checker run is in flight", () => {
+    mockIsTranslating = true;
+    mockTranslationResult = "กำลังตรวจและเติมคำแปลที่ตกหล่น… (จุด 1/2 · 0:42)";
+    render(<WorkspacePage />);
+
+    const toast = screen.getByRole("status");
+    expect(toast).toHaveTextContent("กำลังตรวจและเติมคำแปลที่ตกหล่น…");
+
+    fireEvent.click(screen.getByRole("button", { name: "ยกเลิก" }));
+    expect(cancelTranslateAllMock).toHaveBeenCalledTimes(1);
+    // The pill must not also dismiss itself when the cancel button is used.
+    expect(setTranslationResultMock).not.toHaveBeenCalledWith(null);
+  });
+
+  it("hides the cancel button when no run is in flight", () => {
+    mockIsTranslating = false;
+    mockTranslationResult = "✅ แปลสำเร็จ!";
+    render(<WorkspacePage />);
+    expect(screen.queryByRole("button", { name: "ยกเลิก" })).toBeNull();
   });
 
   it("does not emit stuck translation overlay messages during applyTranslationOverlay", async () => {

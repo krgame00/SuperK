@@ -59,6 +59,12 @@ class LamaLargeCleaner:
         self._cpu_session_factory = cpu_session_factory
         self._cpu_fallback_used = False
 
+    def unload(self) -> None:
+        """Release ONNX session and DirectML D3D12 allocations."""
+        self.session = None
+        self._cpu_session_factory = None
+        self._cpu_fallback_used = False
+
     @classmethod
     def from_model_store(cls, model_store: ModelStore) -> Self:
         fp16_path = model_store.model_dir / "anime-manga-big-lama-fp16.onnx"
@@ -117,8 +123,15 @@ class LamaLargeCleaner:
             raise ValueError("image and mask dimensions must match")
 
         height, width = mask.shape
-        padded_height = _round_up(height, 8)
-        padded_width = _round_up(width, 8)
+        is_dml = "DmlExecutionProvider" in self.providers and "CUDAExecutionProvider" not in self.providers
+        if is_dml:
+            # DirectML commits a dedicated D3D12 device heap for each dynamic shape.
+            # Bucketing dimensions prevents VRAM fragmentation and buffer proliferation across speech bubbles.
+            padded_height = _round_up(height, 64)
+            padded_width = _round_up(width, 64)
+        else:
+            padded_height = _round_up(height, 8)
+            padded_width = _round_up(width, 8)
 
         legacy_buffers = os.getenv("SUPERK_LEGACY_LAMA_BUFFERS") == "1"
         if legacy_buffers:
@@ -307,8 +320,8 @@ class LamaLargeCleaner:
             and "CUDAExecutionProvider" not in self.providers
         ):
             # Cap full-page Fast Fourier Convolution size on DirectML to avoid
-            # exceeding Windows WDDM's 2-second TDR timeout (0x887A0005).
-            effective_max_dim = int(os.getenv("SUPERK_DML_MAX_DIM", "1152"))
+            # exceeding Windows WDDM's 2-second TDR timeout (0x887A0005) or VRAM exhaustion.
+            effective_max_dim = int(os.getenv("SUPERK_DML_MAX_DIM", "768"))
 
         height, width = mask.shape
         scale = 1.0

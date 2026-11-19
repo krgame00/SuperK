@@ -1162,6 +1162,20 @@ const languagePolicy_1 = require("lib/languagePolicy.ts");
 const qualityReview_1 = require("lib/translation/qualityReview.ts");
 const modelPreference_1 = require("lib/translation/modelPreference.ts");
 class ReviewRequestFailed extends Error {
+    status;
+    constructor(status) {
+        super(String(status));
+        this.status = status;
+    }
+}
+function describeReviewFailure(error) {
+    if (error instanceof ReviewRequestFailed) {
+        return { status: error.status, message: `HTTP ${error.status}` };
+    }
+    if (typeof error === "object" && error !== null && error.name === "AbortError") {
+        return { message: "หมดเวลาตรวจ (50 วินาที)" };
+    }
+    return { message: error instanceof Error ? error.message : String(error) };
 }
 function chunkItems(items) {
     const chunks = [];
@@ -1222,7 +1236,7 @@ async function reviewTranslatedBubbles(bubbles, options) {
             if (options.signal?.aborted)
                 throw new DOMException("Cancelled", "AbortError");
             if (!response.ok)
-                throw new ReviewRequestFailed(String(response.status));
+                throw new ReviewRequestFailed(response.status);
             return (0, qualityReview_1.parseQualityReviews)(chunk, await response.json(), options.targetLang, options.sourceRevision);
         }
         finally {
@@ -1233,8 +1247,24 @@ async function reviewTranslatedBubbles(bubbles, options) {
         // Dense pages exceed single-request limits: chunk instead of silently
         // leaving active points unreviewed. A failed chunk keeps its explicit
         // unavailable snapshot; cancellation still propagates to the caller.
-        for (const chunk of chunkItems(items)) {
-            const reviews = await requestChunk(chunk);
+        const chunks = chunkItems(items);
+        for (const [chunkIndex, chunk] of chunks.entries()) {
+            let reviews;
+            try {
+                reviews = await requestChunk(chunk);
+            }
+            catch (error) {
+                if (options.signal?.aborted)
+                    throw new DOMException("Cancelled", "AbortError");
+                // Report and keep going: one failed chunk must not skip the rest.
+                options.onFailure?.({
+                    scope: "review",
+                    chunkIndex: chunkIndex + 1,
+                    chunkCount: chunks.length,
+                    ...describeReviewFailure(error),
+                });
+                continue;
+            }
             if (options.signal?.aborted)
                 throw new DOMException("Cancelled", "AbortError");
             for (const item of chunk) {
@@ -1260,7 +1290,12 @@ async function reviewTranslatedBubbles(bubbles, options) {
                 catch (error) {
                     if (options.signal?.aborted)
                         throw new DOMException("Cancelled", "AbortError");
-                    void error;
+                    options.onFailure?.({
+                        scope: "repair",
+                        chunkIndex: 1,
+                        chunkCount: 1,
+                        ...describeReviewFailure(error),
+                    });
                     break; // A failed repair keeps the unresolved review snapshot; no loop.
                 }
                 if (options.signal?.aborted)

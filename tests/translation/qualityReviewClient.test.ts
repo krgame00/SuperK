@@ -58,6 +58,36 @@ describe("page quality review client", () => {
     expect(result[63].translationReview?.status).toBe("ok");
     expect(result[64].translationReview?.status).toBe("ok");
   });
+  it("reports a failed review request instead of skipping it silently",async()=>{
+    const onFailure=vi.fn();
+    const result=await reviewTranslatedBubbles([bubble],{targetLang:"Thai",onFailure,
+      fetchImpl:vi.fn().mockResolvedValue(new Response(null,{status:504}))});
+    expect(onFailure).toHaveBeenCalledWith(expect.objectContaining({scope:"review",status:504,chunkIndex:1,chunkCount:1}));
+    expect(result[0].translationReview?.status).toBe("unavailable");
+  });
+  it("keeps reviewing later chunks after one chunk fails",async()=>{
+    const onFailure=vi.fn();
+    let call=0;
+    const fetchImpl=vi.fn(async(_url,init)=>{
+      call+=1;
+      if(call===1) return new Response(null,{status:503});
+      const body=JSON.parse(String(init?.body));
+      return Response.json({reviews:body.items.map((item:{id:string})=>({id:item.id,status:"ok"}))});
+    });
+    const result=await reviewTranslatedBubbles(Array.from({length:65},()=>({...bubble})),{targetLang:"Thai",fetchImpl,onFailure});
+    expect(onFailure).toHaveBeenCalledTimes(1);
+    expect(onFailure).toHaveBeenCalledWith(expect.objectContaining({status:503,chunkIndex:1,chunkCount:2}));
+    expect(result[0].translationReview?.status).toBe("unavailable");
+    expect(result[64].translationReview?.status).toBe("ok");
+  });
+  it("reports a failed contamination repair with its own scope",async()=>{
+    const onFailure=vi.fn();
+    const fetchImpl=vi.fn()
+      .mockResolvedValueOnce(Response.json({reviews:[{id:"0",status:"ok"}]}))
+      .mockResolvedValueOnce(new Response(null,{status:500}));
+    await reviewTranslatedBubbles([{...bubble,t:"สวัสดีA"}],{targetLang:"Thai",repairContamination:true,fetchImpl,onFailure});
+    expect(onFailure).toHaveBeenCalledWith(expect.objectContaining({scope:"repair",status:500}));
+  });
   it.each([
     ["local object",{engine:"local",baseUrl:"http://localhost:11434/v1",model:"qwen2.5-vl:7b"}],
     ["bare local marker","local"],

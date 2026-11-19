@@ -105,6 +105,10 @@ export interface WorkspaceCanvasHostProps {
   workflowMessage: string | null;
   translationResult: string | null;
   onDismissTranslationResult: () => void;
+  /** True while a translation/checker run is in flight for the current page. */
+  isTranslating?: boolean;
+  /** Aborts the in-flight run; shown as a "ยกเลิก" button in the status pill. */
+  onCancelTranslation?: () => void;
   modelPreference: ModelPreference;
   onSwitchToAutoModel: () => void;
 
@@ -195,6 +199,8 @@ export function WorkspaceCanvasHost({
   workflowMessage,
   translationResult,
   onDismissTranslationResult,
+  isTranslating = false,
+  onCancelTranslation,
   modelPreference,
   onSwitchToAutoModel,
   toolbarPosition,
@@ -465,6 +471,19 @@ export function WorkspaceCanvasHost({
                 เปลี่ยนเป็น Auto
               </button>
             )}
+          {isTranslating && onCancelTranslation && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onCancelTranslation();
+              }}
+              className="shrink-0 rounded border border-red-400/50 px-2 py-0.5 font-semibold text-red-400 hover:bg-red-400/10"
+              title="ยกเลิกงานที่กำลังทำ (ตรวจคำแปล/เติมคำแปล)"
+            >
+              ยกเลิก
+            </button>
+          )}
           {translationResult && (
             <span className="ml-1 text-muted hover:text-foreground text-xs leading-none">
               &times;

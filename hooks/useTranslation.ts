@@ -30,7 +30,8 @@ import { LRUMap } from "@/lib/lruMap";
 import { resolveTranslationOutcome } from "@/lib/translationPipeline";
 import { parseLLMJSON } from "@/lib/parseLLMJSON";
 import { deduplicateTranslations, excludeDeletedTranslations, findMissingTranslationRegions, recoverMissingTranslations } from "@/lib/translation/completeness";
-import { reviewTranslatedBubbles } from "@/lib/translation/qualityReviewClient";
+import { reviewTranslatedBubbles, type ReviewFailure } from "@/lib/translation/qualityReviewClient";
+import { showSupplementFailureToast } from "@/lib/notify/supplementFailureToast";
 import {
   AUTO_MODEL_PREFERENCE,
   readPersistedModelPreference,
@@ -180,6 +181,36 @@ interface UseTranslationProps {
 }
 
 const TRANSLATED_IMAGE_CACHE_LIMIT = 8;
+
+/** m:ss for progress text — the recovery pass can run for minutes. */
+function formatElapsedClock(elapsedMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+/** Abortable pause between recovery attempts. */
+function waitForRetry(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Cancelled", "AbortError"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("Cancelled", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+const RECOVERY_MAX_ATTEMPTS = 3;
+const RECOVERY_SLOW_NOTICE_MS = 15_000;
 
 export const deduplicateBubbleSFX = (
   bubbles: TranslatedBubble[],
@@ -375,6 +406,18 @@ export function useTranslation({
       await cleanup(pageUrl, boxes);
     } catch (err) {
       console.warn("[Translation] residue cleanup failed:", err);
+      // A skipped residue pass still leaves a usable page, but the user must
+      // know the cleanup did not run and be able to retry it on demand.
+      if (!isTranslatingAllRef.current) {
+        void showSupplementFailureToast({
+          id: "residue-cleanup",
+          title: "ล้างเศษหมึกไม่สำเร็จ",
+          detail: `${err instanceof Error ? err.message : "ไม่ทราบสาเหตุ"} · ภาพแปลยังใช้งานได้`,
+          onRetry: () => {
+            void runResidueCleanup(pageUrl, bubbles);
+          },
+        });
+      }
     }
   };
   const preparedSourceFingerprintsRef = useRef(new Map<string,string>());
@@ -383,6 +426,8 @@ export function useTranslation({
   const getPageSourceRevision = useCallback((pageUrl:string):string|undefined=>
     suppliedSourceFingerprintsRef.current?.get(pageUrl) ?? preparedSourceFingerprintsRef.current.get(pageUrl),[]);
   const [isTranslatingAll, setIsTranslatingAll] = useState(false);
+  const isTranslatingAllRef = useRef(isTranslatingAll);
+  isTranslatingAllRef.current = isTranslatingAll;
   const [translateAllProgress, setTranslateAllProgress] = useState<{
     current: number;
     total: number;
@@ -1641,13 +1686,36 @@ async function compressImageForTranslation(
       const blob = await resImg.blob();
       const { base64, mimeType: actualMimeType } = await compressImageForTranslation(blob);
 
+      // Set once the final bubbles are cached, so a failed checker can offer a
+      // retry that only re-runs the review instead of re-translating the page.
+      let rerunReview: (() => Promise<void>) | null = null;
+      const reportReviewFailure = (failure: ReviewFailure) => {
+        if (activePageRef.current !== pageUrl) return;
+        const chunkNote = failure.chunkCount > 1
+          ? ` · ชิ้นที่ ${failure.chunkIndex}/${failure.chunkCount}`
+          : "";
+        void showSupplementFailureToast({
+          id: "quality-review",
+          title: failure.scope === "repair" ? "ซ่อมคำแปลที่ปนภาษาอื่นไม่สำเร็จ" : "ตรวจคำแปลไม่สำเร็จ",
+          detail: `${failure.message}${chunkNote} · ใช้ผลแปลปกติ`,
+          // Resolved lazily: the retry is installed only after the page renders.
+          onRetry: () => {
+            if (rerunReview) {
+              void rerunReview();
+              return;
+            }
+            setTranslationResult("⚠️ ยังไม่มีผลแปลให้ตรวจซ้ำ กรุณาแปลหน้านี้ใหม่");
+          },
+        });
+      };
       const reviewPage = async (bubbles: TranslatedBubble[]) => {
         if (activePageRef.current === pageUrl && bubbles.some(b => !b.isManual && !b.deleted)) {
           setTranslationResult("กำลังตรวจความหมายและสำนวนคำแปล…");
         }
         return reviewTranslatedBubbles(bubbles,{targetLang,apiKey:userApiKey,modelPreference,
           allowPreview:allowPreviewModels,glossary:glossaryRef.current,signal,
-          sourceRevision:getPageSourceRevision(pageUrl),repairContamination:true});
+          sourceRevision:getPageSourceRevision(pageUrl),repairContamination:true,
+          onFailure:reportReviewFailure});
       };
       const unresolvedScriptWarning = (bubbles: TranslatedBubble[]) => {
         const points = bubbles.flatMap((bubble,index) => {
@@ -1662,9 +1730,23 @@ async function compressImageForTranslation(
         const manual = getManualBubblesForPage(pageUrl);
         initial = excludeDeletedTranslations(initial, manual);
         const seed = [...initial, ...manual];
-        if (findMissingTranslationRegions(seed, textScope).length === 0) return {bubbles:initial,missing:[] as number[][]};
+        const missingTargets = findMissingTranslationRegions(seed, textScope);
+        if (missingTargets.length === 0) return {bubbles:initial,missing:[] as number[][]};
+        // recoverMissingTranslations caps the work at six targets; mirror the cap
+        // so the progress label never promises more points than it will visit.
+        const totalTargets = Math.min(missingTargets.length, 6);
+        let targetIndex = 0;
         let original: HTMLImageElement | undefined;
+        const reportRecovery = (message: string) => {
+          if (activePageRef.current === pageUrl) setTranslationResult(message);
+        };
+        const isTestRuntime =
+          typeof process !== "undefined" && process.env?.NODE_ENV === "test";
         const recovered = await recoverMissingTranslations(seed, textScope, async target => {
+          targetIndex += 1;
+          const label = `จุด ${Math.min(targetIndex, totalTargets)}/${totalTargets}`;
+          const startedAt = Date.now();
+          const elapsed = () => formatElapsedClock(Date.now() - startedAt);
           original ??= await waitForImageReady(recognitionUrl);
           const width = original.naturalWidth;
           const height = original.naturalHeight;
@@ -1696,26 +1778,98 @@ async function compressImageForTranslation(
             crop.width = 0;
             crop.height = 0;
           }
-          if (activePageRef.current === pageUrl) setTranslationResult("กำลังตรวจและเติมคำแปลที่ตกหล่น…");
-          const response = await fetch("/api/translate", {
-            method:"POST", headers:{"Content-Type":"application/json"}, signal,
-            // isRetry: the full-page pass already missed this region, so the
-            // crop gets the high-precision retry prompt and model rotation.
-            body:JSON.stringify({imageBase64:cropBase64,mimeType:"image/jpeg",
-              targetLang,sourceLang,modelPreference,apiKey:userApiKey,allowPreview:allowPreviewModels,glossary:glossaryRef.current,pronounMatrix:pronounMatrixRef.current,isRetry:true,policy:{sfx:sfxModeRef.current},context:priorContext || undefined}),
-          });
-          const data = await readTranslationResponse<{text:string}>(response);
-          const parsed = parseLLMJSON(data.text) as {bubbles?:TranslatedBubble[]} | null;
-          if (!Array.isArray(parsed?.bubbles)) throw new Error("Missing translation recovery response malformed.");
-          const candidates = normalizeTargetTranslationPayload(parsed!, targetLang).bubbles ?? [];
-          return candidates.filter(b=>b.box?.length===4 && b.box.every(Number.isFinite)).map(b=>({...b,box:[
-            Math.round((sy+b.box![0]*cropH/1000)/height*1000),
-            Math.round((sx+b.box![1]*cropW/1000)/width*1000),
-            Math.round((sy+b.box![2]*cropH/1000)/height*1000),
-            Math.round((sx+b.box![3]*cropW/1000)/width*1000),
-          ]}));
+          // A single model call can sit for two minutes. Tick the elapsed clock
+          // so the pill never looks frozen, and switch to the "still waiting"
+          // wording at 15 s — long before the server's 120 s timeout.
+          let isWaitingOnRetry = false;
+          const slowTimer = isTestRuntime
+            ? null
+            : setInterval(() => {
+                if (isWaitingOnRetry) return;
+                const waitedMs = Date.now() - startedAt;
+                reportRecovery(waitedMs >= RECOVERY_SLOW_NOTICE_MS
+                  ? `⏳ โมเดลยังไม่ตอบ — กำลังลองใหม่… (${label} · ${formatElapsedClock(waitedMs)} · กดยกเลิกได้)`
+                  : `กำลังตรวจและเติมคำแปลที่ตกหล่น… (${label} · ${formatElapsedClock(waitedMs)})`);
+              }, 1_000);
+          let lastError: unknown = new Error("Missing translation recovery failed.");
+          try {
+            for (let attempt = 1; attempt <= RECOVERY_MAX_ATTEMPTS; attempt++) {
+              reportRecovery(`กำลังตรวจและเติมคำแปลที่ตกหล่น… (${label}${
+                attempt > 1 ? ` · ลองครั้งที่ ${attempt}/${RECOVERY_MAX_ATTEMPTS}` : ""
+              } · ${elapsed()})`);
+              try {
+                const response = await fetch("/api/translate", {
+                  method:"POST", headers:{"Content-Type":"application/json"}, signal,
+                  // isRetry: the full-page pass already missed this region, so the
+                  // crop gets the high-precision retry prompt and model rotation.
+                  body:JSON.stringify({imageBase64:cropBase64,mimeType:"image/jpeg",
+                    targetLang,sourceLang,modelPreference,apiKey:userApiKey,allowPreview:allowPreviewModels,glossary:glossaryRef.current,pronounMatrix:pronounMatrixRef.current,isRetry:true,policy:{sfx:sfxModeRef.current},context:priorContext || undefined}),
+                });
+                const data = await readTranslationResponse<{text:string}>(response);
+                const parsed = parseLLMJSON(data.text) as {bubbles?:TranslatedBubble[]} | null;
+                if (!Array.isArray(parsed?.bubbles)) throw new Error("Missing translation recovery response malformed.");
+                const candidates = normalizeTargetTranslationPayload(parsed!, targetLang).bubbles ?? [];
+                return candidates.filter(b=>b.box?.length===4 && b.box.every(Number.isFinite)).map(b=>({...b,box:[
+                  Math.round((sy+b.box![0]*cropH/1000)/height*1000),
+                  Math.round((sx+b.box![1]*cropW/1000)/width*1000),
+                  Math.round((sy+b.box![2]*cropH/1000)/height*1000),
+                  Math.round((sx+b.box![3]*cropW/1000)/width*1000),
+                ]}));
+              } catch (error) {
+                lastError = error;
+                if (signal?.aborted || isUserCancelledError(error)) throw error;
+                // Only retry failures the transport layer marks as transient.
+                const delay = getTranslationRetryDelay(error, attempt - 1);
+                if (attempt >= RECOVERY_MAX_ATTEMPTS || delay === null) throw error;
+                reportRecovery(`⚠️ เติมคำแปลไม่สำเร็จ (${label}) — กำลังลองใหม่ครั้งที่ ${attempt + 1}/${RECOVERY_MAX_ATTEMPTS} · ${elapsed()}`);
+                isWaitingOnRetry = true;
+                await waitForRetry(Math.min(delay, 8_000), signal);
+                isWaitingOnRetry = false;
+              }
+            }
+            throw lastError;
+          } finally {
+            if (slowTimer) clearInterval(slowTimer);
+          }
         }, signal);
         return {...recovered,bubbles:recovered.bubbles.filter(b=>!manual.includes(b))};
+      };
+
+      /**
+       * The checker runs after the page is already rendered, so a failure must
+       * not force a full re-translation. This retry re-runs only the review on
+       * the cached bubbles and re-renders the overlay.
+       */
+      const installReviewRetry = () => {
+        rerunReview = async () => {
+          const cached = bubbleCacheRef.current.get(pageUrl);
+          if (!cached || activePageRef.current !== pageUrl) return;
+          try {
+            setTranslationResult("กำลังตรวจคำแปลใหม่…");
+            const reviewed = await reviewPage(cached);
+            const styled = preserveManualStyleProfiles(reviewed, cached);
+            await renderAndCacheTranslation(
+              styled,
+              backgroundUrl,
+              pageUrl,
+              pageIndex,
+              jobTargetIdentity,
+            );
+            bubbleCacheRef.current.set(pageUrl, styled);
+            markPageDirty(pageUrl, true);
+            setTranslationResult(styled.some(needsQualityReview)
+              ? "⚠️ ตรวจใหม่แล้ว แต่ยังมีคำแปลที่ต้องตรวจ"
+              : "✅ ตรวจคำแปลใหม่แล้ว");
+          } catch (error) {
+            if (isUserCancelledError(error)) {
+              setTranslationResult("⏹ ยกเลิกการตรวจคำแปลแล้ว");
+              return;
+            }
+            setTranslationResult(
+              `❌ ตรวจคำแปลใหม่ไม่สำเร็จ: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        };
       };
 
       if (preparedPage.isLongStrip || nsfwBypassMode || forceNsfwBypass) {
@@ -2070,6 +2224,7 @@ async function compressImageForTranslation(
           jobTargetIdentity,
         );
         bubbleCacheRef.current.set(pageUrl, coloredBubbles);
+        installReviewRetry();
         autoLearnCandidates(coloredBubbles);
         pageTargetCacheRef.current.set(pageUrl, jobTargetIdentity);
         completedPagesRef.current.add(pageUrl);
@@ -2345,6 +2500,7 @@ async function compressImageForTranslation(
       );
       discardOptimisticResidue = false;
       bubbleCacheRef.current.set(pageUrl, coloredBubbles);
+      installReviewRetry();
         autoLearnCandidates(coloredBubbles);
       pageTargetCacheRef.current.set(pageUrl, jobTargetIdentity);
       completedPagesRef.current.add(pageUrl);

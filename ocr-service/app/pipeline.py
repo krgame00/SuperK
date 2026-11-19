@@ -141,6 +141,20 @@ class CleaningPipeline:
         self.protection_detector = protection_detector
         self.eligibility_classifier = eligibility_classifier
 
+    def unload(self) -> None:
+        """Release all model sessions and underlying execution provider allocations."""
+        if hasattr(self.detector, "unload"):
+            try:
+                self.detector.unload()
+            except Exception:
+                pass
+        for cleaner in self.cleaners.values():
+            if hasattr(cleaner, "unload"):
+                try:
+                    cleaner.unload()
+                except Exception:
+                    pass
+
     def run(
         self,
         image_rgb: RgbImage,

@@ -279,31 +279,42 @@ Launcher ใช้ standalone ถูกต้องแล้ว (`scripts/start-
 
 ข้อเสนอ: จัดการ `useExportOrchestrator` ก่อน เพราะเกี่ยวกับ safety gate. ที่เหลือเก็บกวาดภายหลัง.
 
-### F4. ตัวอักษรแปลเล็กกว่าต้นฉบับมาก (Observation, ยังไม่ยืนยัน)
+### F4. ตัวอักษรแปลเล็กกว่าต้นฉบับ (Low — วัดจริงแล้วรอบเจ็ด 2026-11-19)
 
-จาก `03-translated.jpeg` ข้อความไทยในบับเบิลมีขนาดประมาณ 25-35% ของความสูง glyph ต้นฉบับ. ตัวเลขนี้ประมาณจาก screenshot ไม่ได้วัด pixel จริง.
+วัดบนหน้ามังงะจริง `public/demo/page.png` (1280x1811) เทียบภาพ export `SuperK_Page_001_page.jpg` (370,458 B):
 
-ระบบขึ้นเตือน "ข้อความล้นพื้นที่หน้า" สองครั้งหลังยืนยันหน้า แสดงว่า overflow detection ทำงาน. จึงอาจเป็นพฤติกรรม shrink-to-fit ตามดีไซน์ ไม่ใช่ bug.
+| บับเบิล | ต้นฉบับ (JP) | คำแปล (TH) | เทียบ |
+| :--- | :--- | :--- | :--- |
+| นารเรชันบน `夜になると姿を変える` | glyph สูง ~24 px | targetFontSize 22 px, หมึกไทย ~10 px | em 0.92x / หมึก 0.42x |
+| บับเบิลเล็ก `この街は、` | glyph สูง ~25 px | targetFontSize 22 px, หมึกไทย ~10 px | em 0.88x / หมึก 0.40x |
+| นารเรชันล่าง `第四章　夜の約束` | glyph สูง ~21.5 px | targetFontSize 25 px | em 1.16x |
 
-ต้องยืนยันบนหน้ามังงะจริงก่อนสรุป.
+สาเหตุ: ขนาดฟอนต์ที่เลือกใกล้เคียงต้นฉบับ แต่ glyph ไทยกินความสูงเพียง ~45% ของ em จึงอ่านดูเล็กกว่าชัดเจน. ไม่ใช่ shrink-to-fit รุนแรง.
 
-### F5. นารเรชันและ SFX ไม่ถูกแปล (Observation, ยังไม่ยืนยัน)
+ข้อเสนอ: ชดเชยด้วย `fontSizeMultiplier` เริ่มต้น ~1.2 สำหรับ th หรือปรับตาม x-height ของฟอนต์.
 
-ภาพทดสอบมีข้อความ 3 กลุ่ม. หลังแปล มีเพียงบับเบิลที่ได้คำแปล. กล่องนารเรชันยังว่าง และ SFX แนวตั้ง `ドドド` ยังเป็นต้นฉบับ.
+### F5. นารเรชันและ SFX (ยืนยันรอบเจ็ด — ทำงานถูกต้องตามโหมด SFX)
 
-อาจเกิดจาก CTD ไม่ตรวจจับภาพสังเคราะห์ หรือภูมิภาคเหล่านั้นถูกจัดเป็น unconfirmed candidate. ต้องทดสอบหน้าจริง.
+บนหน้าจริง `public/demo/page.png` (6 ข้อความ): แปลครบทุกกล่องข้อความและนารเรชัน
 
-### F6. Extension polling 401 ทุกประมาณ 1 วินาที (Info)
+| ต้นฉบับ | คำแปล | ชนิด |
+| :--- | :--- | :--- |
+| `夜になると姿を変える` | เมื่อถึงยามค่ำคืนจะเปลี่ยนรูปร่างไป | narration |
+| `この街は、` | เมืองนี้น่ะ... | dialogue |
+| `やあ、` | ว่าไง | dialogue |
+| `第四章　夜の約束` | บทที่ 4 สัญญาในยามค่ำคืน | narration |
+| `…行こう` | ...ไปกันเถอะ | dialogue |
+| `ゴオオオ` | ゴオオオ (คงเดิม, fontSize 69, `hidden:false`) | sfx |
 
-Dev server log แสดง:
+**SFX:** โหมด `preserve` คงต้นฉบับถูกต้อง (เห็น `ゴオオオ` ในภาพ export). **แต่ค่าเริ่มต้นในโค้ดคือ `ignore`** (`hooks/useTranslation.ts:533-539`, `localStorage["superk:sfx-policy"]` ว่าง → `"ignore"`) ซึ่งซ่อน SFX ทั้งหมดจากภาพ/export. ถ้าผลิตภัณฑ์ต้องการ "คงต้นฉบับเป็นค่าเริ่มต้น" ต้องเปลี่ยน default เป็น `preserve`.
 
-```
-GET /api/extension/publish-back?sinceSeq=3&sinceEpoch=epoch_muvjnn9p_vmlemp 401
-```
+ข้อสังเกตคุณภาพ: การตัดบรรทัดไทยแยกคำประกอบ เช่น `เปลี่ยนรูป` / `ร่างไป` (ยอมรับได้ แต่ควรใช้ Thai word-break).
 
-เกิดซ้ำทุกประมาณ 1 วินาทีตลอดการทดสอบ. มาจาก Chrome extension ที่มี pairing token เก่า ไม่ได้มาจากแท็บที่ผมทดสอบ. ไม่กระทบหน้าเว็บ แต่ทำให้ log รกและกิน request เปล่า.
+### F6. Extension polling 401 ทุกประมาณ 1 วินาที (Fixed in code — ยืนยันรอบเจ็ด 2026-11-19)
 
-ข้อเสนอ: ให้ extension หยุด poll หรือ backoff เมื่อได้ 401 ซ้ำ.
+`chrome-extension/background.js:507-539`: `checkPublishedUpdates()` เริ่มด้วย `if (Date.now() < syncAuthBackoffUntil) return [];` และเมื่อได้ 401/403 ตั้ง `syncAuthBackoffUntil = Date.now() + 30000`. ตัว build ที่โพลทุก ~1 วินาทีจึงเป็น extension รุ่นเก่าที่ค้างอยู่ใน Chrome (ไม่ได้ reload) ไม่ใช่โค้ดปัจจุบัน.
+
+ข้อเสนอ: reload extension ที่ `chrome://extensions` หนึ่งครั้ง; ถ้าต้องการกันซ้ำให้เพิ่ม log ระดับ debug ตอน backoff.
 
 ### F7. คลีนไม่หมด นารเรชันและ SFX ยังเหลือบนภาพคลีน (Medium, ยืนยันแล้ว — ทดสอบรอบ 3)
 
@@ -462,6 +473,103 @@ Caused by:
 1. เพิ่ม auto-recovery: เมื่อ dev server วิเคราะห์ Turbopack persistence DB ล้ม ให้ล้าง `.next/dev` อัตโนมัติหรือแนะนำคำสั่งใน error message
 2. สรุปเป็น superk guard script เมื่อเปิดเครื่องใหม่ ต้องเริ่มทั้ง `npm run dev` และ `ocr-service/run.ps1` อัตโนมัติ (launcher มีแล้ว แต่ dev workflow ต้องทำขึ้นเอง)
 
+## Seventh round: หน้าจริง F4/F5 + extension backoff F6 (2026-11-19)
+
+ทดสอบบน production build ที่ให้บริการ `localhost:3000` (process: `F:\Projects\manga-translator\.next\standalone\server.js`, bind 127.0.0.1) และ sidecar `127.0.0.1:8765` (`/health` = 200). หมายเหตุสภาพแวดล้อม: โฟลเดอร์ `C:\Users\PC\Downloads\manga-translator` ที่ใช้ในรอบก่อนว่างเปล่า (เหลือ `node_modules/.vitest-cache` กับ `.pytest_cache`) — ใช้ tree จริงที่ `F:\Projects\manga-translator` ซึ่งมีรายงานและโค้ดครบตรงกับรอบ 1-6.
+
+หน้าทดสอบ: `public/demo/page.png` 1280x1811 (มังงะจริง: บับเบิล 3, นารเรชัน 2, SFX `ゴオオオ` 1).
+
+| ขั้น | ผล | หลักฐาน |
+| :--- | :--- | :--- |
+| Upload | ผ่าน | toast "นำเข้าสำเร็จ 1 หน้า" |
+| SFX mode ก่อนแปล | หมายเหตุ | ค่าเริ่มต้นในโค้ด = `ignore` (`useTranslation.ts:533-539`; `localStorage` ว่าง). เปลี่ยนเป็น `preserve` เพื่อทดสอบ F5 |
+| Clean | ผ่าน (ช้า) | job `f302e2c8…` เป็น `queued` ~20 นาที (`GET /v1/jobs/<id>`), sidecar CPU 366s→737s, WS 7-8 GB. UI แสดง "กำลังคลีนหน้า 1/1" ไม่มีตำแหน่งคิว |
+| Translate | ผ่าน | 6/6 ข้อความได้คำแปล (ตารางใน F5) |
+| SFX คงต้นฉบับ | ผ่าน | `layers.json`: `ゴオオオ` `isSfx:true`, `hidden:false`, fontSize 69; ภาพ export เห็น SFX ญี่ปุ่นเดิม |
+| Narration | ผ่าน | `第四章　夜の約束` → "บทที่ 4 สัญญาในยามค่ำคืน" |
+| Export หน้าเดียว | ผ่าน | `SuperK_Page_001_page.jpg` 370,458 B |
+| Layered pack | ผ่าน | 1,815,355 B: `page_001_original.png` 97,240 (SHA256 ตรงต้นฉบับ `AB1610…F80A`), `page_001_inpainted.png` 190,761, `page_001_layers.json` 1,524,534, `build_layered_page_001.jsx` 2,150 |
+| Console | มี error จากภายนอก | `POST /api/translation-review` 504 (45,026 ms), `POST /api/clean/v1/clean/crop` 503 (306,213 ms) — ดู F19/F20 |
+
+### F19. ขั้น "ตรวจและเติมคำแปลที่ตกหล่น" ชน timeout 120s → 504 แล้ว retry เงียบ (Medium, ใหม่)
+
+บนหน้าจริง: `POST /api/translate` ตอบ **504 ที่ 120,034 ms** (ครั้งก่อนหน้า 200 ที่ 39,904 ms) แล้ว client ยิงซ้ำเอง; UI ค้างที่ "กำลังตรวจและเติมคำแปลที่ตกหล่น…" ต่อเนื่อง ~6 นาที ไม่มีข้อความความคืบหน้าหรือ error; จบได้เมื่อ retry ครั้งที่ 3 (200, 17,367 ms).
+
+`logs/server.log` ระบุสาเหตุฝั่งผู้ให้บริการ:
+```
+Gemini API error [504]: Gemini ตอบสนองช้าเกินกำหนด (GEMINI_TIMEOUT, retryable)
+Gemini API error [502]: Gemini rejected … (GEMINI_UPSTREAM, retryable)
+Gemini routing error: No eligible Gemini route (GEMINI_ROUTE_COOLDOWN, retryAfterMs 12000)
+```
+
+ข้อเสนอ: แสดงสถานะ retry + จำนวนครั้ง/นับถอยหลัง, ให้ผู้ใช้ยกเลิกขั้นนี้ได้ชัดเจน, และสรุป error สุดท้ายเป็น toast แทนการค้างเงียบ.
+
+**สถานะ: แก้แล้วในโค้ด (รอบแปด)** — ดูหัวข้อ "Eighth round" ด้านล่าง.
+
+### F20. ขั้นเสริม (translation-review / clean crop) ล้มแล้วถูกข้ามโดยไม่แจ้ง (Low, ใหม่)
+
+- `POST /api/translation-review` → 504 (45,026 ms) แต่ flow เดินต่อเหมือนไม่มีอะไรเกิดขึ้น
+- `POST /api/clean/v1/clean/crop` → 503 (306,213 ms) ระหว่าง retry จุด SFX
+
+ผลกระทบ: ผู้ใช้เข้าใจว่าผ่านการตรวจสำนวนแล้ว ทั้งที่ขั้นนั้นล้มเหลว. ข้อเสนอ: toast "ตรวจสำนวนไม่สำเร็จ — ข้ามขั้นนี้" และบันทึกใน System Logs.
+
+**สถานะ: แก้แล้วในโค้ด (รอบแปด)** — toast พร้อมปุ่ม "ลองใหม่" ทั้งฝั่ง `translation-review` และ residue cleanup.
+
+### F21. Sidecar คิวเดี่ยว: งานคลีนรอคิวได้นานมากโดยไม่มี ETA (Info, ใหม่)
+
+`max_workers=1` (`ocr-service/app/jobs.py:154`) ทำให้ job ใหม่เป็น `queued` จนกว่างานก่อนหน้าจะจบ. ในรอบนี้รอ ~20 นาที; UI ไม่บอกตำแหน่งคิวหรือเวลารอ. ข้อเสนอ: แสดง queue position/elapsed และ timeout ที่แจ้งผู้ใช้.
+
+### F22. ปุ่ม "บันทึกหน้านี้" ครั้งแรกได้ไฟล์ต้นฉบับ (ยังไม่สรุป)
+
+ครั้งแรกที่กด "บันทึกหน้านี้" ได้ `page.png` 97,240 B ซึ่ง **SHA256 ตรงกับต้นฉบับทุกไบต์** ทั้งที่ `exportSource` = `translated`; กดซ้ำด้วยปุ่มเดิมได้ `SuperK_Page_001_page.jpg` 370,458 B (ภาพแปลถูกต้อง). ยังแยกไม่ได้ว่าเป็น race กับการแปลรอบสุดท้ายหรือสาเหตุอื่น — ต้องลองมือซ้ำก่อนสรุปเป็น bug.
+
+## Eighth round: F19/F20 — progress, cancel และ toast เมื่อขั้นเสริมล้ม (2026-11-19)
+
+ปิด F19 และ F20 ที่ระดับโค้ด พร้อม unit test ใหม่ (ยังไม่ทดสอบบนหน้าจริง เพราะต้อง rebuild production build ที่ `localhost:3000` ใช้งานอยู่).
+
+### สิ่งที่แก้
+
+| ไฟล์ | เปลี่ยน | เหตุผล |
+| :--- | :--- | :--- |
+| `hooks/useTranslation.ts:1729-1841` | ขั้นเติมคำแปลที่ตกหล่นรายงาน `จุด x/y · m:ss`, retry สูงสุด 3 ครั้ง (นับถอยหลัง), และขึ้น "⏳ โมเดลยังไม่ตอบ — กำลังลองใหม่…" ที่ 15 วินาที | F19: เดิมค้าง 6 นาทีโดยไม่มีข้อความใด ๆ |
+| `hooks/useTranslation.ts:1692-1727` | ส่ง `onFailure` เข้า `reviewTranslatedBubbles` → toast "ตรวจคำแปลไม่สำเร็จ · HTTP 504 · ใช้ผลแปลปกติ" + ปุ่ม "ลองใหม่" | F20: เดิม 504 ถูกกลืนเงียบ |
+| `hooks/useTranslation.ts:388-422` | residue cleanup ที่ล้ม → toast "ล้างเศษหมึกไม่สำเร็จ" + ปุ่มลองใหม่ (ไม่เด้งระหว่าง translate-all) | F20: `clean/crop` 503 ถูกกลืน |
+| `hooks/useTranslation.ts:1843-1878` | `installReviewRetry()` — ปุ่ม "ลองใหม่" ตรวจเฉพาะคำแปลบน bubble ที่ cache ไว้ แล้ว re-render (ไม่แปลใหม่ทั้งหน้า) | retry ต้องไม่กินโทเคนซ้ำ |
+| `lib/translation/qualityReviewClient.ts:6-58, 100-140` | เพิ่ม `onFailure` + `ReviewFailure`; chunk ที่ล้มไม่ทำให้ chunk ที่เหลือถูกข้าม | F20 |
+| `lib/notify/supplementFailureToast.tsx` (ใหม่) | toast มีปุ่ม retry, `id` คงที่กันเด้งซ้ำ | F20 |
+| `hooks/useCleaning.ts:1944-1950` | inpaint ล้ม → throw แทน `return undefined` (caller จับและแจ้ง) | F20 |
+| `components/workspace/WorkspaceCanvasHost.tsx:474-486` | ปุ่ม "ยกเลิก" ในแถบสถานะเมื่อ `isTranslating` | F19 |
+| `hooks/useWorkspaceController.ts:676-677` | ส่ง `isTranslating` + `onCancelTranslation` | F19 |
+
+### พฤติกรรมใหม่ของขั้นเติมคำแปล
+
+```
+กำลังตรวจและเติมคำแปลที่ตกหล่น… (จุด 1/2 · 0:04)
+⏳ โมเดลยังไม่ตอบ — กำลังลองใหม่… (จุด 1/2 · 0:15 · กดยกเลิกได้)   ← 15 วินาที
+⚠️ เติมคำแปลไม่สำเร็จ (จุด 1/2) — กำลังลองใหม่ครั้งที่ 2/3 · 2:05   ← เมื่อ 504 จริง
+```
+
+- retry เฉพาะ error ที่ transport ประกาศว่า retryable (`getTranslationRetryDelay`) และเว้นช่วงสูงสุด 8 วินาที; error ประเภท quota/auth/safety ไม่ retry
+- ตัวเลขนาฬิกาเดินทุก 1 วินาที (ข้ามใน `NODE_ENV=test` ตาม pattern เดิมของ translate-all) และหยุดเมื่อจบ/ยกเลิก
+- ปุ่ม "ยกเลิก" เรียก `cancelTranslateAll` → abort ทั้ง request ที่ค้างและลูป retry
+
+### หลักฐาน
+
+| การตรวจ | ผล |
+| :--- | :--- |
+| `npx tsc --noEmit` | ผ่าน (ไม่มี output) |
+| `npx eslint` ไฟล์ที่แก้ | 0 error (10 warning เดิมของ repo) |
+| `tests/translation/qualityReviewClient.test.ts` | 15 passed (เพิ่ม 3 เคส: รายงาน 504, chunk แรกพังแต่ chunk ต่อไปผ่าน, repair ล้มแยก scope) |
+| `tests/workspace/WorkflowMessageNotification.test.tsx` | 6 passed (เพิ่ม: ปุ่มยกเลิกโผล่ตอนแปล, ซ่อนเมื่อไม่แปล, คลิกแล้วไม่ปิด pill) |
+| `tests/translation/useTranslation*.test.tsx` | 46 passed |
+| full suite | 2385 passed / 1 failed — `tests/cleaning/sfxDefaultProfile.test.ts` คาดหวังให้ `createCleaningJob` อ่าน `superk:sfx-policy` เอง แต่ `lib/cleaning/client.ts:38` รับ `cleaningMode` เป็นพารามิเตอร์ (default `safe`). เป็น failure เดิม ไม่เกี่ยวกับรอบนี้ และยังไม่ได้แก้ |
+
+### ยังค้าง
+
+- ยังไม่เห็นผลบนหน้าจริง: ต้อง `npm run build` แล้วรีสตาร์ท `localhost:3000` (จะกระทบ server ที่รันอยู่)
+- F19 ฝั่งเซิร์ฟเวอร์ยัง timeout ที่ 120 วินาที; ฝั่ง client แค่ทำให้ผู้ใช้เห็นและยกเลิกได้
+- F21 (queue position ของ sidecar) ยังไม่ทำ
+
 ## Incident during testing (round 4)
 
 1. รัน `npm test`, `tsc`, `lint`, `build` พร้อมกัน. Build ล้มด้วย EBUSY.
@@ -499,6 +607,11 @@ Caused by:
   - `SuperK_handoff_synthetic.superk.json` 892,920 bytes
 - Trace `trace.json.gz` 183,085 bytes
 - F7 verification (รอบ 3): upload `synthetic_manga_page.png` (800x1200) → clean job → remnant panel แสดง `รายการจุดตรวจข้อความที่เหลือ` + `listitem` 4 รายการ. ยืนยัน cleaning pipeline ยังไม่หมด SFX/narration.
+- รอบเจ็ด (หน้าจริง, temp ของ browser อาจถูกล้าง):
+  - `SuperK_Page_001_page.jpg` 370,458 B (ภาพแปล)
+  - `SuperK_Layered_Photoshop_Pack.zip` 1,815,355 B → `page_001_original.png` 97,240 / `page_001_inpainted.png` 190,761 / `page_001_layers.json` 1,524,534 / `build_layered_page_001.jsx` 2,150
+  - `layers7-table.json` (สรุป 6 bubbles: ข้อความ, targetFontSize, layout box, isSfx)
+  - สคริปต์วัด: `measure3.py`, `measure4.py` (PIL + OpenCV, venv ของ ocr-service)
 
 ## Recommended next steps
 
@@ -514,4 +627,4 @@ Caused by:
 10. เติม ARIA ให้ export gate modal (F12).
 11. เพิ่ม feedback จำนวนจุดที่แทนที่ใน Find/Replace (F13).
 12. ผูก Ctrl+Z ของ Mask กับ dialog และแก้ข้อความ empty state หลังอนุมัติ (F14, F15).
-13. F11, F12, F15, F16 และ flow รอบสี่ ตรวจสอบจริงครบแล้ว. รอบห้ายืนยัน **F8 แก้แล้ว (merge)** รอบหกปิด **F10 (ไม่ซ้ำจริง)**. เหลือ: F4/F5 (หน้าจริง), F6 (extension backoff), F7 (cleaning heuristic), F18 (Layered PSD ไม่อยู่ใน drawer มือถือ), F17 (Turbopack dev persistence auto-recovery).
+13. F11, F12, F15, F16 และ flow รอบสี่ ตรวจสอบจริงครบแล้ว. รอบห้ายืนยัน **F8 แก้แล้ว (merge)**, รอบหกปิด **F10**, รอบเจ็ดปิด **F4/F5 (หน้าจริง)** และยืนยัน **F6 แก้ในโค้ดแล้ว**, รอบแปดแก้ **F19/F20 ในโค้ด** (progress + retry + ปุ่มยกเลิก + toast พร้อมปุ่มลองใหม่) รอทดสอบบนหน้าจริงหลัง rebuild. คงเหลือ: F7 (cleaning heuristic), F17 (dev persistence auto-recovery), F18 (Layered PSD ไม่อยู่ใน drawer มือถือ), **F21 (คิว sidecar ไม่มี ETA)**, **F22 (export ต้นฉบับครั้งแรก — ต้องลองมือ)**, และเปลี่ยน default SFX เป็น `preserve` ถ้าต้องการให้ SFX คงต้นฉบับเป็นค่าเริ่มต้น.

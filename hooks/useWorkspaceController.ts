@@ -674,6 +674,8 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     workflowMessage,
     translationResult,
     onDismissTranslationResult: () => setTranslationResult(null),
+    isTranslating,
+    onCancelTranslation: cancelTranslateAll,
     modelPreference,
     onSwitchToAutoModel: () => {
       setModelPreference(AUTO_MODEL_PREFERENCE);

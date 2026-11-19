@@ -1941,9 +1941,11 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
           cleanUrl,
         });
         return cleanUrl;
-      } catch {
-        // Inpainting failures must never break the translation flow.
-        return undefined;
+      } catch (error) {
+        // Inpainting failures must never break the translation flow, but they
+        // must be visible: the caller shows a dismissible warning with a retry
+        // and keeps the previous clean image.
+        throw error instanceof Error ? error : new Error(String(error));
       }
     },
     [],

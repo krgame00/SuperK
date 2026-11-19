@@ -83,6 +83,12 @@ class AotCleaner:
         )
         self._cpu_fallback_used = False
 
+    def unload(self) -> None:
+        """Release ONNX session and DirectML D3D12 allocations."""
+        self.session = None
+        self._cpu_session_factory = None
+        self._cpu_fallback_used = False
+
     @classmethod
     def from_session(
         cls,

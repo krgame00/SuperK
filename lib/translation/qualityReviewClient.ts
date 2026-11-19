@@ -15,9 +15,42 @@ interface ReviewOptions {
   sourceRevision?: string;
   /** Run the single bounded automatic repair round for locally detected script contamination. */
   repairContamination?: boolean;
+  /**
+   * Called once per failed review/repair request. The translation itself still
+   * succeeds with explicit "unavailable" snapshots, so callers use this to tell
+   * the user that the checker was skipped instead of failing silently.
+   */
+  onFailure?: (failure: ReviewFailure) => void;
 }
 
-class ReviewRequestFailed extends Error {}
+export interface ReviewFailure {
+  /** Which pass failed: the main review or the bounded contamination repair. */
+  scope: "review" | "repair";
+  /** HTTP status when the server answered; undefined for network/timeout. */
+  status?: number;
+  message: string;
+  /** 1-based chunk position, for "ชิ้นที่ 2/3" style messages. */
+  chunkIndex: number;
+  chunkCount: number;
+}
+
+class ReviewRequestFailed extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super(String(status));
+    this.status = status;
+  }
+}
+
+function describeReviewFailure(error: unknown): { status?: number; message: string } {
+  if (error instanceof ReviewRequestFailed) {
+    return { status: error.status, message: `HTTP ${error.status}` };
+  }
+  if (typeof error === "object" && error !== null && (error as { name?: string }).name === "AbortError") {
+    return { message: "หมดเวลาตรวจ (50 วินาที)" };
+  }
+  return { message: error instanceof Error ? error.message : String(error) };
+}
 
 function chunkItems(items: QualityReviewItem[]): QualityReviewItem[][] {
   const chunks: QualityReviewItem[][] = [];
@@ -76,7 +109,7 @@ export async function reviewTranslatedBubbles(bubbles: TranslatedBubble[], optio
           glossary:options.glossary ?? [],...(mode ? {mode}:{})}),
       });
       if (options.signal?.aborted) throw new DOMException("Cancelled", "AbortError");
-      if (!response.ok) throw new ReviewRequestFailed(String(response.status));
+      if (!response.ok) throw new ReviewRequestFailed(response.status);
       return parseQualityReviews(chunk, await response.json(), options.targetLang, options.sourceRevision);
     } finally {
       clearTimeout(timeout);
@@ -86,8 +119,22 @@ export async function reviewTranslatedBubbles(bubbles: TranslatedBubble[], optio
     // Dense pages exceed single-request limits: chunk instead of silently
     // leaving active points unreviewed. A failed chunk keeps its explicit
     // unavailable snapshot; cancellation still propagates to the caller.
-    for (const chunk of chunkItems(items)) {
-      const reviews = await requestChunk(chunk);
+    const chunks = chunkItems(items);
+    for (const [chunkIndex, chunk] of chunks.entries()) {
+      let reviews: Record<string, TranslationReview>;
+      try {
+        reviews = await requestChunk(chunk);
+      } catch (error) {
+        if (options.signal?.aborted) throw new DOMException("Cancelled", "AbortError");
+        // Report and keep going: one failed chunk must not skip the rest.
+        options.onFailure?.({
+          scope: "review",
+          chunkIndex: chunkIndex + 1,
+          chunkCount: chunks.length,
+          ...describeReviewFailure(error),
+        });
+        continue;
+      }
       if (options.signal?.aborted) throw new DOMException("Cancelled", "AbortError");
       for (const item of chunk) {
         const index = Number(item.id);
@@ -109,7 +156,12 @@ export async function reviewTranslatedBubbles(bubbles: TranslatedBubble[], optio
           reviews = await requestChunk(chunk, "repair");
         } catch (error) {
           if (options.signal?.aborted) throw new DOMException("Cancelled", "AbortError");
-          void error;
+          options.onFailure?.({
+            scope: "repair",
+            chunkIndex: 1,
+            chunkCount: 1,
+            ...describeReviewFailure(error),
+          });
           break; // A failed repair keeps the unresolved review snapshot; no loop.
         }
         if (options.signal?.aborted) throw new DOMException("Cancelled", "AbortError");

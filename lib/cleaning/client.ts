@@ -538,3 +538,15 @@ export async function detectTextlessPair(
     scaled_textless_base64: typeof rec.scaled_textless_base64 === "string" ? rec.scaled_textless_base64 : null,
   };
 }
+
+export async function flushCleaningMemory(signal?: AbortSignal): Promise<boolean> {
+  try {
+    const res = await fetch(`${PROXY_BASE}/v1/jobs/flush-memory`, {
+      method: "POST",
+      signal,
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
