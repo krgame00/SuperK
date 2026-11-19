@@ -1,5 +1,18 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Poteto Mode Project Rules & Skill Integration — 2026-11-19
+
+### Status: VERIFIED WORKING (Configured project-wide /poteto-mode rules and skill under `.agents/` and repository root per principles: `principle-model-the-domain`, `principle-encode-lessons-in-structure`, `principle-laziness-protocol`, `principle-prove-it-works`):
+
+1) Changes & Implementation:
+   - Created project rule file `.agents/rules/poteto-mode.md` codifying concise writing style, non-negotiables (goal first, data shape first, root cause only, prove it works), and pstack core principles.
+   - Created project skill `.agents/skills/poteto-mode/SKILL.md` enabling `/poteto-mode` slash command and skill invocation locally within the project.
+   - Updated `.agents/AGENTS.md`, `AGENTS.md`, and `GEMINI.md` to establish Poteto Mode communication standards (one sentence per idea ending with period, no long dashes, no mid-sentence colons, answer first, pstack principles ledger, ADB priority rules) alongside the 9arm quality persona.
+
+2) Verification Evidence:
+   - Tracked rule and skill files: `git status` confirms `.agents/rules/poteto-mode.md`, `.agents/skills/poteto-mode/SKILL.md`, `GEMINI.md`, and `AGENTS.md` updated and synchronized.
+   - Verified rules match global Antigravity customization discovery standards.
+
 ## Side-by-Side (เทียบสองฝั่ง) Translation Disappearance & Overlay Remount Fix — 2026-11-19
 
 ### Status: VERIFIED WORKING (Fixed translated text bubbles and overlay disappearing when toggling side-by-side mode or switching comparison modes per principles: `principle-model-the-domain`, `principle-experience-first`, `principle-fix-root-causes`, `principle-prove-it-works`, `principle-laziness-protocol`):
