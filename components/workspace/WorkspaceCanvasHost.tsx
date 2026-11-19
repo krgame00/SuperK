@@ -44,7 +44,7 @@ import { ColorMatchStatus } from "@/components/colorMatching/ColorMatchStatus";
 import { WorkspaceExportButtons } from "@/components/workspace/WorkspaceExportButtons";
 import { useTextLayers } from "@/hooks/useTextLayers";
 import type { ImageLayer, TextLayer, WarpEffect } from "@/lib/editing/commands";
-import type { TranslatedBubble } from "@/lib/translationOverlay";
+import type { TranslatedBubble, OverlayTextStyle } from "@/lib/translationOverlay";
 import type { GlossaryEntry } from "@/lib/translation/glossary";
 import type { ModelPreference } from "@/lib/translation/modelPreference";
 import type { BwContrastMode } from "@/lib/colorMatching/types";
@@ -155,6 +155,8 @@ export interface WorkspaceCanvasHostProps {
   // PageViewer image layers
   cleaningResultsByPage: Map<string, PageCleaningResult>;
   translatedImagesMap: Map<string, string>;
+  getBubblesForPage?: (pageUrl: string) => TranslatedBubble[];
+  textStyleRef?: React.MutableRefObject<OverlayTextStyle>;
   brokenPages: Set<string>;
 
   // Optional Studio Tools integration (Ctrl+1..7 / Text / OCR / FindReplace / Shortcuts)
@@ -233,6 +235,8 @@ export function WorkspaceCanvasHost({
   onRetryFailedPages,
   cleaningResultsByPage,
   translatedImagesMap,
+  getBubblesForPage,
+  textStyleRef,
   brokenPages,
   onOpenFindReplace,
   onOpenShortcuts,
@@ -1370,6 +1374,9 @@ export function WorkspaceCanvasHost({
               currentCleaningResult={currentCleaningResult}
               cleaningResultsByPage={cleaningResultsByPage}
               translatedImagesMap={translatedImagesMap}
+              getBubblesForPage={getBubblesForPage}
+              textStyleRef={textStyleRef}
+              targetLang={targetLang}
               brokenPages={brokenPages}
               isFocusMode={isFocusMode}
               isFilmstripVisible={!isThumbnailsCollapsed && !isFocusMode}

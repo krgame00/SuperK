@@ -648,6 +648,16 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     [pages, currentPageUrl, dirtyExportPagesRef, setActiveBubbles, markPageDirty],
   );
 
+  const getBubblesForPage = useCallback(
+    (pageUrl: string) => {
+      if (pageUrl === currentPageUrl && activeBubbles.length > 0) {
+        return activeBubbles;
+      }
+      return bubbleCacheRef?.current?.get(pageUrl) ?? [];
+    },
+    [currentPageUrl, activeBubbles, bubbleCacheRef],
+  );
+
   const canvasProps: WorkspaceCanvasHostProps = {
     isFocusMode,
     isFocusToolbarVisible,
@@ -725,6 +735,8 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     onRetryFailedPages: () => void retryFailedPages(),
     cleaningResultsByPage,
     translatedImagesMap,
+    getBubblesForPage,
+    textStyleRef,
     brokenPages,
     onOpenFindReplace: openFindReplace,
     onOpenShortcuts: openShortcuts,

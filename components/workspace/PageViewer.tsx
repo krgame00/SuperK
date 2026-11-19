@@ -8,9 +8,9 @@ import { PageZoomToolbar } from "@/components/workspace/PageZoomToolbar";
 import { usePageZoom } from "@/hooks/usePageZoom";
 import type { PageCleaningResult } from "@/hooks/useCleaning";
 import type { WorkspaceLayer } from "@/components/cleaning/CleaningToolbar";
-import { dataUrlToBlob } from "@/lib/projectStore";
 import { CompareSlider } from "@/components/workspace/CompareSlider";
 import { ViewportCanvasEngine, WEBTOON_LONG_STRIP_THRESHOLD } from "@/lib/canvas/ViewportCanvasEngine";
+import { applyTranslationOverlay, type TranslatedBubble, type OverlayTextStyle } from "@/lib/translationOverlay";
 
 export interface PageViewerProps {
   pages: { url: string; name: string }[];
@@ -32,53 +32,86 @@ export interface PageViewerProps {
   isSplitView?: boolean;
   comparisonMode?: "side-by-side" | "slider";
   onComparisonModeChange?: (mode: "side-by-side" | "slider") => void;
+  getBubblesForPage?: (pageUrl: string) => TranslatedBubble[];
+  textStyleRef?: React.MutableRefObject<OverlayTextStyle>;
+  targetLang?: string;
 }
 
 function VirtualPageItem({
   page,
   index,
   totalPages,
-  isTranslated,
+  bubbles = [],
   cleanedSrc,
   cachedTranslated,
   workspaceLayer,
   scrollZoomMode,
+  textStyleRef,
+  targetLang = "th",
   onPageChange,
   onViewLayoutChange,
 }: {
   page: { url: string; name: string };
   index: number;
   totalPages: number;
-  isTranslated: boolean;
+  bubbles?: TranslatedBubble[];
   cleanedSrc: string;
   cachedTranslated: string | undefined;
   workspaceLayer: string;
   scrollZoomMode: "fit-width" | "actual-size";
+  textStyleRef?: React.MutableRefObject<OverlayTextStyle>;
+  targetLang?: string;
   onPageChange: (idx: number) => void;
   onViewLayoutChange: (layout: "single" | "scroll") => void;
 }) {
-  const blobUrl = useMemo(() => {
-    if (cachedTranslated?.startsWith("data:")) {
-      return URL.createObjectURL(dataUrlToBlob(cachedTranslated));
-    }
-    return null;
-  }, [cachedTranslated]);
-
-  useEffect(() => {
-    return () => {
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
-    };
-  }, [blobUrl]);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const hasCachedImage = Boolean(cachedTranslated);
+  const hasBubbles = Boolean(
+    bubbles &&
+      bubbles.some(
+        (b) =>
+          !b.deleted &&
+          !b.hidden &&
+          Boolean((b.t ?? b.translated ?? "").trim() || b.layoutAdjustment),
+      ),
+  );
 
   const imgSrc =
     workspaceLayer === "original"
       ? page.url
-      : workspaceLayer === "translated" && isTranslated
-        ? blobUrl ?? cachedTranslated ?? cleanedSrc
+      : workspaceLayer === "translated" && hasCachedImage
+        ? cachedTranslated
         : cleanedSrc;
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    if (workspaceLayer === "translated" && !hasCachedImage && hasBubbles && bubbles) {
+      void applyTranslationOverlay(
+        bubbles,
+        "scroll",
+        index,
+        () => {},
+        undefined,
+        textStyleRef,
+        container,
+        page.url,
+        undefined,
+        targetLang,
+      );
+    } else {
+      container.querySelectorAll(".tl-overlay,.tl-canvas").forEach((el) => {
+        const cleanup = (el as unknown as { _cleanupListeners?: () => void })._cleanupListeners;
+        if (typeof cleanup === "function") cleanup();
+        el.remove();
+      });
+    }
+  }, [workspaceLayer, hasCachedImage, hasBubbles, bubbles, index, page.url, textStyleRef, targetLang]);
 
   return (
     <div
+      ref={containerRef}
+      id={`spage-${index}`}
       role="button"
       tabIndex={0}
       aria-label={`หน้า ${index + 1} จาก ${totalPages}: คลิกเพื่อแก้ไขหน้านี้ในโหมดทีละหน้า`}
@@ -138,6 +171,9 @@ export function PageViewer({
   isSplitView = false,
   comparisonMode: comparisonModeProp,
   onComparisonModeChange,
+  getBubblesForPage,
+  textStyleRef,
+  targetLang = "th",
 }: PageViewerProps): ReactElement | null {
   const [localComparisonMode, setLocalComparisonMode] = useState<"side-by-side" | "slider">("side-by-side");
   const activeComparisonMode = comparisonModeProp ?? localComparisonMode;
@@ -333,6 +369,8 @@ export function PageViewer({
             {virtualizer.getVirtualItems().map((virtualItem) => {
               const idx = virtualItem.index;
               const p = pages[idx];
+              const pageBubbles = getBubblesForPage?.(p.url) ?? [];
+              const cachedTranslated = translatedImagesMap?.get(p.url);
               return (
                 <div
                   key={virtualItem.key}
@@ -347,11 +385,13 @@ export function PageViewer({
                     page={p}
                     index={idx}
                     totalPages={pages.length}
-                    isTranslated={translatedImagesMap?.has(p.url) ?? false}
+                    bubbles={pageBubbles}
                     cleanedSrc={cleaningResultsByPage.get(p.url)?.cleanUrl ?? p.url}
-                    cachedTranslated={translatedImagesMap?.get(p.url)}
+                    cachedTranslated={cachedTranslated}
                     workspaceLayer={workspaceLayer}
                     scrollZoomMode={zoom.scrollZoomMode}
+                    textStyleRef={textStyleRef}
+                    targetLang={targetLang}
                     onPageChange={onPageChange}
                     onViewLayoutChange={onViewLayoutChange}
                   />

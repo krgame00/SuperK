@@ -118,7 +118,7 @@ export function useTranslationOrchestrator({
     pageReaderImageUrls,
     pageExportSources,
     pageSourceFingerprints,
-    viewMode: "single",
+    viewMode: viewLayout,
     preparePageForTranslation,
     getCleanedPageUrl,
     onPageDirtied,

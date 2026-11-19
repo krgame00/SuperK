@@ -1,5 +1,39 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Continuous Scroll Mode (โหมดเลื่อนอ่าน) Translation Overlay & Fallback Fix — 2026-11-20
+
+### Status: VERIFIED WORKING (Fixed continuous scroll reading mode /โหมดเลื่อนอ่าน missing translated text bubbles by introducing vector overlay fallback, spage DOM anchoring, and eliminating fragile Data URL blob revocation per principles: `principle-model-the-domain`, `principle-experience-first`, `principle-fix-root-causes`, `principle-prove-it-works`, `principle-laziness-protocol`):
+
+1) Changes & Implementation:
+   - Root Causes Diagnosed:
+     - 1. Missing Vector Overlay Layer: `VirtualPageItem` in `components/workspace/PageViewer.tsx` only rendered an `<img>` tag and depended 100% on `translatedImagesMap.get(page.url)`. In single-page mode, translation text is dynamically mounted onto `#pageContainer` via `applyTranslationOverlay` directly from `bubbleCacheRef`, meaning single-page mode displays translation even when `translatedImagesMap` has no raster entry. In scroll mode, `VirtualPageItem` had no overlay mount logic.
+     - 2. Bitmap Eviction & Deletion: `translatedImagesMap` is an ephemeral LRU cache limited to 8 pages (`TRANSLATED_IMAGE_CACHE_LIMIT = 8`). Furthermore, `markPageDirty` deliberately evicts raster entries upon text edit, formatting change, or bubble move. Chrome extension handoffs and project session restorations also populate `bubbleCacheRef` without offscreen raster bitmaps, leaving `translatedImagesMap` empty and causing scroll mode to render clean/original pages without text.
+     - 3. Fragile Object URL Lifecycle: `VirtualPageItem` converted Data URLs to Blob URLs inside `useMemo` and revoked them via `URL.revokeObjectURL` in `useEffect` cleanup. In virtualized lists, element re-measuring and scrolling triggered cleanup, revoking blob URLs while still mounted.
+     - 4. ViewMode Disconnect: `useTranslationOrchestrator` hardcoded `viewMode: "single"`, leaving `useTranslation` unaware of the active `"scroll"` layout mode and failing to anchor to `#spage-${index}`.
+   - Fixes Implemented:
+     - In `hooks/useWorkspaceController.ts`:
+       - Created `getBubblesForPage` callback returning live `activeBubbles` for `currentPage` or cached bubbles from `bubbleCacheRef`.
+       - Passed `getBubblesForPage` and `textStyleRef` through `canvasProps`.
+     - In `components/workspace/WorkspaceCanvasHost.tsx`:
+       - Extended `WorkspaceCanvasHostProps` with `getBubblesForPage` and `textStyleRef`, forwarding them to `PageViewer`.
+     - In `hooks/useTranslationOrchestrator.ts`:
+       - Changed `viewMode: "single"` to `viewMode: viewLayout` so `useTranslation` matches the user's active viewport mode.
+     - In `components/workspace/PageViewer.tsx`:
+       - Added `id="spage-${index}"` and `containerRef` to `VirtualPageItem`.
+       - Removed dangerous `dataUrlToBlob` conversion and `URL.revokeObjectURL` in `useMemo`/`useEffect`.
+       - Added reactive effect in `VirtualPageItem`: when `workspaceLayer === "translated"` and no rasterized bitmap exists in `translatedImagesMap`, it mounts `applyTranslationOverlay` in `"scroll"` mode directly onto the page container, providing crisp vector text overlay with zero lag.
+       - Cleaned up overlays when layer switches to `"original"` or `"clean"`.
+     - In `tests/workspace/PageViewerScroll.test.tsx`:
+       - Added test `renders translation overlay on virtual pages in scroll mode when bubbles exist without cached bitmap`.
+       - Added test `renders cached translated image in scroll mode directly without calling applyTranslationOverlay`.
+
+2) Verification Evidence:
+   - TypeScript Check: `npx tsc --noEmit` passed with 0 errors.
+   - ESLint Check: `npm run lint` passed with 0 errors.
+   - Vitest Unit Tests:
+     - `npx vitest run tests/workspace/PageViewerScroll.test.tsx` -> 3/3 passed (197ms).
+     - Full Workspace Tests: `npx vitest run tests/workspace/` -> 44 test files passed, 221/221 passed (20.05s).
+
 ## Poteto Mode Project Rules & Skill Integration — 2026-11-19
 
 ### Status: VERIFIED WORKING (Configured project-wide /poteto-mode rules and skill under `.agents/` and repository root per principles: `principle-model-the-domain`, `principle-encode-lessons-in-structure`, `principle-laziness-protocol`, `principle-prove-it-works`):
