@@ -20,6 +20,7 @@ from PIL import Image, UnidentifiedImageError
 from app.cleaners.aot import AotCleaner
 from app.cleaners.flat import FlatCleaner, GradientCleaner
 from app.cleaners.lama_large import LamaLargeCleaner
+from app.cleaners.screentone import ScreentoneCleaner
 from app.cleaners.tier_router import TieredInpainter
 from app.detector import HybridTextDetector
 from app.jobs import JobStore, Pipeline, PipelineFactory, _decode_mask, _decode_rgb
@@ -750,6 +751,7 @@ def _default_pipeline_factory(settings: Settings) -> Callable[[], Pipeline]:
             tier2_cleaner=gradient,
             tier3_cleaner=artwork,
         )
+        screentone = ScreentoneCleaner(fallback_cleaner=artwork)
 
         force_all_lama = os.getenv("SUPERK_FORCE_ALL_LAMA") == "1"
         if force_all_lama and lama_large is not None:
@@ -761,6 +763,8 @@ def _default_pipeline_factory(settings: Settings) -> Callable[[], Pipeline]:
                 "gradient": gradient,
                 "hybrid": tiered,
                 "tiered": tiered,
+                "screentone": screentone,
+                "screentone_fast": screentone,
                 "lama-large": lama_large,
                 "anime-lama": lama_large,
                 "aot": aot,
@@ -774,6 +778,8 @@ def _default_pipeline_factory(settings: Settings) -> Callable[[], Pipeline]:
                 "gradient": gradient,
                 "hybrid": tiered,
                 "tiered": tiered,
+                "screentone": screentone,
+                "screentone_fast": screentone,
                 "aot": aot,
             }
             if lama_large is not None:

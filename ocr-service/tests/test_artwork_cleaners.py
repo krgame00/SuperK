@@ -164,3 +164,55 @@ def test_anime_lama_model_preserves_unmasked_pixels() -> None:
     )
     assert output.shape == image.shape
     assert np.array_equal(output[refined.mask == 0], image[refined.mask == 0])
+
+
+def test_lama_large_clean_regions_merges_adjacent_boxes() -> None:
+    from app.cleaners.lama_large import LamaLargeCleaner
+
+    class RecordingSession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get_providers(self) -> list[str]:
+            return ["CPUExecutionProvider"]
+
+        def run(self, _outputs: None, inputs: dict[str, np.ndarray]) -> list[np.ndarray]:
+            self.calls += 1
+            return [np.ones_like(inputs["image"], dtype=np.float32)]
+
+    session = RecordingSession()
+    cleaner = LamaLargeCleaner.from_session(session)
+
+    image = np.full((128, 128, 3), 100, dtype=np.uint8)
+    mask = np.zeros((128, 128), dtype=np.uint8)
+    mask[20:40, 20:40] = 255
+    mask[20:40, 50:70] = 255
+
+    r1 = MaskRegion(
+        id="r1",
+        rect=PixelRect(x=20, y=20, width=20, height=20),
+        component_ids=(1,),
+        stroke_radius=2,
+    )
+    # r2 is 10px apart from r1 (x=50, gap = 50 - 40 = 10 <= 48)
+    r2 = MaskRegion(
+        id="r2",
+        rect=PixelRect(x=50, y=20, width=20, height=20),
+        component_ids=(2,),
+        stroke_radius=2,
+    )
+
+    result = cleaner.clean_regions(image, mask, [r1, r2], max_gap=48, max_dimension=768)
+
+    # Invocations reduced from 2 to 1 due to region merging
+    assert session.calls == 1
+    assert result.shape == image.shape
+    assert np.array_equal(result[mask == 0], image[mask == 0])
+
+
+def test_ort_session_options_honors_cpu_threads_env(monkeypatch) -> None:
+    from app.ort_utils import create_session_options
+
+    monkeypatch.setenv("SUPERK_CPU_THREADS", "6")
+    opts = create_session_options()
+    assert opts.intra_op_num_threads == 6

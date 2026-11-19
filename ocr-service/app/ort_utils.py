@@ -138,7 +138,12 @@ def create_session_options(*, for_directml: bool | None = None) -> ort.SessionOp
     options.enable_mem_pattern = not for_directml
     options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-    options.intra_op_num_threads = min(4, os.cpu_count() or 1)
+    options.intra_op_num_threads = int(
+        os.getenv(
+            "SUPERK_CPU_THREADS",
+            str(min(8, max(4, (os.cpu_count() or 4) // 2))),
+        ),
+    )
     return options
 
 

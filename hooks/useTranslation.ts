@@ -1516,6 +1516,69 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
   return commaIndex !== -1 ? dataUrl.slice(commaIndex + 1) : dataUrl;
 }
 
+async function compressImageForTranslation(
+  blob: Blob,
+): Promise<{ base64: string; mimeType: string }> {
+  // If already WebP, read directly without recompression
+  if (blob.type === "image/webp") {
+    const base64 = await readBlobAsBase64(blob);
+    return { base64, mimeType: "image/webp" };
+  }
+
+  // JSDOM in test environment does not implement canvas.toBlob or image loading
+  if (typeof navigator !== "undefined" && navigator.userAgent.includes("jsdom")) {
+    const base64 = await readBlobAsBase64(blob);
+    const mimeType = blob.type && blob.type.startsWith("image/") ? blob.type : "image/jpeg";
+    return { base64, mimeType };
+  }
+
+  // Compress to WebP (0.85 quality) using canvas to reduce payload by 50-70% (WP-4.5)
+  if (typeof document !== "undefined") {
+    try {
+      const img = new Image();
+      const objectUrl = URL.createObjectURL(blob);
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error("Image decode failed for translation compression"));
+        img.src = objectUrl;
+      });
+      URL.revokeObjectURL(objectUrl);
+
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth || img.width;
+      canvas.height = img.naturalHeight || img.height;
+      const ctx = canvas.getContext("2d");
+      if (ctx && typeof canvas.toBlob === "function") {
+        ctx.drawImage(img, 0, 0);
+        const webpBlob = await new Promise<Blob | null>((resolve) => {
+          const timeout = setTimeout(() => resolve(null), 1000);
+          try {
+            canvas.toBlob((b) => {
+              clearTimeout(timeout);
+              resolve(b);
+            }, "image/webp", 0.85);
+          } catch {
+            clearTimeout(timeout);
+            resolve(null);
+          }
+        });
+        canvas.width = 0;
+        canvas.height = 0;
+        if (webpBlob && webpBlob.type === "image/webp" && webpBlob.size > 0) {
+          const base64 = await readBlobAsBase64(webpBlob);
+          return { base64, mimeType: "image/webp" };
+        }
+      }
+    } catch {
+      // Fall through to raw blob if canvas or WebP encoding fails
+    }
+  }
+
+  const base64 = await readBlobAsBase64(blob);
+  const mimeType = blob.type && blob.type.startsWith("image/") ? blob.type : "image/jpeg";
+  return { base64, mimeType };
+}
+
   const cacheBackgroundOnly = useCallback(
     async (backgroundUrl: string, pageUrl: string, targetIdentity?: PageTargetIdentity): Promise<void> => {
       const response = await fetch(backgroundUrl);
@@ -1576,8 +1639,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
       const resImg = await fetch(recognitionUrl, signal ? { signal } : undefined);
       if (!resImg.ok) throw new Error(`ไม่สามารถโหลดรูปภาพได้ (HTTP ${resImg.status})`);
       const blob = await resImg.blob();
-      const actualMimeType = blob.type && blob.type.startsWith('image/') ? blob.type : "image/jpeg";
-      const base64 = await readBlobAsBase64(blob);
+      const { base64, mimeType: actualMimeType } = await compressImageForTranslation(blob);
 
       const reviewPage = async (bubbles: TranslatedBubble[]) => {
         if (activePageRef.current === pageUrl && bubbles.some(b => !b.isManual && !b.deleted)) {
@@ -2126,7 +2188,30 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         }
         ctx.filter = "contrast(1.35) brightness(1.05)";
         ctx.drawImage(imgEl, 0, 0);
-        const enhancedBase64 = canvas.toDataURL("image/jpeg", 0.95).split(",")[1];
+        let enhancedBase64 = "";
+        let enhancedMime = "image/jpeg";
+        if (typeof navigator === "undefined" || !navigator.userAgent.includes("jsdom")) {
+          const enhancedBlob = await new Promise<Blob | null>((resolve) => {
+            const timeout = setTimeout(() => resolve(null), 500);
+            try {
+              canvas.toBlob((b) => {
+                clearTimeout(timeout);
+                resolve(b);
+              }, "image/webp", 0.85);
+            } catch {
+              clearTimeout(timeout);
+              resolve(null);
+            }
+          });
+          if (enhancedBlob && enhancedBlob.type === "image/webp" && enhancedBlob.size > 0) {
+            enhancedBase64 = await readBlobAsBase64(enhancedBlob);
+            enhancedMime = "image/webp";
+          }
+        }
+        if (!enhancedBase64) {
+          enhancedBase64 = canvas.toDataURL("image/jpeg", 0.95).split(",")[1];
+          enhancedMime = "image/jpeg";
+        }
         canvas.width = 0;
         canvas.height = 0;
         if (!enhancedBase64) {
@@ -2141,7 +2226,7 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
           },
           body: JSON.stringify({
             imageBase64: enhancedBase64,
-            mimeType: "image/jpeg",
+            mimeType: enhancedMime,
             targetLang,
             sourceLang,
             modelPreference,

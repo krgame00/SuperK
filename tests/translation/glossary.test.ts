@@ -122,3 +122,67 @@ it("a non-string note cannot crash prompt building", () => {
   expect(directives).toContain('- "Nami" MUST ALWAYS be translated as "นามิ" (สมจริง)');
   expect(directives).not.toContain("42");
 });
+
+it("formats character persona attributes into prompt directives (WP-4.5)", () => {
+  const directives = buildGlossaryDirectives([
+    {
+      source: "田中",
+      target: "ทานากะ",
+      note: "พระเอก",
+      persona: {
+        selfPronoun: "กู",
+        otherPronoun: "มึง",
+        particleTone: "ว่ะ",
+      },
+    },
+    {
+      source: "鈴木",
+      target: "ซูซูกิ",
+      persona: {
+        selfPronoun: "ฉัน",
+        particleTone: "จ๊ะ",
+      },
+    },
+  ]);
+
+  expect(directives).toContain(
+    '- "田中" MUST ALWAYS be translated as "ทานากะ" [Persona: สรรพนามแทนตัว: "กู", สรรพนามเรียกผู้อื่น: "มึง", หางเสียง/น้ำเสียง: "ว่ะ"] (พระเอก)',
+  );
+  expect(directives).toContain(
+    '- "鈴木" MUST ALWAYS be translated as "ซูซูกิ" [Persona: สรรพนามแทนตัว: "ฉัน", หางเสียง/น้ำเสียง: "จ๊ะ"]',
+  );
+});
+
+it("merges and preserves persona fields across incoming updates", () => {
+  const existing: GlossaryEntry[] = [
+    {
+      source: "田中",
+      target: "ทานากะ",
+      persona: { selfPronoun: "ฉัน", otherPronoun: "นาย" },
+    },
+  ];
+  const incoming = [
+    {
+      source: "田中",
+      target: "ทานากะ",
+      persona: { selfPronoun: "กู", otherPronoun: "มึง", particleTone: "ว่ะ" },
+    },
+    {
+      source: "佐藤",
+      target: "ซาโต้",
+      persona: { particleTone: "ครับ" },
+    },
+  ];
+
+  const { merged, addedCount, updatedCount } = mergeGlossaryEntries(existing, incoming);
+  expect(addedCount).toBe(1);
+  expect(updatedCount).toBe(1);
+  expect(merged[0].persona).toEqual({
+    selfPronoun: "กู",
+    otherPronoun: "มึง",
+    particleTone: "ว่ะ",
+  });
+  expect(merged[1].persona).toEqual({
+    particleTone: "ครับ",
+  });
+});

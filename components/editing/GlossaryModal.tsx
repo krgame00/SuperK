@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, type ReactElement } from "react";
-import { BookText, Download, Plus, Sparkles, Trash2, Upload, X } from "lucide-react";
-import type { GlossaryEntry } from "@/lib/translation/glossary";
+import { BookText, ChevronDown, ChevronUp, Download, Plus, Sparkles, Trash2, Upload, User, X } from "lucide-react";
+import type { CharacterPersona, GlossaryEntry } from "@/lib/translation/glossary";
 
 export interface GlossaryModalProps {
   isOpen: boolean;
@@ -22,6 +22,10 @@ export function GlossaryModal({
   const [sourceTerm, setSourceTerm] = useState("");
   const [targetTerm, setTargetTerm] = useState("");
   const [noteTerm, setNoteTerm] = useState("");
+  const [selfPronoun, setSelfPronoun] = useState("");
+  const [otherPronoun, setOtherPronoun] = useState("");
+  const [particleTone, setParticleTone] = useState("");
+  const [showPersonaFields, setShowPersonaFields] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
   if (!isOpen) return null;
@@ -32,19 +36,38 @@ export function GlossaryModal({
     const note = noteTerm.trim();
     if (!src || !tgt) return;
 
+    const persona: CharacterPersona | undefined =
+      selfPronoun.trim() || otherPronoun.trim() || particleTone.trim()
+        ? {
+            ...(selfPronoun.trim() ? { selfPronoun: selfPronoun.trim() } : {}),
+            ...(otherPronoun.trim() ? { otherPronoun: otherPronoun.trim() } : {}),
+            ...(particleTone.trim() ? { particleTone: particleTone.trim() } : {}),
+          }
+        : undefined;
+
+    const newEntry: GlossaryEntry = {
+      source: src,
+      target: tgt,
+      ...(note ? { note } : {}),
+      ...(persona ? { persona } : {}),
+    };
+
     const existingIdx = glossary.findIndex(
       (item) => item.source.trim().toLowerCase() === src.toLowerCase(),
     );
     if (existingIdx >= 0) {
       const updated = [...glossary];
-      updated[existingIdx] = { source: src, target: tgt, ...(note ? { note } : {}) };
+      updated[existingIdx] = newEntry;
       onGlossaryChange(updated);
     } else {
-      onGlossaryChange([...glossary, { source: src, target: tgt, ...(note ? { note } : {}) }]);
+      onGlossaryChange([...glossary, newEntry]);
     }
     setSourceTerm("");
     setTargetTerm("");
     setNoteTerm("");
+    setSelfPronoun("");
+    setOtherPronoun("");
+    setParticleTone("");
   };
 
   const handleRemoveEntry = (idx: number) => {
@@ -77,10 +100,19 @@ export function GlossaryModal({
             const tgt = item.target.trim();
             if (!src || !tgt) continue;
             const idx = merged.findIndex((m) => m.source.toLowerCase() === src.toLowerCase());
+            let persona: CharacterPersona | undefined = undefined;
+            if (item.persona && typeof item.persona === "object") {
+              const p = item.persona as Record<string, unknown>;
+              const sp = typeof p.selfPronoun === "string" ? p.selfPronoun.trim() || undefined : undefined;
+              const op = typeof p.otherPronoun === "string" ? p.otherPronoun.trim() || undefined : undefined;
+              const pt = typeof p.particleTone === "string" ? p.particleTone.trim() || undefined : undefined;
+              if (sp || op || pt) persona = { selfPronoun: sp, otherPronoun: op, particleTone: pt };
+            }
             const entry: GlossaryEntry = {
               source: src,
               target: tgt,
               ...(typeof item.note === "string" && item.note.trim() ? { note: item.note.trim() } : {}),
+              ...(persona ? { persona } : {}),
             };
             if (idx >= 0) merged[idx] = entry;
             else merged.push(entry);
@@ -97,10 +129,16 @@ export function GlossaryModal({
     .filter(({ entry }) => {
       if (!searchQuery.trim()) return true;
       const q = searchQuery.trim().toLowerCase();
+      const personaMatch = entry.persona
+        ? (entry.persona.selfPronoun ?? "").toLowerCase().includes(q) ||
+          (entry.persona.otherPronoun ?? "").toLowerCase().includes(q) ||
+          (entry.persona.particleTone ?? "").toLowerCase().includes(q)
+        : false;
       return (
         entry.source.toLowerCase().includes(q) ||
         entry.target.toLowerCase().includes(q) ||
-        (entry.note ?? "").toLowerCase().includes(q)
+        (entry.note ?? "").toLowerCase().includes(q) ||
+        personaMatch
       );
     });
 
@@ -176,6 +214,53 @@ export function GlossaryModal({
             </div>
           </div>
 
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setShowPersonaFields(!showPersonaFields)}
+              className="text-[11px] text-muted hover:text-foreground flex items-center gap-1 transition-colors cursor-pointer"
+            >
+              <User className="w-3 h-3 text-primary" />
+              <span>{showPersonaFields ? "ซ่อนแท็กบุคลิกตัวละคร (Character Persona)" : "+ กำหนดบุคลิก/สรรพนามตัวละคร (Character Persona)"}</span>
+              {showPersonaFields ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </button>
+          </div>
+
+          {showPersonaFields && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 p-2.5 rounded-lg bg-surface/50 border border-border/60">
+              <div>
+                <label className="text-[10px] text-muted block mb-0.5">สรรพนามแทนตัว (Self Pronoun)</label>
+                <input
+                  type="text"
+                  value={selfPronoun}
+                  onChange={(e) => setSelfPronoun(e.target.value)}
+                  placeholder="เช่น ฉัน, ผม, กู, ข้า"
+                  className="w-full bg-background border border-border rounded-md px-2.5 py-1 text-xs text-foreground focus:outline-none focus:border-primary"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted block mb-0.5">สรรพนามเรียกเพื่อน (Other Pronoun)</label>
+                <input
+                  type="text"
+                  value={otherPronoun}
+                  onChange={(e) => setOtherPronoun(e.target.value)}
+                  placeholder="เช่น นาย, เธอ, มึง, เจ้า"
+                  className="w-full bg-background border border-border rounded-md px-2.5 py-1 text-xs text-foreground focus:outline-none focus:border-primary"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted block mb-0.5">หางเสียง / น้ำเสียง (Particle / Tone)</label>
+                <input
+                  type="text"
+                  value={particleTone}
+                  onChange={(e) => setParticleTone(e.target.value)}
+                  placeholder="เช่น ว่ะ, เว้ย, ครับ, ค่ะ"
+                  className="w-full bg-background border border-border rounded-md px-2.5 py-1 text-xs text-foreground focus:outline-none focus:border-primary"
+                />
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center justify-between gap-2">
             <input
               type="search"
@@ -230,7 +315,7 @@ export function GlossaryModal({
                 key={`${entry.source}-${idx}`}
                 className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-background/70 border border-border/60 text-xs"
               >
-                <div className="flex items-center gap-2 min-w-0 flex-1">
+                <div className="flex items-center gap-2 min-w-0 flex-1 flex-wrap">
                   <span className="font-mono font-semibold text-foreground truncate max-w-[160px]">
                     {entry.source}
                   </span>
@@ -238,6 +323,15 @@ export function GlossaryModal({
                   <span className="font-semibold text-primary truncate max-w-[180px]">
                     {entry.target}
                   </span>
+                  {entry.persona && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 border border-primary/20 text-primary truncate">
+                      {[
+                        entry.persona.selfPronoun && `แทนตัว: ${entry.persona.selfPronoun}`,
+                        entry.persona.otherPronoun && `เรียก: ${entry.persona.otherPronoun}`,
+                        entry.persona.particleTone && `หางเสียง: ${entry.persona.particleTone}`,
+                      ].filter(Boolean).join(" · ")}
+                    </span>
+                  )}
                   {entry.note && (
                     <span className="text-[11px] text-muted truncate">
                       ({entry.note})

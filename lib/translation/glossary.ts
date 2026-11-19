@@ -1,7 +1,14 @@
+export interface CharacterPersona {
+  selfPronoun?: string;
+  otherPronoun?: string;
+  particleTone?: string;
+}
+
 export interface GlossaryEntry {
   source: string;
   target: string;
   note?: string;
+  persona?: CharacterPersona;
 }
 
 export type FlexibleGlossaryEntry =
@@ -12,6 +19,7 @@ export type FlexibleGlossaryEntry =
       original?: string;
       translation?: string;
       note?: string;
+      persona?: CharacterPersona;
     };
 
 export function buildGlossaryDirectives(
@@ -44,18 +52,44 @@ export function buildGlossaryDirectives(
         typeof candidate.note === "string"
           ? candidate.note.trim() || undefined
           : undefined;
-      return { src: rawSource.trim(), tgt: rawTarget.trim(), note };
+
+      let persona: CharacterPersona | undefined = undefined;
+      if (candidate.persona && typeof candidate.persona === "object") {
+        const p = candidate.persona as Record<string, unknown>;
+        const selfPronoun = typeof p.selfPronoun === "string" ? p.selfPronoun.trim() || undefined : undefined;
+        const otherPronoun = typeof p.otherPronoun === "string" ? p.otherPronoun.trim() || undefined : undefined;
+        const particleTone = typeof p.particleTone === "string" ? p.particleTone.trim() || undefined : undefined;
+        if (selfPronoun || otherPronoun || particleTone) {
+          persona = { selfPronoun, otherPronoun, particleTone };
+        }
+      }
+
+      return { src: rawSource.trim(), tgt: rawTarget.trim(), note, persona };
     })
     .filter(
-      (entry): entry is { src: string; tgt: string; note: string | undefined } =>
+      (entry): entry is { src: string; tgt: string; note: string | undefined; persona: CharacterPersona | undefined } =>
         entry !== null,
     );
 
   if (validEntries.length === 0) return "";
 
   const lines = validEntries.map(
-    ({ src, tgt, note }) =>
-      `- "${src}" MUST ALWAYS be translated as "${tgt}"${note ? ` (${note})` : ""}`,
+    ({ src, tgt, note, persona }) => {
+      let line = `- "${src}" MUST ALWAYS be translated as "${tgt}"`;
+      if (persona) {
+        const parts: string[] = [];
+        if (persona.selfPronoun) parts.push(`สรรพนามแทนตัว: "${persona.selfPronoun}"`);
+        if (persona.otherPronoun) parts.push(`สรรพนามเรียกผู้อื่น: "${persona.otherPronoun}"`);
+        if (persona.particleTone) parts.push(`หางเสียง/น้ำเสียง: "${persona.particleTone}"`);
+        if (parts.length > 0) {
+          line += ` [Persona: ${parts.join(", ")}]`;
+        }
+      }
+      if (note) {
+        line += ` (${note})`;
+      }
+      return line;
+    },
   );
 
   return (
@@ -162,7 +196,17 @@ export function mergeGlossaryEntries(
       typeof c.note === "string" && c.note.trim().length > 0
         ? c.note.trim()
         : undefined;
-    return { source: rawSource.trim(), target: rawTarget.trim(), note };
+    let persona: CharacterPersona | undefined = undefined;
+    if (c.persona && typeof c.persona === "object") {
+      const p = c.persona as Record<string, unknown>;
+      const selfPronoun = typeof p.selfPronoun === "string" ? p.selfPronoun.trim() || undefined : undefined;
+      const otherPronoun = typeof p.otherPronoun === "string" ? p.otherPronoun.trim() || undefined : undefined;
+      const particleTone = typeof p.particleTone === "string" ? p.particleTone.trim() || undefined : undefined;
+      if (selfPronoun || otherPronoun || particleTone) {
+        persona = { selfPronoun, otherPronoun, particleTone };
+      }
+    }
+    return { source: rawSource.trim(), target: rawTarget.trim(), note, persona };
   };
 
   for (const item of existing ?? []) {
@@ -191,6 +235,7 @@ export function mergeGlossaryEntries(
         source: valid.source,
         target: valid.target,
         note: valid.note !== undefined ? valid.note : prev.note,
+        persona: valid.persona !== undefined ? valid.persona : prev.persona,
       };
       updatedCount += 1;
     } else {

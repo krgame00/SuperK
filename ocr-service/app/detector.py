@@ -69,7 +69,11 @@ class _Session(Protocol):
 
 class TextDetector:
     def __init__(self, model_store: ModelStore, input_size: int = 1024) -> None:
-        model_path = model_store.ensure("ctd-onnx")
+        fp16_path = model_store.model_dir / "ctd-fp16.onnx"
+        if fp16_path.exists() and fp16_path.stat().st_size > 1000:
+            model_path = fp16_path
+        else:
+            model_path = model_store.ensure("ctd-onnx")
         session = create_inference_session(model_path)
         self._set_session(
             cast("_Session", session),
