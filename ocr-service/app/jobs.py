@@ -120,16 +120,19 @@ class JobState:
     output: PipelineOutput | None = None
     asset_dir: Path | None = None
     error: str | None = None
+    submitted_at: float = field(default_factory=perf_counter)
     started_at: float | None = None
     lock: threading.RLock = field(default_factory=threading.RLock)
 
-    def snapshot(self) -> dict[str, object]:
+    def snapshot(self, queue_position: int | None = None) -> dict[str, object]:
         with self.lock:
+            elapsed = self._current_elapsed_ms()
             progress = JobProgress(
                 stage=self.stage,
                 completed_regions=self.completed_regions,
                 total_regions=self.total_regions,
-                elapsed_ms=self._current_elapsed_ms(),
+                elapsed_ms=elapsed,
+                queue_position=queue_position,
             )
             return {
                 "job_id": self.id,
@@ -138,11 +141,15 @@ class JobState:
                 "progress": progress.model_dump(mode="json"),
                 "error": self.error,
                 "cleaning_mode": self.cleaning_mode.value,
+                "queue_position": queue_position,
+                "elapsed_ms": elapsed,
             }
 
     def _current_elapsed_ms(self) -> int:
         if self.started_at is not None and self.status is JobStatus.RUNNING:
             return round((perf_counter() - self.started_at) * 1000)
+        if self.status is JobStatus.QUEUED:
+            return round((perf_counter() - self.submitted_at) * 1000)
         return self.elapsed_ms
 
 
@@ -249,6 +256,26 @@ class JobStore:
             if job is not None:
                 return job
             return self._restore_job_from_disk(job_id)
+
+    def get_snapshot(self, job_id: str) -> dict[str, object] | None:
+        if not isinstance(job_id, str) or re.fullmatch(r"[0-9a-f]{32}", job_id) is None:
+            return None
+        with self._jobs_lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                job = self._restore_job_from_disk(job_id)
+            if job is None:
+                return None
+            queue_position = None
+            if job.status is JobStatus.QUEUED:
+                pos = 1
+                for other_id, other_job in self._jobs.items():
+                    if other_id == job_id:
+                        break
+                    if other_job.status in (JobStatus.QUEUED, JobStatus.RUNNING):
+                        pos += 1
+                queue_position = pos
+            return job.snapshot(queue_position=queue_position)
 
     def _restore_job_from_disk(self, job_id: str) -> JobState | None:
         candidate_dirs = [self.cache_dir]

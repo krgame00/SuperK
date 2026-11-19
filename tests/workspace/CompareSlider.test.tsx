@@ -144,4 +144,52 @@ describe("CompareSlider (Interactive Drag-Compare Curtain Slider)", () => {
     rerender(<CompareSlider {...defaultProps} position={85} />);
     expect(handle).toHaveAttribute("aria-valuenow", "85");
   });
+
+  it("computes slider percentage relative to image stage when image is smaller than container", () => {
+    const onPositionChange = vi.fn();
+    render(
+      <CompareSlider
+        {...defaultProps}
+        initialPosition={50}
+        onPositionChange={onPositionChange}
+        naturalDimensions={{ width: 600, height: 900 }}
+      />,
+    );
+
+    const container = screen.getByTestId("compare-slider-container");
+    const imageStage = screen.getByTestId("compare-slider-image-stage");
+
+    vi.spyOn(container, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 1600,
+      height: 900,
+      right: 1600,
+      bottom: 900,
+      x: 0,
+      y: 0,
+      toJSON: () => {},
+    });
+
+    // Image is centered in container: left = 500, width = 600
+    vi.spyOn(imageStage, "getBoundingClientRect").mockReturnValue({
+      left: 500,
+      top: 0,
+      width: 600,
+      height: 900,
+      right: 1100,
+      bottom: 900,
+      x: 500,
+      y: 0,
+      toJSON: () => {},
+    });
+
+    // Pointer down at x=800 (which is (800 - 500)/600 = 50% of the image)
+    fireEvent.pointerDown(container, { clientX: 800, pointerId: 1 });
+    expect(onPositionChange).toHaveBeenCalledWith(50);
+
+    // Pointer move to x=950 (which is (950 - 500)/600 = 75% of the image)
+    fireEvent.pointerMove(container, { clientX: 950, pointerId: 1 });
+    expect(onPositionChange).toHaveBeenCalledWith(75);
+  });
 });

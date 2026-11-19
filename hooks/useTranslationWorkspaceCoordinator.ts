@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { getWorkspacePrimaryAction } from "@/lib/workspacePrimaryAction";
-import { stageLabel, type WorkspaceLayer } from "@/components/cleaning/CleaningToolbar";
+import { stageLabel, formatWaitTime, type WorkspaceLayer } from "@/components/cleaning/CleaningToolbar";
 import { formatStopwatchTime } from "@/components/workspace/WorkspaceHeaderHost";
 import type { ReviewIssuePage } from "@/components/workspace/WorkspaceModalsHost";
 import type { CleaningProgress } from "@/lib/cleaning/types";
@@ -127,7 +127,9 @@ export function useTranslationWorkspaceCoordinator({
     : null;
 
   const cleaningStatusText = cleaningProgress
-    ? `กำลังคลีน: ${stageLabel(cleaningProgress.stage)} · ${cleaningProgress.completedRegions}/${cleaningProgress.totalRegions} · ${(cleaningProgress.elapsedMs / 1000).toFixed(1)}s`
+    ? cleaningProgress.stage === "queued"
+      ? `คิวที่ ${cleaningProgress.queuePosition ?? 1} • รอ ${formatWaitTime(cleaningProgress.elapsedMs)}`
+      : `กำลังคลีน: ${stageLabel(cleaningProgress.stage)} · ${cleaningProgress.completedRegions}/${cleaningProgress.totalRegions} · ${(cleaningProgress.elapsedMs / 1000).toFixed(1)}s`
     : null;
 
   const workflowMessage =

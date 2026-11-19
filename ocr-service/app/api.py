@@ -212,7 +212,7 @@ def create_app(
         image: Annotated[UploadFile, File()],
         project_id: Annotated[str | None, Form()] = None,
         cleaning_mode: Annotated[CleaningMode, Form()] = CleaningMode.SAFE,
-    ) -> dict[str, str]:
+    ) -> dict[str, object]:
         source_bytes = await _validated_upload(
             image,
             max_upload_bytes=runtime_settings.max_upload_mb * 1024 * 1024,
@@ -223,11 +223,16 @@ def create_app(
         job_id = await asyncio.to_thread(
             store.submit, source_bytes, image.filename or "page", project_id, cleaning_mode
         )
+        snap = store.get_snapshot(job_id)
+        queue_pos = snap.get("queue_position") if snap else 1
+        elapsed = snap.get("elapsed_ms") if snap else 0
         return {
             "job_id": job_id,
             "status": JobStatus.QUEUED.value,
             "stage": JobStage.QUEUED.value,
             "cleaning_mode": cleaning_mode.value,
+            "queue_position": queue_pos,
+            "elapsed_ms": elapsed,
         }
 
     @app.post("/v1/jobs/restore", status_code=200)
@@ -302,7 +307,10 @@ def create_app(
     @app.get("/v1/jobs/{job_id}")
     def get_job(job_id: str, response: Response) -> dict[str, object]:
         response.headers["Cache-Control"] = "no-store"
-        return _job_or_404(store, job_id).snapshot()
+        snap = store.get_snapshot(job_id)
+        if snap is None:
+            raise HTTPException(status_code=404, detail="Job not found.")
+        return snap
 
     @app.get("/v1/jobs/{job_id}/result")
     def get_result(job_id: str, response: Response) -> dict[str, object]:

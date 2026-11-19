@@ -70,7 +70,18 @@ export async function createCleaningJob(
   }
 
   form.append("image", resolvedFile, filename);
-  form.append("cleaning_mode", cleaningMode);
+  let effectiveCleaningMode: "safe" | "all-text" = cleaningMode;
+  if (cleaningMode === "safe" && typeof localStorage !== "undefined") {
+    try {
+      const savedSfx = localStorage.getItem("superk:sfx-policy");
+      if (savedSfx === "translate") {
+        effectiveCleaningMode = "all-text";
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }
+  form.append("cleaning_mode", effectiveCleaningMode);
   return decodeJob(
     await requestJson(`${PROXY_BASE}/v1/jobs`, {
       method: "POST",
@@ -309,15 +320,41 @@ async function requestJson(
 
 function decodeJob(payload: unknown): CleaningJob {
   const raw = requireRecord(payload, "cleaning job");
-  const progress = isRecord(raw.progress)
+  const queuePos =
+    typeof raw.queue_position === "number"
+      ? raw.queue_position
+      : typeof (raw.progress as Record<string, unknown> | undefined)?.queue_position === "number"
+        ? (raw.progress as Record<string, unknown>).queue_position as number
+        : null;
+  const elapsed =
+    typeof raw.elapsed_ms === "number"
+      ? raw.elapsed_ms
+      : typeof (raw.progress as Record<string, unknown> | undefined)?.elapsed_ms === "number"
+        ? (raw.progress as Record<string, unknown>).elapsed_ms as number
+        : undefined;
+
+  let progress = isRecord(raw.progress)
     ? decodeProgress(raw.progress)
     : undefined;
+
+  if (!progress && (raw.status === "queued" || raw.stage === "queued")) {
+    progress = {
+      stage: "queued",
+      completedRegions: 0,
+      totalRegions: 0,
+      elapsedMs: elapsed ?? 0,
+      queuePosition: queuePos,
+    };
+  }
+
   return {
     jobId: requireString(raw.job_id, "job_id"),
     status: requireString(raw.status, "status") as CleaningJobStatus,
     stage: requireString(raw.stage, "stage") as CleaningJobStage,
     progress,
     error: typeof raw.error === "string" ? raw.error : null,
+    queuePosition: queuePos,
+    elapsedMs: elapsed,
   };
 }
 
@@ -333,6 +370,7 @@ function decodeProgress(raw: Record<string, unknown>): CleaningProgress {
       "progress.total_regions",
     ),
     elapsedMs: requireNumber(raw.elapsed_ms, "progress.elapsed_ms"),
+    queuePosition: typeof raw.queue_position === "number" ? raw.queue_position : null,
   };
 }
 

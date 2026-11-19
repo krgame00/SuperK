@@ -976,6 +976,53 @@ export function useTranslation({
     textStyle.textOutline,
   ]);
 
+  // Handle external overlay refresh requests (e.g. split view toggles, comparison mode switches, panel remounts)
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const handleOverlayRefresh = () => {
+      if (pages.length === 0) return;
+      const currentKey = activePageRef.current || pages[currentPage];
+      if (!currentKey || suppressedOverlayPagesRef.current.has(currentKey)) return;
+      const cached = bubbleCacheRef.current.get(currentKey) ?? activeBubbles;
+      if (cached && cached.length > 0) {
+        const pageIndex = pagesRef.current.indexOf(currentKey);
+        const effectiveIndex = pageIndex >= 0 ? pageIndex : currentPage;
+        const renderTarget =
+          getPageTargetLanguage(currentKey) || targetLangRef.current || "th";
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => {
+          if (suppressedOverlayPagesRef.current.has(currentKey)) return;
+          void applyTranslationOverlay(
+            cached,
+            viewMode,
+            effectiveIndex,
+            setTranslationResult,
+            undefined,
+            textStyleRef,
+            undefined,
+            currentKey,
+            () => markPageDirty(currentKey),
+            renderTarget,
+          );
+        }, 50);
+      }
+    };
+
+    window.addEventListener("superk:request-overlay-refresh", handleOverlayRefresh);
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("superk:request-overlay-refresh", handleOverlayRefresh);
+    };
+  }, [
+    pages,
+    currentPage,
+    activeBubbles,
+    viewMode,
+    setTranslationResult,
+    markPageDirty,
+    getPageTargetLanguage,
+  ]);
+
   // Save status and revision management for session reliability
   const saveRevisionRef = useRef(0);
   const lastSavedRevisionRef = useRef(0);

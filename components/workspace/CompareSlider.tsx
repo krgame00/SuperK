@@ -14,6 +14,7 @@ export interface CompareSliderProps {
   className?: string;
   naturalDimensions?: { width: number; height: number } | null;
   stageStyle?: React.CSSProperties;
+  zoomScale?: number;
   showLabels?: boolean;
 }
 
@@ -28,6 +29,7 @@ export function CompareSlider({
   className = "",
   naturalDimensions,
   stageStyle,
+  zoomScale = 1,
   showLabels = true,
 }: CompareSliderProps) {
   const [internalPosition, setInternalPosition] = useState(
@@ -35,13 +37,18 @@ export function CompareSlider({
   );
   const [isDragging, setIsDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const imageStageRef = useRef<HTMLDivElement>(null);
 
   const currentPos = controlledPosition !== undefined ? controlledPosition : internalPosition;
 
   const updatePositionFromClientX = useCallback(
     (clientX: number) => {
-      if (!containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
+      const targetElement =
+        imageStageRef.current && imageStageRef.current.getBoundingClientRect().width > 0
+          ? imageStageRef.current
+          : containerRef.current;
+      if (!targetElement) return;
+      const rect = targetElement.getBoundingClientRect();
       if (rect.width <= 0) return;
       const rawPct = ((clientX - rect.left) / rect.width) * 100;
       const clampedPct = Math.max(0, Math.min(100, Math.round(rawPct * 10) / 10));
@@ -175,7 +182,9 @@ export function CompareSlider({
 
       {/* Main Image Stage (with pan/zoom transform applied) */}
       <div
-        className="relative inline-flex shrink-0 justify-center items-center"
+        ref={imageStageRef}
+        data-testid="compare-slider-image-stage"
+        className={`${stageStyle?.transform ? "absolute top-0 left-0" : "relative"} inline-flex shrink-0 justify-center items-center`}
         style={{
           width: stageWidth,
           height: stageHeight,
@@ -215,43 +224,51 @@ export function CompareSlider({
             style={{ userSelect: "none", WebkitUserDrag: "none" } as React.CSSProperties}
           />
         </div>
-      </div>
 
-      {/* Slider Divider Line */}
-      <div
-        data-testid="compare-slider-divider"
-        className="absolute top-0 bottom-0 z-20 pointer-events-none"
-        style={{
-          left: `${currentPos}%`,
-          transform: "translateX(-50%)",
-        }}
-      >
-        {/* Vertical Line */}
-        <div className="w-[2px] h-full bg-white shadow-[0_0_8px_rgba(0,0,0,0.7)]" />
-
-        {/* Interactive Handle */}
+        {/* Slider Divider Line (placed directly inside image stage so divider & clipping are 100% aligned) */}
         <div
-          role="slider"
-          tabIndex={0}
-          aria-label="ตัวเลื่อนเปรียบเทียบภาพต้นฉบับกับภาพแปลแล้ว"
-          aria-valuenow={Math.round(currentPos)}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuetext={`${Math.round(currentPos)}%`}
-          data-testid="compare-slider-handle"
-          onKeyDown={handleKeyDown}
-          onDoubleClick={handleDoubleClick}
-          className={`pointer-events-auto absolute top-1/2 -translate-y-1/2 -translate-x-1/2 left-[1px] w-9 h-9 rounded-full bg-surface border-2 border-primary text-primary-foreground flex items-center justify-center shadow-xl cursor-ew-resize hover:scale-110 active:scale-95 transition-transform focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${
-            isDragging ? "ring-2 ring-primary scale-110 bg-primary/20 text-white" : "bg-neutral-900 text-neutral-200"
-          }`}
-          title="ลากเพื่อเปรียบเทียบ (ดับเบิลคลิกเพื่อรีเซ็ต 50%)"
+          data-testid="compare-slider-divider"
+          className="absolute top-0 bottom-0 z-20 pointer-events-none"
+          style={{
+            left: `${currentPos}%`,
+            transform: "translateX(-50%)",
+          }}
         >
-          <ChevronsLeftRight className="w-4 h-4 text-primary" aria-hidden="true" />
-          {isDragging && (
-            <div className="absolute -top-7 px-2 py-0.5 rounded bg-black/90 text-[10px] text-white font-mono shadow pointer-events-none">
-              {Math.round(currentPos)}%
-            </div>
-          )}
+          {/* Vertical Line */}
+          <div
+            className="h-full bg-white shadow-[0_0_8px_rgba(0,0,0,0.7)] pointer-events-none"
+            style={{
+              width: `${Math.max(1, Math.round(2 / (zoomScale || 1)))}px`,
+            }}
+          />
+
+          {/* Interactive Handle */}
+          <div
+            role="slider"
+            tabIndex={0}
+            aria-label="ตัวเลื่อนเปรียบเทียบภาพต้นฉบับกับภาพแปลแล้ว"
+            aria-valuenow={Math.round(currentPos)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuetext={`${Math.round(currentPos)}%`}
+            data-testid="compare-slider-handle"
+            onKeyDown={handleKeyDown}
+            onDoubleClick={handleDoubleClick}
+            className={`pointer-events-auto absolute top-1/2 left-1/2 w-9 h-9 rounded-full bg-surface border-2 border-primary text-primary-foreground flex items-center justify-center shadow-xl cursor-ew-resize hover:scale-110 active:scale-95 transition-transform focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${
+              isDragging ? "ring-2 ring-primary scale-110 bg-primary/20 text-white" : "bg-neutral-900 text-neutral-200"
+            }`}
+            style={{
+              transform: `translate(-50%, -50%) scale(${1 / (zoomScale || 1)})`,
+            }}
+            title="ลากเพื่อเปรียบเทียบ (ดับเบิลคลิกเพื่อรีเซ็ต 50%)"
+          >
+            <ChevronsLeftRight className="w-4 h-4 text-primary" aria-hidden="true" />
+            {isDragging && (
+              <div className="absolute -top-7 px-2 py-0.5 rounded bg-black/90 text-[10px] text-white font-mono shadow pointer-events-none whitespace-nowrap">
+                {Math.round(currentPos)}%
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

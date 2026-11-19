@@ -48,6 +48,7 @@ export interface CleaningProgress {
   completedRegions: number;
   totalRegions: number;
   elapsedMs: number;
+  queuePosition?: number | null;
 }
 
 export interface CleaningJob {
@@ -56,6 +57,8 @@ export interface CleaningJob {
   stage: CleaningJobStage;
   progress?: CleaningProgress;
   error?: string | null;
+  queuePosition?: number | null;
+  elapsedMs?: number;
 }
 
 export interface PixelRect {

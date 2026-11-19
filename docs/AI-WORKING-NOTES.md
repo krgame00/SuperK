@@ -1,6 +1,102 @@
 # AI Working Notes — SuperK / Manga Translator
 
-## Performance & Architecture Upgrade: Sprint 4 FFT Screentone, Region Merging, and Glossary Persona (WP-3.3, WP-4.2, WP-4.5) — 2026-11-19
+## Side-by-Side (เทียบสองฝั่ง) Translation Disappearance & Overlay Remount Fix — 2026-11-19
+
+### Status: VERIFIED WORKING (Fixed translated text bubbles and overlay disappearing when toggling side-by-side mode or switching comparison modes per principles: `principle-model-the-domain`, `principle-experience-first`, `principle-fix-root-causes`, `principle-prove-it-works`, `principle-laziness-protocol`):
+
+1) Changes & Implementation:
+   - Root Causes Diagnosed:
+     - 1. DOM Container Replacement: When toggling `isSplitView` or switching between `"slider"` and `"side-by-side"`, React unmounted `#pageContainer` from the single view branch and mounted a brand new `#pageContainer` inside `split-view-translated-pane`.
+     - 2. Overlay Lifecycle Disconnect: The translated text overlays (`.tl-canvas`, `.tl-overlay`, text nodes) are appended directly to the DOM by `applyTranslationOverlay`. When `#pageContainer` was unmounted, all DOM overlay children were destroyed. Meanwhile, `useTranslation`'s reactive effect did not depend on `isSplitView` or `activeComparisonMode`, and `activeBubbles` / `currentPage` remained identical, so `applyTranslationOverlay` was never re-triggered on the newly mounted container.
+     - 3. Pane Styling & Scoping: `split-view-translated-pane` lacked a dedicated `[data-overlay-chrome-layer]` and translation layer visibility class (`hide-translation`), causing bubble selection handles to fall back to the outer viewport, and `img.src` lacked `translatedImagesMap` fallback when cleaning data was missing.
+   - Fixes Implemented:
+     - In `components/workspace/PageViewer.tsx`:
+       - Added event-driven DOM remount sync: dispatched `superk:request-overlay-refresh` custom event whenever `isSplitView`, `activeComparisonMode`, or `currentPage` changes.
+       - In `split-view-translated-pane`, added dedicated `<div data-overlay-chrome-layer="true" ... />` ensuring bubble selection boxes and handles are correctly scoped within the right pane.
+       - Added dynamic layer visibility class `${workspaceLayer === "translated" ? "" : "hide-translation"}` to `split-view-translated-pane`.
+       - Updated right pane `img.src` fallback chain to check `translatedImagesMap?.get(currentPageItem.url)` before falling back to the raw image.
+     - In `hooks/useTranslation.ts`:
+       - Added an event listener for `superk:request-overlay-refresh` on `window`. When triggered, it re-queries `bubbleCacheRef.current` / `activeBubbles` and invokes `applyTranslationOverlay` on the active `#pageContainer` with a 50ms settling debounce.
+     - In `tests/workspace/SplitViewComparison.test.tsx`:
+       - Added test `dispatches superk:request-overlay-refresh event when entering split view or switching to side-by-side`.
+       - Added test `renders dedicated overlay chrome layer and uses translatedImagesMap fallback when cleaning is missing`.
+     - In `tests/translation/useTranslation.test.tsx`:
+       - Added test `re-applies translation overlay when superk:request-overlay-refresh is dispatched`.
+
+2) Verification Evidence:
+   - Translation Hook Unit Tests:
+     - `npx vitest run tests/translation/useTranslation.test.tsx` -> 41/41 passed (4.33s).
+   - Workspace Split View Unit Tests:
+     - `npx vitest run tests/workspace/SplitViewComparison.test.tsx` -> 6/6 passed (4.43s).
+   - Full Workspace Test Suite:
+     - `npx vitest run tests/workspace/` -> 44 test files passed, 219/219 tests passed (55.52s).
+   - Next.js Production Build:
+     - `npm run build` -> Compiled successfully, TypeScript passed (0 errors), 21 static/dynamic routes generated.
+
+## Compare Slider (ตัวเลื่อนม่าน) Centering, Scale & Coordinate Alignment Fix — 2026-11-19
+
+### Status: VERIFIED WORKING (Fixed manga compare curtain slider drifting and image stage displacement per principles: `principle-model-the-domain`, `principle-experience-first`, `principle-fix-root-causes`, `principle-prove-it-works`, `principle-laziness-protocol`):
+
+1) Changes & Implementation:
+   - Root Causes Diagnosed:
+     - 1. Viewport Zoom Calculation: In `components/workspace/PageViewer.tsx`, `usePageZoom` received `isSplitView: isSplitView` unconditionally. In `hooks/usePageZoom.ts`, `isSplitView: true` split available width in half for 2-column side-by-side mode. In slider mode, there is only 1 column, causing the manga image to shrink to half-screen width and dock to the left.
+     - 2. Coordinate System Mismatch: In `components/workspace/CompareSlider.tsx`, the slider divider line was rendered as a direct child of the full-width viewport container (`left: ${currentPos}%` of 1600px+ viewport), while the clipped translated image was inside the image stage (`clipPath: polygon(0 0, ${currentPos}% 0, ...)` of image width). 50% of screen != 50% of image, causing the divider to hang in empty space.
+     - 3. Double-Centering Offset: The image stage had `relative inline-flex` inside a flexbox-centered container while also receiving `stageStyle` (`transform: translate3d(panX, panY, 0)`), resulting in compound translation.
+     - 4. Translated Image Fallback: In `PageViewer.tsx`, `translatedUrl` fell back to `cleanUrl` when `workspaceLayer !== "original"`, missing `translatedImagesMap.get(currentPageItem.url)`.
+   - Fixes Implemented:
+     - In `components/workspace/PageViewer.tsx`:
+       - Restricted `isSplitView` in `usePageZoom` to `isSplitView: isSplitView && activeComparisonMode === "side-by-side"`. In slider mode, zoom now uses full viewport dimensions, centering and scaling the manga page correctly.
+       - Updated `translatedUrl` fallback chain to check `translatedImagesMap?.get(currentPageItem.url)` before falling back to `cleanUrl`.
+       - Passed `zoomScale={zoom.scale}` to `CompareSlider`.
+     - In `components/workspace/CompareSlider.tsx`:
+       - Added `imageStageRef` to image stage element (`data-testid="compare-slider-image-stage"`).
+       - Changed image stage className to `${stageStyle?.transform ? "absolute top-0 left-0" : "relative"} inline-flex shrink-0 justify-center items-center` to eliminate flexbox double-centering under active stage pan/zoom.
+       - Moved `compare-slider-divider` directly inside the image stage container. The divider line and the `clipPath` now share the exact same DOM coordinate box (`left: ${currentPos}%`), guaranteeing 100% sync with zero drift.
+       - Counter-scaled the divider handle (`scale(1 / zoomScale)`) and line width (`max(1, round(2 / zoomScale))px`) so the handle stays at an ergonomic 36px and the line stays at 2px crisp resolution across any zoom level.
+       - Updated `updatePositionFromClientX` to compute percentage relative to `imageStageRef.current.getBoundingClientRect()` with fallback to container.
+     - In `tests/workspace/CompareSlider.test.tsx`:
+       - Added test `computes slider percentage relative to image stage when image is smaller than container`.
+
+2) Verification Evidence:
+   - Workspace Unit Tests:
+     - `npx vitest run tests/workspace/CompareSlider.test.tsx` -> 7/7 passed (2.15s).
+     - Full Workspace Tests: `npx vitest run tests/workspace/` -> 44 test files passed, 217/217 passed (27.27s).
+   - Cleaning Unit Tests:
+     - `npx vitest run tests/cleaning/` -> 30 test files passed, 448/448 passed (22.29s).
+   - Sidecar Backend Tests:
+     - `pytest tests/` in `ocr-service` -> 334 passed, 3 skipped, 0 failed (21.79s).
+   - Production Build:
+     - `npm run build` -> Compiled successfully with zero TypeScript / lint errors.
+
+## Sidecar Queue Status Visibility (F21) & Stage Timeout / Neural Circuit Breaker (Tasks 6 & 7) — 2026-11-19
+
+### Status: VERIFIED WORKING (Completed full sidecar queue position feedback and per-stage timeout/circuit-breaker safeguards in ocr-service and Next.js frontend per principles: `principle-model-the-domain`, `principle-experience-first`, `principle-fix-root-causes`, `principle-prove-it-works`, `principle-laziness-protocol`):
+
+1) Changes & Implementation:
+   - Task 6 (Sidecar Queue Status Visibility F21):
+     - In `ocr-service/app/schemas.py`, extended `JobProgress` with optional `queue_position: Optional[int] = None`.
+     - In `ocr-service/app/jobs.py`, added `submitted_at: float = field(default_factory=perf_counter)` to `JobState`. Updated `_current_elapsed_ms()` to compute live elapsed waiting time while in `QUEUED` status.
+     - In `JobStore.get_snapshot(job_id)`, added dynamic 1-indexed queue position calculation (`queue_position = pos`) iterating jobs in active states (`QUEUED`, `RUNNING`) ahead of the target job.
+     - In `ocr-service/app/api.py`, updated `create_job` (`POST /v1/jobs`) and `get_job` (`GET /v1/jobs/{job_id}`) to return `queue_position` and live `elapsed_ms`.
+     - In `lib/cleaning/types.ts` and `lib/cleaning/client.ts`, updated `CleaningProgress` and `CleaningJob` types and decoders to extract `queuePosition` and `elapsedMs`, auto-synthesizing progress on initial queued responses.
+     - In `components/cleaning/CleaningToolbar.tsx` and `hooks/useTranslationWorkspaceCoordinator.ts`, added `formatWaitTime(ms)` helper and rendered `"คิวที่ {queuePosition} • รอ {m:ss}"` during queued state so the user is never left wondering without progress feedback.
+   - Task 7 (Stage Timeout & Neural Circuit Breaker):
+     - In `ocr-service/app/schemas.py`, defined `StageTimeouts` with default budgets: `detect_seconds=60.0`, `refine_seconds=30.0`, `clean_seconds=180.0`, `verify_seconds=30.0`.
+     - In `ocr-service/app/pipeline.py`, introduced `StageTimeoutError` and `NeuralCircuitBreaker` (consecutive failure threshold = 2, trips on timeout or consecutive failures, blocks further heavy neural inpainting and automatically falls back to `FlatCleaner`).
+     - Guarded `CleaningPipeline.run()` with `StageTimeoutError` on text detection and mask refinement stages.
+     - Guarded `CleaningPipeline._run_batched()`: checked `clean_seconds` budget during the cleaning loop and `verify_seconds` during residual verification. Escalation attempts (2 and 3) check `circuit_breaker.can_execute()` and stage timeout before attempting heavy inpainting, catching exceptions to trip the breaker and falling back safely.
+
+2) Verification Evidence:
+   - Python Backend Tests:
+     - `pytest tests/test_jobs.py tests/test_pipeline.py -k "queue_position or circuit_breaker or stage_timeout"` -> 3/3 passed (9.58s).
+     - Full Pipeline & Jobs Suite: `pytest tests/test_jobs.py tests/test_pipeline.py` -> 57/57 passed (8.55s).
+     - API Endpoints Suite: `pytest tests/test_api.py` -> 27/27 passed (8.73s).
+     - Full OCR Service Suite: `pytest tests/` -> 334 passed, 3 skipped, 0 failed (21.79s).
+   - Next.js Frontend Tests & Build:
+     - Next.js Production Build: `npm run build` -> Compiled successfully, TypeScript passed (0 errors), 21 static/dynamic routes generated.
+     - CleaningToolbar Vitest Suite: `npx vitest run tests/cleaning/CleaningToolbar.test.tsx` -> 6/6 passed (11.97s), including new queue position and wait time display test.
+     - Client Vitest Suite: `npx vitest run tests/cleaning/client.test.ts` -> 7/7 passed (2.35s), verifying `queue_position` and `elapsed_ms` decoding.
+     - Full Cleaning Vitest Suite: `npx vitest run tests/cleaning/` -> 30 test files passed, 448/448 tests passed (22.29s).
 
 ### Status: VERIFIED WORKING (Completed Sprint 4 package including 2D FFT screentone fast-path cleaner, adjacent Tier-3 bounding box merging for LaMa neural cleaner, ONNX CPU thread tuning & FP16 model support, WebP client-side translation payload compression, and Character Persona pronoun/tone locks in Glossary per principles: `principle-fix-root-causes`, `principle-prove-it-works`, `principle-laziness-protocol`, `principle-model-the-domain`, `principle-experience-first`, `principle-sequence-verifiable-units`):
 

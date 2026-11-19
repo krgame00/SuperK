@@ -106,6 +106,14 @@ class JobProgress(BaseModel):
     completed_regions: int = Field(ge=0)
     total_regions: int = Field(ge=0)
     elapsed_ms: int = Field(ge=0)
+    queue_position: int | None = Field(default=None, ge=0)
+
+
+class StageTimeouts(BaseModel):
+    detect_seconds: float = Field(default=60.0, ge=0.01)
+    refine_seconds: float = Field(default=30.0, ge=0.01)
+    clean_seconds: float = Field(default=180.0, ge=0.01)
+    verify_seconds: float = Field(default=30.0, ge=0.01)
 
 
 class EvidenceSource(StrEnum):

@@ -80,7 +80,11 @@ export function CleaningToolbar({
         {progress && (
           <p className="text-xs font-medium text-foreground flex items-center gap-1.5 bg-surface-hover/80 px-2 py-0.5 rounded-md shrink-0" aria-live="polite">
             <span className="inline-block w-2 h-2 rounded-full bg-primary animate-pulse" />
-            <span>{stageLabel(progress.stage)} · {progress.completedRegions}/{progress.totalRegions} · {(progress.elapsedMs / 1000).toFixed(1)}s</span>
+            <span>
+              {progress.stage === "queued"
+                ? `คิวที่ ${progress.queuePosition ?? 1} • รอ ${formatWaitTime(progress.elapsedMs)}`
+                : `${stageLabel(progress.stage)} · ${progress.completedRegions}/${progress.totalRegions} · ${(progress.elapsedMs / 1000).toFixed(1)}s`}
+            </span>
           </p>
         )}
         {error?.recovery === "start-local-service" && (
@@ -211,6 +215,13 @@ export function CleaningToolbar({
       </div>
     </section>
   );
+}
+
+export function formatWaitTime(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
 export function stageLabel(stage: CleaningProgress["stage"]): string {

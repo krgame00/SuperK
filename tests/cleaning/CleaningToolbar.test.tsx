@@ -127,3 +127,26 @@ test("renders actionable reclean recovery banner when saved assets are missing",
   fireEvent.click(recleanBtn);
   expect(onClean).toHaveBeenCalledOnce();
 });
+
+test("displays queue position and elapsed wait time when queued", () => {
+  render(
+    <CleaningToolbar
+      hasPage
+      hasResult={false}
+      hasTranslated={false}
+      layer="original"
+      onClean={vi.fn()}
+      onEditMask={vi.fn()}
+      onLayerChange={vi.fn()}
+      progress={{
+        stage: "queued",
+        completedRegions: 0,
+        totalRegions: 0,
+        elapsedMs: 252000,
+        queuePosition: 2,
+      }}
+    />,
+  );
+  expect(screen.getByText("คิวที่ 2 • รอ 4:12")).toBeTruthy();
+});
+

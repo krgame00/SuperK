@@ -242,7 +242,7 @@ export function PageViewer({
     containerRef: viewportRef,
     imageNaturalWidth: naturalDimensions?.width,
     imageNaturalHeight: naturalDimensions?.height,
-    isSplitView,
+    isSplitView: isSplitView && activeComparisonMode === "side-by-side",
   });
 
   const viewportEngine = useMemo(() => {
@@ -266,6 +266,14 @@ export function PageViewer({
       virtualizer.measure();
     }
   }, [zoom.scrollZoomMode, viewLayout, virtualizer]);
+
+  // Notify translation overlay engine to re-attach whenever split view, comparison mode, or page changes
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("superk:request-overlay-refresh"));
+    }, 40);
+    return () => clearTimeout(timer);
+  }, [isSplitView, activeComparisonMode, currentPage]);
 
   // Auto-scroll to current page when switching from single to scroll mode
   useEffect(() => {
@@ -453,14 +461,20 @@ export function PageViewer({
                   translatedUrl={
                     workspaceLayer === "original"
                       ? currentPageItem.url
-                      : currentCleaningResult?.cleanUrl ??
+                      : translatedImagesMap?.get(currentPageItem.url) ??
+                        currentCleaningResult?.cleanUrl ??
                         cleaningResultsByPage.get(currentPageItem.url)?.cleanUrl ??
                         currentPageItem.url
                   }
                   originalAlt={`ต้นฉบับ: ${currentPageItem.name}`}
-                  translatedAlt={`หน้าแปลแล้ว: ${currentPageItem.name}`}
+                  translatedAlt={
+                    workspaceLayer === "clean"
+                      ? `ภาพคลีนแล้ว: ${currentPageItem.name}`
+                      : `หน้าแปลแล้ว: ${currentPageItem.name}`
+                  }
                   naturalDimensions={naturalDimensions}
                   stageStyle={zoom.stageStyle}
+                  zoomScale={zoom.scale}
                 />
               ) : (
                 <div className="relative w-full h-full flex flex-row items-center justify-center gap-3 p-2 overflow-hidden">
@@ -503,7 +517,9 @@ export function PageViewer({
                   {/* Right Column: Translated & Cleaned Artwork */}
                   <div
                     data-testid="split-view-translated-pane"
-                    className="relative flex-1 h-full flex items-center justify-center overflow-hidden bg-background/40 rounded-xl"
+                    className={`relative flex-1 h-full flex items-center justify-center overflow-hidden bg-background/40 rounded-xl ${
+                      workspaceLayer === "translated" ? "" : "hide-translation"
+                    }`}
                   >
                     <div className="absolute top-2 left-2 z-30 bg-primary/85 text-white border border-primary/50 px-2.5 py-0.5 rounded-md text-[11px] font-semibold tracking-wide shadow-md pointer-events-none">
                       หน้าแปลแล้ว (Translated)
@@ -549,9 +565,10 @@ export function PageViewer({
                                 ? currentPageItem.url
                                 : currentCleaningResult?.cleanUrl ??
                                   cleaningResultsByPage.get(currentPageItem.url)?.cleanUrl ??
+                                  translatedImagesMap?.get(currentPageItem.url) ??
                                   currentPageItem.url
                             }
-                            alt={`หน้า ${currentPage + 1}: ${currentPageItem.name}`}
+                            alt={`หน้าแปลแล้ว: ${currentPageItem.name}`}
                             title={currentPageItem.name}
                             draggable={false}
                             decoding="async"
@@ -620,6 +637,11 @@ export function PageViewer({
                         </>
                       )}
                     </div>
+                    {/* Dedicated Chrome Overlay Layer inside split translated pane */}
+                    <div
+                      data-overlay-chrome-layer="true"
+                      className="pointer-events-none absolute inset-0 z-40 overflow-visible"
+                    />
                   </div>
                 </div>
               )}

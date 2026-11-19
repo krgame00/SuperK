@@ -146,3 +146,30 @@ test("client exposes safe recovery guidance for failed requests", async () => {
     }),
   );
 });
+
+test("createCleaningJob and getCleaningJob decode queue_position and elapsed_ms", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json(
+      {
+        job_id: "job-1",
+        status: "queued",
+        stage: "queued",
+        queue_position: 2,
+        elapsed_ms: 125000,
+        progress: {
+          stage: "queued",
+          completed_regions: 0,
+          total_regions: 0,
+          elapsed_ms: 125000,
+          queue_position: 2,
+        },
+      },
+      { status: 202 },
+    ),
+  );
+  const result = await createCleaningJob(new Blob(["png"], { type: "image/png" }));
+  expect(result.queuePosition).toBe(2);
+  expect(result.elapsedMs).toBe(125000);
+  expect(result.progress?.queuePosition).toBe(2);
+  expect(result.progress?.elapsedMs).toBe(125000);
+});

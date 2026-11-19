@@ -170,4 +170,88 @@ describe("PageViewer Side-by-Side Split View", () => {
     expect(screen.getByTestId("split-view-original-pane")).toBeInTheDocument();
     expect(screen.queryByTestId("compare-slider-container")).not.toBeInTheDocument();
   });
+
+  it("dispatches superk:request-overlay-refresh event when entering split view or switching to side-by-side", async () => {
+    vi.useFakeTimers();
+    const refreshListener = vi.fn();
+    window.addEventListener("superk:request-overlay-refresh", refreshListener);
+
+    try {
+      const { rerender } = render(
+        <PageViewer
+          pages={pages}
+          currentPage={0}
+          viewLayout="single"
+          workspaceLayer="translated"
+          currentCleaningResult={null}
+          cleaningResultsByPage={new Map()}
+          brokenPages={new Set()}
+          onPageChange={vi.fn()}
+          onViewLayoutChange={vi.fn()}
+          onRemovePage={vi.fn()}
+          onImageError={vi.fn()}
+          isSplitView={false}
+        />,
+      );
+
+      vi.advanceTimersByTime(50);
+      expect(refreshListener).toHaveBeenCalled();
+      refreshListener.mockClear();
+
+      // Enter split view
+      rerender(
+        <PageViewer
+          pages={pages}
+          currentPage={0}
+          viewLayout="single"
+          workspaceLayer="translated"
+          currentCleaningResult={null}
+          cleaningResultsByPage={new Map()}
+          brokenPages={new Set()}
+          onPageChange={vi.fn()}
+          onViewLayoutChange={vi.fn()}
+          onRemovePage={vi.fn()}
+          onImageError={vi.fn()}
+          isSplitView={true}
+        />,
+      );
+
+      vi.advanceTimersByTime(50);
+      expect(refreshListener).toHaveBeenCalled();
+    } finally {
+      window.removeEventListener("superk:request-overlay-refresh", refreshListener);
+      vi.useRealTimers();
+    }
+  });
+
+  it("renders dedicated overlay chrome layer and uses translatedImagesMap fallback when cleaning is missing", () => {
+    const translatedImages = new Map([
+      ["blob:original-page-1", "blob:baked-translated-page-1"],
+    ]);
+
+    render(
+      <PageViewer
+        pages={pages}
+        currentPage={0}
+        viewLayout="single"
+        workspaceLayer="translated"
+        currentCleaningResult={null}
+        cleaningResultsByPage={new Map()}
+        translatedImagesMap={translatedImages}
+        brokenPages={new Set()}
+        onPageChange={vi.fn()}
+        onViewLayoutChange={vi.fn()}
+        onRemovePage={vi.fn()}
+        onImageError={vi.fn()}
+        isSplitView={true}
+      />,
+    );
+
+    const transPane = screen.getByTestId("split-view-translated-pane");
+    const chromeLayer = transPane.querySelector("[data-overlay-chrome-layer]");
+    expect(chromeLayer).toBeInTheDocument();
+
+    const img = transPane.querySelector("img");
+    expect(img).toHaveAttribute("src", "blob:baked-translated-page-1");
+  });
 });

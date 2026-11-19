@@ -1653,3 +1653,51 @@ test("parallelPages 2 translates two blocked pages concurrently", async () => {
   expect(result.current.bubbleCacheRef.current.has("blob:one")).toBe(true);
   expect(result.current.bubbleCacheRef.current.has("blob:two")).toBe(true);
 });
+
+test("re-applies translation overlay when superk:request-overlay-refresh is dispatched", async () => {
+  vi.useFakeTimers();
+  try {
+    const pages = ["blob:one"];
+    vi.mocked(applyTranslationOverlay).mockClear();
+
+    const { result } = renderHook(() =>
+      useTranslation({
+        currentPage: 0,
+        pages,
+        viewMode: "single",
+        preparePageForTranslation: vi.fn(),
+      }),
+    );
+
+    act(() => {
+      result.current.bubbleCacheRef.current.set("blob:one", [translatedBubble]);
+      result.current.setActiveBubbles([translatedBubble]);
+    });
+
+    vi.mocked(applyTranslationOverlay).mockClear();
+
+    // Dispatch external refresh request (e.g. from PageViewer split view toggle)
+    act(() => {
+      window.dispatchEvent(new CustomEvent("superk:request-overlay-refresh"));
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+
+    expect(applyTranslationOverlay).toHaveBeenCalledWith(
+      [translatedBubble],
+      "single",
+      0,
+      expect.any(Function),
+      undefined,
+      expect.any(Object),
+      undefined,
+      "blob:one",
+      expect.any(Function),
+      expect.any(String),
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
