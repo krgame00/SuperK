@@ -10,6 +10,7 @@ import {
   restoreCleaningJob,
   retryCleaningRegion,
 } from "@/lib/cleaning/client";
+import { readStoredSfxPolicy, sfxPolicyToCleaningMode } from "@/lib/cleaning/sfxPolicy";
 import type {
   CleanerOverride,
   CleaningJob,
@@ -70,8 +71,7 @@ const safeRestoredRegions = (regions: CleaningResult["regions"]): CleaningResult
     : region);
 
 const activeCleaningMode = (): CleaningMode => {
-  if (typeof window === "undefined" || typeof localStorage === "undefined") return "safe";
-  return localStorage.getItem("superk:sfx-policy") === "translate" ? "all-text" : "safe";
+  return sfxPolicyToCleaningMode(readStoredSfxPolicy());
 };
 
 export class TextlessRegistrationError extends Error {
@@ -538,7 +538,11 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
    * remove").
    */
   const registerTextlessCleanResult = useCallback(
-    async (pageUrl: string, cleanBlob: Blob): Promise<string> => {
+    async (
+      pageUrl: string,
+      cleanBlob: Blob,
+      detectedBoxes: Array<{ x: number; y: number; width: number; height: number }> = [],
+    ): Promise<string> => {
       const bitmap = await createImageBitmap(cleanBlob);
       try {
         const width = bitmap.width;
@@ -559,6 +563,20 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
           : await maskFingerprintValue;
         const cleanUrl = URL.createObjectURL(cleanBlob);
         const maskUrl = URL.createObjectURL(maskBlob);
+        const regions: CleaningRegion[] = (detectedBoxes || []).map((rect, idx) => ({
+          id: String(idx + 1),
+          rect,
+          route: "flat",
+          confidence: 1.0,
+          status: "repaired",
+          residualScore: 0,
+          damageScore: 0,
+          pageRole: "comic",
+          textRole: "dialogue",
+          eligibilityConfidence: 1.0,
+          automaticAction: "clean",
+          protectionReasons: [],
+        }));
         const nextResult: PageCleaningResult = {
           jobId: `textless:${Date.now()}`,
           sourceHash: sourceFingerprint,
@@ -568,7 +586,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
           maskAsset: "",
           reviewMaskAsset: "",
           protectedMaskAsset: "",
-          regions: [],
+          regions,
           timingsMs: {},
           awaitingReview: false,
           pipelineVersion: CURRENT_PIPELINE_VERSION,
@@ -1084,6 +1102,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
     ): Promise<PageCleaningResult> => {
       if (signal?.aborted) throw new DOMException("Cleaning cancelled", "AbortError");
       setError(undefined);
+      const expectedMode = activeCleaningMode();
       const sourceFingerprintValue = fingerprintBlob(source);
       const cached = !force ? resultsRef.current.get(pageUrl) : undefined;
       if (!force) {
@@ -1092,7 +1111,6 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
             ? sourceFingerprintValue
             : await sourceFingerprintValue;
         if (signal?.aborted) throw new DOMException("Cleaning cancelled", "AbortError");
-        const expectedMode = activeCleaningMode();
         if (
           cached &&
           cached.sourceFingerprint &&
@@ -1114,7 +1132,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       try {
         // Start the request before hashing the first uncached page so source
         // fingerprinting cannot delay the polling schedule.
-        const jobPromise = signal ? createCleaningJob(source,signal) : createCleaningJob(source);
+        const jobPromise = createCleaningJob(source, signal, expectedMode);
         const sourceFingerprint =
           typeof sourceFingerprintValue === "string"
             ? sourceFingerprintValue

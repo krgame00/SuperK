@@ -10,6 +10,37 @@ export interface DeltaUndoPatch {
   afterPixels: ImageData;
 }
 
+export function computeModuloAlignedCrop(
+  dirty: { x: number; y: number; width: number; height: number },
+  canvasWidth: number,
+  canvasHeight: number,
+  padding = 32,
+  modulo = 8,
+): { x: number; y: number; width: number; height: number } {
+  const maxAlignedW = Math.max(1, Math.floor(canvasWidth / modulo) * modulo);
+  const maxAlignedH = Math.max(1, Math.floor(canvasHeight / modulo) * modulo);
+
+  const rawX0 = Math.max(0, Math.floor(dirty.x - padding));
+  const rawY0 = Math.max(0, Math.floor(dirty.y - padding));
+  const rawX1 = Math.min(canvasWidth, Math.ceil(dirty.x + dirty.width + padding));
+  const rawY1 = Math.min(canvasHeight, Math.ceil(dirty.y + dirty.height + padding));
+
+  const alignedW = Math.min(
+    maxAlignedW,
+    Math.max(modulo, Math.ceil(Math.max(1, rawX1 - rawX0) / modulo) * modulo),
+  );
+  const alignedH = Math.min(
+    maxAlignedH,
+    Math.max(modulo, Math.ceil(Math.max(1, rawY1 - rawY0) / modulo) * modulo),
+  );
+
+  // เลื่อน x0, y0 ย้อนเข้าด้านในหากกรอบที่ปัดขึ้น ล้นขอบขวาหรือขอบล่าง
+  const x0 = Math.max(0, Math.min(rawX0, canvasWidth - alignedW));
+  const y0 = Math.max(0, Math.min(rawY0, canvasHeight - alignedH));
+
+  return { x: x0, y: y0, width: alignedW, height: alignedH };
+}
+
 export class BrushStrokeTracker {
   private minX = Infinity;
   private minY = Infinity;
@@ -29,22 +60,21 @@ export class BrushStrokeTracker {
     imageWidth: number,
     imageHeight: number,
     contextPadding = 32,
-    modulo = 8
+    modulo = 8,
   ): { x: number; y: number; width: number; height: number } | null {
     if (!this.hasStrokes) return null;
-
-    const x0 = Math.max(0, this.minX - contextPadding);
-    const y0 = Math.max(0, this.minY - contextPadding);
-    const x1 = Math.min(imageWidth, this.maxX + contextPadding);
-    const y1 = Math.min(imageHeight, this.maxY + contextPadding);
-
-    const rawW = x1 - x0;
-    const rawH = y1 - y0;
-
-    const alignedW = Math.min(imageWidth - x0, Math.ceil(rawW / modulo) * modulo);
-    const alignedH = Math.min(imageHeight - y0, Math.ceil(rawH / modulo) * modulo);
-
-    return { x: x0, y: y0, width: alignedW, height: alignedH };
+    return computeModuloAlignedCrop(
+      {
+        x: this.minX,
+        y: this.minY,
+        width: Math.max(1, this.maxX - this.minX),
+        height: Math.max(1, this.maxY - this.minY),
+      },
+      imageWidth,
+      imageHeight,
+      contextPadding,
+      modulo,
+    );
   }
 
   reset(): void {

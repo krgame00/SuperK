@@ -70,16 +70,7 @@ export async function createCleaningJob(
   }
 
   form.append("image", resolvedFile, filename);
-  let effectiveCleaningMode: "safe" | "all-text" = cleaningMode;
-  if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
-    const savedSfx = localStorage.getItem("superk:sfx-policy");
-    if (savedSfx === "translate") {
-      effectiveCleaningMode = "all-text";
-    } else if (savedSfx === "ignore" || savedSfx === "preserve") {
-      effectiveCleaningMode = "safe";
-    }
-  }
-  form.append("cleaning_mode", effectiveCleaningMode);
+  form.append("cleaning_mode", cleaningMode);
   return decodeJob(
     await requestJson(`${PROXY_BASE}/v1/jobs`, {
       method: "POST",

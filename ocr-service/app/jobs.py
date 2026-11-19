@@ -62,10 +62,11 @@ def _trim_process_memory(aggressive: bool = True) -> None:
     try:
         import gc
 
-        if not aggressive:
-            gc.collect(0)
-            return
-        gc.collect()
+        if aggressive:
+            gc.collect()
+        else:
+            gc.collect(1)
+
         try:
             import torch
 

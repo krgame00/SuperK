@@ -5181,3 +5181,36 @@ Verification evidence:
   - `npx tsc --noEmit`: 0 errors.
   - `/api/translate/models`: Discovered and exposed 37 models in live catalog.
   - Next.js Standalone build re-compiled and live on port 3000.
+
+
+---
+
+## pstack (Poteto Mode) Root-Cause Fix Suite — 2026-11-19
+
+### Status: VERIFIED WORKING (Vitest 3/3 passed, Pytest 6/6 passed, tsc --noEmit 0 errors)
+
+- **P1: รวมศูนย์นโยบาย SFX Policy เป็นความจริงชุดเดียว (`lib/cleaning/sfxPolicy.ts`, `lib/cleaning/client.ts`)**:
+  - สร้าง `lib/cleaning/sfxPolicy.ts` สำหรับ `normalizeSfxPolicy()`, `readStoredSfxPolicy()`, `sfxPolicyToCleaningMode()`.
+  - ลบ side-channel `localStorage` ออกจาก `lib/cleaning/client.ts` ทำให้ `createCleaningJob()` เป็นฟังก์ชันบริสุทธิ์ (`cleaningMode: "safe" | "all-text"`).
+  - เชื่อมโยง `activeCleaningMode()` ใน `hooks/useCleaning.ts` เข้ากับ `sfxPolicyToCleaningMode()`.
+
+- **P3: แก้ปัญหาสัญญาดัชนีคำแปลใน TranscriptModal (`components/editing/TranscriptModal.tsx`, `hooks/useWorkspaceController.ts`)**:
+  - ย้ายและ export `applyTranscriptUpdatesToBubbles()` ไว้ใน `TranscriptModal.tsx` ร่วมกับตัวจัดรูปแบบและตัวแยกวิเคราะห์.
+  - อัปเดต `_cachedTranslatedText` และรับประกันการข้ามบอลลูนที่ถูกลบ (`deleted: true`) โดยไม่เลื่อนเป้าหมายผิดกล่อง.
+
+- **P4: แก้การปัดขนาด Modulo-8 ริมขอบภาพกระดาษ (`lib/inpaint/DirtyRectInpainter.ts`, `components/cleaning/MaskEditor.tsx`)**:
+  - สร้างและ export `computeModuloAlignedCrop()` ใน `DirtyRectInpainter.ts` โดยเลื่อนจุดเริ่มต้น (x0, y0) ถอยกลับเข้าด้านในภาพเมื่อชนขอบขวาหรือขอบล่าง.
+  - รับประกัน `width % 8 === 0` และ `height % 8 === 0` เสมอ ป้องกันข้อผิดพลาด tensor mismatch ในโมเดล LaMa.
+
+- **P5: ปรับปรุงกฎแก้ Hotlink ใน Chrome Extension (`chrome-extension/background.js`)**:
+  - ปรับใช้ระบบ `withAntiHotlinkRule()` แบบ Ref-Counted Origin Rule ต่อหนึ่งโดเมน CDN เพื่อลดการสร้างกฎซ้ำซ้อน.
+
+- **P6: ส่งต่อ detected_boxes ใน Textless Clean Result (`hooks/useCleaning.ts`, `hooks/useWorkspaceDocumentManager.ts`, `hooks/useWorkspaceController.ts`)**:
+  - เชื่อมต่อ `detectedBoxes` จากผลการจับคู่หน้าไร้ตัวอักษรเข้าสู่ `CleaningRegion[]` ใน `registerTextlessCleanResult()`.
+  - ป้องกันปัญหา `regions: []` ว่างเปล่า ทำให้ระบบกู้คืนคำแปลตกหล่น (`recoverDetectedOmissions`) ทำงานได้สมบูรณ์ 100%.
+
+- **Verification Evidence**:
+  - `npx vitest run tests/pstack/rootCauseFixes.test.ts`: 3/3 passed (100%).
+  - `npx vitest run tests/cleaning/textlessMatcher.test.ts tests/workspace/useWorkspaceDocumentManager.test.tsx`: 16/16 passed (100%).
+  - `npx tsc --noEmit`: Exit code 0 (Type safety passed).
+  - `pytest tests/test_pstack_cleaners.py tests/test_textless_matcher.py`: 6/6 passed (100%).

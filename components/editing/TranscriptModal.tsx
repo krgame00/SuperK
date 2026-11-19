@@ -92,6 +92,29 @@ export function parseTranscriptText(
   return updates;
 }
 
+export function applyTranscriptUpdatesToBubbles(
+  bubbles: TranslatedBubble[],
+  idxMap: ReadonlyMap<number, string>,
+): { nextBubbles: TranslatedBubble[]; changed: boolean } {
+  let changed = false;
+  const nextBubbles = bubbles.map((bubble, rawArrayIdx) => {
+    if (bubble.deleted) return bubble;
+    const nextText = idxMap.get(rawArrayIdx);
+    const currentText = String(bubble.t ?? bubble.translated ?? "");
+    if (typeof nextText === "string" && nextText !== currentText) {
+      changed = true;
+      return {
+        ...bubble,
+        t: nextText,
+        translated: nextText,
+        _cachedTranslatedText: nextText,
+      };
+    }
+    return bubble;
+  });
+  return { nextBubbles: changed ? nextBubbles : bubbles, changed };
+}
+
 export function TranscriptModal({
   isOpen,
   onClose,

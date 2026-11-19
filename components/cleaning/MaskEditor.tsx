@@ -32,7 +32,7 @@ import {
 import { rederiveRegionMaskFromContent, type MaskRederiveResult } from "@/lib/cleaning/maskRederive";
 import { applyBrush, dilateMask, type BrushMode, type MaskPoint } from "@/lib/cleaning/maskEdits";
 import { inpaintCrop } from "@/lib/cleaning/client";
-import { BrushStrokeTracker } from "@/lib/inpaint/DirtyRectInpainter";
+import { BrushStrokeTracker, computeModuloAlignedCrop } from "@/lib/inpaint/DirtyRectInpainter";
 import { findRegionForCandidate } from "@/lib/cleaning/remnantReview";
 import type {
   CleanerOverride,
@@ -750,14 +750,9 @@ export function MaskEditor({
     const started = Date.now();
 
     try {
-      const customBox = strokeTrackerRef.current.getAlignedCropBox(canvasSize.width, canvasSize.height, 32, 8);
-      const x0 = customBox ? customBox.x : Math.max(0, r.x - 32);
-      const y0 = customBox ? customBox.y : Math.max(0, r.y - 32);
-      const rawW = customBox ? customBox.width : Math.max(1, Math.min(canvasSize.width, r.x + r.width + 32) - x0);
-      const rawH = customBox ? customBox.height : Math.max(1, Math.min(canvasSize.height, r.y + r.height + 32) - y0);
-      // Enforce Modulo-8 alignment for LaMa tensor compatibility
-      const cropW = Math.min(canvasSize.width - x0, Math.max(8, Math.ceil(rawW / 8) * 8));
-      const cropH = Math.min(canvasSize.height - y0, Math.max(8, Math.ceil(rawH / 8) * 8));
+      const alignedBox = strokeTrackerRef.current.getAlignedCropBox(canvasSize.width, canvasSize.height, 32, 8) ??
+        computeModuloAlignedCrop(r, canvasSize.width, canvasSize.height, 32, 8);
+      const { x: x0, y: y0, width: cropW, height: cropH } = alignedBox;
 
       const imgCanvas = document.createElement("canvas");
       imgCanvas.width = cropW;

@@ -25,6 +25,7 @@ import { useExtensionWorkspaceBridge } from "@/hooks/useExtensionWorkspaceBridge
 import { useWorkspaceTextActions } from "@/hooks/useWorkspaceTextActions";
 import { useTranslationWorkspaceCoordinator } from "@/hooks/useTranslationWorkspaceCoordinator";
 import { useWorkspaceShortcuts } from "@/hooks/useWorkspaceShortcuts";
+import { applyTranscriptUpdatesToBubbles } from "@/components/editing/TranscriptModal";
 import {
   doesPageRequireReview,
   missingTranslationSignature,
@@ -199,7 +200,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
       try {
         for (const match of batch) {
           try {
-            await registerTextlessCleanResult(match.textPageUrl, match.scaledCleanBlob);
+            await registerTextlessCleanResult(match.textPageUrl, match.scaledCleanBlob, match.detectedBoxes);
           } catch (error) {
             console.warn("Failed to register the textless clean base:", error);
             const toast = (await import("react-hot-toast")).default;
@@ -791,21 +792,13 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
       for (const [pageUrlKey, idxMap] of updatesByPageUrl.entries()) {
         const list =
           pageUrlKey === currentPageUrl && activeBubbles.length > 0
-            ? [...activeBubbles]
-            : [...(bubbleCacheRef?.current?.get(pageUrlKey) ?? [])];
-        let changed = false;
-        for (let i = 0; i < list.length; i++) {
-          if (list[i].deleted) continue;
-          const nextText = idxMap.get(i);
-          if (typeof nextText === "string" && nextText !== (list[i].t ?? list[i].translated ?? "")) {
-            list[i] = { ...list[i], t: nextText, translated: nextText };
-            changed = true;
-          }
-        }
+            ? activeBubbles
+            : (bubbleCacheRef?.current?.get(pageUrlKey) ?? []);
+        const { nextBubbles, changed } = applyTranscriptUpdatesToBubbles(list, idxMap);
         if (changed) {
-          bubbleCacheRef?.current?.set(pageUrlKey, list);
+          bubbleCacheRef?.current?.set(pageUrlKey, nextBubbles);
           if (pageUrlKey === currentPageUrl) {
-            setActiveBubbles(list);
+            setActiveBubbles(nextBubbles);
           }
         }
       }

@@ -236,55 +236,59 @@ chrome.runtime.onMessage?.addListener?.(async (message, sender) => {
   }
 });
 
-let nextDnrRuleId = 10000;
-function getNextRuleId() {
-  const id = nextDnrRuleId++;
-  if (nextDnrRuleId > 60000) nextDnrRuleId = 10000;
-  return id;
-}
+const activeOriginRules = new Map(); // origin -> { ruleId: number, refCount: number, ready: Promise<void> }
+let nextOriginRuleId = 10000;
 
 async function withAntiHotlinkRule(url, taskFn) {
   if (!/^https?:/i.test(url) || !chrome?.declarativeNetRequest?.updateDynamicRules) {
     return await taskFn();
   }
-  let origin = "";
+  let origin;
   try {
-    origin = new URL(url).origin + "/";
+    origin = new URL(url).origin;
   } catch {
     return await taskFn();
   }
-  const ruleId = getNextRuleId();
-  try {
-    await chrome.declarativeNetRequest.updateDynamicRules({
-      removeRuleIds: [ruleId],
-      addRules: [
-        {
-          id: ruleId,
-          priority: 1,
-          action: {
-            type: "modifyHeaders",
-            requestHeaders: [
-              { header: "Referer", operation: "set", value: origin },
-              { header: "Origin", operation: "set", value: origin.replace(/\/$/, "") }
-            ]
+  let entry = activeOriginRules.get(origin);
+  if (!entry) {
+    nextOriginRuleId = 10000 + ((nextOriginRuleId - 9999) % 4000);
+    const ruleId = nextOriginRuleId;
+    const ready = chrome.declarativeNetRequest
+      .updateDynamicRules({
+        removeRuleIds: [ruleId],
+        addRules: [
+          {
+            id: ruleId,
+            priority: 1,
+            action: {
+              type: "modifyHeaders",
+              requestHeaders: [
+                { header: "Referer", operation: "set", value: origin + "/" },
+                { header: "Origin", operation: "set", value: origin },
+              ],
+            },
+            condition: {
+              urlFilter: origin + "/*",
+              resourceTypes: ["xmlhttprequest", "image", "other"],
+            },
           },
-          condition: {
-            urlFilter: url,
-            resourceTypes: ["xmlhttprequest", "image", "other"]
-          }
-        }
-      ]
-    });
-  } catch {
-    // Ignore if declarativeNetRequest is unavailable in test or older browser
+        ],
+      })
+      .catch(() => {});
+    entry = { ruleId, refCount: 0, ready };
+    activeOriginRules.set(origin, entry);
   }
+  entry.refCount += 1;
+  await entry.ready;
   try {
     return await taskFn();
   } finally {
-    try {
-      await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [ruleId] });
-    } catch {
-      // Ignore cleanup error
+    entry.refCount -= 1;
+    if (entry.refCount <= 0) {
+      activeOriginRules.delete(origin);
+      await chrome.declarativeNetRequest
+        .updateDynamicRules({ removeRuleIds: [entry.ruleId] })
+        .catch(() => {});
     }
   }
 }

@@ -61,6 +61,7 @@ export interface UseWorkspaceDocumentManagerOptions {
 export interface PendingTextlessMatch {
   textPageUrl: string;
   scaledCleanBlob: Blob;
+  detectedBoxes?: Array<{ x: number; y: number; width: number; height: number }>;
 }
 
 export async function fetchExtensionPairingToken(): Promise<string | null> {
@@ -266,6 +267,7 @@ export function useWorkspaceDocumentManager({
             outcome.matchedPairs.map((pair) => ({
               textPageUrl: pair.textPage.url,
               scaledCleanBlob: pair.scaledCleanBlob,
+              detectedBoxes: pair.detectedBoxes,
             })),
           );
           const toast = (await import("react-hot-toast")).default;
