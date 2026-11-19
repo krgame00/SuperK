@@ -47,24 +47,31 @@ class FlatCleaner:
         features = extract_region_features(image_rgb, mask, region)
         if features.gradient_coherence >= 0.55:
             repair = _fit_color_plane(image_rgb, ring)
+            result[support] = repair[support]
         else:
-            lab = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2LAB)
-            ring_pixels = lab[ring]
-            median = np.median(ring_pixels, axis=0).astype(np.float32)
-            repair_lab = np.empty_like(lab, dtype=np.float32)
-            repair_lab[:] = median
+            crop_lab = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2LAB)
+            crop_ring = _ring(crop_support, radius=6)
+            crop_ring_pixels = crop_lab[crop_ring]
+            if len(crop_ring_pixels) == 0:
+                crop_ring_pixels = crop_lab[crop_support == 0]
+            if len(crop_ring_pixels) == 0:
+                crop_ring_pixels = crop_lab.reshape(-1, 3)
+
+            median = np.median(crop_ring_pixels, axis=0).astype(np.float32)
+            repair_crop_lab = np.empty_like(crop_lab, dtype=np.float32)
+            repair_crop_lab[:] = median
 
             # Analyze texture / screentone noise in the surrounding ring
-            ring_l = ring_pixels[:, 0].astype(np.float32)
-            std_l = float(np.std(ring_l))
+            ring_l = crop_ring_pixels[:, 0].astype(np.float32)
+            std_l = float(np.std(ring_l)) if len(ring_l) > 0 else 0.0
             if std_l > 1.5:
                 # Synthesize micro-texture matching surrounding screentone/paper grain
                 rng = np.random.default_rng(hash(region.id) & 0xFFFFFFFF)
-                noise = rng.normal(0, min(std_l * 0.75, 8.0), size=lab.shape[:2])
-                repair_lab[..., 0] = np.clip(repair_lab[..., 0] + noise, 0, 255)
+                noise = rng.normal(0, min(std_l * 0.75, 8.0), size=crop_lab.shape[:2])
+                repair_crop_lab[..., 0] = np.clip(repair_crop_lab[..., 0] + noise, 0, 255)
 
-            repair = cv2.cvtColor(repair_lab.astype(np.uint8), cv2.COLOR_LAB2RGB)
-        result[support] = repair[support]
+            repair_crop = cv2.cvtColor(repair_crop_lab.astype(np.uint8), cv2.COLOR_LAB2RGB)
+            result[y0:y1, x0:x1][crop_support] = repair_crop[crop_support]
         return result
 
 
@@ -93,10 +100,10 @@ class GradientCleaner:
         support = support_full[y0:y1, x0:x1]
 
         binary = support.astype(np.uint8) * 255
-        # Test both Telea and Navier-Stokes inpainting candidates
+        # Test both Telea and Navier-Stokes inpainting candidates with optimized radius set
         candidates = [
             cv2.inpaint(crop, binary, radius, method)
-            for radius in (2, 3, 5)
+            for radius in (2, 4)
             for method in (cv2.INPAINT_TELEA, cv2.INPAINT_NS)
         ]
         repaired = min(

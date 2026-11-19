@@ -29,6 +29,17 @@ export type MeasureWidthFn = (
 
 const THAI_STICKY_PUNCTUATION = /^([!?:;.,…ๆฯ"')\]]+)$/u;
 
+const SEGMENTER_CACHE = new Map<string, Intl.Segmenter>();
+
+function getSegmenter(locale: string): Intl.Segmenter {
+  let seg = SEGMENTER_CACHE.get(locale);
+  if (!seg) {
+    seg = new Intl.Segmenter(locale, { granularity: "word" });
+    SEGMENTER_CACHE.set(locale, seg);
+  }
+  return seg;
+}
+
 export function segmentThaiAwareTokens(
   text: string,
   locale = "th",
@@ -39,7 +50,7 @@ export function segmentThaiAwareTokens(
   let rawSegments: string[];
   if (typeof Intl !== "undefined" && "Segmenter" in Intl) {
     try {
-      const segmenter = new Intl.Segmenter(locale, { granularity: "word" });
+      const segmenter = getSegmenter(locale);
       rawSegments = Array.from(segmenter.segment(trimmed), (s) => s.segment);
     } catch {
       rawSegments = trimmed.split(/(\s+)/);

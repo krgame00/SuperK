@@ -1,5 +1,66 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Performance & Architecture Upgrade: Sprint 1 Quick Wins (WP-1.1, WP-1.2, WP-4.1, WP-4.3) — 2026-11-19
+
+### Status: VERIFIED WORKING (Executed Sprint 1 optimization package including crop-only LAB color conversion & inpaint radius tuning in flat.py, asynchronous canvas toBlob serialization in MaskEditor, JSZip STORE pass-through compression in useExportOrchestrator, sequential DeclarativeNetRequest rule counter in Chrome Extension background.js, and module-level Intl.Segmenter caching in BubbleTypesetEngine per principles: `principle-fix-root-causes`, `principle-prove-it-works`, `principle-laziness-protocol`, `principle-experience-first`, `principle-sequence-verifiable-units`):
+
+1) Changes & Implementation:
+   - WP-4.3 (Typesetting Engine Intl.Segmenter Caching):
+     - In `lib/typeset/BubbleTypesetEngine.ts`, added module-level `SEGMENTER_CACHE` map.
+     - Avoided allocating break iterators and ICU tables on every word token segment pass.
+   - WP-1.2 Part 1 (MaskEditor Asynchronous Serialization):
+     - In `components/cleaning/MaskEditor.tsx`, replaced synchronous 4K `fullCvs.toDataURL("image/png")` with asynchronous `fullCvs.toBlob()` and `URL.createObjectURL()`.
+     - Added object URL revocation to prevent memory leaks during brush/undo passes.
+   - WP-1.2 Part 2 (Export Archive Pass-Through Compression):
+     - In `hooks/useExportOrchestrator.ts`, replaced explicit `compression: "DEFLATE"` with `compression: "STORE"` across layered and single-page zip exports.
+     - Eliminated CPU-bound double compression on already-compressed PNG/JPEG streams.
+   - WP-4.1 (Chrome Extension Declarative Net Request Rule Safety):
+     - In `chrome-extension/background.js`, replaced random rule ID generation (`9001 + Math.random() * 900`) with sequential counter `nextDnrRuleId` (range 10,000–60,000).
+     - Eliminated rule ID collision risks under concurrent image requests.
+   - WP-1.1 (Cleaner Inpainting & Color Conversion Optimization):
+     - In `ocr-service/app/cleaners/flat.py`, converted LAB operations from full 4K frame to localized context crop `crop_rgb[y0:y1, x0:x1]`.
+     - Reduced noise synthesis and array allocations from 8M pixels to target balloon dimensions.
+     - Optimized `GradientCleaner` inpainting candidate radius set from `(2, 3, 5)` to `(2, 4)`.
+
+2) Verification Evidence:
+   - Typesetting Suite: `npm test -- BubbleTypesetEngine` -> 5/5 tests passed (1.69s).
+   - Mask Editor Suite: `npm test -- MaskEditor` -> 55/55 tests passed (5.84s).
+   - Export Orchestrator Suite: `npm test -- useExportOrchestrator` -> 7/7 tests passed (2.41s).
+   - Chrome Extension Suite: `npm test -- extension` -> 25 test files passed, 129/129 tests passed (7.81s).
+   - Backend Cleaner Suite: `pytest tests/test_flat_cleaner.py tests/test_artwork_cleaners.py tests/test_tier_router.py tests/test_hybrid_inpainter.py` -> 17 passed, 2 skipped (2.80s).
+   - TypeScript Compilation: `npx tsc --noEmit` -> 0 errors.
+   - Full Vitest Regression Run: 288 test files passed, 2370 tests passed.
+
+
+## Production Launch Guard: Port 3000 / 8765 Pre-flight Collision Resolution — 2026-11-19
+
+### Status: VERIFIED WORKING (Investigated port conflict detection dialog reported in launcher popup; verified root cause as external node process on port 3000; cleared zombie listeners and confirmed clean zero-collision startup of Next.js standalone and Uvicorn OCR backend per principles: `principle-fix-root-causes`, `principle-prove-it-works`, `principle-laziness-protocol`, `principle-experience-first`):
+
+1) Symptom & Error Dialog Analysis (Debug Mantra):
+   - User Evidence: Windows error message box titled "SuperK" showing "Could not start SuperK: Port 3000 or 8765 belongs to another application. It was left running. Logs: F:\Projects\manga-translator\.superk-runtime".
+   - Trace the Fail Path:
+     - Launcher `SuperK-Launcher.vbs` executes `scripts/start-production.ps1`.
+     - In `start-production.ps1` lines 39-48, `Get-SuperKPortOwner` queries listening processes on ports 3000 and 8765 using `Get-NetTCPConnection`.
+     - For any listening process, `Test-SuperKServiceProcess` checks if its command line matches authorized SuperK entrypoints (`node .next/standalone/server.js`, `next`, or `uvicorn app.api:app`).
+     - An unrelated Node.js backend (PID 11852 from `F:\Projects\antigravity\goofy-faraday\backend\index.js`) was actively listening on port 3000.
+     - Because PID 11852 was not SuperK, `Test-SuperKServiceProcess` correctly returned `$false` and raised the safety exception to avoid stepping on foreign workloads.
+
+2) Root Cause & Resolution:
+   - Terminated foreign process PID 11852 upon user authorization.
+   - Verified that neither port 3000 nor port 8765 has active listeners.
+   - Tested pre-flight execution in `start-production.ps1`:
+     - Standalone asset sync succeeded (`assets-error.log` size 0).
+     - Uvicorn OCR daemon booted cleanly on port 8765 (`INFO: 127.0.0.1 - GET /health HTTP/1.1 200 OK`).
+     - Next.js 16.3.6 standalone server booted cleanly on port 3000 (`✓ Ready`).
+     - Zero port collision errors occurred.
+
+3) Verification Evidence:
+   - Port 3000 / 8765 Ownership: Confirmed `WebOwner: False`, `OcrOwner: False` prior to launch.
+   - Startup Logs: `ocr-20261119-155003.log` verified healthy `200 OK` on `/health`.
+   - Web Server Log: `web-20261119-155003.log` confirmed Next.js standalone ready on `http://127.0.0.1:3000`.
+   - Full Test Suite: All 677 tests in Vitest passed without regressions.
+
+
 ## Bug Fix: Vertical Speech Bubble Sideways Rotation Artifact Elimination — 2026-11-12
 
 ### Status: VERIFIED WORKING (Eliminated 90-degree sideways text rotation artifact on vertical manga speech bubbles across Prompt, Payload Sanitizer, Layout Optimizer, and Overlay Renderer per principles: `principle-fix-root-causes`, `principle-prove-it-works`, `principle-model-the-domain`, `principle-laziness-protocol`):
@@ -4983,3 +5044,44 @@ Verification evidence:
      - Port 3000 (Next.js Standalone): HTTP 200 OK
      - Port 8765 (Python OCR/Inpainting): HTTP 200 OK (`{"status":"ok"}`)
      - Port 11434 (Ollama): HTTP 200 OK (`qwen2.5:7b`, `qwen2.5vl:7b` loaded)
+
+
+---
+
+## Local Models Cleanup & Resource Reclaim — 2026-11-19
+
+### Status: VERIFIED WORKING (10.7 GB reclaimed on Drive F, Ollama background stopped, SuperK 3000/8765 healthy)
+
+- **Actions Taken (`principle-laziness-protocol`, `accidental-data-loss-prevention`)**:
+  - Removed local models upon user confirmation (`1`):
+    - `qwen2.5:7b` (4.7 GB) deleted.
+    - `qwen2.5vl:7b` (6.0 GB) deleted.
+  - Verified `F:\OllamaModels\blobs` purged of model weights (~10.7 GB freed). Drive F now has 115.57 GB free.
+  - Stopped `ollama.exe` and `ollama app.exe` background daemons to save RAM and VRAM.
+  - Verified SuperK Core Services:
+    - Web App (Port 3000): HTTP 200 OK
+    - Python OCR Daemon (Port 8765): HTTP 200 OK (`status: ok`)
+    - Cloud translation (Gemini 3.5 Flash-lite / 3.8 Flash) operates at 100% capacity.
+
+
+---
+
+## Model Catalog Expansion (Gemini 4 & 3.1 Pro/Preview) — 2026-11-19
+
+### Status: VERIFIED WORKING (677/677 tests passed across 68 suites, tsc --noEmit 0 errors, build synced)
+
+- **Model Whitelist & Fallback Expansion (`lib/translation/imageModelChoices.ts`)**:
+  - Added new models to `FIXED_IMAGE_MODELS` and `MANUAL_IMAGE_MODEL_IDS`:
+    - `gemini-4-hydrogen` (Gemini 4 generation - verified functional with multimodal vision + JSON output)
+    - `gemini-4-argon`
+    - `gemini-4-carbon`
+    - `gemini-3.1-pro-preview`
+    - `gemini-3.1-flash-lite-preview`
+    - `gemini-2.5-pro`
+  - Preserved priority hierarchy for `gemini-3.5-flash-lite` (default) and `gemini-3.8-flash` (high-precision).
+  - Maintained backward-compatibility for legacy assertions on `.slice(0, 5)`.
+- **Verification Evidence**:
+  - `npm test -- tests/translation/ tests/api/`: 68 passed / 68 test files (677/677 tests).
+  - `npx tsc --noEmit`: 0 errors.
+  - `/api/translate/models`: Discovered and exposed 37 models in live catalog.
+  - Next.js Standalone build re-compiled and live on port 3000.

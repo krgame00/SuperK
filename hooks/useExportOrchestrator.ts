@@ -774,7 +774,7 @@ export function useExportOrchestrator({
             exportProcessedCount++;
             setExportRenderProgress({ completed: exportProcessedCount, total: exportableTotal });
           }
-          const content = await layeredZip.generateAsync({ type: "blob", compression: "DEFLATE" });
+          const content = await layeredZip.generateAsync({ type: "blob", compression: "STORE" });
           await saveBlob(content, "SuperK_Layered_Photoshop_Pack.zip", destDir);
           setTranslationResult(`✅ ดาวน์โหลดแพ็กเกจแยกเลเยอร์สำเร็จ! (${layeredCount} หน้า)${excludedNote}`);
           setTimeout(() => setTranslationResult(null), 3000);
@@ -903,7 +903,7 @@ export function useExportOrchestrator({
               });
               archive.file(generateStripFilename(i + 1, stagedChunks.length, activePages), bytes);
             }
-            releaseBlob = await archive.generateAsync({ type: "blob" });
+            releaseBlob = await archive.generateAsync({ type: "blob", compression: "STORE" });
             releaseFilename = generateStripFilename(1, 1, activePages).replace(/\.jpg$/, ".zip");
           }
           assertCurrentOutput();
@@ -1099,7 +1099,7 @@ export function useExportOrchestrator({
 
           const archiveFilename = generateArchiveFilename(format, activePages);
           setTranslationResult(`⏳ กำลังสร้างไฟล์ ${format.toUpperCase()}...`);
-          const content = await zip.generateAsync({ type: "blob" });
+          const content = await zip.generateAsync({ type: "blob", compression: "STORE" });
           assertCurrentOutput();
           const savedName = await saveBlob(content, archiveFilename, destDir);
           const wasRenamed = savedName !== archiveFilename;

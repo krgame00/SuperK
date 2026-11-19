@@ -236,6 +236,13 @@ chrome.runtime.onMessage?.addListener?.(async (message, sender) => {
   }
 });
 
+let nextDnrRuleId = 10000;
+function getNextRuleId() {
+  const id = nextDnrRuleId++;
+  if (nextDnrRuleId > 60000) nextDnrRuleId = 10000;
+  return id;
+}
+
 async function withAntiHotlinkRule(url, taskFn) {
   if (!/^https?:/i.test(url) || !chrome?.declarativeNetRequest?.updateDynamicRules) {
     return await taskFn();
@@ -246,7 +253,7 @@ async function withAntiHotlinkRule(url, taskFn) {
   } catch {
     return await taskFn();
   }
-  const ruleId = 9001 + Math.floor(Math.random() * 900);
+  const ruleId = getNextRuleId();
   try {
     await chrome.declarativeNetRequest.updateDynamicRules({
       removeRuleIds: [ruleId],

@@ -819,7 +819,16 @@ export function MaskEditor({
                 : null) ?? sourceImg;
             fullCtx.drawImage(baseDisplayImg, 0, 0);
             fullCtx.drawImage(bmp, x0, y0, cropW, cropH);
-            sourceImageRef.current.src = fullCvs.toDataURL("image/png");
+            const blob = await new Promise<Blob | null>((resolve) =>
+              fullCvs.toBlob(resolve, "image/png"),
+            );
+            if (blob && sourceImageRef.current) {
+              const prevSrc = sourceImageRef.current.src;
+              if (prevSrc && prevSrc.startsWith("blob:")) {
+                URL.revokeObjectURL(prevSrc);
+              }
+              sourceImageRef.current.src = URL.createObjectURL(blob);
+            }
           }
           bmp.close?.();
         } catch {

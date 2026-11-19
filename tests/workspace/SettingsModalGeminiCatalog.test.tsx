@@ -119,7 +119,7 @@ describe("SettingsModal dynamic Gemini catalog", () => {
       { ...catalog.models[0], id: "gemini-3.8-flash", displayName: "Gemini 3.8 Flash", status: "high_demand" },
       { ...catalog.models[0], id: "gemini-3.8-flash-tts", displayName: "Gemini 3.8 Flash TTS" },
       { ...catalog.models[0], id: "gemini-2.5-flash-image", displayName: "Gemini 2.5 Flash Image" },
-      { ...catalog.models[0], id: "gemini-2.5-pro", displayName: "Gemini 2.5 Pro" },
+      { ...catalog.models[0], id: "text-embedding-004", displayName: "Text Embedding 004" },
     ];
     vi.stubGlobal("fetch", vi.fn().mockImplementation(() =>
       Promise.resolve(Response.json({ ...catalog, models })),
@@ -132,7 +132,7 @@ describe("SettingsModal dynamic Gemini catalog", () => {
     expect(screen.queryByRole("option", { name: /^Gemini 3\.8 Flash [0-9]/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Flash TTS/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Flash Image/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: /Gemini 2\.5 Pro/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Text Embedding 004/i })).not.toBeInTheDocument();
   }, 15000);
 
   it("does not offer models from a bootstrap catalog that could not validate any key", async () => {
