@@ -72,6 +72,7 @@ export interface ImageLayer {
   id: string;
   pageId: string;
   src: string;
+  blob?: Blob;
   x: number;
   y: number;
   width: number;

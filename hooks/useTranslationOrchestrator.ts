@@ -124,6 +124,7 @@ export function useTranslationOrchestrator({
     onPageDirtied,
     onTranslationResidueCleanup,
     parallelPages: 3,
+    cleaningResultsByPage,
   });
 
   const {

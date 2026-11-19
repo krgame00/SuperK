@@ -649,7 +649,7 @@ test("cleans future pages serially up to the prefetch cap while the first transl
     }
     throw new Error(`unexpected fetch: ${url}`);
   });
-  const { result } = renderHook(() => useTranslation({ currentPage: 0, pages, viewMode: "single", preparePageForTranslation }));
+  const { result } = renderHook(() => useTranslation({ currentPage: 0, pages, viewMode: "single", preparePageForTranslation, prefetchCap: 8 }));
   let batch!: Promise<void>;
   act(() => { batch = result.current.handleTranslateAll(); });
   await act(async () => { for (let tick = 0; tick < 50; tick++) await Promise.resolve(); });
@@ -751,7 +751,7 @@ test("quota aborts the in-flight future cleaner and prevents further scheduling"
     }
     throw new Error(`unexpected fetch: ${input}`);
   });
-  const { result } = renderHook(() => useTranslation({ currentPage: 0, pages, viewMode: "single", preparePageForTranslation }));
+  const { result } = renderHook(() => useTranslation({ currentPage: 0, pages, viewMode: "single", preparePageForTranslation, prefetchCap: 8 }));
   await act(async () => { await result.current.handleTranslateAll(); });
   expect(cloudCalls).toBe(1);
   expect(preparePageForTranslation).toHaveBeenCalledTimes(2);

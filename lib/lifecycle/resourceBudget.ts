@@ -7,7 +7,7 @@
 
 export interface ResourceItem<T = unknown> {
   key: string;
-  category: "source" | "clean" | "mask" | "translated-render";
+  category: "source" | "clean" | "mask" | "translated-render" | "image-layer";
   sizeBytes: number;
   lastAccessedAt: number;
   data: T;

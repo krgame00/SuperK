@@ -421,6 +421,9 @@ function decodeRegion(value: unknown): CleaningRegion {
       raw.protection_reasons,
       "region.protection_reasons",
     ) as CleaningRegion["protectionReasons"],
+    scanlineRatios: Array.isArray(raw.scanline_ratios)
+      ? raw.scanline_ratios.filter((n): n is number => typeof n === "number")
+      : undefined,
   };
 }
 

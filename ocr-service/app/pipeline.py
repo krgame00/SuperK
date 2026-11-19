@@ -212,6 +212,20 @@ class CleaningPipeline:
                 ),
             )
 
+        profiles_by_region_id: dict[str, list[float]] = {}
+        if refined.regions:
+            try:
+                from app.bubble_contour import extract_bubble_profiles
+
+                boxes = [(r.rect.x, r.rect.y, r.rect.width, r.rect.height) for r in refined.regions]
+                profiles = extract_bubble_profiles(image_rgb, boxes, num_slices=20, color_order="rgb")
+                for prof in profiles:
+                    if 0 <= prof.text_box_id < len(refined.regions):
+                        rid = refined.regions[prof.text_box_id].id
+                        profiles_by_region_id[rid] = prof.scanline_ratios
+            except Exception as err:
+                LOGGER.warning("extract_bubble_profiles failed during pipeline: %s", err)
+
         score_many = getattr(self.residual_probe, "score_many", None)
         if callable(score_many):
             return self._run_batched(
@@ -228,6 +242,7 @@ class CleaningPipeline:
                 progress_callback,
                 score_many,
                 cleaning_mode,
+                profiles_by_region_id,
             )
 
         clean_ms = 0
@@ -255,6 +270,7 @@ class CleaningPipeline:
                         0,
                         page,
                         eligibility,
+                        profiles_by_region_id.get(region.id),
                     ),
                 )
                 continue
@@ -339,6 +355,7 @@ class CleaningPipeline:
                     report.damage_score,
                     page,
                     eligibility,
+                    profiles_by_region_id.get(region.id),
                 ),
             )
         _progress(progress_callback, JobStage.COMPLETE, total, total)
@@ -441,6 +458,7 @@ class CleaningPipeline:
         progress_callback: ProgressCallback | None,
         score_many: BatchScore,
         cleaning_mode: CleaningMode = CleaningMode.SAFE,
+        profiles_by_region_id: dict[str, list[float]] | None = None,
     ) -> PipelineOutput:
         clean_image = image_rgb.copy()
         clean_ms = 0
@@ -595,6 +613,7 @@ class CleaningPipeline:
                             damage_score,
                             page,
                             item.eligibility,
+                            (profiles_by_region_id or {}).get(item.region.id),
                         ),
                     )
                     _progress(progress_callback, JobStage.VERIFYING, index + 1, total)
@@ -734,6 +753,7 @@ class CleaningPipeline:
                     damage_score,
                     page,
                     item.eligibility,
+                    (profiles_by_region_id or {}).get(item.region.id),
                 ),
             )
             _progress(progress_callback, JobStage.VERIFYING, index + 1, total)
@@ -755,6 +775,7 @@ class CleaningPipeline:
                     0,
                     page,
                     decisions[region.id],
+                    (profiles_by_region_id or {}).get(region.id),
                 ),
             )
         # Residual sweep: run the detector over the cleaned image and inpaint
@@ -1345,6 +1366,7 @@ def _record(
     damage_score: float,
     page: PageContext,
     eligibility: EligibilityDecision,
+    scanline_ratios: list[float] | None = None,
 ) -> RegionRecord:
     return RegionRecord(
         id=region.id,
@@ -1361,6 +1383,7 @@ def _record(
         protection_reasons=eligibility.protection_reasons,
         text_confirmed=eligibility.action is AutomaticAction.CLEAN and eligibility.text_role is not TextRole.REVIEW,
         mask_approved=eligibility.action is AutomaticAction.CLEAN and eligibility.text_role is not TextRole.REVIEW,
+        scanline_ratios=scanline_ratios,
     )
 
 

@@ -10,6 +10,7 @@ import type { PageCleaningResult } from "@/hooks/useCleaning";
 import type { WorkspaceLayer } from "@/components/cleaning/CleaningToolbar";
 import { dataUrlToBlob } from "@/lib/projectStore";
 import { CompareSlider } from "@/components/workspace/CompareSlider";
+import { ViewportCanvasEngine, WEBTOON_LONG_STRIP_THRESHOLD } from "@/lib/canvas/ViewportCanvasEngine";
 
 export interface PageViewerProps {
   pages: { url: string; name: string }[];
@@ -243,6 +244,13 @@ export function PageViewer({
     imageNaturalHeight: naturalDimensions?.height,
     isSplitView,
   });
+
+  const viewportEngine = useMemo(() => {
+    if (naturalDimensions && naturalDimensions.height >= WEBTOON_LONG_STRIP_THRESHOLD) {
+      return new ViewportCanvasEngine(naturalDimensions.width, naturalDimensions.height);
+    }
+    return null;
+  }, [naturalDimensions]);
 
   const isTransitionActive = Boolean(
     naturalDimensions &&
@@ -620,6 +628,8 @@ export function PageViewer({
             <div
               key={currentPage}
               id="pageContainer"
+              data-webtoon-engine={viewportEngine ? "active" : undefined}
+              data-viewport-tiles={viewportEngine?.totalTiles}
               onDragStart={(e) => e.preventDefault()}
               className={`absolute top-0 left-0 inline-flex shrink-0 justify-center items-center select-none ${
                 isTransitionActive ? "transition-transform duration-150 ease-out" : ""

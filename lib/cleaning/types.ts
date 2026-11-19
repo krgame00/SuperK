@@ -81,6 +81,7 @@ export interface CleaningRegion {
   eligibilityConfidence: number;
   automaticAction: AutomaticAction;
   protectionReasons: ProtectionReason[];
+  scanlineRatios?: number[];
 }
 
 export interface CleaningResult {

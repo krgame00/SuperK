@@ -1,5 +1,38 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Performance & Architecture Upgrade: Sprint 3 Pipeline Integration & Webtoon Engine (WP-3.1, WP-3.2, WP-4.4, WP-4.6) — 2026-11-19
+
+### Status: VERIFIED WORKING (Completed Sprint 3 package including scanline ratios extracted during initial cleaning pass, 1-step prefetch pipeline, ImageLayer Blob URL + IndexedDB hydration, bounded concurrency export worker pool, and ViewportCanvasEngine for ultra-long Webtoon strips per principles: `principle-fix-root-causes`, `principle-prove-it-works`, `principle-laziness-protocol`, `principle-model-the-domain`, `principle-experience-first`, `principle-sequence-verifiable-units`):
+
+1) Changes & Implementation:
+   - WP-3.1 (Scanline Ratios Extracted at Cleaning Pass):
+     - In `ocr-service/app/pipeline.py`, called `extract_bubble_profiles` on `image_rgb` immediately after detection/refinement and attached `scanline_ratios` to each `RegionRecord`.
+     - In `ocr-service/app/schemas.py`, added `scanline_ratios: list[float] | None = None`.
+     - In `lib/cleaning/types.ts` and `client.ts`, added and decoded `scanlineRatios?: number[]`.
+     - In `hooks/useTranslation.ts`, matched translated bubbles to pre-extracted `cleaningResultsByPage` regions via IoU/area overlap, setting `scanlineRatios` directly and bypassing `/v1/detect/bubbles` 4K image re-upload completely.
+   - WP-3.2 (1-Step Prefetch Pipeline):
+     - In `hooks/useTranslation.ts`, bounded preparation queue ahead to `prefetchCap` (default 1) while `pageIndex` is awaiting Gemini translation response.
+     - Preserved `max_workers = 1` in `ocr-service/app/jobs.py` to prevent DirectML VRAM exhaustion (0x887A0005).
+   - WP-4.4 (ImageLayer to Blob URL & IndexedDB Hydration):
+     - In `components/workspace/WorkspaceCanvasHost.tsx`, replaced synchronous Base64 `FileReader.readAsDataURL` with `URL.createObjectURL(file)`, registered resource with `workspaceResourceManager`, and added async IndexedDB hydration via `loadImageLayersFromIndexedDB()`.
+     - In `lib/editing/commands.ts` and `lib/editing/imageLayerStore.ts`, added native `blob?: Blob` persistence to IndexedDB, stripping raw blob from `localStorage` to avoid `QuotaExceededError`.
+   - WP-4.6 (Worker Pool 3-Way Parallel Export & ViewportCanvasEngine):
+     - In `hooks/useExportOrchestrator.ts`, converted sequential ZIP/CBZ export loop into a Bounded Concurrency Worker Pool (`concurrency = 3`), keeping final archive files in original sequential page order.
+     - Created `lib/canvas/ViewportCanvasEngine.ts` to slice ultra-long Webtoon strips (> 8192px) into 4096px tiles, eliminating browser 16,384px GPU texture exhaustion.
+     - Connected `ViewportCanvasEngine` into `components/workspace/PageViewer.tsx`.
+
+2) Verification Evidence:
+   - TypeScript Compilation: `npx tsc --noEmit` -> 0 errors.
+   - Scanline Preload Suite: `npm test -- useTranslation.scanlinePreload` -> 1/1 test passed (124ms).
+   - Translation Regression Suite: `npm test -- tests/translation/` -> 65 test files passed, 642/642 tests passed.
+   - ViewportCanvasEngine Suite: `npm test -- ViewportCanvasEngine` -> 4/4 tests passed (6ms).
+   - Export Orchestrator Suite: `npm test -- useExportOrchestrator tests/export/` -> 14 test files passed, 101/101 tests passed.
+   - PageViewer Suite: `npm test -- PageViewer` -> 4 test files passed, 16/16 tests passed.
+   - Backend Pipeline Suite: `pytest tests/test_pipeline.py tests/test_textless_matcher.py` -> 41/41 passed (3.38s).
+   - Backend Code Quality: `ruff check app tests` -> All checks passed (0 errors).
+   - Frontend Linter: `npm run lint` -> 0 errors (91 warnings).
+
+
 ## Performance & Architecture Upgrade: Sprint 2 Textless Matcher v2 (WP-2.1 – WP-2.5) — 2026-11-19
 
 ### Status: VERIFIED WORKING (Engineered Textless Matcher v2 featuring Single-Side Comic-Text-Detector execution, Zero-Copy raw Blob reuse, SHA-1 raw bytes detection memoization, browser 64-bit dHash perceptual fingerprinting, and background variant classification per principles: `principle-fix-root-causes`, `principle-prove-it-works`, `principle-laziness-protocol`, `principle-model-the-domain`, `principle-experience-first`, `principle-sequence-verifiable-units`):

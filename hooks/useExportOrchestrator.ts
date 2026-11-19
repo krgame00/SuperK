@@ -1036,40 +1036,63 @@ export function useExportOrchestrator({
       const zip = new JSZip();
       let zipAddedCount = 0;
 
-      for (let i = 0; i < activePages.length; i++) {
-        if (activePages[i].exportExcluded) continue;
-        setTranslationResult(`⏳ กำลังเตรียมรูปภาพหน้า ${i + 1}/${activePages.length}... (${Math.round(((i + 1) / activePages.length) * 100)}%)`);
-        try {
-          if (collectExportReviewPages(activePages, [i], allowUnreviewedExportRef.current).length) {
-            throw new Error("กรุณาตรวจหลักฐานหน้านี้ใหม่ เลือกต้นฉบับ หรือข้ามหน้า");
+      // Bounded concurrency pool (concurrency = 3 per WP-4.6)
+      const exportTasks = activePages
+        .map((page, i) => ({ page, index: i }))
+        .filter(({ page }) => !page.exportExcluded);
+
+      const renderResults: Array<{ filename: string; bytes: ArrayBuffer } | null> = new Array(activePages.length).fill(null);
+      const CONCURRENCY = 3;
+      let nextZipTaskIdx = 0;
+
+      const zipWorker = async () => {
+        while (nextZipTaskIdx < exportTasks.length) {
+          const taskIdx = nextZipTaskIdx++;
+          const { page, index: i } = exportTasks[taskIdx];
+          setTranslationResult(`⏳ กำลังเตรียมรูปภาพหน้า ${i + 1}/${activePages.length}... (${Math.round(((i + 1) / activePages.length) * 100)}%)`);
+          try {
+            if (collectExportReviewPages(activePages, [i], allowUnreviewedExportRef.current).length) {
+              throw new Error("กรุณาตรวจหลักฐานหน้านี้ใหม่ เลือกต้นฉบับ หรือข้ามหน้า");
+            }
+            const selectedUrl = await resolvePageExportUrl(
+              page,
+              cleaningResultsByPage.get(page.url)?.cleanUrl,
+              () => renderExportImage(page.url, i, activePages),
+            );
+            const rawBlob = await exportImageBlob(selectedUrl);
+            const blob = await convertExportBlobToFormat(
+              rawBlob,
+              exportImageFormatRef.current,
+              exportFormatExplicitRef.current,
+            );
+            const filename = exportImageFilename(page.name, i, blob.type);
+            const bytes = await new Promise<ArrayBuffer>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result as ArrayBuffer);
+              reader.onerror = () => reject(reader.error);
+              reader.readAsArrayBuffer(blob);
+            });
+            renderResults[i] = { filename, bytes };
+            exportProcessedCount++;
+            setExportRenderProgress({ completed: exportProcessedCount, total: exportableTotal });
+            setTranslationResult(`📦 บีบอัดลง ${format.toUpperCase()} ${exportProcessedCount}/${activePages.length} หน้า...`);
+          } catch (err) {
+            console.warn(`Error processing ZIP page ${i + 1}`, err);
+            failedExportPages.push(i + 1);
+            exportErrors.push(err instanceof Error ? err.message : String(err));
           }
-          const selectedUrl = await resolvePageExportUrl(
-            activePages[i],
-            cleaningResultsByPage.get(activePages[i].url)?.cleanUrl,
-            () => renderExportImage(activePages[i].url, i, activePages),
-          );
-          const rawBlob = await exportImageBlob(selectedUrl);
-          const blob = await convertExportBlobToFormat(
-            rawBlob,
-            exportImageFormatRef.current,
-            exportFormatExplicitRef.current,
-          );
-          const filename = exportImageFilename(activePages[i].name, i, blob.type);
-          const bytes = await new Promise<ArrayBuffer>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as ArrayBuffer);
-            reader.onerror = () => reject(reader.error);
-            reader.readAsArrayBuffer(blob);
-          });
-          zip.file(filename, bytes);
+        }
+      };
+
+      await Promise.all(
+        Array.from({ length: Math.min(CONCURRENCY, exportTasks.length) }, () => zipWorker()),
+      );
+
+      for (let i = 0; i < activePages.length; i++) {
+        const item = renderResults[i];
+        if (item) {
+          zip.file(item.filename, item.bytes);
           zipAddedCount++;
-          setTranslationResult(`📦 บีบอัดลง ${format.toUpperCase()} ${zipAddedCount}/${activePages.length} หน้า...`);
-          exportProcessedCount++;
-          setExportRenderProgress({ completed: exportProcessedCount, total: exportableTotal });
-        } catch (err) {
-          console.warn(`Error processing ZIP page ${i + 1}`, err);
-          failedExportPages.push(i + 1);
-          exportErrors.push(err instanceof Error ? err.message : String(err));
         }
       }
 

@@ -70,7 +70,22 @@ export async function loadImageLayersFromIndexedDB(): Promise<Record<string, Ima
       },
     );
     if (result?.layers) {
-      memoryCache = { ...readAllImageLayers(), ...result.layers };
+      const restored = { ...readAllImageLayers(), ...result.layers };
+      for (const pageKey of Object.keys(restored)) {
+        const layers = restored[pageKey];
+        if (Array.isArray(layers)) {
+          for (const layer of layers) {
+            if (layer.blob && typeof URL !== "undefined" && typeof URL.createObjectURL === "function") {
+              try {
+                layer.src = URL.createObjectURL(layer.blob);
+              } catch {
+                // Keep existing layer.src if recreation fails
+              }
+            }
+          }
+        }
+      }
+      memoryCache = restored;
       return memoryCache;
     }
   } catch {
@@ -113,7 +128,12 @@ export function savePageImageLayers(pageKey: string, layers: ImageLayer[]): void
 
   if (typeof window !== "undefined" && window.localStorage) {
     try {
-      localStorage.setItem(IMAGE_LAYERS_KEY, JSON.stringify(all));
+      // Save metadata to localStorage without attempting to serialize native Blob handles
+      const metadataOnly: Record<string, Array<Omit<ImageLayer, "blob">>> = {};
+      for (const [pk, list] of Object.entries(all)) {
+        metadataOnly[pk] = list.map(({ blob: _discarded, ...rest }) => rest);
+      }
+      localStorage.setItem(IMAGE_LAYERS_KEY, JSON.stringify(metadataOnly));
     } catch {
       // Quota exceeded: data remains safe in memoryCache and will flush to IndexedDB below
     }

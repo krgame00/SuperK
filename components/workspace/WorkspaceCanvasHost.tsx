@@ -36,7 +36,8 @@ import { GlossaryModal } from "@/components/editing/GlossaryModal";
 import { WarpPanel } from "@/components/editing/WarpPanel";
 import { ImageLayerPanel } from "@/components/editing/ImageLayerPanel";
 import { ImageLayerCanvas } from "@/components/editing/ImageLayerCanvas";
-import { readAllImageLayers, savePageImageLayers } from "@/lib/editing/imageLayerStore";
+import { loadImageLayersFromIndexedDB, readAllImageLayers, savePageImageLayers } from "@/lib/editing/imageLayerStore";
+import { workspaceResourceManager } from "@/lib/lifecycle/workspaceResourceManager";
 import { TextPropertiesPanel } from "@/components/editing/TextPropertiesPanel";
 import { TextLayerCanvas } from "@/components/editing/TextLayerCanvas";
 import { ColorMatchStatus } from "@/components/colorMatching/ColorMatchStatus";
@@ -283,6 +284,15 @@ export function WorkspaceCanvasHost({
     }
     return {};
   });
+
+  useEffect(() => {
+    loadImageLayersFromIndexedDB().then((layers) => {
+      if (layers && Object.keys(layers).length > 0) {
+        setImageLayersByPage((prev) => ({ ...prev, ...layers }));
+      }
+    });
+  }, []);
+
   const [selectedImageLayerId, setSelectedImageLayerId] = useState<string | null>(null);
   const handleAutoFitSelectedBubble = useCallback(async () => {
     if (!selectedBubbleBridge) return;
@@ -1036,41 +1046,39 @@ export function WorkspaceCanvasHost({
                     const file = e.target.files?.[0];
                     e.target.value = "";
                     if (!file || !activePage) return;
-                    const reader = new FileReader();
-                    reader.onload = () => {
-                      const src = String(reader.result || "");
-                      if (!src) return;
-                      const newLayer: ImageLayer = {
-                        id: `img_${Date.now()}`,
-                        pageId: activePage.url,
-                        src,
-                        x: 120,
-                        y: 120,
-                        width: 220,
-                        height: 220,
-                        opacity: 1,
-                        flipX: false,
-                        flipY: false,
-                      };
-                      const prevLayers = imageLayersByPage[activePage.url] ?? [];
-                      const nextLayers = [...prevLayers, newLayer];
-                      handleUpdatePageImageLayers(activePage.url, nextLayers);
-                      setSelectedImageLayerId(newLayer.id);
-                      setSelectedBubbleBridge(null);
-                      setSidePanel("inspector");
-                      undoManager.push({
-                        label: "เพิ่มรูปภาพ",
-                        undo: () => {
-                          handleUpdatePageImageLayers(activePage.url, prevLayers);
-                          setSelectedImageLayerId(null);
-                        },
-                        redo: () => {
-                          handleUpdatePageImageLayers(activePage.url, nextLayers);
-                          setSelectedImageLayerId(newLayer.id);
-                        },
-                      });
+                    const blobUrl = URL.createObjectURL(file);
+                    const pageId = activePage.id || activePage.url;
+                    workspaceResourceManager.registerResource(pageId, "image-layer", blobUrl, file.size);
+                    const newLayer: ImageLayer = {
+                      id: `img_${Date.now()}`,
+                      pageId: activePage.url,
+                      src: blobUrl,
+                      blob: file,
+                      x: 120,
+                      y: 120,
+                      width: 220,
+                      height: 220,
+                      opacity: 1,
+                      flipX: false,
+                      flipY: false,
                     };
-                    reader.readAsDataURL(file);
+                    const prevLayers = imageLayersByPage[activePage.url] ?? [];
+                    const nextLayers = [...prevLayers, newLayer];
+                    handleUpdatePageImageLayers(activePage.url, nextLayers);
+                    setSelectedImageLayerId(newLayer.id);
+                    setSelectedBubbleBridge(null);
+                    setSidePanel("inspector");
+                    undoManager.push({
+                      label: "เพิ่มรูปภาพ",
+                      undo: () => {
+                        handleUpdatePageImageLayers(activePage.url, prevLayers);
+                        setSelectedImageLayerId(null);
+                      },
+                      redo: () => {
+                        handleUpdatePageImageLayers(activePage.url, nextLayers);
+                        setSelectedImageLayerId(newLayer.id);
+                      },
+                    });
                   }}
                 />
               </div>

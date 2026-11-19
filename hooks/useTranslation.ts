@@ -58,6 +58,7 @@ import {
 } from "@/lib/translation/diagnostics";
 import { CleaningClientError, isCleaningClientError } from "@/lib/cleaning/client";
 import type { CleaningMode } from "@/lib/cleaning/types";
+import type { PageCleaningResult } from "./useCleaning";
 import {
   buildFailureGroups,
   extendFailureGroupCooldown,
@@ -173,6 +174,9 @@ interface UseTranslationProps {
   ) => Promise<unknown> | void;
   /** Batch workers translating pages concurrently. Default 1 (sequential). */
   parallelPages?: number;
+  cleaningResultsByPage?: Map<string, PageCleaningResult>;
+  /** Maximum pages to clean ahead in batch translation. Default 1 (WP-3.2 1-Step Prefetch Pipeline). */
+  prefetchCap?: number;
 }
 
 const TRANSLATED_IMAGE_CACHE_LIMIT = 8;
@@ -339,7 +343,13 @@ export function useTranslation({
   onPageDirtied,
   onTranslationResidueCleanup,
   parallelPages,
+  cleaningResultsByPage,
+  prefetchCap,
 }: UseTranslationProps) {
+  const prefetchCapRef = useRef(prefetchCap);
+  prefetchCapRef.current = prefetchCap;
+  const cleaningResultsByPageRef = useRef(cleaningResultsByPage);
+  cleaningResultsByPageRef.current = cleaningResultsByPage;
   const getCleanedPageUrlRef = useRef(getCleanedPageUrl);
   getCleanedPageUrlRef.current = getCleanedPageUrl;
   const onTranslationResidueCleanupRef = useRef(onTranslationResidueCleanup);
@@ -1190,6 +1200,7 @@ export function useTranslation({
       try {
         const iw = original.naturalWidth;
         const ih = original.naturalHeight;
+        const preloadedRegions = cleaningResultsByPageRef.current?.get(originalUrl)?.regions ?? [];
         const validIndices: number[] = [];
         const boxes: Array<[number, number, number, number]> = [];
         bubbles.forEach((b, idx) => {
@@ -1199,8 +1210,40 @@ export function useTranslation({
             const y = Math.max(0, Math.round((ymin / 1000) * ih));
             const w = Math.max(8, Math.round(((xmax - xmin) / 1000) * iw));
             const h = Math.max(8, Math.round(((ymax - ymin) / 1000) * ih));
-            validIndices.push(idx);
-            boxes.push([x, y, w, h]);
+
+            // Fast-path: Check if pre-extracted scanline_ratios exist in preloadedRegions
+            let matchedRatios: number[] | undefined;
+            for (const r of preloadedRegions) {
+              if (r.scanlineRatios && r.scanlineRatios.length > 0) {
+                const rx0 = r.rect.x;
+                const ry0 = r.rect.y;
+                const rx1 = r.rect.x + r.rect.width;
+                const ry1 = r.rect.y + r.rect.height;
+                const ix0 = Math.max(x, rx0);
+                const iy0 = Math.max(y, ry0);
+                const ix1 = Math.min(x + w, rx1);
+                const iy1 = Math.min(y + h, ry1);
+                const interW = Math.max(0, ix1 - ix0);
+                const interH = Math.max(0, iy1 - iy0);
+                const interArea = interW * interH;
+                if (interArea > 0) {
+                  const bubbleArea = w * h;
+                  const regionArea = r.rect.width * r.rect.height;
+                  const overlapRatio = interArea / Math.min(bubbleArea, regionArea);
+                  if (overlapRatio > 0.45) {
+                    matchedRatios = r.scanlineRatios;
+                    break;
+                  }
+                }
+              }
+            }
+
+            if (matchedRatios) {
+              b.scanlineRatios = matchedRatios;
+            } else {
+              validIndices.push(idx);
+              boxes.push([x, y, w, h]);
+            }
           }
         });
         if (boxes.length > 0 && typeof fetch === "function" && originalUrl.startsWith("blob:")) {
@@ -2526,9 +2569,10 @@ async function readBlobAsBase64(blob: Blob): Promise<string> {
         if (legacyPerformanceMode || producerRunning || signal.aborted) return;
         producerRunning = true;
         try {
-          // Outcomes (including the in-flight job) occupy a slot until consumed.
-          // The currently translating page has already left this queue.
-          while (!signal.aborted && preparationQueue.size < 8 && producerStep < indicesToProcess.length) {
+          // WP-3.2 1-Step Prefetch Pipeline: ensure at most prefetchCap (default 1) page ahead is prepared
+          // concurrently while current page is awaiting translation response.
+          const maxAhead = Math.max(1, prefetchCapRef.current ?? 1);
+          while (!signal.aborted && preparationQueue.size < maxAhead && producerStep < indicesToProcess.length) {
             const pageIndex = indicesToProcess[producerStep++];
             if (!isTargetedRetry && completedPagesRef.current.has(pages[pageIndex])) continue;
             producerPage = pageIndex;

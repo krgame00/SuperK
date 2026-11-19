@@ -98,6 +98,7 @@ class RegionRecord(BaseModel):
     text_confirmed: bool = False
     mask_approved: bool = False
     approval_revision: str | None = None
+    scanline_ratios: list[float] | None = None
 
 
 class JobProgress(BaseModel):

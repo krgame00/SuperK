@@ -1027,3 +1027,18 @@ def test_residual_sweep_spares_restored_needs_review_region(monkeypatch):
     assert np.array_equal(output.clean_image[10:18, 10:18], source[10:18, 10:18])
     assert np.array_equal(output.clean_image[48:56, 48:56], source[48:56, 48:56])
     assert output.timings_ms["residual_sweep_runs"] == 0
+
+
+def test_pipeline_attaches_scanline_ratios_to_regions() -> None:
+    source = _sweep_source()
+    full = SweepFullCleaner(240)
+    pipeline = _two_region_pipeline(full, _ZeroBatchProbe())
+
+    output = pipeline.run(source)
+
+    assert len(output.regions) == 2
+    for r in output.regions:
+        assert r.scanline_ratios is not None
+        assert isinstance(r.scanline_ratios, list)
+        assert len(r.scanline_ratios) > 0
+
