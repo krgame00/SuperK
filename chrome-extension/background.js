@@ -26,10 +26,13 @@ const MAX_CONCURRENT_EXTENSION_JOBS = 2;
 
 function enqueueTranslation(tabId, frameId, imageUrl) {
   const key = JSON.stringify([tabId, frameId, imageUrl]);
-  if (queuedOrActive.has(key)) return;
+  if (queuedOrActive.has(key)) return undefined;
   queuedOrActive.add(key);
-  translationQueue.push({ tabId, frameId, imageUrl, key });
+  let resolveDone;
+  const done = new Promise((resolve) => { resolveDone = resolve; });
+  translationQueue.push({ tabId, frameId, imageUrl, key, resolveDone });
   void pumpTranslationQueue();
+  return done;
 }
 
 async function pumpTranslationQueue() {
@@ -37,13 +40,16 @@ async function pumpTranslationQueue() {
     const job = translationQueue.shift();
     if (!job) continue;
     activeTranslations += 1;
-    runTranslationFlow(job.tabId, job.frameId, job.imageUrl)
-      .catch(() => {})
-      .finally(() => {
-        queuedOrActive.delete(job.key);
-        activeTranslations -= 1;
-        void pumpTranslationQueue();
-      });
+    try {
+      await runTranslationFlow(job.tabId, job.frameId, job.imageUrl);
+    } catch {
+      // runTranslationFlow reports its own failures to the content script
+    } finally {
+      queuedOrActive.delete(job.key);
+      activeTranslations -= 1;
+      if (job.resolveDone) job.resolveDone();
+      void pumpTranslationQueue();
+    }
   }
 }
 
