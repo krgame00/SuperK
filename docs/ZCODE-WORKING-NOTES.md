@@ -34,6 +34,17 @@
 
 ---
 
+## ตรวจรับ audit pstack 6 ข้อ + เติมคิวแปล extension (poteto-mode, receiving-code-review) — 2026-11-19
+
+### Status: **push แล้ว CI เขียว** run 44563885276 บน `75d2fcb` (commits eafbc5e lint / 301fb8e คิวแปล / aa1930c งานค้างแชตขนาน / 75d2fcb แก้ await คิว) — verification pipeline ของ audit ผ่านครบ: tsc exit 0, vitest audit 15/15, ruff clean, pytest 334, npm test เต็ม 2390/2390
+
+- **บริบท:** ผู้ใช้ส่งเอกสาร 2 ไฟล์ (docx = แผน WP-1.1→4.6 / PDF = audit P1-P6 พร้อมชุดแก้) สั่ง "ดูและไปทดสอบ" — ตรวจแบบ skeptical ต่อ audit จาก AI ตัวอื่น: ไล่ grep โค้ดจริงทีละ claim ก่อนเชื่อ
+- **Verdict P1-P6 (ทุก fix ลงแล้วโดยแชตขนาน sprint 1-4: commits 264304b/fd08980/bfa11e6/2081cd1/77fdec7/9082eda):** (1) P1 sfx-policy conflict = หายแล้ว (client.ts null→safe ไม่ใช่ all-text, sfxPolicy รวมศูนย์ที่ lib/translation/sfxPolicy.ts; เหลือ side-channel localStorage อ่านใน client.ts เป็น nit ดีไซน์) (2) P2 ลบแคชถาวร = หายแล้ว (setSfxMode ใช้ applyLiveSfxPolicy non-destructive: hidden flag + cache sfxTranslated/sfxOriginal) (3) P3 ดัชนีเลื่อน = หายแล้ว (applyTranscriptUpdatesToBubbles อยู่ใน TranscriptModal ใช้ rawArrayIdx, controller import จากไฟล์เดียวกัน) (4) P4 modulo-8 + toDataURL = หายแล้ว (computeModuloAlignedCrop ใน DirtyRectInpainter.ts + MaskEditor ใช้ toBlob) (5) P5 = **ครึ่งเดียว**: ref-counted origin rule (activeOriginRules) ลงแล้วแต่ **คิวจำกัด concurrency ไม่มี** (6) P6 = หายแล้วทั้งสาม (flat.py LAB เฉพาะ crop / registerTextlessCleanResult แปลง detected_boxes→regions / ZIP ใช้ STORE ทุกจุด)
+- **ของที่เพิ่มรอบนี้:** (1) คิวแปล extension ที่ขาด (301fb8e: enqueueTranslation + pumpTranslationQueue จำกัด 2 jobs, entry 4 จุดคือ context menu/click/message 2 แบบ; รอบแรกเทสต์ extension ล้ม 10+2 เพราะ enqueue ไม่คืน promise ให้ caller await — แก้ด้วย per-job `done` promise resolve หลัง flow จบ, บทเรียน: เปลี่ยน async dispatch ต้องรันเทสต์ extension ด้วย ไม่ใช่แค่ 3 ไฟล์ audit) (2) แก้ ruff lints เก่า 5 จุด (E501 pipeline.py:610 / F841 job1_id / I001 2 ไฟล์) ให้ `ruff check .` clean ตามเกตข้อ 3 ของ audit
+- **เหตุการณ์ CI แดง 2 รอบ (จดไว้กันซ้ำ):** รอบ 1 = commit lint ของฉันกวาดงานค้างของแชตขนานใน pipeline.py (+169 NeuralCircuitBreaker/StageTimeouts) ขึ้นไปโดย schemas.py ยังไม่ commit → ImportError 11 ไฟล์ แก้ด้วย commit ส่วนที่เหลือทั้งก้อน (aa1930c, state ที่เทสต์ผ่านอยู่แล้ว) รอบ 2 = เทสต์ extension ล้มเพราะคิว (แก้แล้ว) — **บทเรียน: ก่อน push ต้องรัน `npm test` เต็ม + ตรวจ dirty tree ของแชตขนานก่อน add เฉพาะบางไฟล์**
+- **ยืนยันสุดท้าย:** `npx tsc --noEmit` exit 0 / `vitest run` audit 3 ไฟล์ 15 ผ่าน / `ruff check .` clean / pytest เต็ม **334 ผ่าน** / `npm test` เต็ม **2390 ผ่าน** (1 fail แรก = flaky รันซ้ำหาย) / CI success
+- **ค้าง/เปิด:** (1) side-channel localStorage ใน client.ts = nit ดีไซน์ตาม audit ยังไม่รีแฟกเตอร์ (2) เอกสาร audit/docx เก็บสำเนาไว้ scratch/audit-review/ (3) dirty tree ของแชตอื่น (.agents/AGENTS.md + docs) ยังค้างตามเจ้าของ ไม่แตะ
+
 ## สรุปเนื้อเรื่อง NTR Knightess ทั้งเกมพร้อม CG ทั้ง 96 ฉากเป็น HTML เดียว (poteto-mode, extraction+delegate) — 2026-11-18
 
 ### Status: **เสร็จแล้ว** ไฟล์ที่ emiyasanz/สรุปเนื้อเรื่อง_CG/เนื้อเรื่องและCG.html (6.8MB, ฝังภาพ base64 95 ภาพ, เปิดในเบราว์เซอร์ออฟไลน์)
