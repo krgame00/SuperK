@@ -152,10 +152,6 @@ export function RemnantReviewPanel({
     };
     window.addEventListener("superk:bubble-selected", handleBubbleSelected);
     window.addEventListener("superk:inspector-toggle", handleInspectorToggle);
-    if (isInspectorOpen) {
-      setIsCollapsed(true);
-      setSide("left");
-    }
     return () => {
       observer?.disconnect();
       window.removeEventListener("superk:bubble-selected", handleBubbleSelected);

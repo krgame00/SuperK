@@ -38,16 +38,6 @@ export interface TextPropertiesPanelProps {
   onAutoFitBubble?: () => void;
 }
 
-const FONT_OPTIONS = [
-  { id: "Itim, sans-serif", label: "Manga (Itim) — ค่าเริ่มต้น" },
-  { id: "Prompt, sans-serif", label: "Prompt (คมชัด/โมเดิร์น)" },
-  { id: "Kanit, sans-serif", label: "Kanit (มาตรฐานซับ)" },
-  { id: "Sarabun, sans-serif", label: "Sarabun (ทางการ)" },
-  { id: "Chakra Petch, sans-serif", label: "Chakra Petch (ไซไฟ/เหลี่ยม)" },
-  { id: "Mali, sans-serif", label: "Mali (ลายมือใสๆ)" },
-  { id: "Sriracha, sans-serif", label: "Sriracha (พู่กันโชเน็น)" },
-];
-
 export function TextPropertiesPanel({
   layer,
   onChange,

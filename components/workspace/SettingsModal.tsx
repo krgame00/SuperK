@@ -225,7 +225,6 @@ export function SettingsModal({
   const [newSource, setNewSource] = useState("");
   const [newTarget, setNewTarget] = useState("");
   const [newNote, setNewNote] = useState("");
-  const [glossaryFilter, setGlossaryFilter] = useState("");
   const [pronounSpeaker, setPronounSpeaker] = useState("");
   const [pronounListener, setPronounListener] = useState("");
   const [pronounFirstPerson, setPronounFirstPerson] = useState("");

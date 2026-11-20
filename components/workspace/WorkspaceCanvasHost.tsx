@@ -188,7 +188,6 @@ export function WorkspaceCanvasHost({
   viewLayout,
   onViewLayoutChange,
   isSplitView = false,
-  onToggleSplitView,
   onToggleFocusMode,
   isThumbnailsCollapsed,
   isDragging,

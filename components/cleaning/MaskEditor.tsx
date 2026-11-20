@@ -415,6 +415,7 @@ export function MaskEditor({
     const regionSnapshots = regionSnapshotsRef.current;
     const maskGenerations = maskGenerationsRef.current;
     const undoDisposers = activeUndoDisposersRef.current;
+    const baseRegionMask = baseRegionMaskRef.current;
     const canvasEl = canvasRef.current;
     return () => {
       for (const [k, gen] of maskGenerations.entries()) {
@@ -425,7 +426,7 @@ export function MaskEditor({
       }
       undoDisposers.length = 0;
       regionSnapshots.clear();
-      baseRegionMaskRef.current.clear();
+      baseRegionMask.clear();
       cachedSourceImgRef.current = null;
       cachedCleanImgRef.current = null;
       opsBaseRef.current = null;

@@ -1,5 +1,24 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Codebase Quality & Static Hygiene Polish (P1 Stale Closures & P2 Dead Code) — 2026-11-20
+
+### Status: VERIFIED WORKING (Resolved React stale refs/closures in effects and pruned dead code across components per principles: `principle-fix-root-causes`, `principle-laziness-protocol`, `principle-prove-it-works`):
+
+1) Changes & Implementation:
+   - Fixed P1 Stale Ref / Closure warnings:
+     - In `components/cleaning/MaskEditor.tsx`: Captured `baseRegionMaskRef.current` into a local variable within the effect body before passing to cleanup, preventing cleanup from reading a mutated ref.
+     - In `components/cleaning/RemnantReviewPanel.tsx`: Removed redundant `if (isInspectorOpen)` check from the global event listener setup effect, eliminating the missing dependency warning and delegating panel sync to the dedicated `[isInspectorOpen]` effect.
+     - In `hooks/useBubbleOrganizeOrchestrator.ts`: Added `notifyTranslationResult` and `safeTextStyleRef` while removing obsolete `setTranslationResult` and `textStyleRef` across all 4 callbacks' dependency arrays.
+   - Cleaned up P2 Dead Code:
+     - In `components/workspace/WorkspaceCanvasHost.tsx`: Removed unused `onToggleSplitView` destructuring.
+     - In `components/workspace/SettingsModal.tsx`: Removed unused `glossaryFilter` state.
+     - In `components/editing/TextPropertiesPanel.tsx`: Removed legacy unused `FONT_OPTIONS` constant superseded by `BUILTIN_MANGA_FONTS`.
+
+2) Verification Evidence:
+   - TypeScript Check: `npx tsc --noEmit` passed with 0 errors.
+   - ESLint Check: `npx eslint components/cleaning/MaskEditor.tsx components/cleaning/RemnantReviewPanel.tsx hooks/useBubbleOrganizeOrchestrator.ts components/workspace/WorkspaceCanvasHost.tsx components/workspace/SettingsModal.tsx components/editing/TextPropertiesPanel.tsx` passed with 0 errors and 0 warnings.
+   - Vitest Unit Tests: `npx vitest run tests/cleaning/ tests/workspace/ tests/editing/` passed (85 test files, 713/713 tests passed).
+
 ## CI Test Suite URL Format Alignment (CI Run 44588264678 Fix) — 2026-11-20
 
 ### Status: VERIFIED WORKING (Fixed GitHub Actions CI failure on Frontend vitest step in Run 44588264678 by updating scroll layer test assertion to accept both data and blob URLs per principles: `principle-fix-root-causes`, `principle-prove-it-works`, `principle-laziness-protocol`, `principle-test-behavior-not-implementation`):
