@@ -1,5 +1,23 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## CI Test Suite URL Format Alignment (CI Run 44588264678 Fix) — 2026-11-20
+
+### Status: VERIFIED WORKING (Fixed GitHub Actions CI failure on Frontend vitest step in Run 44588264678 by updating scroll layer test assertion to accept both data and blob URLs per principles: `principle-fix-root-causes`, `principle-prove-it-works`, `principle-laziness-protocol`, `principle-test-behavior-not-implementation`):
+
+1) Changes & Implementation:
+   - Root Cause Diagnosed:
+     - In commit `22be1dc`, `VirtualPageItem` eliminated the fragile and memory-leaking `dataUrlToBlob` / `URL.revokeObjectURL` lifecycle, serving cached rendered translated images directly as Data URLs (`data:image/png;base64,...`) instead of ephemeral Blob URLs.
+     - Integration test `tests/workflow/WorkspacePage.test.tsx:780` had a hardcoded legacy assertion `expect(scrollImage().getAttribute("src")).toMatch(/^blob:/);` which strictly expected a `blob:` URL scheme.
+     - Under the modernized direct rendering architecture, `scrollImage().getAttribute("src")` receives `"data:image/png;base64,TRANSLATED"`, causing vitest assertion failure in CI run 44588264678.
+   - Fixes Implemented:
+     - In `tests/workflow/WorkspacePage.test.tsx:780`:
+       - Updated regex assertion to `expect(scrollImage().getAttribute("src")).toMatch(/^(blob:|data:)/);`, validating that the scroll view layer correctly displays the rendered translated image whether provided as a Data URL or Blob URL.
+
+2) Verification Evidence:
+   - TypeScript Check: `npx tsc --noEmit` passed with 0 errors.
+   - Vitest Unit Test: `npx vitest run tests/workflow/WorkspacePage.test.tsx` passed (54/54 passed).
+   - ESLint Check: `npm run lint` passed with 0 errors.
+
 ## Continuous Scroll Mode (โหมดเลื่อนอ่าน) Translation Overlay & Fallback Fix — 2026-11-20
 
 ### Status: VERIFIED WORKING (Fixed continuous scroll reading mode /โหมดเลื่อนอ่าน missing translated text bubbles by introducing vector overlay fallback, spage DOM anchoring, and eliminating fragile Data URL blob revocation per principles: `principle-model-the-domain`, `principle-experience-first`, `principle-fix-root-causes`, `principle-prove-it-works`, `principle-laziness-protocol`):
