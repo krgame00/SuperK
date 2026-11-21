@@ -25,7 +25,6 @@ import {
   hasBrokenThaiLineBreak,
   isStructuredMangaList,
   isStructuredSectionHeaderLine,
-  minimumWidthForWholeWords,
   type FixedFontWidthResult,
 } from "./textBoxWidthLayout";
 import {
@@ -60,8 +59,6 @@ import type {
 
 export type { TranslatedBubble, OverlayTextStyle, OverlayAdjustment, BubbleProportionalLayout };
 import {
-  fitTextForBubble,
-  getSharedMeasureCtx,
   layoutBubbleAtFixedFont,
   type BubbleTextFit,
 } from "./overlay/bubbleTextFit";
@@ -87,6 +84,27 @@ export {
   saveOverlayAdjustments,
   syncPageOverlayAdjustments,
 } from "./overlay/overlayAdjustmentStore";
+import {
+  fitTextInAdaptiveBubble,
+  getReadableMinimumFontSize,
+  growBubbleFrameToFit,
+  measureBubbleRenderFit,
+  minimumBubbleWidthAtFixedFont,
+} from "./overlay/bubbleTextFit";
+import { estimateSourceTextTiltAngle, snapRotationToRightAngle } from "./overlay/sourceGeometry";
+import { resolveBubbleFontFamily, resolveCanvasFontFamily } from "./overlay/canvasFont";
+
+export {
+  fitTextInAdaptiveBubble,
+  getReadableMinimumFontSize,
+  growBubbleFrameToFit,
+  measureBubbleRenderFit,
+  measureTextLinesWidth,
+  minimumBubbleWidthAtFixedFont,
+} from "./overlay/bubbleTextFit";
+export type { AdaptiveBubbleLayout } from "./overlay/bubbleTextFit";
+export { estimateSourceTextTiltAngle, snapRotationToRightAngle } from "./overlay/sourceGeometry";
+export { resolveBubbleFontFamily, resolveCanvasFontFamily } from "./overlay/canvasFont";
 
 const WORD_WRAP_LOCALES: Record<string, string> = {
   thai: "th",
@@ -103,15 +121,6 @@ const wordWrapLocaleOf = (language?: string): string => {
   return WORD_WRAP_LOCALES[normalized] ?? normalized;
 };
 
-import { BUILTIN_CANVAS_FONT_VARS } from "./customFonts";
-
-// next/font registers its families under build-hashed names, so canvas
-// `ctx.font = "16px Itim"` silently falls back to generic sans-serif.
-// Resolve the selected family through the CSS variable next/font set on <html>.
-const CANVAS_FONT_VARS: Record<string, string> = {
-  ...BUILTIN_CANVAS_FONT_VARS,
-};
-
 const canvasShadowColor = (color: string, opacity: number): string => {
   const hex = color.trim().match(/^#([0-9a-f]{6})$/i);
   if (!hex) return color;
@@ -120,75 +129,6 @@ const canvasShadowColor = (color: string, opacity: number): string => {
   const g = parseInt(value.slice(2, 4), 16);
   const b = parseInt(value.slice(4, 6), 16);
   return `rgba(${r}, ${g}, ${b}, ${Math.max(0, Math.min(1, opacity))})`;
-};
-
-export const resolveCanvasFontFamily = (fontFamily?: string): string => {
-  const fallback = fontFamily || "Itim, sans-serif";
-  if (typeof window === "undefined" || typeof document === "undefined") {
-    return fallback;
-  }
-  try {
-    const cleanFont = fallback.trim();
-    if (cleanFont.startsWith("var(")) {
-      const match = cleanFont.match(/var\(\s*(--[\w-]+)\s*\)/);
-      if (match) {
-        const varName = match[1];
-        if (varName === "--font-manga") {
-          return "Itim, sans-serif";
-        }
-        const resolved = getComputedStyle(document.documentElement)
-          .getPropertyValue(varName)
-          .trim();
-        if (resolved) return resolved;
-        return "Itim, sans-serif";
-      }
-    }
-    const parts = cleanFont.split(",").map((p) => p.trim()).filter(Boolean);
-    const rawPrimary = (parts[0] || "Itim").replace(/^["']|["']$/g, "").trim();
-    if (rawPrimary.toLowerCase() === "manga" || rawPrimary.toLowerCase() === "--font-manga") {
-      return "Itim, sans-serif";
-    }
-    const varName = CANVAS_FONT_VARS[rawPrimary.toLowerCase()];
-    if (varName) {
-      const resolved = getComputedStyle(document.documentElement)
-        .getPropertyValue(varName)
-        .trim();
-      if (resolved) return resolved;
-    }
-    if (/\s|\d/.test(rawPrimary) && !/^["']/.test(parts[0] || "")) {
-      const rest = parts.slice(1).join(", ") || "sans-serif";
-      return `"${rawPrimary}", ${rest}`;
-    }
-    return cleanFont;
-  } catch {
-    return fallback;
-  }
-};
-
-export const resolveBubbleFontFamily = (
-  bubble?: TranslatedBubble,
-  style?: OverlayTextStyle,
-): string => {
-  const customBubbleFont = (bubble as { fontFamily?: string } | undefined)?.fontFamily;
-  if (typeof customBubbleFont === "string" && customBubbleFont.trim().length > 0) {
-    return resolveCanvasFontFamily(customBubbleFont);
-  }
-  const category =
-    bubble?.bubbleCategory ||
-    bubble?.styleProfile?.category ||
-    (bubble as { styleCategory?: string } | undefined)?.styleCategory;
-  const catFont =
-    category && style?.categoryFonts ? style.categoryFonts[category] : undefined;
-  if (catFont && catFont.trim().length > 0) {
-    return resolveCanvasFontFamily(catFont);
-  }
-  if (category) {
-    const rules = resolveCategoryTypography(category);
-    if (rules.fontFamilyFallback && !style?.fontFamily) {
-      return resolveCanvasFontFamily(rules.fontFamilyFallback);
-    }
-  }
-  return resolveCanvasFontFamily(style?.fontFamily);
 };
 
 const LAYOUT_SNAPSHOT_MAX_LINES = 400;
@@ -218,124 +158,6 @@ const isUsableLayoutSnapshot = (
     snapshot.bubbleMult,
     snapshot.globalMult,
   ].every((value) => typeof value === "number" && Number.isFinite(value));
-
-/**
- * Snaps a rotation angle (in degrees) to cardinal right angles (0, 90, 180, 270)
- * if within thresholdDeg (default 6 degrees), matching Torii Translate scanlation ergonomics.
- * Angles outside the threshold are normalized to [0, 360) and preserved.
- */
-export function snapRotationToRightAngle(deg: number, thresholdDeg = 6): number {
-  const normalized = ((deg % 360) + 360) % 360;
-  const nearestQuarter = Math.round(normalized / 90) * 90;
-  if (Math.abs(normalized - nearestQuarter) <= thresholdDeg) {
-    return nearestQuarter % 360;
-  }
-  return deg >= 0 && deg < 360 ? deg : parseFloat(normalized.toFixed(6));
-}
-
-/**
- * Estimates the baseline tilt angle (in degrees, -35..35) and italic slant of source text
- * from an image pixel region by fitting top and bottom ink contours across horizontal slices.
- * Both top and bottom contours must slope in the same direction so normal oval bubbles
- * (which expand and contract symmetrically) stay at 0 degrees.
- */
-export function estimateSourceTextTiltAngle(
-  sample: { width: number; height: number; rgba: Uint8ClampedArray } | null | undefined,
-): { rotationDeg: number; isItalic: boolean } {
-  if (!sample || sample.width < 16 || sample.height < 10 || sample.rgba.length < sample.width * sample.height * 4) {
-    return { rotationDeg: 0, isItalic: false };
-  }
-  const { width, height, rgba } = sample;
-  const luma = new Float32Array(width * height);
-  const borderLuma: number[] = [];
-  for (let y = 0; y < height; y++) {
-    const rOff = y * width;
-    for (let x = 0; x < width; x++) {
-      const idx = (rOff + x) * 4;
-      const yVal = 0.299 * rgba[idx] + 0.587 * rgba[idx + 1] + 0.114 * rgba[idx + 2];
-      luma[rOff + x] = yVal;
-      if (x <= 1 || x >= width - 2 || y <= 1 || y >= height - 2) {
-        borderLuma.push(yVal);
-      }
-    }
-  }
-  borderLuma.sort((a, b) => a - b);
-  const bgMedian = borderLuma.length > 0 ? borderLuma[Math.floor(borderLuma.length * 0.65)] : 235;
-
-  const numBins = 8;
-  const binW = width / numBins;
-  const xs: number[] = [];
-  const yTops: number[] = [];
-  const yBots: number[] = [];
-  const yMids: number[] = [];
-
-  for (let b = 0; b < numBins; b++) {
-    const x0 = Math.max(1, Math.floor(b * binW));
-    const x1 = Math.min(width - 1, Math.ceil((b + 1) * binW));
-    const ys: number[] = [];
-    for (let y = 1; y < height - 1; y++) {
-      const rOff = y * width;
-      for (let x = x0; x < x1; x++) {
-        if (Math.abs(luma[rOff + x] - bgMedian) >= 42) {
-          ys.push(y);
-        }
-      }
-    }
-    if (ys.length < 4) continue;
-    ys.sort((a, c) => a - c);
-    const yTop = ys[Math.floor(ys.length * 0.12)];
-    const yBot = ys[Math.floor(ys.length * 0.88)];
-    xs.push((x0 + x1) * 0.5);
-    yTops.push(yTop);
-    yBots.push(yBot);
-    yMids.push((yTop + yBot) * 0.5);
-  }
-
-  if (xs.length < 4) {
-    return { rotationDeg: 0, isItalic: false };
-  }
-
-  const fitSlope = (yArr: number[]) => {
-    const n = xs.length;
-    const meanX = xs.reduce((s, v) => s + v, 0) / n;
-    const meanY = yArr.reduce((s, v) => s + v, 0) / n;
-    let num = 0;
-    let denX = 0;
-    let denY = 0;
-    for (let i = 0; i < n; i++) {
-      const dx = xs[i] - meanX;
-      const dy = yArr[i] - meanY;
-      num += dx * dy;
-      denX += dx * dx;
-      denY += dy * dy;
-    }
-    if (denX <= 1e-3) return { slope: 0, r2: 0 };
-    const slope = num / denX;
-    const r2 = denY <= 1e-3 ? 0 : (num * num) / (denX * denY);
-    return { slope, r2 };
-  };
-
-  const topFit = fitSlope(yTops);
-  const botFit = fitSlope(yBots);
-  const midFit = fitSlope(yMids);
-
-  // Require both top and bottom text edges to tilt in the same direction (excludes oval/diamond bubbles)
-  if (topFit.slope * botFit.slope <= 0 || midFit.r2 < 0.52) {
-    return { rotationDeg: 0, isItalic: false };
-  }
-
-  const rawDeg = (Math.atan(midFit.slope) * 180) / Math.PI;
-  if (Math.abs(rawDeg) < 3.5 || Math.abs(rawDeg) > 36) {
-    return { rotationDeg: 0, isItalic: false };
-  }
-  const roundedDeg = Math.round(rawDeg * 2) / 2;
-  return {
-    rotationDeg: roundedDeg,
-    isItalic: Math.abs(roundedDeg) >= 4.5,
-  };
-}
-
-
 
 // Document-level overlay listeners must not outlive their container —
 // #pageContainer remounts on page switches, orphaning the previous
@@ -473,88 +295,6 @@ export const downloadTranslatedImage = (
   }
 };
 
-export const getReadableMinimumFontSize = (pageWidth: number): number => {
-  if (!pageWidth || pageWidth <= 0) return 14;
-  return Math.max(14, Math.round(pageWidth * 0.0225));
-};
-
-export function measureBubbleRenderFit(
-  text: string,
-  width: number,
-  height: number,
-  pageWidth: number,
-  fontFamily: string,
-  globalMultiplier: number,
-  bubbleMultiplier: number,
-  isOval: boolean,
-  targetFontSize?: number,
-  locale = "th",
-  enableHyphenation = false,
-  scanlineRatios?: number[],
-): BubbleTextFit {
-  if (typeof targetFontSize === "number" && targetFontSize > 0) {
-    const effectiveFs = Math.max(8, Math.round(targetFontSize * globalMultiplier * bubbleMultiplier));
-    const layout = layoutBubbleAtFixedFont(
-      text, width, effectiveFs, fontFamily, isOval, 0, height, locale, enableHyphenation, scanlineRatios,
-    );
-    return {
-      fontSize: effectiveFs,
-      lines: layout.lines,
-      lineHeight: effectiveFs * 1.30,
-      fits: !layout.overflow,
-    };
-  }
-  const targetMinimum = Math.max(14, Math.round(getReadableMinimumFontSize(pageWidth) * 0.75));
-  const allowedMinimum = Math.max(8, Math.round(targetMinimum * Math.min(1, bubbleMultiplier)));
-  return fitTextForBubble(
-    text,
-    width * 0.92,
-    height * 0.92,
-    fontFamily,
-    isOval,
-    globalMultiplier * bubbleMultiplier,
-    allowedMinimum,
-    locale,
-    enableHyphenation,
-    scanlineRatios,
-  );
-}
-
-/** The export overlay may grow a non-fitting frame up to 2.5x before drawing. */
-export function growBubbleFrameToFit(
-  text: string,
-  baseWidth: number,
-  baseHeight: number,
-  pageWidth: number,
-  pageHeight: number,
-  fontFamily: string,
-  globalMultiplier: number,
-  bubbleMultiplier: number,
-  isOval: boolean,
-  lockWidth = false,
-  targetFontSize?: number,
-  locale = "th",
-  enableHyphenation = false,
-  scanlineRatios?: number[],
-): { width: number; height: number } {
-  const maxWidth = lockWidth ? baseWidth : Math.min(pageWidth, baseWidth * 1.4);
-  const maxHeight = Math.min(pageHeight, baseHeight * 2.5);
-  let width = baseWidth;
-  let height = baseHeight;
-  if (measureBubbleRenderFit(text, width, height, pageWidth, fontFamily, globalMultiplier, bubbleMultiplier, isOval, targetFontSize, locale, enableHyphenation, scanlineRatios).fits) {
-    return { width, height };
-  }
-  for (let guard = 0; guard < 30; guard++) {
-    const nextWidth = lockWidth ? width : Math.min(maxWidth, width * 1.12);
-    const nextHeight = Math.min(maxHeight, height * 1.12);
-    if (nextWidth <= width + 0.5 && nextHeight <= height + 0.5) break;
-    width = nextWidth;
-    height = nextHeight;
-    if (measureBubbleRenderFit(text, width, height, pageWidth, fontFamily, globalMultiplier, bubbleMultiplier, isOval, targetFontSize, locale, enableHyphenation, scanlineRatios).fits) break;
-  }
-  return { width, height };
-}
-
 interface WidthLayoutPreview {
   layout: FixedFontWidthResult;
   text: string;
@@ -565,95 +305,6 @@ interface WidthLayoutPreview {
   manualMinHeightPx: number;
   availableHeightPx: number;
   locale: string;
-}
-
-function minimumBubbleWidthAtFixedFont(
-  text: string,
-  fontSizePx: number,
-  fontFamily: string,
-  isOval: boolean,
-  locale: string,
-): number {
-  const measureContext = getSharedMeasureCtx();
-  if (measureContext) measureContext.font = `bold ${fontSizePx}px ${fontFamily}`;
-  return minimumWidthForWholeWords({
-    text,
-    fontSizePx,
-    isOval,
-    locale,
-    measureText: measureContext
-      ? (value) => measureContext.measureText(value).width
-      : (value) => value.length * (fontSizePx * 0.6),
-  });
-}
-
-export function measureTextLinesWidth(
-  lines: string[],
-  fontSize: number,
-  fontFamily: string = "sans-serif",
-): number {
-  if (!lines || lines.length === 0) return 0;
-  const tempCtx = getSharedMeasureCtx();
-  if (tempCtx) {
-    tempCtx.font = `bold ${fontSize}px ${fontFamily}`;
-    let maxW = 0;
-    for (const line of lines) {
-      const w = tempCtx.measureText(line).width;
-      if (w > maxW) maxW = w;
-    }
-    return maxW;
-  }
-  let maxLen = 0;
-  for (const line of lines) {
-    if (line.length > maxLen) maxLen = line.length;
-  }
-  return maxLen * (fontSize * 0.6);
-}
-
-export interface AdaptiveBubbleLayout extends BubbleTextFit {
-  width: number;
-  height: number;
-}
-
-export function fitTextInAdaptiveBubble(
-  text: string,
-  width: number,
-  height: number,
-  fontFamily: string = "sans-serif",
-  isOval: boolean = true,
-  fontSizeMultiplier = 1,
-  minFontSize = 14,
-  maxScale = 3.0,
-  locale = "th",
-  enableHyphenation = false,
-): AdaptiveBubbleLayout {
-  let curW = width;
-  let curH = height;
-  const maxW = width * maxScale;
-  const maxH = height * maxScale;
-
-  let fit = fitTextForBubble(text, curW, curH, fontFamily, isOval, fontSizeMultiplier, minFontSize, locale);
-
-  while ((curW < maxW || curH < maxH) && !fit.fits) {
-    curW = Math.min(maxW, curW * 1.25);
-    curH = Math.min(maxH, curH * 1.25);
-    fit = fitTextForBubble(text, curW, curH, fontFamily, isOval, fontSizeMultiplier, minFontSize, locale);
-    if (fit.fits) break;
-  }
-
-  if (fit.lines.length > 0) {
-    const textH = (fit.lines.length - 1) * fit.lineHeight + fit.fontSize * 1.25;
-    const textW = measureTextLinesWidth(fit.lines, fit.fontSize, fontFamily);
-    const snugW = Math.max(28, Math.min(curW, Math.ceil(textW * 1.22)));
-    const snugH = Math.max(20, Math.min(curH, Math.ceil(textH * 1.22)));
-    return {
-      ...fit,
-      width: snugW,
-      height: snugH,
-    };
-  }
-
-  return { ...fit, width: curW, height: curH };
 }
 
 export const applyTranslationOverlay = async (

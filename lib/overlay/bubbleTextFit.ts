@@ -6,6 +6,7 @@ import {
   formatStructuredMangaText,
   isStructuredMangaList,
   layoutTextAtFixedFont,
+  minimumWidthForWholeWords,
   segmentTextIntoWords,
   type FixedFontWidthResult,
 } from "../textBoxWidthLayout";
@@ -292,4 +293,175 @@ export function fitTextForBubble(
   }
 
   return bestFit;
+}
+
+export const getReadableMinimumFontSize = (pageWidth: number): number => {
+  if (!pageWidth || pageWidth <= 0) return 14;
+  return Math.max(14, Math.round(pageWidth * 0.0225));
+};
+
+export function measureBubbleRenderFit(
+  text: string,
+  width: number,
+  height: number,
+  pageWidth: number,
+  fontFamily: string,
+  globalMultiplier: number,
+  bubbleMultiplier: number,
+  isOval: boolean,
+  targetFontSize?: number,
+  locale = "th",
+  enableHyphenation = false,
+  scanlineRatios?: number[],
+): BubbleTextFit {
+  if (typeof targetFontSize === "number" && targetFontSize > 0) {
+    const effectiveFs = Math.max(8, Math.round(targetFontSize * globalMultiplier * bubbleMultiplier));
+    const layout = layoutBubbleAtFixedFont(
+      text, width, effectiveFs, fontFamily, isOval, 0, height, locale, enableHyphenation, scanlineRatios,
+    );
+    return {
+      fontSize: effectiveFs,
+      lines: layout.lines,
+      lineHeight: effectiveFs * 1.30,
+      fits: !layout.overflow,
+    };
+  }
+  const targetMinimum = Math.max(14, Math.round(getReadableMinimumFontSize(pageWidth) * 0.75));
+  const allowedMinimum = Math.max(8, Math.round(targetMinimum * Math.min(1, bubbleMultiplier)));
+  return fitTextForBubble(
+    text,
+    width * 0.92,
+    height * 0.92,
+    fontFamily,
+    isOval,
+    globalMultiplier * bubbleMultiplier,
+    allowedMinimum,
+    locale,
+    enableHyphenation,
+    scanlineRatios,
+  );
+}
+
+/** The export overlay may grow a non-fitting frame up to 2.5x before drawing. */
+export function growBubbleFrameToFit(
+  text: string,
+  baseWidth: number,
+  baseHeight: number,
+  pageWidth: number,
+  pageHeight: number,
+  fontFamily: string,
+  globalMultiplier: number,
+  bubbleMultiplier: number,
+  isOval: boolean,
+  lockWidth = false,
+  targetFontSize?: number,
+  locale = "th",
+  enableHyphenation = false,
+  scanlineRatios?: number[],
+): { width: number; height: number } {
+  const maxWidth = lockWidth ? baseWidth : Math.min(pageWidth, baseWidth * 1.4);
+  const maxHeight = Math.min(pageHeight, baseHeight * 2.5);
+  let width = baseWidth;
+  let height = baseHeight;
+  if (measureBubbleRenderFit(text, width, height, pageWidth, fontFamily, globalMultiplier, bubbleMultiplier, isOval, targetFontSize, locale, enableHyphenation, scanlineRatios).fits) {
+    return { width, height };
+  }
+  for (let guard = 0; guard < 30; guard++) {
+    const nextWidth = lockWidth ? width : Math.min(maxWidth, width * 1.12);
+    const nextHeight = Math.min(maxHeight, height * 1.12);
+    if (nextWidth <= width + 0.5 && nextHeight <= height + 0.5) break;
+    width = nextWidth;
+    height = nextHeight;
+    if (measureBubbleRenderFit(text, width, height, pageWidth, fontFamily, globalMultiplier, bubbleMultiplier, isOval, targetFontSize, locale, enableHyphenation, scanlineRatios).fits) break;
+  }
+  return { width, height };
+}
+
+export function minimumBubbleWidthAtFixedFont(
+  text: string,
+  fontSizePx: number,
+  fontFamily: string,
+  isOval: boolean,
+  locale: string,
+): number {
+  const measureContext = getSharedMeasureCtx();
+  if (measureContext) measureContext.font = `bold ${fontSizePx}px ${fontFamily}`;
+  return minimumWidthForWholeWords({
+    text,
+    fontSizePx,
+    isOval,
+    locale,
+    measureText: measureContext
+      ? (value) => measureContext.measureText(value).width
+      : (value) => value.length * (fontSizePx * 0.6),
+  });
+}
+
+export function measureTextLinesWidth(
+  lines: string[],
+  fontSize: number,
+  fontFamily: string = "sans-serif",
+): number {
+  if (!lines || lines.length === 0) return 0;
+  const tempCtx = getSharedMeasureCtx();
+  if (tempCtx) {
+    tempCtx.font = `bold ${fontSize}px ${fontFamily}`;
+    let maxW = 0;
+    for (const line of lines) {
+      const w = tempCtx.measureText(line).width;
+      if (w > maxW) maxW = w;
+    }
+    return maxW;
+  }
+  let maxLen = 0;
+  for (const line of lines) {
+    if (line.length > maxLen) maxLen = line.length;
+  }
+  return maxLen * (fontSize * 0.6);
+}
+
+export interface AdaptiveBubbleLayout extends BubbleTextFit {
+  width: number;
+  height: number;
+}
+
+export function fitTextInAdaptiveBubble(
+  text: string,
+  width: number,
+  height: number,
+  fontFamily: string = "sans-serif",
+  isOval: boolean = true,
+  fontSizeMultiplier = 1,
+  minFontSize = 14,
+  maxScale = 3.0,
+  locale = "th",
+  enableHyphenation = false,
+): AdaptiveBubbleLayout {
+  let curW = width;
+  let curH = height;
+  const maxW = width * maxScale;
+  const maxH = height * maxScale;
+
+  let fit = fitTextForBubble(text, curW, curH, fontFamily, isOval, fontSizeMultiplier, minFontSize, locale);
+
+  while ((curW < maxW || curH < maxH) && !fit.fits) {
+    curW = Math.min(maxW, curW * 1.25);
+    curH = Math.min(maxH, curH * 1.25);
+    fit = fitTextForBubble(text, curW, curH, fontFamily, isOval, fontSizeMultiplier, minFontSize, locale);
+    if (fit.fits) break;
+  }
+
+  if (fit.lines.length > 0) {
+    const textH = (fit.lines.length - 1) * fit.lineHeight + fit.fontSize * 1.25;
+    const textW = measureTextLinesWidth(fit.lines, fit.fontSize, fontFamily);
+    const snugW = Math.max(28, Math.min(curW, Math.ceil(textW * 1.22)));
+    const snugH = Math.max(20, Math.min(curH, Math.ceil(textH * 1.22)));
+    return {
+      ...fit,
+      width: snugW,
+      height: snugH,
+    };
+  }
+
+  return { ...fit, width: curW, height: curH };
 }
