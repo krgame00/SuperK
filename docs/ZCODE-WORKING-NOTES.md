@@ -5,7 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 22 พ.ย. 00:21 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "เริ่ม Phase 0+1 [$poteto-mode](F:\\Projects\\manga-translator\\.agents\\skills\\poteto-mode\\SKILL.md)"
+- 22 พ.ย. 00:44 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ทำ Phase 2"
 - 17 พ.ย. 22:31 · `2b8116b8` · "ทำต่อหน่อย" · ⚠️ · ↳ "ระบบตรวจ ai locel มันยังจับได้ไม่หมด และยังมีรอยจุดๆๆๆ เราพอจะแก้ได้ไหม [$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\pstack-poteto-…"
 - 15 พ.ย. 01:40 · `2b7e562b` · "ทำให้ระบบตรวจดีขึ้นอีกได้ไหมครับ ยังจับได้ไม่ครบ" · ⚠️
 - 15 พ.ย. 01:03 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ⚠️ · ↳ "เราทำให้ระบบตรวจมันจับให้ได้หมดเลยได้ไหม พอมีวิธีไหม"
@@ -33,6 +33,17 @@
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
 
 ---
+
+## Phase 3 refactor translationOverlay แยก pure functions ครบสำเร็จ (poteto-mode, refactoring playbook) — 2026-11-22
+
+### Status: **push แล้ว CI เขียว** commit `ff4c628` — เหลือใน translationOverlay เฉพาะงานของนักวาดจริง ๆ (paint + listener/generation + snapshot validator + export ของ overlay) โมดูลย่อย lib/overlay/* ครบ 5 ไฟล์แล้ว
+
+- **ของที่ย้าย (3 โมดูล):** (1) bubbleTextFit.ts เติมส่วนที่เหลือ getReadableMinimumFontSize / measureBubbleRenderFit / growBubbleFrameToFit / minimumBubbleWidthAtFixedFont (เปิด export เพราะ paint ยังกิน) / measureTextLinesWidth / AdaptiveBubbleLayout / fitTextInAdaptiveBubble (2) `sourceGeometry.ts` ใหม่ snapRotationToRightAngle + estimateSourceTextTiltAngle (pure pixel math, import ศูนย์) (3) `canvasFont.ts` ใหม่ resolveCanvasFontFamily + resolveBubbleFontFamily + CANVAS_FONT_VARS (next/font) ย้ายพร้อมคอมเมนต์เดิม
+- **ของที่ตัดสินใจไม่ย้าย:** isUsableLayoutSnapshot + LAYOUT_SNAPSHOT_MAX_LINES + WidthLayoutPreview + canvasShadowColor + wordWrapLocaleOf อยู่กับ paint (ผู้เรียกเดียวคือ paint ตามแผน) — ไม่ขยายขอบเขตเกินแผน (principle-laziness-protocol)
+- **ปลอดภัยยืนยันก่อนย้าย:** comicTypography + customFonts ไม่ย้อน import translationOverlay (grep), sourceTextSizeClient กิน estimateSourceTextTiltAngle ผ่าน re-export จึงไม่พัง, เทสต์เฉพาะทาง snapRotationToRightAngle.test.ts + SettingsModalFonts.test.tsx เข้าชุดครอบคลุม
+- **พิสูจน์:** tsc 0 / eslint เซต warning เท่า baseline 3 ตัว (2 enableHyphenation ย้ายบ้านตามฟังก์ชันไป bubbleTextFit) / เทสต์ครอบคลุม 12 ไฟล์ **182 เคสเขียว** / madge ยัง 2 วงจร / npm test เต็ม **2392/2392 เขียวหมด** (รอบแรก grep จับคำ failed จากชื่อเทสต์ที่ผ่านกับ stderr จำลอง error-path — ไม่มี FAIL จริง ใช้ `--silent` ตัด noise ได้สรุปสะอาด)
+- **บทเรียน:** grep `failed` จับ false positive จากชื่อเทสต์เอง ("failed original fetch aborts ZIP...") และ log จำลองของ error-path ต้องดูบรรทัด FAIL ตัวใหญ่หรือสรุปท้ายเท่านั้น `--silent` คือเพื่อนที่ดีที่สุดตอนรันเต็ม
+- **ต่อไป:** Phase 4 (exportTranslatedImage — downloadTranslatedImage) → Phase 5 ผ่า paint (สุดท้าย เสี่ยงสูง ย้าย listener/generation ทั้งก้อน) → Phase 6 รัด type ลบ shim ใส่ madge ใน CI
 
 ## Phase 2 refactor translationOverlay แยก adjustment store สำเร็จ (poteto-mode, refactoring playbook) — 2026-11-22
 
