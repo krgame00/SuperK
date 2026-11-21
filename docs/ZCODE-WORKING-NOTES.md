@@ -34,6 +34,18 @@
 
 ---
 
+## เริ่มแผน refactor translationOverlay Phase 0+1 สำเร็จ (poteto-mode, refactoring playbook) — 2026-11-22
+
+### Status: **push แล้ว CI เขียว** run 44929055138 บน `acac2a7` (ของฉัน = `1386b08` types / `a895b5f` fit core; แชตขนานวาง acac2a7 ทับแล้ว push รวดเดียว) — วงจร madge ใน lib/ ลดจาก 3 เป็น 2 และวงจรเป้าหมาย bubbleLayoutOptimizer > translationOverlay หายจริง
+
+- **บริบท:** ผู้ใช้ส่งแผน refactor lib/translationOverlay.ts (ร่างโดย AI ภายนอกจาก GitHub API, baseline 4f8a17e) สั่ง "ดูว่าเป็นไง" — ตรวจยืนยันตัวเลขทุกข้อกับโค้ดจริงก่อนเชื่อ (4,460 บรรทัด / god function 1176-4444 / พารามิเตอร์ 10 / addEventListener 26 / gemini_api_key ที่ 2783 / วงจรสองทิศยืนยันจาก import จริง) แล้วผู้ใช้สั่ง "เริ่ม Phase 0+1"
+- **Phase 0 (pin):** เทสต์ครอบคลุม 8 ไฟล์ **164 เคสเขียวบน baseline** (translationOverlay + InspectorGuard + translationOverlayVertical + verticalTypography + textFitting + bubbleLayoutOptimizer + ovalTextFitting + readabilityGeometry) + madge baseline lib/ = **3 วงจร** (เป้าหมาย 1 + งานเก่าไม่เกี่ยว 2)
+- **ตัว A (1386b08) Phase 1 ตามแผน:** ย้าย TranslatedBubble/OverlayTextStyle/OverlayAdjustment/BubbleProportionalLayout ไป `lib/overlay/overlayTypes.ts` (leaf, import type ล้วน ไม่มี runtime edge) + re-export คืนจาก translationOverlay คุมผู้ใช้เดิม 135 ไฟล์; bubbleLayoutOptimizer ชี้ type ที่ overlayTypes — **ค้นพบแผนขัดตัวเอง:** Phase 1 แบบ type-ล้วนตัดวงจรไม่ได้ เพราะ bubbleLayoutOptimizer กิน fitTextForBubble/layoutBubbleAtFixedFont เป็น "ค่า" ด้วย (madge นับเฉพาะ value edge)
+- **ตัว B (a895b5f) ดึงแกน fit ของ Phase 3 มาตัดวงจรให้จริง:** ย้าย wrapTextForBubble + layoutBubbleAtFixedFont + fitTextForBubble + BubbleTextFit + getSharedMeasureCtx (singleton canvas) ไป `lib/overlay/bubbleTextFit.ts`; bubbleLayoutOptimizer เปลี่ยนมา import จากที่นี่ = value edge ทิศกลับหาย (madge 3→2 ที่เหลือคือ cleaning + translation งานเก่า) ; translationOverlay re-export ทุกชื่อคืน และ measureBubbleRenderFit/growBubbleFrameToFit/fitTextInAdaptiveBubble/minimumBubbleWidthAtFixedFont อยู่ที่เดิม
+- **พิสูจน์:** `npx tsc --noEmit` 0 error ทั้งสอง commit / eslint 0 error (เซต warning ของไฟล์ที่แตะ = baseline เป๊ะ 3 ตัว โดย fitTextForBubble ย้ายบ้านพร้อม warning ตัวเดิม) / เทสต์ครอบคลุม **164/164 รอบละครั้งหลังแต่ละ commit** / npm test เต็มรอบแรก 1 fail (flaky waitFor เดิมของ repo) รันซ้ำเต็มครั้งที่สอง **เขียวหมด** / pre-push guard ผ่าน 3 เกต (tsc + eslint + ruff)
+- **บทเรียน:** (1) tsc TS18048 ที่โผล่ครั้งแรกคือ cascade ของ TS2307 (พาธ import ผิด → ฟังก์ชันกลาย any → narrowing พัง) แก้พาธแล้วหายทั้งชุด อย่าไล่แก้ narrowing ทีหลัง (2) แผนจาก AI ภายนอกเขียนเกณฑ์ Phase 1 ขัดกับหมวด 8 ของตัวเอง (วงจรจบที่ Phase 3) — ตัดสินใจยึดเจตนาแผน ดึงแกน fit มาทำตัว B เพื่อให้ประตู "madge แสดงวงจรหาย" เป็นจริง (3) แชตขนาน commit acac2a7 วางทับ a895b5f แล้ว push ก่อนผม (push ผมกลายเป็น Everything up-to-date) — ดวงดีที่งานไม่ชนกันเพราะ add เฉพาะไฟล์ตัวเองเสมอ
+- **ค้าง/ต่อไป:** Phase 2 (แยก adjustment store ระวัง schema localStorage ห้ามเปลี่ยน) / Phase 3 ส่วนเหลือ (growBubbleFrameToFit ฯลฯ อยู่ translationOverlay ได้ตามดุล) / Phase 4 export / Phase 5 ผ่า paint เสี่ยงสูงสุดสุดท้าย / Phase 6 รัด type ลบ shim ใส่ madge ใน CI; แผนฉบับเต็มอยู่ C:\Users\PC\Downloads\refactor-plan.md (ยังไม่ได้ commit ลง repo)
+
 ## ตรวจรับ audit pstack 6 ข้อ + เติมคิวแปล extension (poteto-mode, receiving-code-review) — 2026-11-19
 
 ### Status: **push แล้ว CI เขียว** run 44563885276 บน `75d2fcb` (commits eafbc5e lint / 301fb8e คิวแปล / aa1930c งานค้างแชตขนาน / 75d2fcb แก้ await คิว) — verification pipeline ของ audit ผ่านครบ: tsc exit 0, vitest audit 15/15, ruff clean, pytest 334, npm test เต็ม 2390/2390
