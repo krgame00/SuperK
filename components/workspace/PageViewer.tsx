@@ -86,6 +86,16 @@ function VirtualPageItem({
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    let isCancelled = false;
+
+    const cleanupOverlays = () => {
+      container.querySelectorAll(".tl-overlay,.tl-canvas").forEach((el) => {
+        const cleanup = (el as unknown as { _cleanupListeners?: () => void })._cleanupListeners;
+        if (typeof cleanup === "function") cleanup();
+        el.remove();
+      });
+    };
+
     if (workspaceLayer === "translated" && !hasCachedImage && hasBubbles && bubbles) {
       void applyTranslationOverlay(
         bubbles,
@@ -98,14 +108,19 @@ function VirtualPageItem({
         page.url,
         undefined,
         targetLang,
-      );
-    } else {
-      container.querySelectorAll(".tl-overlay,.tl-canvas").forEach((el) => {
-        const cleanup = (el as unknown as { _cleanupListeners?: () => void })._cleanupListeners;
-        if (typeof cleanup === "function") cleanup();
-        el.remove();
+      ).then(() => {
+        if (isCancelled) {
+          cleanupOverlays();
+        }
       });
+    } else {
+      cleanupOverlays();
     }
+
+    return () => {
+      isCancelled = true;
+      cleanupOverlays();
+    };
   }, [workspaceLayer, hasCachedImage, hasBubbles, bubbles, index, page.url, textStyleRef, targetLang]);
 
   return (

@@ -260,9 +260,16 @@ export async function executeDirtyRectInpaint(
       ? await createImageBitmap(repairedBlob)
       : await new Promise<HTMLImageElement>((resolve, reject) => {
           const img = new Image();
-          img.onload = () => resolve(img);
-          img.onerror = reject;
-          img.src = URL.createObjectURL(repairedBlob);
+          const objectUrl = URL.createObjectURL(repairedBlob);
+          img.onload = () => {
+            URL.revokeObjectURL(objectUrl);
+            resolve(img);
+          };
+          img.onerror = (err) => {
+            URL.revokeObjectURL(objectUrl);
+            reject(err);
+          };
+          img.src = objectUrl;
         });
 
   imageCtx.drawImage(repairedBitmap, cropBox.x, cropBox.y);

@@ -9,6 +9,17 @@ const STORE_NAME = "image_layers";
 
 let memoryCache: Record<string, ImageLayer[]> | null = null;
 let debounceTimeout: ReturnType<typeof setTimeout> | null = null;
+let cachedDb: IDBDatabase | null = null;
+
+function revokeBlobUrl(url?: string): void {
+  if (url && url.startsWith("blob:") && typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+    try {
+      URL.revokeObjectURL(url);
+    } catch {
+      // Ignore revoke failure
+    }
+  }
+}
 
 export function normalizePageKey(key: string): string {
   if (!key) return "page_0";
@@ -22,6 +33,7 @@ export function normalizePageKey(key: string): string {
 }
 
 function openDB(): Promise<IDBDatabase> {
+  if (cachedDb) return Promise.resolve(cachedDb);
   return new Promise((resolve, reject) => {
     if (typeof window === "undefined" || !window.indexedDB) {
       reject(new Error("IndexedDB unavailable"));
@@ -34,7 +46,17 @@ function openDB(): Promise<IDBDatabase> {
         db.createObjectStore(STORE_NAME, { keyPath: "id" });
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      cachedDb = req.result;
+      cachedDb.onclose = () => {
+        cachedDb = null;
+      };
+      cachedDb.onversionchange = () => {
+        cachedDb?.close();
+        cachedDb = null;
+      };
+      resolve(cachedDb);
+    };
     req.onerror = () => reject(req.error ?? new Error("IndexedDB open failed"));
   });
 }
@@ -77,6 +99,7 @@ export async function loadImageLayersFromIndexedDB(): Promise<Record<string, Ima
           for (const layer of layers) {
             if (layer.blob && typeof URL !== "undefined" && typeof URL.createObjectURL === "function") {
               try {
+                revokeBlobUrl(layer.src);
                 layer.src = URL.createObjectURL(layer.blob);
               } catch {
                 // Keep existing layer.src if recreation fails
@@ -117,6 +140,14 @@ export function readPageImageLayers(pageKey: string): ImageLayer[] {
 export function savePageImageLayers(pageKey: string, layers: ImageLayer[]): void {
   const normalized = normalizePageKey(pageKey);
   const all = { ...readAllImageLayers() };
+  const previousLayers = memoryCache?.[normalized] ?? memoryCache?.[pageKey] ?? [];
+  const remainingSrcs = new Set(layers.map((l) => l.src));
+  for (const prev of previousLayers) {
+    if (prev.src && !remainingSrcs.has(prev.src)) {
+      revokeBlobUrl(prev.src);
+    }
+  }
+
   if (layers.length > 0) {
     all[normalized] = layers;
     if (normalized !== pageKey) delete all[pageKey];
@@ -131,7 +162,10 @@ export function savePageImageLayers(pageKey: string, layers: ImageLayer[]): void
       // Save metadata to localStorage without attempting to serialize native Blob handles
       const metadataOnly: Record<string, Array<Omit<ImageLayer, "blob">>> = {};
       for (const [pk, list] of Object.entries(all)) {
-        metadataOnly[pk] = list.map(({ blob: _discarded, ...rest }) => rest);
+        metadataOnly[pk] = list.map(({ blob, ...rest }) => {
+          void blob;
+          return rest;
+        });
       }
       localStorage.setItem(IMAGE_LAYERS_KEY, JSON.stringify(metadataOnly));
     } catch {
@@ -146,6 +180,15 @@ export function savePageImageLayers(pageKey: string, layers: ImageLayer[]): void
 }
 
 export function clearAllImageLayers(): void {
+  if (memoryCache) {
+    for (const list of Object.values(memoryCache)) {
+      if (Array.isArray(list)) {
+        for (const layer of list) {
+          revokeBlobUrl(layer.src);
+        }
+      }
+    }
+  }
   memoryCache = null;
   if (debounceTimeout) {
     clearTimeout(debounceTimeout);

@@ -107,35 +107,6 @@ export function RemnantReviewPanel({
   }, [isInspectorOpen]);
 
   useEffect(() => {
-    const checkInspector = () => {
-      if (typeof document === "undefined") return;
-      const hasInspector = Boolean(
-        document.querySelector('[data-inspector-panel="true"]') ||
-        document.querySelector('[data-selected="true"]') ||
-        document.querySelector('[aria-label="คุณสมบัติข้อความ"]') ||
-        document.querySelector('[data-testid="text-properties-panel"]')
-      );
-      if (hasInspector) {
-        setIsCollapsed(true);
-        setSide("left");
-      }
-    };
-
-    checkInspector();
-
-    const observer =
-      typeof MutationObserver !== "undefined"
-        ? new MutationObserver(() => checkInspector())
-        : null;
-    if (observer && typeof document !== "undefined") {
-      observer.observe(document.body, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ["data-selected", "data-inspector-panel", "aria-label"],
-      });
-    }
-
     const handleBubbleSelected = (e: Event) => {
       const custom = e as CustomEvent;
       if (custom.detail) {
@@ -153,7 +124,6 @@ export function RemnantReviewPanel({
     window.addEventListener("superk:bubble-selected", handleBubbleSelected);
     window.addEventListener("superk:inspector-toggle", handleInspectorToggle);
     return () => {
-      observer?.disconnect();
       window.removeEventListener("superk:bubble-selected", handleBubbleSelected);
       window.removeEventListener("superk:inspector-toggle", handleInspectorToggle);
     };

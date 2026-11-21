@@ -1,5 +1,24 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Deep Code Audit & Hygiene Hardening (DOM Observer Thrashing & Memory Lifecycle) — 2026-11-22
+
+### Status: VERIFIED WORKING (Eliminated unthrottled MutationObserver on document.body, closed blob: URL and IndexedDB connection leaks in imageLayerStore/DirtyRectInpainter, and added unmount cancellation to scroll overlay per principles: `principle-subtract-before-you-add`, `principle-fix-root-causes`, `principle-boundary-discipline`, `principle-make-operations-idempotent`, `principle-prove-it-works`):
+
+1) Changes & Implementation:
+   - 1. [P1] Eliminated Document-Wide DOM Observer Thrashing:
+     - In `components/cleaning/RemnantReviewPanel.tsx`: Removed unthrottled `MutationObserver` on `document.body` that triggered 4 `querySelector` scans on every single DOM mutation. Delegated position docking solely to the `isInspectorOpen` prop and custom events `superk:bubble-selected` and `superk:inspector-toggle`.
+   - 2. [P1] Hardened IndexedDB Connection & Blob URL Lifecycle:
+     - In `lib/editing/imageLayerStore.ts`: Made `openDB()` connection a cached singleton handling `onclose` and `onversionchange`. Added safe `revokeBlobUrl` helper to automatically revoke obsolete `blob:` URLs when updating, restoring, or clearing image layers.
+   - 3. [P2] Fixed Async Race Condition & Unmount Leak in Scroll Overlay:
+     - In `components/workspace/PageViewer.tsx`: Added `isCancelled` guard and unmount cleanup to `VirtualPageItem`'s `useEffect`, ensuring overlays and event listeners are cleanly dismantled when virtual pages unmount during fast scrolling.
+   - 4. [P2] Closed Blob URL Leak in Inpainter Fallback:
+     - In `lib/inpaint/DirtyRectInpainter.ts`: Guaranteed immediate `URL.revokeObjectURL(objectUrl)` inside `img.onload` and `img.onerror` handlers when `createImageBitmap` is unavailable.
+
+2) Verification Evidence:
+   - TypeScript Check: `npx tsc --noEmit` passed with 0 errors.
+   - ESLint Check: `npx eslint components/cleaning/RemnantReviewPanel.tsx lib/editing/imageLayerStore.ts components/workspace/PageViewer.tsx lib/inpaint/DirtyRectInpainter.ts` passed with 0 errors and 0 warnings.
+   - Vitest Unit Tests: `npx vitest run tests/cleaning/ tests/editing/ tests/workspace/PageViewerScroll.test.tsx tests/unit/DirtyRectInpainter.test.ts tests/pstack/rootCauseFixes.test.ts` passed (6 test files, 43/43 tests passed).
+
 ## Codebase Quality & Static Hygiene Polish (P1 Stale Closures & P2 Dead Code) — 2026-11-20
 
 ### Status: VERIFIED WORKING (Resolved React stale refs/closures in effects and pruned dead code across components per principles: `principle-fix-root-causes`, `principle-laziness-protocol`, `principle-prove-it-works`):
