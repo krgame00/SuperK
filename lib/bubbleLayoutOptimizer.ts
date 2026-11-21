@@ -4,7 +4,7 @@ import {
   isStructuredMangaList,
 } from "./textBoxWidthLayout";
 import type { TranslatedBubble, OverlayAdjustment } from "./overlay/overlayTypes";
-import { fitTextForBubble, layoutBubbleAtFixedFont } from "./translationOverlay";
+import { fitTextForBubble, layoutBubbleAtFixedFont } from "./overlay/bubbleTextFit";
 import {
   isDoubleBubblePair,
   splitConjoinedPairVoronoi,
