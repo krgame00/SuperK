@@ -5,7 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 21 พ.ย. 23:53 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ช่วยดูหน่อยครับ ว่าเป็นไง"
+- 22 พ.ย. 00:21 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "เริ่ม Phase 0+1 [$poteto-mode](F:\\Projects\\manga-translator\\.agents\\skills\\poteto-mode\\SKILL.md)"
 - 17 พ.ย. 22:31 · `2b8116b8` · "ทำต่อหน่อย" · ⚠️ · ↳ "ระบบตรวจ ai locel มันยังจับได้ไม่หมด และยังมีรอยจุดๆๆๆ เราพอจะแก้ได้ไหม [$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\pstack-poteto-…"
 - 15 พ.ย. 01:40 · `2b7e562b` · "ทำให้ระบบตรวจดีขึ้นอีกได้ไหมครับ ยังจับได้ไม่ครบ" · ⚠️
 - 15 พ.ย. 01:03 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ⚠️ · ↳ "เราทำให้ระบบตรวจมันจับให้ได้หมดเลยได้ไหม พอมีวิธีไหม"
@@ -33,6 +33,16 @@
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
 
 ---
+
+## Phase 2 refactor translationOverlay แยก adjustment store สำเร็จ (poteto-mode, refactoring playbook) — 2026-11-22
+
+### Status: **push แล้ว** commit `91aef3c` (CI run 44931194285 เฝ้าดูตอนจด) — ย้าย persistence คำต่อคำ คีย์/สคีมา localStorage ไม่แตะแม้บิตเดียว วงจร madge คงเดิม 2
+
+- **ของที่ย้าย:** bubbleKeyOf + 7 ฟังก์ชัน store (readOverlayAdjustments / saveOverlayAdjustments / compactOverlayPageKey / readPageOverlayAdjustments / syncPageOverlayAdjustments / clearPageAdjustments / clearAllAdjustments) + ADJ_KEY + cached pair + คอมเมนต์ quota → `lib/overlay/overlayAdjustmentStore.ts`; translationOverlay re-export ทุกชื่อคุมผู้ใช้เดิม (readabilityScan, useBubbleOrganizeOrchestrator, เทสต์ 2 ไฟล์เฉพาะทาง)
+- **ตัดสินใจสำคัญ:** bubbleKeyOf ย้ายไปอยู่กับ store (ไม่ใช่ overlayTypes เพราะ leaf ต้อง type-ล้วน, ไม่ค้างใน translationOverlay เพราะ store กินมัน = วงจร) — เหตุผลมันเป็น key-derivation ล้วนและ store คือผู้บริโภคหลัก, resolveTextStyle import กลับแบบ type-only (madge ข้าม) จึงปลอดภัยที่ store จะกิน cloneTextStyleProfile; generation guard WeakMap อยู่กับนักวาดตามเจ้าของ
+- **พิสูจน์:** tsc 0 / eslint เซต warning เท่าเดิม 3 ตัว / เทสต์ครอบคลุมขยายเป็น 10 ไฟล์ **171 เคสเขียว** (เพิ่ม translationOverlayAdjust + translationOverlayAdjustments) / madge ยัง 2 วงจร / npm test เต็มรอบแรก 6 fail จาก 3 ไฟล์ (เครื่องหนัก setup/import บวม 233s/390s) รันซ้ำเหลือ 1 และตัวนั้น (`nextServer.integration` pairing token ยิง HTTP จริง) รันเดี่ยวผ่าน 5/5 ใน 6.7s = noise จาก contention ไม่ใช่ regression
+- **บทเรียน:** pipe `tail -6` ตัดชื่อเทสต์ที่ล้มทิ้งหมด ต้องเก็บ log เต็มหรือ grep FAIL ตั้งแต่แรก (เสียเวลารันเต็ม 5 นาที 2 รอบฟรี); เทสต์ integration แบบ spin server จริงไวต่อโหลดเครื่อง ตีความ fail ต้องดู timing ประกอบ
+- **ต่อไป:** Phase 3 ส่วนเหลือ (geometry/canvasFont/export) → Phase 4 → Phase 5 ผ่า paint (สุดท้าย เสี่ยงสูง) → Phase 6 รัด type + ลบ shim + madge เข้า CI
 
 ## เริ่มแผน refactor translationOverlay Phase 0+1 สำเร็จ (poteto-mode, refactoring playbook) — 2026-11-22
 
