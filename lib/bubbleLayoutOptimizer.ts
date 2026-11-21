@@ -3,12 +3,8 @@ import {
   hasBrokenThaiLineBreak,
   isStructuredMangaList,
 } from "./textBoxWidthLayout";
-import {
-  type TranslatedBubble,
-  type OverlayAdjustment,
-  fitTextForBubble,
-  layoutBubbleAtFixedFont,
-} from "./translationOverlay";
+import type { TranslatedBubble, OverlayAdjustment } from "./overlay/overlayTypes";
+import { fitTextForBubble, layoutBubbleAtFixedFont } from "./translationOverlay";
 import {
   isDoubleBubblePair,
   splitConjoinedPairVoronoi,
