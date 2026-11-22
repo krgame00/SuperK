@@ -5,7 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 23 พ.ย. 00:20 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ทำ Phase 3"
+- 23 พ.ย. 00:52 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅
 - 17 พ.ย. 22:31 · `2b8116b8` · "ทำต่อหน่อย" · ⚠️ · ↳ "ระบบตรวจ ai locel มันยังจับได้ไม่หมด และยังมีรอยจุดๆๆๆ เราพอจะแก้ได้ไหม [$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\pstack-poteto-…"
 - 15 พ.ย. 01:40 · `2b7e562b` · "ทำให้ระบบตรวจดีขึ้นอีกได้ไหมครับ ยังจับได้ไม่ครบ" · ⚠️
 - 15 พ.ย. 01:03 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ⚠️ · ↳ "เราทำให้ระบบตรวจมันจับให้ได้หมดเลยได้ไหม พอมีวิธีไหม"
@@ -33,6 +33,17 @@
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
 
 ---
+
+## แผนแยก bubbleInteraction — Phase 5 ย้าย selection/move ไป bubbleMove.ts (poteto-mode, refactoring playbook) — 2026-11-23
+
+### Status: **push แล้ว** commit `2f4400b` (CI `45054461728` success) — bubbleInteraction เหลือ 68 บรรทัด = shim re-export + BubbleResizeChromeDeps + composer เท่านั้น เหลือ Phase 6 ลบ shim
+
+- **bubbleMove.ts (584 บรรทัด):** interface BubbleSelectionMoveDeps (23 ฟิลด์) + wireBubbleSelectionAndMove ย้ายคำต่อคำ (hover/selection styling, drag preview loop, keyboard, live editor / delete / font-size actions) — body ใช้ import ครบ 10 ชื่อ ตรวจด้วย grep นับต่อชื่อก่อนเขียน header
+- **shim:** bubbleInteraction re-export { wireBubbleSelectionAndMove, BubbleSelectionMoveDeps } จาก bubbleMove ผู้เรียกเดียว (translationOverlay.ts:39,785) ไม่ต้องแก้; ลบ import ตาย 10 ชื่อที่ตาม body ย้ายบ้าน
+- **พิสูจน์:** tsc 0 / eslint 0 / ชุดครอบคลุม 175 ไฟล์ 1611 เคสเขียว / madge gate overlay เขียว / CI success
+- **เต็มชุดบนเครื่องเจอ noise ตามแพตเทิร์นเดิม:** รอบแรกล้ม workspaceAccessibility SettingsModal (เดี่ยวผ่าน 8/8) รอบสองล้ม productionWatchdog+serviceOwnership timeout (เดี่ยวผ่าน 13/13) — ล้มต่างกันทุกรอบ ไม่เกี่ยว diff overlay สรุปเป็น contention และใช้ CI เป็นเกตจริง ตามบทเรียน Phase 2
+- **ต่อไป:** Phase 6 เปลี่ยนผู้เรียกเดียวให้ import ตรง lib/overlay/* แล้วลบ shim bubbleInteraction.ts — ปิดแผนแยก bubbleInteraction
+
 
 ## แผนแยก bubbleInteraction — Phase 4 แยก resize chrome เป็น handles + toolbar (poteto-mode, refactoring playbook) — 2026-11-23
 
