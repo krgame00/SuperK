@@ -41,6 +41,7 @@ import {
   createSelectionChrome,
   pruneOverlayCleanups,
 } from "./overlay/bubbleInteraction";
+import { createBubbleStyleActions } from "./overlay/bubbleStyleActions";
 
 export { fitTextForBubble, layoutBubbleAtFixedFont, wrapTextForBubble } from "./overlay/bubbleTextFit";
 export type { BubbleTextFit } from "./overlay/bubbleTextFit";
@@ -774,6 +775,13 @@ export async function applyTranslationOverlay(
       b.render = renderBubble;
 
       if (viewMode !== "offscreen") {
+        const styleActions = createBubbleStyleActions({
+          bubble: b,
+          state: sharedState,
+          onBubblesMutated,
+          renderBubble,
+          saveAdjustment,
+        });
         const { openLiveEditor, deleteBubbleWithUndo, adjustBubbleFontSize } = wireBubbleSelectionAndMove({
           bubble: b,
           wrapper,
@@ -791,13 +799,7 @@ export async function applyTranslationOverlay(
           reviewApiKeyProvider,
           onBubblesMutated,
           isStaleOverlay,
-          toggleBubbleItalic: () => {
-            toggleBubbleItalic();
-          },
-          applyBubbleRotationAndSlant: (nextRot, nextItalic, label) => {
-            applyBubbleRotationAndSlant(nextRot, nextItalic, label);
-          },
-          getCurrentRotation: () => currentRotation,
+          styleActions,
           renderBubble,
           saveAdjustment,
           updateBubbleFrame,
@@ -813,7 +815,7 @@ export async function applyTranslationOverlay(
         openLiveEditor();
       });
 
-      const { toggleBubbleItalic, applyBubbleRotationAndSlant } = wireBubbleResizeChrome({
+      wireBubbleResizeChrome({
         bubble: b,
         wrapper,
         tlContainer,
@@ -834,6 +836,7 @@ export async function applyTranslationOverlay(
         openLiveEditor,
         deleteBubbleWithUndo,
         adjustBubbleFontSize,
+        styleActions,
         getActiveEditorPosition: () => activeEditorPosition,
         visibleSelection,
         chrome: selection,

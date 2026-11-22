@@ -12,6 +12,7 @@ import { cloneTextStyleProfile, applyBwContrastModeToBubble } from "../colorMatc
 import type { BwContrastMode } from "../colorMatching/types";
 import { getWarpLabel, getNextWarpType, type WarpConfig } from "../tools/TextWarpRenderer";
 import { openBubbleLiveEditor } from "./bubbleEditor";
+import type { BubbleStyleActions } from "./bubbleStyleActions";
 import { resolveCanvasFontFamily } from "./canvasFont";
 import { layoutBubbleAtFixedFont, measureBubbleRenderFit, minimumBubbleWidthAtFixedFont } from "./bubbleTextFit";
 import { estimateSourceTextTiltAngle, snapRotationToRightAngle } from "./sourceGeometry";
@@ -47,9 +48,7 @@ export interface BubbleSelectionMoveDeps {
   reviewApiKeyProvider: ReviewApiKeyProvider;
   onBubblesMutated?: () => void;
   isStaleOverlay: () => boolean;
-  toggleBubbleItalic: () => void;
-  applyBubbleRotationAndSlant: (nextRot: number, nextItalic: boolean, label?: string) => void;
-  getCurrentRotation: () => number;
+  styleActions: BubbleStyleActions;
   renderBubble: (availableHeight?: number, snapshotScale?: number, widthLayoutPreview?: WidthLayoutPreview) => void;
   saveAdjustment: () => void;
   updateBubbleFrame: () => void;
@@ -80,9 +79,7 @@ export const wireBubbleSelectionAndMove = (deps: BubbleSelectionMoveDeps): {
     reviewApiKeyProvider,
     onBubblesMutated,
     isStaleOverlay,
-    toggleBubbleItalic,
-    applyBubbleRotationAndSlant,
-    getCurrentRotation,
+    styleActions,
     renderBubble,
     saveAdjustment,
     updateBubbleFrame,
@@ -497,30 +494,30 @@ export const wireBubbleSelectionAndMove = (deps: BubbleSelectionMoveDeps): {
     if ((e.key === "i" || e.key === "I") && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault();
       e.stopPropagation();
-      toggleBubbleItalic();
+      styleActions.toggleBubbleItalic();
       return;
     }
 
     if ((e.key === "q" || e.key === "Q") && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault();
       e.stopPropagation();
-      const normRot = ((getCurrentRotation() + 540) % 360) - 180;
-      applyBubbleRotationAndSlant(Math.round((normRot - 4) * 10) / 10, Boolean(b.isItalic ?? b.italic ?? true), "หมุนข้อความเอียงขึ้น (-4°)");
+      const normRot = ((state.currentRotation + 540) % 360) - 180;
+      styleActions.applyBubbleRotationAndSlant(Math.round((normRot - 4) * 10) / 10, Boolean(b.isItalic ?? b.italic ?? true), "หมุนข้อความเอียงขึ้น (-4°)");
       return;
     }
 
     if ((e.key === "e" || e.key === "E") && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault();
       e.stopPropagation();
-      const normRot = ((getCurrentRotation() + 540) % 360) - 180;
-      applyBubbleRotationAndSlant(Math.round((normRot + 4) * 10) / 10, Boolean(b.isItalic ?? b.italic ?? true), "หมุนข้อความเอียงลง (+4°)");
+      const normRot = ((state.currentRotation + 540) % 360) - 180;
+      styleActions.applyBubbleRotationAndSlant(Math.round((normRot + 4) * 10) / 10, Boolean(b.isItalic ?? b.italic ?? true), "หมุนข้อความเอียงลง (+4°)");
       return;
     }
 
     if (e.key === "0" && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault();
       e.stopPropagation();
-      applyBubbleRotationAndSlant(0, false, "รีเซ็ตมุมเอียงข้อความ");
+      styleActions.applyBubbleRotationAndSlant(0, false, "รีเซ็ตมุมเอียงข้อความ");
       return;
     }
 
@@ -620,6 +617,7 @@ export interface BubbleResizeChromeDeps {
   openLiveEditor: () => void;
   deleteBubbleWithUndo: () => void;
   adjustBubbleFontSize: (delta: number) => void;
+  styleActions: BubbleStyleActions;
   getActiveEditorPosition: () => (() => void) | null;
   visibleSelection: () => SelectionRect;
   chrome: SelectionChromeHandle;
@@ -644,6 +642,7 @@ export const wireBubbleResizeChrome = (deps: BubbleResizeChromeDeps): {
     onBubblesMutated,
     isStaleOverlay,
     adjustmentScaleX: adjSx,
+    styleActions,
     renderBubble,
     saveAdjustment,
     updateBubbleFrame,
@@ -1372,97 +1371,12 @@ export const wireBubbleResizeChrome = (deps: BubbleResizeChromeDeps): {
     },
   );
 
-  const syncItalicBtnStyle = (btnEl: HTMLButtonElement) => {
-    const active = Boolean(b.isItalic ?? b.italic ?? state.currentIsItalic);
-    btnEl.setAttribute("aria-pressed", String(active));
-    btnEl.style.color = active ? "var(--primary, #f43f5e)" : "#e4e4e7";
-    btnEl.style.background = active ? "rgba(244, 63, 94, 0.22)" : "transparent";
-  };
-
-  const toggleBubbleItalic = () => {
-    const prevItalic = Boolean(b.isItalic ?? b.italic ?? state.currentIsItalic);
-    const nextItalic = !prevItalic;
-    const prevSnapshot = b.layoutSnapshot;
-    state.currentIsItalic = nextItalic;
-    b.isItalic = nextItalic;
-    b.italic = nextItalic;
-    delete b.layoutSnapshot;
-    syncItalicBtnStyle(italicBtn);
-    onBubblesMutated?.();
-    renderBubble();
-    const nextSnapshot = b.layoutSnapshot;
-    saveAdjustment();
-    undoManager.push({
-      label: nextItalic ? "เปิดข้อความตัวเอียง" : "ปิดข้อความตัวเอียง",
-      undo: () => {
-        state.currentIsItalic = prevItalic;
-        b.isItalic = prevItalic;
-        b.italic = prevItalic;
-        b.layoutSnapshot = prevSnapshot;
-        syncItalicBtnStyle(italicBtn);
-        renderBubble();
-        saveAdjustment();
-      },
-      redo: () => {
-        state.currentIsItalic = nextItalic;
-        b.isItalic = nextItalic;
-        b.italic = nextItalic;
-        b.layoutSnapshot = nextSnapshot;
-        syncItalicBtnStyle(italicBtn);
-        renderBubble();
-        saveAdjustment();
-      },
-    });
-  };
-
-  const applyBubbleRotationAndSlant = (nextRot: number, nextItalic: boolean, label = "ปรับองศาเอียงข้อความ") => {
-    const prevRot = state.currentRotation;
-    const prevItalic = Boolean(b.isItalic ?? b.italic ?? state.currentIsItalic);
-    const prevSnapshot = b.layoutSnapshot;
-    state.currentRotation = nextRot;
-    state.currentIsItalic = nextItalic;
-    b.rotation = nextRot;
-    b.isItalic = nextItalic;
-    b.italic = nextItalic;
-    delete b.layoutSnapshot;
-    syncItalicBtnStyle(italicBtn);
-    onBubblesMutated?.();
-    renderBubble();
-    const nextSnapshot = b.layoutSnapshot;
-    saveAdjustment();
-    undoManager.push({
-      label,
-      undo: () => {
-        state.currentRotation = prevRot;
-        state.currentIsItalic = prevItalic;
-        b.rotation = prevRot;
-        b.isItalic = prevItalic;
-        b.italic = prevItalic;
-        b.layoutSnapshot = prevSnapshot;
-        syncItalicBtnStyle(italicBtn);
-        renderBubble();
-        saveAdjustment();
-      },
-      redo: () => {
-        state.currentRotation = nextRot;
-        state.currentIsItalic = nextItalic;
-        b.rotation = nextRot;
-        b.isItalic = nextItalic;
-        b.italic = nextItalic;
-        b.layoutSnapshot = nextSnapshot;
-        syncItalicBtnStyle(italicBtn);
-        renderBubble();
-        saveAdjustment();
-      },
-    });
-  };
-
   const italicBtn = createToolBtn(
     "สลับตัวอักษรเอียง (Italic หรือคีย์ I)",
     `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><line x1="19" x2="10" y1="4" y2="4"/><line x1="14" x2="5" y1="20" y2="20"/><line x1="15" x2="9" y1="4" y2="20"/></svg>`,
-    () => toggleBubbleItalic(),
+    () => styleActions.toggleBubbleItalic(),
   );
-  syncItalicBtnStyle(italicBtn);
+  styleActions.registerItalicButton(italicBtn);
 
   const tiltBtn = createToolBtn(
     "เอียงข้อความตามต้นฉบับ / สลับมุมเอียง (คีย์ Q / E)",
@@ -1478,11 +1392,11 @@ export const wireBubbleResizeChrome = (deps: BubbleResizeChromeDeps): {
             targetAngle = detected.rotationDeg;
           }
         }
-        applyBubbleRotationAndSlant(targetAngle, true, "เอียงข้อความตามต้นฉบับ");
+        styleActions.applyBubbleRotationAndSlant(targetAngle, true, "เอียงข้อความตามต้นฉบับ");
       } else if (normRot < 0) {
-        applyBubbleRotationAndSlant(12, true, "สลับมุมเอียงข้อความ (+12°)");
+        styleActions.applyBubbleRotationAndSlant(12, true, "สลับมุมเอียงข้อความ (+12°)");
       } else {
-        applyBubbleRotationAndSlant(0, false, "รีเซ็ตมุมเอียงข้อความ (0°)");
+        styleActions.applyBubbleRotationAndSlant(0, false, "รีเซ็ตมุมเอียงข้อความ (0°)");
       }
     },
   );
@@ -1702,5 +1616,8 @@ export const wireBubbleResizeChrome = (deps: BubbleResizeChromeDeps): {
     setVisible: setChromeVisible,
   });
 
-  return { toggleBubbleItalic, applyBubbleRotationAndSlant };
+  return {
+    toggleBubbleItalic: styleActions.toggleBubbleItalic,
+    applyBubbleRotationAndSlant: styleActions.applyBubbleRotationAndSlant,
+  };
 };
