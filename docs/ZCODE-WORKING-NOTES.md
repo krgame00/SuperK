@@ -5,7 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 23 พ.ย. 00:02 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "เริ่ม Phase 0+1+2"
+- 23 พ.ย. 00:20 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ทำ Phase 3"
 - 17 พ.ย. 22:31 · `2b8116b8` · "ทำต่อหน่อย" · ⚠️ · ↳ "ระบบตรวจ ai locel มันยังจับได้ไม่หมด และยังมีรอยจุดๆๆๆ เราพอจะแก้ได้ไหม [$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\pstack-poteto-…"
 - 15 พ.ย. 01:40 · `2b7e562b` · "ทำให้ระบบตรวจดีขึ้นอีกได้ไหมครับ ยังจับได้ไม่ครบ" · ⚠️
 - 15 พ.ย. 01:03 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ⚠️ · ↳ "เราทำให้ระบบตรวจมันจับให้ได้หมดเลยได้ไหม พอมีวิธีไหม"
@@ -33,6 +33,17 @@
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
 
 ---
+
+## แผนแยก bubbleInteraction — Phase 4 แยก resize chrome เป็น handles + toolbar (poteto-mode, refactoring playbook) — 2026-11-23
+
+### Status: **push แล้ว** commit `019611b` (CI `45051443976` success ทั้ง Frontend+Backend) — wireBubbleResizeChrome (997 บรรทัด) ถูกตัดเป็น composer ~16 บรรทัด lib/overlay/* มี 13 โมดูลแล้ว เหลือ Phase 5 (bubbleMove) กับ Phase 6 (ลบ shim)
+
+- **bubbleResizeHandles.ts (618 บรรทัด):** drag geometry ทั้งชุด rotate/scale/width/move + rAF width previews + undo/redo ครบทุก id — deps 15 ฟิลด์ คืน { chromeHandles } ให้ toolbar ใช้ anchor; substitution เดียวคือ adj → state.adj 12 จุด (lookbehind กัน state.adj และ adjSx ปลอดภัย)
+- **bubbleToolbar.ts (464 บรรทัด):** floating toolbar (A-/A+/แก้ไข/italic/tilt/warp/bw-contrast/ลบ) + positionChromeControls + setChromeVisible + chromeControlsByWrapper.set จบด้วยการลงทะเบียน {toolbar, handles, position, setVisible} เหมือนเดิม — deps 17 ฟิลด์ รับ chromeHandles จาก handles ผ่าน composer
+- **composer ใน bubbleInteraction.ts:** wireBubbleResizeChrome แค่ spread deps ให้ทั้งสอง factory (เติม cancelDragPreviews และ chromeControlsByWrapper จาก chrome facade) และคง return { toggleBubbleItalic, applyBubbleRotationAndSlant } จาก styleActions เดิม ผู้เรียกและ BubbleResizeChromeDeps ไม่เปลี่ยน effectiveTarget ไม่ forward เพราะยูนิตใหม่ไม่ใช้ (จาก inventory 0 จุด)
+- **เก็บกวาด:** ลบ import ใน bubbleInteraction 12 ชื่อที่ตาม body ย้ายบ้าน (eslint 0 warning ทั้ง 3 ไฟล์ที่แตะ)
+- **พิสูจน์:** tsc 0 / eslint 0 / ชุดครอบคลุม 175 ไฟล์ **1611 เคสเขียว** / เต็มชุด **2394 ผ่าน 0 ล้ม** = baseline / madge gate overlay เขียว (เหลือวงจรเก่า 2 วงจรนอกแผน) / CI success
+- **ต่อไป:** Phase 5 ย้าย wireBubbleSelectionAndMove → bubbleMove.ts → Phase 6 ลบ shim (ผู้เรียกเดียว) — smoke checklist interaction ยังรอผู้ใช้ทดสอบมือ
 
 ## แผนแยก bubbleInteraction — Phase 3 ตัด late-binding ด้วย style actions (poteto-mode, refactoring playbook) — 2026-11-23
 
