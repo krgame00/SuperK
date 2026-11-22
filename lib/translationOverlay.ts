@@ -48,6 +48,7 @@ import {
 } from "./overlay/qualityReviewActions";
 import { openBubbleLiveEditor } from "./overlay/bubbleEditor";
 import { renderBubbleContent, type WidthLayoutPreview } from "./overlay/bubbleRenderer";
+import { createSelectionChrome, pruneOverlayCleanups } from "./overlay/bubbleInteraction";
 
 export { fitTextForBubble, layoutBubbleAtFixedFont, wrapTextForBubble } from "./overlay/bubbleTextFit";
 export type { BubbleTextFit } from "./overlay/bubbleTextFit";
@@ -106,25 +107,10 @@ const wordWrapLocaleOf = (language?: string): string => {
   return WORD_WRAP_LOCALES[normalized] ?? normalized;
 };
 
-// Document-level overlay listeners must not outlive their container —
-// #pageContainer remounts on page switches, orphaning the previous
-// generation's listeners. Registry keyed by container; stale (disconnected)
-// entries are pruned and cleaned up on the next apply.
-const overlayCleanups = new Map<Element, () => void>();
-
 // Each applyTranslationOverlay bumps its container's generation; a paint
 // whose generation is no longer current (page switched underneath it) must
 // bail instead of repainting the previous page over the current one.
 const overlayGenerations = new WeakMap<Element, number>();
-
-const pruneOverlayCleanups = (): void => {
-  for (const [element, cleanup] of overlayCleanups) {
-    if (!element.isConnected) {
-      cleanup();
-      overlayCleanups.delete(element);
-    }
-  }
-};
 
 
 export const applyTranslationOverlay = async (
@@ -263,73 +249,22 @@ export const applyTranslationOverlay = async (
         : null;
     chromeRoot?.querySelectorAll("[data-translation-chrome]").forEach((el) => el.remove());
 
-    type BubbleChromeControls = {
-      toolbar: HTMLElement;
-      handles: HTMLElement[];
-      position: () => void;
-      setVisible: (visible: boolean) => void;
-    };
-    const chromeControlsByWrapper = new WeakMap<HTMLElement, BubbleChromeControls>();
-    const cancelDragPreviews: Array<() => void> = [];
+    const selection = createSelectionChrome({
+      container,
+      tlContainer,
+      chromeRoot,
+      viewMode,
+    });
+    const chromeControlsByWrapper = selection.chromeControlsByWrapper;
+    const selectedBubbleBridgeByWrapper = selection.selectedBubbleBridgeByWrapper;
+    const setSelectedBubble = selection.setSelectedBubble;
+    const getSelectedBubble = selection.getSelectedBubble;
+    const cancelDragPreviews = selection.cancelDragPreviews;
     // Set once scheduleChromeSync exists (it is declared after the bubble
     // builders); selection updates that happen before it are harmless no-ops.
     let scheduleChromeSyncRef: ((frames?: number) => void) | null = null;
 
     let fallbackY2 = 10;
-
-    type SelectedBubbleBridge = {
-      bubble: TranslatedBubble;
-      bubbleId: string;
-      getFontSize: () => number;
-      applyUpdates: (updates: Record<string, unknown>) => void;
-      deleteBubble: () => void;
-      reanalyzeColor: () => void;
-    };
-    const selectedBubbleBridgeByWrapper = new WeakMap<HTMLElement, SelectedBubbleBridge>();
-
-    let selectedBubbleWrapper: HTMLElement | null = null;
-    const setSelectedBubble = (wrapper: HTMLElement | null) => {
-      if (selectedBubbleWrapper === wrapper && wrapper !== null) {
-        const controls = chromeControlsByWrapper.get(wrapper);
-        controls?.position();
-        controls?.setVisible(true);
-        return;
-      }
-      (chromeRoot ?? tlContainer).querySelectorAll<HTMLElement>("[data-bubble-more-menu]").forEach((menu) => {
-        menu.style.display = "none";
-      });
-      if (selectedBubbleWrapper && selectedBubbleWrapper !== wrapper) {
-        const oldFrame = selectedBubbleWrapper.querySelector<HTMLElement>(".bubble-text-selection");
-        if (oldFrame) oldFrame.style.outline = "none";
-        selectedBubbleWrapper.style.zIndex = "10";
-        selectedBubbleWrapper.style.pointerEvents = "none";
-        selectedBubbleWrapper.removeAttribute("data-selected");
-        chromeControlsByWrapper.get(selectedBubbleWrapper)?.setVisible(false);
-      }
-      selectedBubbleWrapper = wrapper;
-      if (!wrapper) {
-        if (viewMode !== "offscreen" && typeof window !== "undefined") {
-          window.dispatchEvent(new CustomEvent("superk:bubble-selected", { detail: null }));
-        }
-        return;
-      }
-
-      const selectedFrame = wrapper.querySelector<HTMLElement>(".bubble-text-selection");
-      if (selectedFrame) selectedFrame.style.outline = "1.5px dashed #3b82f6";
-      wrapper.style.zIndex = "30";
-      wrapper.style.pointerEvents = viewMode === "offscreen" ? "none" : "auto";
-      wrapper.setAttribute("data-selected", "true");
-      const controls = chromeControlsByWrapper.get(wrapper);
-      controls?.position();
-      controls?.setVisible(true);
-      if (viewMode !== "offscreen" && typeof window !== "undefined") {
-        window.dispatchEvent(
-          new CustomEvent("superk:bubble-selected", {
-            detail: selectedBubbleBridgeByWrapper.get(wrapper) ?? null,
-          }),
-        );
-      }
-    };
 
     if (img && (img.naturalWidth > 0 || img.width > 0)) {
       real.forEach((b) => {
@@ -803,8 +738,8 @@ export const applyTranslationOverlay = async (
       b.render = renderBubble;
 
       if (viewMode !== "offscreen") {
-        wrapper.addEventListener('mouseenter', () => { if (selectedBubbleWrapper !== wrapper) selectionFrame.style.outline = "1.5px dashed rgba(249,115,22,0.65)"; });
-      wrapper.addEventListener('mouseleave', () => { if (selectedBubbleWrapper !== wrapper) selectionFrame.style.outline = "none"; });
+        wrapper.addEventListener('mouseenter', () => { if (getSelectedBubble() !== wrapper) selectionFrame.style.outline = "1.5px dashed rgba(249,115,22,0.65)"; });
+      wrapper.addEventListener('mouseleave', () => { if (getSelectedBubble() !== wrapper) selectionFrame.style.outline = "none"; });
 
       let isDragging = false;
       let dragStartX = 0, dragStartY = 0;
@@ -2359,79 +2294,7 @@ export const applyTranslationOverlay = async (
       renderBubble();
     });
 
-    if (viewMode !== "offscreen") {
-    const syncSelectedChrome = () => {
-      if (!selectedBubbleWrapper) return;
-      chromeControlsByWrapper.get(selectedBubbleWrapper)?.position();
-    };
-    let chromeSyncFrame: number | null = null;
-    let chromeSyncFramesRemaining = 0;
-    const runChromeSyncFrame = () => {
-      chromeSyncFrame = null;
-      syncSelectedChrome();
-      chromeSyncFramesRemaining = Math.max(0, chromeSyncFramesRemaining - 1);
-      if (chromeSyncFramesRemaining > 0) {
-        chromeSyncFrame = requestAnimationFrame(runChromeSyncFrame);
-      }
-    };
-    const scheduleChromeSync = (frames = 1) => {
-      chromeSyncFramesRemaining = Math.max(chromeSyncFramesRemaining, frames);
-      if (chromeSyncFrame === null) chromeSyncFrame = requestAnimationFrame(runChromeSyncFrame);
-    };
-    scheduleChromeSyncRef = scheduleChromeSync;
-
-    const stageObserver = chromeRoot && typeof MutationObserver !== "undefined"
-      ? new MutationObserver(() => scheduleChromeSync(12))
-      : null;
-    stageObserver?.observe(container, { attributes: true, attributeFilter: ["style", "class"] });
-
-    const chromeResizeObserver = chromeRoot && typeof ResizeObserver !== "undefined"
-      ? new ResizeObserver(() => scheduleChromeSync(2))
-      : null;
-    if (chromeRoot && chromeResizeObserver) {
-      chromeResizeObserver.observe(chromeRoot);
-      chromeResizeObserver.observe(container);
-    }
-
-    const handleViewportChange = () => scheduleChromeSync(2);
-    const handleDocumentPointerDown = (e: PointerEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (
-        target &&
-        !target.closest('.translation-bubble-wrapper') &&
-        !target.closest('.action-handle') &&
-        !target.closest('[data-translation-editor]') &&
-        !target.closest('[data-inspector-panel="true"]') &&
-        !target.closest('[data-testid="text-properties-panel"]') &&
-        !target.closest('[data-testid="workspace-inspector-panel"]') &&
-        !target.closest('#warp-panel-section') &&
-        !target.closest('[aria-label="คุณสมบัติข้อความ"]') &&
-        !target.closest('[aria-label="แผงดัดตัวอักษรและรูปภาพ"]') &&
-        !target.closest('[aria-label="สถานะการจับคู่สี"]') &&
-        !target.closest('[data-testid="remnant-review-findings"]')
-      ) {
-        setSelectedBubble(null);
-      }
-    };
-    const handleDocumentKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") setSelectedBubble(null); };
-    const detachDocumentListeners = () => {
-      for (const cancelPreview of cancelDragPreviews) cancelPreview();
-      document.removeEventListener('pointerdown', handleDocumentPointerDown);
-      document.removeEventListener('keydown', handleDocumentKeyDown);
-      window.removeEventListener('resize', handleViewportChange);
-      window.removeEventListener('scroll', handleViewportChange, true);
-      stageObserver?.disconnect();
-      chromeResizeObserver?.disconnect();
-      if (chromeSyncFrame !== null) cancelAnimationFrame(chromeSyncFrame);
-      chromeRoot?.querySelectorAll('[data-translation-chrome]').forEach((el) => el.remove());
-    };
-    document.addEventListener('pointerdown', handleDocumentPointerDown);
-    document.addEventListener('keydown', handleDocumentKeyDown);
-    window.addEventListener('resize', handleViewportChange);
-    window.addEventListener('scroll', handleViewportChange, true);
-    (tlContainer as unknown as { _cleanupListeners: () => void })._cleanupListeners = detachDocumentListeners;
-    overlayCleanups.set(container, detachDocumentListeners);
-    }
+    scheduleChromeSyncRef = selection.scheduleChromeSync;
 
     container.appendChild(tlContainer);
 
