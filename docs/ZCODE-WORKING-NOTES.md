@@ -5,7 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 22 พ.ย. 21:21 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ทำ Phase 5 ต่อ"
+- 22 พ.ย. 21:41 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ทำ Phase 5 ต่อ"
 - 17 พ.ย. 22:31 · `2b8116b8` · "ทำต่อหน่อย" · ⚠️ · ↳ "ระบบตรวจ ai locel มันยังจับได้ไม่หมด และยังมีรอยจุดๆๆๆ เราพอจะแก้ได้ไหม [$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\pstack-poteto-…"
 - 15 พ.ย. 01:40 · `2b7e562b` · "ทำให้ระบบตรวจดีขึ้นอีกได้ไหมครับ ยังจับได้ไม่ครบ" · ⚠️
 - 15 พ.ย. 01:03 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ⚠️ · ↳ "เราทำให้ระบบตรวจมันจับให้ได้หมดเลยได้ไหม พอมีวิธีไหม"
@@ -33,6 +33,16 @@
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
 
 ---
+
+## Phase 5.2b-iii survey เสร็จ — แผนที่ deps พร้อมผ่า (poteto-mode, refactoring playbook) — 2026-11-22
+
+### Status: **ไม่มีโค้ดเปลี่ยนในรอบนี้** tree สะอาดที่ `78dc296` — อ่าน survey ครบ 769-1452 แล้ว แต่บริบทไม่พอผ่าตัดอีก ~700 บรรทัด (1452-1830) + เขียน factory ~1,100 บรรทัดได้อย่างปลอดภัย จึงหยุดส่งมอบแผนที่แทนการรื้อครึ่ง ๆ (ประโยคความเสี่ยงของแผนเอง: ย้ายครึ่ง = leak/overlay ซ้อน)
+
+- **แผนที่ 5.2b-iii (บรรทัดปัจจุบัน):** if(viewMode!=="offscreen") เปิด 739 ปิด ~1826; dblclick 774-777 (อยู่ paint ได้); handlesConfig 781-815; handle creation + mouseenter/leave 817-843; state locals ของ drag (rStartX/rInitBx../scaleDragSnapshot) 844-866; pinScaleAnchor 867-878 (ใช้ rotateLocalPoint + currentRotation + textSelection + currentB*); widthGeometryForDrag 880-897; handle pointerdown 899-1013 (ย่อ snug width, rDragTargetFs, resizeDragActive=true, widthSelectionPreview=true, minimumBubbleWidthAtFixedFont); applyPointerMove 1018-1141 (rotate/width/scale/move 4 ทาง + scale bitmap preview + pinScaleAnchor + page-constraint rollback); cancelPendingWidthPreview/flush 1143-1163; pointermove 1165-1187; pointerup 1189-1309 (unchangedScale restore, floorBase, manualSourceSizing, userTextSpace, undo/redo ครบ); pointercancel 1311-1334; chromeHandles.push + append 1336-1338; toolbar 1341-1502 (createToolBtn + ปุ่ม A-/A+/แก้ไข/ลบ); toggleBubbleItalic 1503-1538; applyBubbleRotationAndSlant 1539-1671; positionChromeControls 1672-1809; setChromeVisible 1810-1818; chromeControlsByWrapper.set 1819-1825; ปิด if 1826
+- **deps catalog ที่ catalog แล้ว:** sharedState ครบ (currentB*/currentRotation ผ่าน getter เพิ่ม, textSelection เขียน 1113/1123/1213/1330, resizeDragActive, floorBase, manualMinHeightPx, adj, adjSx, renderedFontSize, textLayoutOverflow?), widthSelectionPreview = let ระดับ per-bubble ที่ยังไม่เคย catalog (decl หาด้วย grep ก่อนผ่า!), textStyleRef/ts/wordWrapLocale/effectiveTarget, iw/ih, updateBubbleFrame, renderBubble (เรียกแบบ `renderBubble(id === "scale" ? ih : undefined, 1, widthLayoutPreview)`), rotateLocalPoint + SelectionRect (textSelectionBounds), snapRotationToRightAngle (sourceGeometry — import เพิ่มใน bubbleInteraction ปลอดภัย leaf), layoutBubbleAtFixedFont/minimumBubbleWidthAtFixedFont/measureBubbleRenderFit (bubbleTextFit ✓ มีอยู่แล้วบางส่วน), manualSourceSizing ✓, openLiveEditor/deleteBubbleWithUndo/adjustBubbleFontSize (คืนจาก 5.2b-i), chrome facade, onBubblesMutated, isStaleOverlay, undoManager ✓
+- **ลำดับ wiring ที่ออกแบบไว้:** toggleBubbleItalic/applyBubbleRotationAndSlant ย้ายบ้านพร้อมก้อนนี้ → paint ประกาศ `let toggleBubbleItalicFn/applyBubbleRotationAndSlantFn: ... | null = null` ก่อน wiring 5.2b-i, wiring 5.2b-i คง deferred wrapper (null-guarded), wiring 5.2b-iii คืน helpers แล้ว paint assign เข้า Fn lets — ไม่มี circular ordering; ปุ่ม A-/A+ เรียก adjustBubbleFontSize ผ่าน dep จาก 5.2b-i return
+- **ประมาณการงานรอบหน้า:** อ่านเพิ่ม 1452-1830 (~380) + เขียน wireBubbleResizeChrome(deps) ~1,100 บรรทัด (สับ state.currentB*/state.currentRotation(ผ่าน setter เพิ่ม? ปัจจุบัน BubbleRenderSharedState ไม่มี currentRotation — ต้องเพิ่ม accessor คู่หนึ่ง + widthSelectionPreview อาจเพิ่มเข้า state ด้วย) + wiring + gates ~เท่ายูนิต 5.1
+- **หมายเหตุ:** BubbleRenderSharedState ต้องเพิ่ม currentRotation get/set และอาจเพิ่ม widthSelectionPreview get/set; 5.2b-i keyboard ใช้ getter อยู่แล้วเปลี่ยนเป็น state.getCurrentRotation ได้ภายหลัง
 
 ## Phase 5.2b-ii-a keyboard/font-size ลงแล้ว (poteto-mode, refactoring playbook) — 2026-11-22
 
