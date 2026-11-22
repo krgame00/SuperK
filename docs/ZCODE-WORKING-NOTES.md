@@ -5,7 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 22 พ.ย. 20:57 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ทำ Phase 5 ต่อ"
+- 22 พ.ย. 21:21 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ทำ Phase 5 ต่อ"
 - 17 พ.ย. 22:31 · `2b8116b8` · "ทำต่อหน่อย" · ⚠️ · ↳ "ระบบตรวจ ai locel มันยังจับได้ไม่หมด และยังมีรอยจุดๆๆๆ เราพอจะแก้ได้ไหม [$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\pstack-poteto-…"
 - 15 พ.ย. 01:40 · `2b7e562b` · "ทำให้ระบบตรวจดีขึ้นอีกได้ไหมครับ ยังจับได้ไม่ครบ" · ⚠️
 - 15 พ.ย. 01:03 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ⚠️ · ↳ "เราทำให้ระบบตรวจมันจับให้ได้หมดเลยได้ไหม พอมีวิธีไหม"
@@ -33,6 +33,15 @@
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
 
 ---
+
+## Phase 5.2b-ii-a keyboard/font-size ลงแล้ว (poteto-mode, refactoring playbook) — 2026-11-22
+
+### Status: **push แล้ว** commit `78dc296` (CI รอยืนยันตอนจด) — translationOverlay เหลือ **1,877 บรรทัด** เหลือ 5.2b-iii (resize handles + chrome factory ~1,046 บรรทัด) ก้อนสุดท้ายของ Phase 5
+
+- **ของที่ย้าย:** keydown handler ครบทุกปุ่ม (Enter แก้ไข, +/- ขนาดฟอนต์, i ตัวเอียง, q/e/0 หมุน, Delete ลบ, Escape ยกเลิกเลือก, ลูกศรเลื่อน/ย่อ-ขยายพร้อม undo) + adjustBubbleFontSize (พร้อม undo/redo snapshot ทุกฟิลด์) ย้ายคำต่อคำเข้า wireBubbleSelectionAndMove ซึ่งคืน adjustBubbleFontSize เพิ่ม เพราะปุ่ม +/- ใน chrome (ยังอยู่ paint) เรียกต่อ
+- **จุดเสี่ยงที่จัดการ:** toggleBubbleItalic/applyBubbleRotationAndSlant ประกาศทีหลังจุด wiring (อยู่ในก้อน chrome ที่ย้ายรอบหน้า) การส่งค่าตรงจะโดน TDZ จึงส่งเป็น deferred wrapper `() => { toggleBubbleItalic(); }`; currentRotation ส่งผ่าน getter `getCurrentRotation()`; deps เพิ่ม textStyle/textStyleRef/targetLocale สำหรับ logic ฟอนต์
+- **พิสูจน์:** tsc 0 / eslint เหลือ baseline 2 warnings เก็บ import กำพร้า 2 ชื่อ (resolveBubbleFontFamily ใส่เผื่อ, setSelectedBubble ย้ายบ้านหมด) / เทสต์ครอบคลุม 16 ไฟล์ **229 เคสเขียว** / เต็มชุด 1 fail = `productionLauncher` (spawn บริการจริง รอเวลา — ไม่เกี่ยว overlay) รันเดี่ยว **3/3 ผ่านใน 3.2s** = contention noise / madge ยัง 2 วงจร
+- **ต่อไป:** 5.2b-iii resize handles + chrome factory (~1,046 บรรทัด ยูนิตสุดท้ายของ Phase 5 — toggleBubbleItalic/applyBubbleRotationAndSlant ย้ายบ้านพร้อมก้อนนี้แล้ว wrapper ใน wiring เปลี่ยนเป็นส่งตรงได้) → Phase 6 รัด type + options object + ลบ shim + madge เข้า CI
 
 ## Phase 5.2b-i drag/select/bridge ลงแล้ว + sharedState ใช้ร่วม (poteto-mode, refactoring playbook) — 2026-11-22
 
