@@ -5,7 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 22 พ.ย. 20:38 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ทำ Phase 5 ต่อ"
+- 22 พ.ย. 20:57 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ทำ Phase 5 ต่อ"
 - 17 พ.ย. 22:31 · `2b8116b8` · "ทำต่อหน่อย" · ⚠️ · ↳ "ระบบตรวจ ai locel มันยังจับได้ไม่หมด และยังมีรอยจุดๆๆๆ เราพอจะแก้ได้ไหม [$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\pstack-poteto-…"
 - 15 พ.ย. 01:40 · `2b7e562b` · "ทำให้ระบบตรวจดีขึ้นอีกได้ไหมครับ ยังจับได้ไม่ครบ" · ⚠️
 - 15 พ.ย. 01:03 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ⚠️ · ↳ "เราทำให้ระบบตรวจมันจับให้ได้หมดเลยได้ไหม พอมีวิธีไหม"
@@ -33,6 +33,15 @@
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
 
 ---
+
+## Phase 5.2b-i drag/select/bridge ลงแล้ว + sharedState ใช้ร่วม (poteto-mode, refactoring playbook) — 2026-11-22
+
+### Status: **push แล้ว** commit `0bad2ad` (CI รอยืนยันตอนจด) — translationOverlay เหลือ **2,096 บรรทัด** เหลือ 5.2b-ii (keyboard + resize handles + chrome factory ~1,170 บรรทัด) เป็นก้อนสุดท้ายของ Phase 5
+
+- **ของที่ย้าย:** mouseenter/leave + drag handlers ทั้งชุด (pointerdown/move rAF/up/pointercancel/lostpointercapture + move-undo) + openLiveEditor + deleteBubbleWithUndo + inspector bridge (applyUpdates/reanalyzeColor) + focus listener ย้ายคำต่อคำไป `wireBubbleSelectionAndMove(deps)` ใน bubbleInteraction.ts คืน { openLiveEditor, deleteBubbleWithUndo } ให้ paint (dblclick/keydown/chrome ยังเรียกผ่านชื่อเดิม)
+- **โครงร่วมสำคัญ:** ยก accessor state object ออกจาก renderBubble wrapper ขึ้นเป็น `sharedState` ตัวเดียวต่อ bubble — renderer เขียนผ่าน state accessors และ drag handlers ที่ย้ายไปแล้วก็เขียนผ่าน object เดียวกัน = ทั้งสองฝั่ง mutate local เดิมของ paint จริง ๆ (จุดรวมของทั้งแผน); ยืนยันก่อนย้ายว่า colorMatching สามโมดูลที่ bridge ใช้ (canvasSampler/sampleTextColors/nearbyStyleFallback) เป็น type-only หรือไม่ย้อน import จึงไม่เกิดวงจร
+- **พิสูจน์:** tsc 0 / eslint เหลือ 2 warnings (baseline เดิม) เก็บ import กำพร้า 3 ชื่อ (openBubbleLiveEditor/selectedBubbleBridgeByWrapper/getSelectedBubble ย้ายบ้าน) / เทสต์ครอบคลุม 16 ไฟล์ **229 เคสเขียว** / เต็มชุด **2392/2392** / madge ยัง 2 วงจร
+- **ต่อไป:** 5.2b-ii keyboard + resize handles + chrome factory (ใช้ sharedState + facade เดิมเป็น deps — ไม่ต้องรื้อ) → Phase 6 รัด type + options object + ลบ shim + madge เข้า CI
 
 ## Phase 5.2a selection/chrome/lifecycle ลงแล้ว (poteto-mode, refactoring playbook) — 2026-11-22
 
