@@ -35,8 +35,12 @@ import {
   type ReviewApiKeyProvider,
 } from "./overlay/qualityReviewActions";
 import { renderBubbleContent, type BubbleRenderSharedState, type WidthLayoutPreview } from "./overlay/bubbleRenderer";
-import { wireBubbleSelectionAndMove, wireBubbleResizeChrome } from "./overlay/bubbleInteraction";
-import { createSelectionChrome, pruneOverlayCleanups } from "./overlay/bubbleInteraction";
+import {
+  wireBubbleSelectionAndMove,
+  wireBubbleResizeChrome,
+  createSelectionChrome,
+  pruneOverlayCleanups,
+} from "./overlay/bubbleInteraction";
 
 export { fitTextForBubble, layoutBubbleAtFixedFont, wrapTextForBubble } from "./overlay/bubbleTextFit";
 export type { BubbleTextFit } from "./overlay/bubbleTextFit";
