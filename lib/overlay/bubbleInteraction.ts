@@ -4,6 +4,14 @@
 // set; per-bubble handlers wire in through the returned facade.
 
 import type { TranslatedBubble } from "./overlayTypes";
+import { undoManager } from "../undoManager";
+import { sampleBubbleRegion } from "../colorMatching/canvasSampler";
+import { extractTextColors } from "../colorMatching/sampleTextColors";
+import { inferTextStyleCategory } from "../colorMatching/nearbyStyleFallback";
+import type { WarpConfig } from "../tools/TextWarpRenderer";
+import { openBubbleLiveEditor } from "./bubbleEditor";
+import type { BubbleRenderSharedState, WidthLayoutPreview } from "./bubbleRenderer";
+import type { ReviewApiKeyProvider } from "./qualityReviewActions";
 
 const overlayCleanups = new Map<Element, () => void>();
 
@@ -181,4 +189,331 @@ export const createSelectionChrome = (deps: SelectionChromeDeps): SelectionChrom
     scheduleChromeSync,
     cancelDragPreviews,
   };
+};
+
+export interface BubbleSelectionMoveDeps {
+  bubble: TranslatedBubble;
+  wrapper: HTMLElement;
+  tlContainer: HTMLElement;
+  chromeRoot: HTMLElement | null | undefined;
+  selectionFrame: HTMLElement;
+  image: HTMLImageElement | null;
+  bubbleId: string;
+  pageWidth: number;
+  pageHeight: number;
+  effectiveTarget: string;
+  reviewApiKeyProvider: ReviewApiKeyProvider;
+  onBubblesMutated?: () => void;
+  isStaleOverlay: () => boolean;
+  renderBubble: (availableHeight?: number, snapshotScale?: number, widthLayoutPreview?: WidthLayoutPreview) => void;
+  saveAdjustment: () => void;
+  updateBubbleFrame: () => void;
+  setActiveEditorPosition: (position: (() => void) | null) => void;
+  chrome: SelectionChromeHandle;
+  state: BubbleRenderSharedState;
+}
+
+export const wireBubbleSelectionAndMove = (deps: BubbleSelectionMoveDeps): {
+  openLiveEditor: () => void;
+  deleteBubbleWithUndo: () => void;
+} => {
+  const {
+    bubble: b,
+    wrapper,
+    tlContainer,
+    chromeRoot,
+    selectionFrame,
+    image: img,
+    bubbleId,
+    pageWidth: iw,
+    pageHeight: ih,
+    effectiveTarget,
+    reviewApiKeyProvider,
+    onBubblesMutated,
+    isStaleOverlay,
+    renderBubble,
+    saveAdjustment,
+    updateBubbleFrame,
+    setActiveEditorPosition,
+    chrome,
+    state,
+  } = deps;
+  const {
+    chromeControlsByWrapper,
+    selectedBubbleBridgeByWrapper,
+    setSelectedBubble,
+    getSelectedBubble,
+    cancelDragPreviews,
+  } = chrome;
+
+  wrapper.addEventListener('mouseenter', () => { if (getSelectedBubble() !== wrapper) selectionFrame.style.outline = "1.5px dashed rgba(249,115,22,0.65)"; });
+  wrapper.addEventListener('mouseleave', () => { if (getSelectedBubble() !== wrapper) selectionFrame.style.outline = "none"; });
+
+  let isDragging = false;
+  let dragStartX = 0, dragStartY = 0;
+  let initialBx = 0, initialBy = 0;
+  let initialBw = 0, initialBh = 0;
+  let pendingMoveFrame: number | null = null;
+  let pendingMovePointer: {clientX:number;clientY:number} | null = null;
+  const cancelMovePreview = () => {
+    if (pendingMoveFrame !== null) window.cancelAnimationFrame(pendingMoveFrame);
+    pendingMoveFrame = null;
+    pendingMovePointer = null;
+  };
+  cancelDragPreviews.push(cancelMovePreview);
+  const applyMovePosition = (clientX:number,clientY:number) => {
+    const rect = tlContainer.getBoundingClientRect();
+    if (!(rect.width > 0 && rect.height > 0)) return;
+    state.currentBx = initialBx + (clientX - dragStartX) * (iw / rect.width);
+    state.currentBy = initialBy + (clientY - dragStartY) * (ih / rect.height);
+    updateBubbleFrame();
+  };
+
+  wrapper.addEventListener('pointerdown', (e) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('.action-handle') || target.closest('.delete-btn') || target.closest('.edit-btn')) return;
+    e.stopPropagation();
+    setSelectedBubble(wrapper);
+    isDragging = true;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    initialBx = state.currentBx;
+    initialBy = state.currentBy;
+    initialBw = state.currentBw;
+    initialBh = state.currentBh;
+    try {
+      wrapper.setPointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+  });
+
+  wrapper.addEventListener('pointermove', (e) => {
+    if (!isDragging) return;
+    e.stopPropagation();
+    pendingMovePointer = {clientX:e.clientX,clientY:e.clientY};
+    if (pendingMoveFrame === null) pendingMoveFrame = window.requestAnimationFrame(() => {
+      pendingMoveFrame = null;
+      const latest = pendingMovePointer;
+      pendingMovePointer = null;
+      if (latest && isDragging && !isStaleOverlay()) applyMovePosition(latest.clientX,latest.clientY);
+    });
+  });
+
+  wrapper.addEventListener('pointerup', (e) => {
+    if (isDragging) {
+      e.stopPropagation();
+      cancelMovePreview();
+      applyMovePosition(e.clientX,e.clientY);
+      isDragging = false;
+      try {
+        wrapper.releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+      // A selection click must leave legacy layout and adaptive styles untouched.
+      if (state.currentBx === initialBx && state.currentBy === initialBy) return;
+      // One final layout settles page-edge constraints for preview/export parity.
+      renderBubble();
+      saveAdjustment();
+      if (state.currentBx !== initialBx || state.currentBy !== initialBy) {
+        const finalBx = state.currentBx, finalBy = state.currentBy, finalBw = state.currentBw, finalBh = state.currentBh;
+        const startBx = initialBx, startBy = initialBy, startBw = initialBw, startBh = initialBh;
+        undoManager.push({
+          label: "ย้ายตำแหน่งกล่องข้อความ",
+          undo: () => {
+            state.currentBx = startBx;
+            state.currentBy = startBy;
+            state.currentBw = startBw;
+            state.currentBh = startBh;
+            renderBubble();
+            saveAdjustment();
+          },
+          redo: () => {
+            state.currentBx = finalBx;
+            state.currentBy = finalBy;
+            state.currentBw = finalBw;
+            state.currentBh = finalBh;
+            renderBubble();
+            saveAdjustment();
+          },
+        });
+      }
+    }
+  });
+
+  wrapper.addEventListener('pointercancel', (e) => {
+    if (isDragging) {
+      isDragging = false;
+      cancelMovePreview();
+      try {
+        wrapper.releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+      state.currentBx = initialBx;
+      state.currentBy = initialBy;
+      state.currentBw = initialBw;
+      state.currentBh = initialBh;
+      renderBubble();
+      saveAdjustment();
+    }
+  });
+
+  wrapper.addEventListener('lostpointercapture', () => {
+    if (isDragging) {
+      isDragging = false;
+      cancelMovePreview();
+    }
+  });
+
+  const openLiveEditor = () => {
+    openBubbleLiveEditor({
+      bubble: b,
+      wrapper,
+      tlContainer,
+      chromeRoot,
+      chromeControls: chromeControlsByWrapper.get(wrapper),
+      pageWidth: iw,
+      pageHeight: ih,
+      getCurrentRect: () => ({ x: state.currentBx, y: state.currentBy, w: state.currentBw, h: state.currentBh }),
+      effectiveTarget,
+      reviewApiKeyProvider,
+      onBubblesMutated,
+      renderBubble,
+      saveAdjustment,
+      setActiveEditorPosition,
+    });
+  };
+
+  const deleteBubbleWithUndo = () => {
+    b.deleted = true;
+    onBubblesMutated?.();
+    wrapper.style.display = "none";
+    wrapper.dataset.deleted = "true";
+    setSelectedBubble(null);
+    undoManager.push({
+      label: "ลบกล่องข้อความ",
+      undo: () => {
+        b.deleted = false;
+        wrapper.style.display = "block";
+        delete wrapper.dataset.deleted;
+        renderBubble();
+        onBubblesMutated?.();
+      },
+      redo: () => {
+        b.deleted = true;
+        wrapper.style.display = "none";
+        wrapper.dataset.deleted = "true";
+        setSelectedBubble(null);
+        onBubblesMutated?.();
+      },
+    });
+  };
+
+  selectedBubbleBridgeByWrapper.set(wrapper, {
+    bubble: b,
+    bubbleId,
+    getFontSize: () => Math.round(state.renderedFontSize || b.targetFontSize || 20),
+    applyUpdates: (updates: Record<string, unknown>) => {
+      if (typeof updates.fontFamily === "string") {
+        (b as { fontFamily?: string }).fontFamily = updates.fontFamily;
+      }
+      if (typeof updates.fontSize === "number" && updates.fontSize > 0) {
+        b.targetFontSize = updates.fontSize;
+      }
+      if (typeof updates.isBold === "boolean") {
+        (b as { isBold?: boolean }).isBold = updates.isBold;
+      }
+      if (typeof updates.isItalic === "boolean") {
+        state.currentIsItalic = updates.isItalic;
+        b.isItalic = updates.isItalic;
+        b.italic = updates.isItalic;
+      }
+      if (typeof updates.align === "string") {
+        (b as { align?: string }).align = updates.align;
+      }
+      if ("boxFill" in updates) {
+        (b as { boxFill?: string }).boxFill = updates.boxFill as string | undefined;
+      }
+      if (typeof updates.opacity === "number") {
+        (b as { opacity?: number }).opacity = updates.opacity;
+      }
+      if (typeof updates.speaker === "string") {
+        b.speaker = updates.speaker.trim();
+      }
+      if (typeof updates.speakerConfirmed === "boolean") {
+        b.speakerConfirmed = updates.speakerConfirmed;
+      }
+      if (typeof updates.strokeWidth === "number") {
+        (b as { strokeWidth?: number }).strokeWidth = updates.strokeWidth;
+      }
+      if (typeof updates.color === "string") {
+        b.styleProfile = {
+          ...(b.styleProfile ?? {
+            fill: updates.color,
+            outline: "#ffffff",
+            hasOutline: true,
+            outlineWidthRatio: 0.16,
+            source: "manual",
+          }),
+          fill: updates.color,
+          source: "manual",
+          ownershipMode: "manual",
+        };
+      }
+      if (typeof updates.strokeColor === "string") {
+        b.styleProfile = {
+          ...(b.styleProfile ?? {
+            fill: "#000000",
+            outline: updates.strokeColor,
+            hasOutline: true,
+            outlineWidthRatio: 0.16,
+            source: "manual",
+          }),
+          outline: updates.strokeColor,
+          hasOutline: true,
+          source: "manual",
+          ownershipMode: "manual",
+        };
+      }
+      if (typeof updates.ownershipMode === "string") {
+        if (b.styleProfile) {
+          b.styleProfile = {
+            ...b.styleProfile,
+            ownershipMode: updates.ownershipMode as "auto" | "readable" | "manual",
+            source: updates.ownershipMode === "manual" ? "manual" : "auto",
+          };
+        }
+      }
+      if ("warp" in updates) {
+        b.warp = updates.warp as WarpConfig | undefined;
+      }
+      delete b.layoutSnapshot;
+      renderBubble();
+      saveAdjustment();
+      onBubblesMutated?.();
+    },
+    deleteBubble: () => deleteBubbleWithUndo(),
+    reanalyzeColor: () => {
+      if (img && (img.naturalWidth > 0 || img.width > 0) && b.box && b.box.length === 4) {
+        const sample = sampleBubbleRegion(img, b.box);
+        if (sample) {
+          const profile = extractTextColors(sample);
+          profile.category = inferTextStyleCategory(b);
+          b.styleProfile = profile;
+          delete b.layoutSnapshot;
+          renderBubble();
+          saveAdjustment();
+          onBubblesMutated?.();
+        }
+      }
+    },
+  });
+
+  wrapper.addEventListener("focus", () => {
+    setSelectedBubble(wrapper);
+  });
+
+  return { openLiveEditor, deleteBubbleWithUndo };
 };

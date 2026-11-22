@@ -46,8 +46,8 @@ import {
   defaultReviewApiKeyProvider,
   type ReviewApiKeyProvider,
 } from "./overlay/qualityReviewActions";
-import { openBubbleLiveEditor } from "./overlay/bubbleEditor";
-import { renderBubbleContent, type WidthLayoutPreview } from "./overlay/bubbleRenderer";
+import { renderBubbleContent, type BubbleRenderSharedState, type WidthLayoutPreview } from "./overlay/bubbleRenderer";
+import { wireBubbleSelectionAndMove } from "./overlay/bubbleInteraction";
 import { createSelectionChrome, pruneOverlayCleanups } from "./overlay/bubbleInteraction";
 
 export { fitTextForBubble, layoutBubbleAtFixedFont, wrapTextForBubble } from "./overlay/bubbleTextFit";
@@ -256,9 +256,7 @@ export const applyTranslationOverlay = async (
       viewMode,
     });
     const chromeControlsByWrapper = selection.chromeControlsByWrapper;
-    const selectedBubbleBridgeByWrapper = selection.selectedBubbleBridgeByWrapper;
     const setSelectedBubble = selection.setSelectedBubble;
-    const getSelectedBubble = selection.getSelectedBubble;
     const cancelDragPreviews = selection.cancelDragPreviews;
     // Set once scheduleChromeSync exists (it is declared after the bubble
     // builders); selection updates that happen before it are harmless no-ops.
@@ -678,6 +676,39 @@ export const applyTranslationOverlay = async (
         updateSelectionFrame();
         chromeControlsByWrapper.get(wrapper)?.position();
       };
+      const sharedState: BubbleRenderSharedState = {
+        get currentBx() { return currentBx; },
+        set currentBx(value: number) { currentBx = value; },
+        get currentBy() { return currentBy; },
+        set currentBy(value: number) { currentBy = value; },
+        get currentBw() { return currentBw; },
+        set currentBw(value: number) { currentBw = value; },
+        get currentBh() { return currentBh; },
+        set currentBh(value: number) { currentBh = value; },
+        get currentIsItalic() { return currentIsItalic; },
+        set currentIsItalic(value: boolean) { currentIsItalic = value; },
+        get manualMinHeightPx() { return manualMinHeightPx; },
+        set manualMinHeightPx(value: number | undefined) { manualMinHeightPx = value; },
+        get adj() { return adj; },
+        set adj(value: OverlayAdjustment | undefined) { adj = value; },
+        get layoutOverflow() { return layoutOverflow; },
+        set layoutOverflow(value: boolean) { layoutOverflow = value; },
+        get resizeDragActive() { return resizeDragActive; },
+        set resizeDragActive(value: boolean) { resizeDragActive = value; },
+        get floorBase() { return floorBase; },
+        set floorBase(value: { w: number; h: number } | null) { floorBase = value; },
+        get textSelection() { return textSelection; },
+        set textSelection(value: SelectionRect) { textSelection = value; },
+        get textLayoutOverflow() { return textLayoutOverflow; },
+        set textLayoutOverflow(value: boolean) { textLayoutOverflow = value; },
+        get renderedFontSize() { return renderedFontSize; },
+        set renderedFontSize(value: number) { renderedFontSize = value; },
+        get scriptNotice() { return scriptNotice; },
+        set scriptNotice(value: string) { scriptNotice = value; },
+        get sourceFontLoaded() { return sourceFontLoaded; },
+        set sourceFontLoaded(value: boolean) { sourceFontLoaded = value; },
+      };
+
       const renderBubble = (
         availableHeight?: number,
         snapshotScale = 1,
@@ -700,314 +731,36 @@ export const applyTranslationOverlay = async (
           legacyAdjustment: legacyAdj,
           adjustmentScaleX: adjSx,
           updateBubbleFrame,
-          state: {
-            get currentBx() { return currentBx; },
-            set currentBx(value: number) { currentBx = value; },
-            get currentBy() { return currentBy; },
-            set currentBy(value: number) { currentBy = value; },
-            get currentBw() { return currentBw; },
-            set currentBw(value: number) { currentBw = value; },
-            get currentBh() { return currentBh; },
-            set currentBh(value: number) { currentBh = value; },
-            get currentIsItalic() { return currentIsItalic; },
-            set currentIsItalic(value: boolean) { currentIsItalic = value; },
-            get manualMinHeightPx() { return manualMinHeightPx; },
-            set manualMinHeightPx(value: number | undefined) { manualMinHeightPx = value; },
-            get adj() { return adj; },
-            set adj(value: OverlayAdjustment | undefined) { adj = value; },
-            get layoutOverflow() { return layoutOverflow; },
-            set layoutOverflow(value: boolean) { layoutOverflow = value; },
-            get resizeDragActive() { return resizeDragActive; },
-            set resizeDragActive(value: boolean) { resizeDragActive = value; },
-            get floorBase() { return floorBase; },
-            set floorBase(value: { w: number; h: number } | null) { floorBase = value; },
-            get textSelection() { return textSelection; },
-            set textSelection(value: SelectionRect) { textSelection = value; },
-            get textLayoutOverflow() { return textLayoutOverflow; },
-            set textLayoutOverflow(value: boolean) { textLayoutOverflow = value; },
-            get renderedFontSize() { return renderedFontSize; },
-            set renderedFontSize(value: number) { renderedFontSize = value; },
-            get scriptNotice() { return scriptNotice; },
-            set scriptNotice(value: string) { scriptNotice = value; },
-            get sourceFontLoaded() { return sourceFontLoaded; },
-            set sourceFontLoaded(value: boolean) { sourceFontLoaded = value; },
-          },
+          state: sharedState,
         }, availableHeight, snapshotScale, widthLayoutPreview);
       };
 
       b.render = renderBubble;
 
       if (viewMode !== "offscreen") {
-        wrapper.addEventListener('mouseenter', () => { if (getSelectedBubble() !== wrapper) selectionFrame.style.outline = "1.5px dashed rgba(249,115,22,0.65)"; });
-      wrapper.addEventListener('mouseleave', () => { if (getSelectedBubble() !== wrapper) selectionFrame.style.outline = "none"; });
-
-      let isDragging = false;
-      let dragStartX = 0, dragStartY = 0;
-      let initialBx = 0, initialBy = 0;
-      let initialBw = 0, initialBh = 0;
-      let pendingMoveFrame: number | null = null;
-      let pendingMovePointer: {clientX:number;clientY:number} | null = null;
-      const cancelMovePreview = () => {
-        if (pendingMoveFrame !== null) window.cancelAnimationFrame(pendingMoveFrame);
-        pendingMoveFrame = null;
-        pendingMovePointer = null;
-      };
-      cancelDragPreviews.push(cancelMovePreview);
-      const applyMovePosition = (clientX:number,clientY:number) => {
-        const rect = tlContainer.getBoundingClientRect();
-        if (!(rect.width > 0 && rect.height > 0)) return;
-        currentBx = initialBx + (clientX - dragStartX) * (iw / rect.width);
-        currentBy = initialBy + (clientY - dragStartY) * (ih / rect.height);
-        updateBubbleFrame();
-      };
-
-      wrapper.addEventListener('pointerdown', (e) => {
-        const target = e.target as HTMLElement;
-        if (target.closest('.action-handle') || target.closest('.delete-btn') || target.closest('.edit-btn')) return;
-        e.stopPropagation();
-        setSelectedBubble(wrapper);
-        isDragging = true;
-        dragStartX = e.clientX;
-        dragStartY = e.clientY;
-        initialBx = currentBx;
-        initialBy = currentBy;
-        initialBw = currentBw;
-        initialBh = currentBh;
-        try {
-          wrapper.setPointerCapture(e.pointerId);
-        } catch {
-          // ignore
-        }
-      });
-
-      wrapper.addEventListener('pointermove', (e) => {
-        if (!isDragging) return;
-        e.stopPropagation();
-        pendingMovePointer = {clientX:e.clientX,clientY:e.clientY};
-        if (pendingMoveFrame === null) pendingMoveFrame = window.requestAnimationFrame(() => {
-          pendingMoveFrame = null;
-          const latest = pendingMovePointer;
-          pendingMovePointer = null;
-          if (latest && isDragging && !isStaleOverlay()) applyMovePosition(latest.clientX,latest.clientY);
-        });
-      });
-
-      wrapper.addEventListener('pointerup', (e) => {
-        if (isDragging) {
-          e.stopPropagation();
-          cancelMovePreview();
-          applyMovePosition(e.clientX,e.clientY);
-          isDragging = false;
-          try {
-            wrapper.releasePointerCapture(e.pointerId);
-          } catch {
-            // ignore
-          }
-          // A selection click must leave legacy layout and adaptive styles untouched.
-          if (currentBx === initialBx && currentBy === initialBy) return;
-          // One final layout settles page-edge constraints for preview/export parity.
-          renderBubble();
-          saveAdjustment();
-          if (currentBx !== initialBx || currentBy !== initialBy) {
-            const finalBx = currentBx, finalBy = currentBy, finalBw = currentBw, finalBh = currentBh;
-            const startBx = initialBx, startBy = initialBy, startBw = initialBw, startBh = initialBh;
-            undoManager.push({
-              label: "ย้ายตำแหน่งกล่องข้อความ",
-              undo: () => {
-                currentBx = startBx;
-                currentBy = startBy;
-                currentBw = startBw;
-                currentBh = startBh;
-                renderBubble();
-                saveAdjustment();
-              },
-              redo: () => {
-                currentBx = finalBx;
-                currentBy = finalBy;
-                currentBw = finalBw;
-                currentBh = finalBh;
-                renderBubble();
-                saveAdjustment();
-              },
-            });
-          }
-        }
-      });
-
-      wrapper.addEventListener('pointercancel', (e) => {
-        if (isDragging) {
-          isDragging = false;
-          cancelMovePreview();
-          try {
-            wrapper.releasePointerCapture(e.pointerId);
-          } catch {
-            // ignore
-          }
-          currentBx = initialBx;
-          currentBy = initialBy;
-          currentBw = initialBw;
-          currentBh = initialBh;
-          renderBubble();
-          saveAdjustment();
-        }
-      });
-
-      wrapper.addEventListener('lostpointercapture', () => {
-        if (isDragging) {
-          isDragging = false;
-          cancelMovePreview();
-        }
-      });
-
-      const openLiveEditor = () => {
-        openBubbleLiveEditor({
+        const { openLiveEditor, deleteBubbleWithUndo } = wireBubbleSelectionAndMove({
           bubble: b,
           wrapper,
           tlContainer,
           chromeRoot,
-          chromeControls: chromeControlsByWrapper.get(wrapper),
+          selectionFrame,
+          image: img,
+          bubbleId,
           pageWidth: iw,
           pageHeight: ih,
-          getCurrentRect: () => ({ x: currentBx, y: currentBy, w: currentBw, h: currentBh }),
           effectiveTarget,
           reviewApiKeyProvider,
           onBubblesMutated,
+          isStaleOverlay,
           renderBubble,
           saveAdjustment,
+          updateBubbleFrame,
           setActiveEditorPosition: (position) => {
             activeEditorPosition = position;
           },
+          chrome: selection,
+          state: sharedState,
         });
-      };
-
-      const deleteBubbleWithUndo = () => {
-        b.deleted = true;
-        onBubblesMutated?.();
-        wrapper.style.display = "none";
-        wrapper.dataset.deleted = "true";
-        setSelectedBubble(null);
-        undoManager.push({
-          label: "ลบกล่องข้อความ",
-          undo: () => {
-            b.deleted = false;
-            wrapper.style.display = "block";
-            delete wrapper.dataset.deleted;
-            renderBubble();
-            onBubblesMutated?.();
-          },
-          redo: () => {
-            b.deleted = true;
-            wrapper.style.display = "none";
-            wrapper.dataset.deleted = "true";
-            setSelectedBubble(null);
-            onBubblesMutated?.();
-          },
-        });
-      };
-
-      selectedBubbleBridgeByWrapper.set(wrapper, {
-        bubble: b,
-        bubbleId,
-        getFontSize: () => Math.round(renderedFontSize || b.targetFontSize || 20),
-        applyUpdates: (updates: Record<string, unknown>) => {
-          if (typeof updates.fontFamily === "string") {
-            (b as { fontFamily?: string }).fontFamily = updates.fontFamily;
-          }
-          if (typeof updates.fontSize === "number" && updates.fontSize > 0) {
-            b.targetFontSize = updates.fontSize;
-          }
-          if (typeof updates.isBold === "boolean") {
-            (b as { isBold?: boolean }).isBold = updates.isBold;
-          }
-          if (typeof updates.isItalic === "boolean") {
-            currentIsItalic = updates.isItalic;
-            b.isItalic = updates.isItalic;
-            b.italic = updates.isItalic;
-          }
-          if (typeof updates.align === "string") {
-            (b as { align?: string }).align = updates.align;
-          }
-          if ("boxFill" in updates) {
-            (b as { boxFill?: string }).boxFill = updates.boxFill as string | undefined;
-          }
-          if (typeof updates.opacity === "number") {
-            (b as { opacity?: number }).opacity = updates.opacity;
-          }
-          if (typeof updates.speaker === "string") {
-            b.speaker = updates.speaker.trim();
-          }
-          if (typeof updates.speakerConfirmed === "boolean") {
-            b.speakerConfirmed = updates.speakerConfirmed;
-          }
-          if (typeof updates.strokeWidth === "number") {
-            (b as { strokeWidth?: number }).strokeWidth = updates.strokeWidth;
-          }
-          if (typeof updates.color === "string") {
-            b.styleProfile = {
-              ...(b.styleProfile ?? {
-                fill: updates.color,
-                outline: "#ffffff",
-                hasOutline: true,
-                outlineWidthRatio: 0.16,
-                source: "manual",
-              }),
-              fill: updates.color,
-              source: "manual",
-              ownershipMode: "manual",
-            };
-          }
-          if (typeof updates.strokeColor === "string") {
-            b.styleProfile = {
-              ...(b.styleProfile ?? {
-                fill: "#000000",
-                outline: updates.strokeColor,
-                hasOutline: true,
-                outlineWidthRatio: 0.16,
-                source: "manual",
-              }),
-              outline: updates.strokeColor,
-              hasOutline: true,
-              source: "manual",
-              ownershipMode: "manual",
-            };
-          }
-          if (typeof updates.ownershipMode === "string") {
-            if (b.styleProfile) {
-              b.styleProfile = {
-                ...b.styleProfile,
-                ownershipMode: updates.ownershipMode as "auto" | "readable" | "manual",
-                source: updates.ownershipMode === "manual" ? "manual" : "auto",
-              };
-            }
-          }
-          if ("warp" in updates) {
-            b.warp = updates.warp as WarpConfig | undefined;
-          }
-          delete b.layoutSnapshot;
-          renderBubble();
-          saveAdjustment();
-          onBubblesMutated?.();
-        },
-        deleteBubble: () => deleteBubbleWithUndo(),
-        reanalyzeColor: () => {
-          if (img && (img.naturalWidth > 0 || img.width > 0) && b.box && b.box.length === 4) {
-            const sample = sampleBubbleRegion(img, b.box);
-            if (sample) {
-              const profile = extractTextColors(sample);
-              profile.category = inferTextStyleCategory(b);
-              b.styleProfile = profile;
-              delete b.layoutSnapshot;
-              renderBubble();
-              saveAdjustment();
-              onBubblesMutated?.();
-            }
-          }
-        },
-      });
-
-      wrapper.addEventListener("focus", () => {
-        setSelectedBubble(wrapper);
-      });
 
       wrapper.addEventListener("dblclick", (e) => {
         e.stopPropagation();
