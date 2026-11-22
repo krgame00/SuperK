@@ -5,7 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 23 พ.ย. 00:52 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅
+- 23 พ.ย. 01:24 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ต่อไป"
 - 17 พ.ย. 22:31 · `2b8116b8` · "ทำต่อหน่อย" · ⚠️ · ↳ "ระบบตรวจ ai locel มันยังจับได้ไม่หมด และยังมีรอยจุดๆๆๆ เราพอจะแก้ได้ไหม [$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\pstack-poteto-…"
 - 15 พ.ย. 01:40 · `2b7e562b` · "ทำให้ระบบตรวจดีขึ้นอีกได้ไหมครับ ยังจับได้ไม่ครบ" · ⚠️
 - 15 พ.ย. 01:03 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ⚠️ · ↳ "เราทำให้ระบบตรวจมันจับให้ได้หมดเลยได้ไหม พอมีวิธีไหม"
@@ -33,6 +33,17 @@
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
 
 ---
+
+## แผนแยก bubbleInteraction — Phase 6 ลบ shim จบ 7 เฟส (poteto-mode, refactoring playbook) — 2026-11-23
+
+### Status: **push แล้ว** commit `4c7d7de` (CI `45055779020` success) — **แผนแยก bubbleInteraction จบครบ 7 เฟส** lib/overlay/bubbleInteraction.ts ถูกลบ orchestrator import ตรง lib/overlay/* ทุกชื่อ
+
+- **พบจากการผ่าจอบก่อนแก้:** จุดเรียก wireBubbleResizeChrome (translationOverlay.ts:818) ทิ้งค่า return ไม่ assign จึงไม่ต้องมี composer ตัวกลางเลย — orchestrator สร้าง resizeChromeDeps object เดียวแล้ว spread เข้า wireBubbleResizeHandles (เติม cancelDragPreviews) + wireBubbleToolbar (เติม chromeHandles + chromeControlsByWrapper) ตาม principle-laziness-protocol ตัดทั้งชั้น composer
+- **import ตรง 5 ชื่อ:** wireBubbleSelectionAndMove ← bubbleMove / wireBubbleResizeHandles ← bubbleResizeHandles / wireBubbleToolbar ← bubbleToolbar / createSelectionChrome ← selectionChrome / pruneOverlayCleanups ← overlayLifecycle — ผู้เรียก bubbleInteraction มีไฟล์เดียว (translationOverlay.ts) ยืนยันด้วย grep ทั้ง repo
+- **โครงสร้างสุดท้าย lib/overlay 16 ไฟล์:** interactionTypes / overlayLifecycle / selectionChrome / bubbleStyleActions / bubbleMove (584) / bubbleResizeHandles (618) / bubbleToolbar (464) + utility เดิม (bubbleRenderer, bubbleEditor, bubbleTextFit, canvasFont, sourceGeometry, overlayTypes, overlayAdjustmentStore, qualityReviewActions, exportTranslatedImage) — translationOverlay.ts เหลือ 906 บรรทัดเป็น orchestrator เท่านั้น
+- **พิสูจน์:** tsc 0 / eslint 0 / ชุดครอบคลุม 175 ไฟล์ 1611 เคสเขียว / madge gate overlay เขียว / CI success ทั้งสอง job
+- **เต็มชุด noise รอบเดียว:** productionLauncher timeout (ตระกูลเดิมจาก Phase 2) รันเดี่ยวผ่าน 3/3 ต่างจากรอบก่อนที่ล้ม SettingsModal+productionWatchdog — ยืนยันเป็น contention ไม่เกี่ยว diff
+- **ค้างสุดท้ายของทั้งแผน:** manual smoke checklist มือ (เลือก bubble, ลาก 3 ชนิด, คีย์บอร์ด, toolbar, สลับหน้า) รอผู้ใช้ทดสอบ — โค้ดทุก phase เขียวแล้ว
 
 ## แผนแยก bubbleInteraction — Phase 5 ย้าย selection/move ไป bubbleMove.ts (poteto-mode, refactoring playbook) — 2026-11-23
 
