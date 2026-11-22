@@ -5,7 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 22 พ.ย. 00:44 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ทำ Phase 2"
+- 22 พ.ย. 00:58 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ทำ Phase 3"
 - 17 พ.ย. 22:31 · `2b8116b8` · "ทำต่อหน่อย" · ⚠️ · ↳ "ระบบตรวจ ai locel มันยังจับได้ไม่หมด และยังมีรอยจุดๆๆๆ เราพอจะแก้ได้ไหม [$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\pstack-poteto-…"
 - 15 พ.ย. 01:40 · `2b7e562b` · "ทำให้ระบบตรวจดีขึ้นอีกได้ไหมครับ ยังจับได้ไม่ครบ" · ⚠️
 - 15 พ.ย. 01:03 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ⚠️ · ↳ "เราทำให้ระบบตรวจมันจับให้ได้หมดเลยได้ไหม พอมีวิธีไหม"
@@ -33,6 +33,15 @@
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
 
 ---
+
+## Phase 4 refactor translationOverlay แยก export รูปสำเร็จ (poteto-mode, refactoring playbook) — 2026-11-22
+
+### Status: **push แล้ว CI เขียว** commit `78b9575` — โมดูลย่อย lib/overlay/* ครบ 6 ไฟล์ (overlayTypes / bubbleTextFit / overlayAdjustmentStore / sourceGeometry / canvasFont / exportTranslatedImage) เหลือ translationOverlay = paint + listener/generation + snapshot validator เท่านั้น
+
+- **ของที่ย้าย:** downloadTranslatedImage ทั้งฟังก์ชันคำต่อคำ → `lib/overlay/exportTranslatedImage.ts` — พิสูจน์ก่อนย้ายว่ามันสมบูรณ์ในตัว (DOM lookup + วาง canvas ภาพต้น/layer/bubble + JPEG 0.9 + return data-url) ไม่มีพึ่งพาภายใน translationOverlay เลย โมดูลใหม่จึง import ศูนย์; paint เรียกผ่าน import 2 จุด (บรรทัด 362/3554 เดิม) และ re-export คุมผู้ใช้เดิม (เทสต์ workspace/workflow/browser-helper ~10 ไฟล์)
+- **พิสูจน์:** tsc 0 / eslint เซต warning เท่า baseline 3 ตัว / เทสต์ครอบคลุม 15 ไฟล์ **218 เคสเขียว** (เพิ่ม workspaceExportEligibility + exportManager + workspacePage) / madge ยัง 2 วงจร / npm test เต็ม `--silent` **2392/2392 เขียวหมด** รอบเดียวจบ
+- **สังเกต:** ล้าง trailing whitespace 3 จุดตอนเขียนไฟล์ใหม่ (เดิมมีช่องว่างท้ายบรรทัด) — ความต่างเดียวของ diff นอกจากการย้ายที่อยู่
+- **ต่อไป:** Phase 5 ผ่า paint ตัวใหญ่ (เสี่ยงสูงสุด ย้าย listener/generation/editor/review ทั้งก้อน ต้อง manual smoke checklist ตามแผน) → Phase 6 รัด type + options object + ลบ shim + madge เข้า CI
 
 ## Phase 3 refactor translationOverlay แยก pure functions ครบสำเร็จ (poteto-mode, refactoring playbook) — 2026-11-22
 
