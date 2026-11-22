@@ -17,15 +17,26 @@ vi.mock("@/lib/colorMatching/canvasSampler", async (importOriginal) => ({
 
 vi.mock("@/lib/translationOverlay", () => ({
   applyTranslationOverlay: vi.fn(
-    async (
-      _bubbles: unknown[],
-      _viewMode: "single" | "scroll" | "offscreen",
-      _pageIndex: number,
-      _setTranslationResult: (message: string | null) => void,
-      onComplete?: (dataUrl: string) => void,
-      _textStyleRef?: unknown,
-      containerOverride?: HTMLElement,
-    ) => {
+    async (firstArg: unknown, ...restArgs: unknown[]) => {
+      const normalizedCall = Array.isArray(firstArg)
+        ? {
+            _bubbles: firstArg,
+            viewMode: restArgs[0],
+            _pageIndex: restArgs[2],
+            _setTranslationResult: restArgs[3],
+            onComplete: restArgs[4],
+            containerOverride: restArgs[6],
+          }
+        : (firstArg as Record<string, unknown>);
+      const { _bubbles, viewMode, _pageIndex, _setTranslationResult, onComplete, containerOverride } = normalizedCall as {
+        _bubbles?: unknown;
+        viewMode?: "single" | "scroll" | "offscreen";
+        _pageIndex?: number;
+        _setTranslationResult?: (message: string | null) => void;
+        onComplete?: (dataUrl: string) => void;
+        containerOverride?: HTMLElement;
+      };
+
       const preparedSrc = containerOverride
         ?.querySelector("img")
         ?.getAttribute("src");
@@ -94,7 +105,7 @@ test("checks source-backed translation quality before drawing a page", async () 
     preparePageForTranslation:async()=>({recognitionUrl:"blob:original",backgroundUrl:"blob:clean"})}));
   await act(async()=>{expect(await result.current.handleTranslate()).toBe(true);});
   expect(order).toEqual(["review"]);
-  const rendered=vi.mocked(applyTranslationOverlay).mock.calls.filter(call=>call[1]==="offscreen").at(-1)?.[0] as Array<{t:string;translationReview?:{status:string}}>; // final render (optimistic preview draws first)
+  const rendered=((vi.mocked(applyTranslationOverlay).mock.calls.filter(call=>(call[0] as { viewMode?: string }).viewMode==="offscreen").at(-1)?.[0] as { bubbles?: Array<{t:string;translationReview?:{status:string}}> } | undefined)?.bubbles) ?? []; // final render (optimistic preview draws first)
   expect(rendered[0]).toMatchObject({t:"สวัสดี",translationReview:{status:"suggested"}});
   expect(result.current.translationResult).toContain("คำแปล");
 });
@@ -156,9 +167,9 @@ test("reads Original pixels and renders translated bubbles onto Clean", async ()
   expect(order).toEqual(["clean", "load-original", "translate"]);
   const offscreenCall = vi
     .mocked(applyTranslationOverlay)
-    .mock.calls.find((call) => call[1] === "offscreen");
+    .mock.calls.find((call) => (call[0] as { viewMode?: string }).viewMode === "offscreen");
   expect(
-    offscreenCall?.[6]?.querySelector("img")?.getAttribute("src"),
+    (offscreenCall?.[0] as { containerOverride?: HTMLElement } | undefined)?.containerOverride?.querySelector("img")?.getAttribute("src"),
   ).toBe("blob:clean");
 });
 
@@ -677,7 +688,15 @@ test("single translation clears stale visible bubbles while preserving their cac
   act(() => { translation = result.current.handleTranslate(); });
   expect(result.current.activeBubbles).toEqual([]);
   expect(result.current.bubbleCacheRef.current.get("blob:one")).toBe(cached);
-  expect(vi.mocked(applyTranslationOverlay)).toHaveBeenCalledWith([], "single", 0, expect.any(Function), undefined, expect.any(Object), undefined, "blob:one");
+  expect(vi.mocked(applyTranslationOverlay)).toHaveBeenCalledWith({
+    bubbles: [],
+    viewMode: "single",
+    currentPage: 0,
+    setTranslationResult: expect.any(Function),
+    textStyleRef: expect.any(Object),
+    pageKeyOverride: "blob:one",
+    reviewApiKeyProvider: expect.any(Function),
+  });
   act(() => result.current.cancelTranslateAll());
   releasePreparation({ recognitionUrl: "blob:one", backgroundUrl: "blob:clean" });
   await act(async () => { await translation; });
@@ -895,18 +914,18 @@ test("background batch renders final images by original URL and skips them later
   expect(
     result.current.translatedImageCacheRef.current.has("blob:clean-2"),
   ).toBe(false);
-  expect(vi.mocked(applyTranslationOverlay)).toHaveBeenCalledWith(
-    expect.any(Array),
-    "offscreen",
-    1,
-    expect.any(Function),
-    expect.any(Function),
-    expect.any(Object),
-    expect.any(HTMLElement),
-    expect.any(String),
-    undefined,
-    "th",
-  );
+  expect(vi.mocked(applyTranslationOverlay)).toHaveBeenCalledWith({
+    bubbles: expect.any(Array),
+    viewMode: "offscreen",
+    currentPage: 1,
+    setTranslationResult: expect.any(Function),
+    onComplete: expect.any(Function),
+    textStyleRef: expect.any(Object),
+    containerOverride: expect.any(HTMLElement),
+    pageKeyOverride: expect.any(String),
+    targetLanguage: "th",
+    reviewApiKeyProvider: expect.any(Function),
+  });
 
   let secondBatch!: Promise<void>;
   act(() => {
@@ -1314,9 +1333,9 @@ test("active and background pages cache from unique clean offscreen containers",
   });
 
   const overlayCalls = vi.mocked(applyTranslationOverlay).mock.calls;
-  const offscreenCalls = overlayCalls.filter((call) => call[1] === "offscreen");
+  const offscreenCalls = overlayCalls.filter((call) => (call[0] as { viewMode?: string }).viewMode === "offscreen");
   expect(offscreenCalls.length).toBeGreaterThanOrEqual(2);
-  const offscreenContainers = offscreenCalls.map((call) => call[6]);
+  const offscreenContainers = offscreenCalls.map((call) => (call[0] as { containerOverride?: HTMLElement }).containerOverride);
   expect(offscreenContainers[0]).not.toBe(offscreenContainers[1]);
   expect(
     offscreenContainers.map((container) =>
@@ -1331,9 +1350,9 @@ test("active and background pages cache from unique clean offscreen containers",
   expect(document.querySelectorAll("#offscreen-container")).toHaveLength(0);
 
   const activeInteractive = overlayCalls.find(
-    (call) => call[1] === "single" && call[2] === 0,
+    (call) => (call[0] as { viewMode?: string }).viewMode === "single" && (call[0] as { currentPage?: number }).currentPage === 0,
   );
-  expect(activeInteractive?.[4]).toBeUndefined();
+  expect((activeInteractive?.[0] as { onComplete?: unknown } | undefined)?.onComplete).toBeUndefined();
   expect(result.current.translatedImageCacheRef.current.get("blob:one")).toBe(
     "data:offscreen,blob:clean-1",
   );
@@ -1685,18 +1704,17 @@ test("re-applies translation overlay when superk:request-overlay-refresh is disp
       await vi.advanceTimersByTimeAsync(100);
     });
 
-    expect(applyTranslationOverlay).toHaveBeenCalledWith(
-      [translatedBubble],
-      "single",
-      0,
-      expect.any(Function),
-      undefined,
-      expect.any(Object),
-      undefined,
-      "blob:one",
-      expect.any(Function),
-      expect.any(String),
-    );
+    expect(applyTranslationOverlay).toHaveBeenCalledWith({
+      bubbles: [translatedBubble],
+      viewMode: "single",
+      currentPage: 0,
+      setTranslationResult: expect.any(Function),
+      textStyleRef: expect.any(Object),
+      pageKeyOverride: "blob:one",
+      onBubblesMutated: expect.any(Function),
+      targetLanguage: expect.any(String),
+      reviewApiKeyProvider: expect.any(Function),
+    });
   } finally {
     vi.useRealTimers();
   }

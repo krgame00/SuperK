@@ -6,15 +6,26 @@ import { applyTranslationOverlay } from "@/lib/translationOverlay";
 
 vi.mock("@/lib/translationOverlay", () => ({
   applyTranslationOverlay: vi.fn(
-    async (
-      _bubbles: unknown[],
-      viewMode: "single" | "scroll" | "offscreen",
-      _pageIndex: number,
-      _setTranslationResult: (message: string | null) => void,
-      onComplete?: (dataUrl: string) => void,
-      _textStyleRef?: unknown,
-      containerOverride?: HTMLElement,
-    ) => {
+    async (firstArg: unknown, ...restArgs: unknown[]) => {
+      const normalizedCall = Array.isArray(firstArg)
+        ? {
+            _bubbles: firstArg,
+            viewMode: restArgs[0],
+            _pageIndex: restArgs[2],
+            _setTranslationResult: restArgs[3],
+            onComplete: restArgs[4],
+            containerOverride: restArgs[6],
+          }
+        : (firstArg as Record<string, unknown>);
+      const { _bubbles, viewMode, _pageIndex, _setTranslationResult, onComplete, containerOverride } = normalizedCall as {
+        _bubbles?: unknown;
+        viewMode?: "single" | "scroll" | "offscreen";
+        _pageIndex?: number;
+        _setTranslationResult?: (message: string | null) => void;
+        onComplete?: (dataUrl: string) => void;
+        containerOverride?: HTMLElement;
+      };
+
       const preparedSrc = containerOverride
         ?.querySelector("img")
         ?.getAttribute("src");
@@ -116,9 +127,9 @@ test("navigation restore is display-only and preserves the prepared translated c
   const restoreCall = vi
     .mocked(applyTranslationOverlay)
     .mock.calls.findLast(
-      (call) => call[1] === "single" && call[2] === 0,
+      (call) => (call[0] as { viewMode?: string }).viewMode === "single" && (call[0] as { currentPage?: number }).currentPage === 0,
     );
-  expect(restoreCall?.[4]).toBeUndefined();
+  expect((restoreCall?.[0] as { onComplete?: unknown } | undefined)?.onComplete).toBeUndefined();
   expect(result.current.translatedImageCacheRef.current.get("blob:one")).toBe(
     "data:offscreen,blob:clean-one",
   );

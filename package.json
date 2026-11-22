@@ -39,6 +39,7 @@
     "eslint-config-next": "16.2.10",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^30.0.1",
+    "madge": "^8.0.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.10"

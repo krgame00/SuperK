@@ -6,13 +6,26 @@ import { applyTranslationOverlay } from "@/lib/translationOverlay";
 
 vi.mock("@/lib/translationOverlay", () => ({
   applyTranslationOverlay: vi.fn(
-    async (
-      _bubbles: unknown[],
-      _viewMode: "single" | "scroll" | "offscreen",
-      _pageIndex: number,
-      _setTranslationResult: (message: string | null) => void,
-      onComplete?: (dataUrl: string) => void,
-    ) => {
+    async (firstArg: unknown, ...restArgs: unknown[]) => {
+      const normalizedCall = Array.isArray(firstArg)
+        ? {
+            _bubbles: firstArg,
+            viewMode: restArgs[0],
+            _pageIndex: restArgs[2],
+            _setTranslationResult: restArgs[3],
+            onComplete: restArgs[4],
+            containerOverride: restArgs[6],
+          }
+        : (firstArg as Record<string, unknown>);
+      const { _bubbles, viewMode, _pageIndex, _setTranslationResult, onComplete, containerOverride } = normalizedCall as {
+        _bubbles?: unknown;
+        viewMode?: "single" | "scroll" | "offscreen";
+        _pageIndex?: number;
+        _setTranslationResult?: (message: string | null) => void;
+        onComplete?: (dataUrl: string) => void;
+        containerOverride?: HTMLElement;
+      };
+
       onComplete?.("data:translated");
     },
   ),
@@ -158,9 +171,9 @@ test("NSFW translation publishes same-page manual bubbles to both render and bub
     expect(await translation).toBe(true);
   });
 
-  const rendered = vi
+  const rendered = (vi
     .mocked(applyTranslationOverlay)
-    .mock.calls.findLast((call) => call[1] === "offscreen")?.[0];
+    .mock.calls.findLast((call) => (call[0] as { viewMode?: string }).viewMode === "offscreen")?.[0] as { bubbles?: unknown[] } | undefined)?.bubbles;
   expect(rendered).toEqual(expect.arrayContaining([manualLike(activeManual)]));
   expect(result.current.bubbleCacheRef.current.get("blob:one")).toEqual(
     expect.arrayContaining([manualLike(activeManual)]),
@@ -209,11 +222,11 @@ test("Translate All uses each background page cache instead of active-page manua
     await batch;
   });
 
-  const backgroundRender = vi
+  const backgroundRender = (vi
     .mocked(applyTranslationOverlay)
     .mock.calls.findLast(
-      (call) => call[1] === "offscreen" && call[2] === 1,
-    )?.[0];
+      (call) => (call[0] as { viewMode?: string }).viewMode === "offscreen" && (call[0] as { currentPage?: number }).currentPage === 1,
+    )?.[0] as { bubbles?: unknown[] } | undefined)?.bubbles;
   expect(backgroundRender).toEqual(
     expect.arrayContaining([manualLike(backgroundManual)]),
   );

@@ -6,7 +6,7 @@ import { saveProjectSession, loadProjectSession } from "@/lib/projectStore";
 import { createPageTargetIdentity, type PageTargetIdentity } from "@/lib/translation/pageEligibility";
 
 vi.mock("@/lib/colorMatching/canvasSampler", async original => ({...await original<typeof import("@/lib/colorMatching/canvasSampler")>(),sampleBubbleRegion:vi.fn(()=>null)}));
-vi.mock("@/lib/translationOverlay",()=>({applyTranslationOverlay:vi.fn(async (_b:unknown,_v:unknown,_p:unknown,_m:unknown,done?: (url:string)=>void)=>done?.("data:render"))}));
+vi.mock("@/lib/translationOverlay",()=>({applyTranslationOverlay:vi.fn(async(...a:unknown[])=>{const o=Array.isArray(a[0])?{onComplete:a[4] as((url:string)=>void)|undefined}:(a[0]as{onComplete?:(url:string)=>void});o.onComplete?.("data:render")})}));
 vi.mock("@/lib/projectStore",()=>({saveProjectSession:vi.fn().mockResolvedValue(undefined),loadProjectSession:vi.fn().mockResolvedValue(null),clearProjectSession:vi.fn().mockResolvedValue(undefined),deleteAsset:vi.fn().mockResolvedValue(undefined)}));
 beforeEach(()=>{
   vi.clearAllMocks();
@@ -39,7 +39,7 @@ test("captures page identity at actual job start and preserves it when next-job 
   act(()=>result.current.setTargetLang("Japanese"));
   expect(targets(result.current)?.get(pages[0])?.targetId).toBe("fr");
   expect(result.current.bubbleCacheRef.current.get(pages[0])).toBe(before);
-  for(const call of vi.mocked(applyTranslationOverlay).mock.calls)expect(call[9]).toBe("fr");
+  for(const call of vi.mocked(applyTranslationOverlay).mock.calls)expect((call[0] as { targetLanguage?: string }).targetLanguage).toBe("fr");
   await act(async()=>{await result.current.retrySaveSession();});
   expect(vi.mocked(saveProjectSession).mock.calls.at(-1)?.[0].pageTargetCache?.get(pages[0])?.targetId).toBe("fr");
 });
@@ -104,7 +104,7 @@ test("restored obsolete policy cannot render lettering as if currently verified"
   await act(async()=>{await result.current.restoreSavedSession();});
   vi.mocked(applyTranslationOverlay).mockClear();
   await act(async()=>{await result.current.refreshPageTranslation(pages[0],"blob:clean");});
-  for(const call of vi.mocked(applyTranslationOverlay).mock.calls)expect(call[9]).toBeUndefined();
+  for(const call of vi.mocked(applyTranslationOverlay).mock.calls)expect((call[0] as { targetLanguage?: string | undefined }).targetLanguage).toBeUndefined();
 });
 test.each(["กAา","เลข ١٢"])("restored baked bitmap cannot leak excluded lettering or unnormalized numeral forms: %s",async text=>{
   vi.mocked(loadProjectSession).mockResolvedValue({pages:[{id:"stable",url:pages[0],name:"page"}],currentPage:0,updatedAt:1,hasUnrecoverableSources:false,bubbleCache:new Map([[pages[0],[{t:text,box:[10,20,40,80]}]]]),translatedImageCache:new Map([[pages[0],"data:unsafe-bitmap"]]),pageTargetCache:new Map([[pages[0],createPageTargetIdentity("th")!]])});

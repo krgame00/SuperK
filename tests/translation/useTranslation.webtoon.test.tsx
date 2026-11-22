@@ -12,13 +12,26 @@ vi.mock("@/lib/colorMatching/canvasSampler", async (importOriginal) => ({
 
 vi.mock("@/lib/translationOverlay", () => ({
   applyTranslationOverlay: vi.fn(
-    async (
-      _bubbles: unknown[],
-      _viewMode: "single" | "scroll" | "offscreen",
-      _pageIndex: number,
-      _setTranslationResult: (message: string | null) => void,
-      onComplete?: (dataUrl: string) => void,
-    ) => {
+    async (firstArg: unknown, ...restArgs: unknown[]) => {
+      const normalizedCall = Array.isArray(firstArg)
+        ? {
+            _bubbles: firstArg,
+            viewMode: restArgs[0],
+            _pageIndex: restArgs[2],
+            _setTranslationResult: restArgs[3],
+            onComplete: restArgs[4],
+            containerOverride: restArgs[6],
+          }
+        : (firstArg as Record<string, unknown>);
+      const { _bubbles, viewMode, _pageIndex, _setTranslationResult, onComplete, containerOverride } = normalizedCall as {
+        _bubbles?: unknown;
+        viewMode?: "single" | "scroll" | "offscreen";
+        _pageIndex?: number;
+        _setTranslationResult?: (message: string | null) => void;
+        onComplete?: (dataUrl: string) => void;
+        containerOverride?: HTMLElement;
+      };
+
       onComplete?.("data:webtoon-translated");
     },
   ),
@@ -143,11 +156,13 @@ describe("Webtoon Long-Strip Translation Pipeline Integration in useTranslation"
     // Verified: applyTranslationOverlay was called with global remapped bubbles
     expect(applyTranslationOverlay).toHaveBeenCalled();
     const calls = vi.mocked(applyTranslationOverlay).mock.calls;
-    const finalCallBubbles = calls[calls.length - 1][0] as Array<{
-      box: number[];
-      text?: string;
-      original_text?: string;
-    }>;
+    const finalCallBubbles = (calls[calls.length - 1][0] as {
+      bubbles?: Array<{
+        box: number[];
+        text?: string;
+        original_text?: string;
+      }>;
+    }).bubbles ?? [];
 
     expect(finalCallBubbles.length).toBeGreaterThan(0);
     // Verify each bubble has valid 0-1000 normalized coordinates

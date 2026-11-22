@@ -8,13 +8,26 @@ import { createPageTargetIdentity } from "@/lib/translation/pageEligibility";
 
 vi.mock("@/lib/translationOverlay", () => ({
   applyTranslationOverlay: vi.fn(
-    async (
-      _bubbles: unknown[],
-      _viewMode: "single" | "scroll" | "offscreen",
-      _pageIndex: number,
-      _setTranslationResult: (message: string | null) => void,
-      onComplete?: (dataUrl: string) => void,
-    ) => {
+    async (firstArg: unknown, ...restArgs: unknown[]) => {
+      const normalizedCall = Array.isArray(firstArg)
+        ? {
+            _bubbles: firstArg,
+            viewMode: restArgs[0],
+            _pageIndex: restArgs[2],
+            _setTranslationResult: restArgs[3],
+            onComplete: restArgs[4],
+            containerOverride: restArgs[6],
+          }
+        : (firstArg as Record<string, unknown>);
+      const { _bubbles, viewMode, _pageIndex, _setTranslationResult, onComplete, containerOverride } = normalizedCall as {
+        _bubbles?: unknown;
+        viewMode?: "single" | "scroll" | "offscreen";
+        _pageIndex?: number;
+        _setTranslationResult?: (message: string | null) => void;
+        onComplete?: (dataUrl: string) => void;
+        containerOverride?: HTMLElement;
+      };
+
       onComplete?.("data:translated");
     },
   ),
@@ -47,11 +60,11 @@ interface ReviewBody {
 }
 
 function lastRendered() {
-  return vi
+  return ((vi
     .mocked(applyTranslationOverlay)
-    .mock.calls.findLast((call) => call[1] === "offscreen")?.[0] as Array<{
+    .mock.calls.findLast((call) => (call[0] as { viewMode?: string }).viewMode === "offscreen")?.[0] as { bubbles?: Array<{
     t?: string;
-  }>;
+  }> } | undefined)?.bubbles) ?? [];
 }
 
 beforeEach(() => {

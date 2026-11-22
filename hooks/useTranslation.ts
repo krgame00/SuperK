@@ -10,6 +10,13 @@ import {
   type TranslationObservabilityMeta,
   DEFAULT_QUOTA_COOLDOWN_MS,
 } from "@/lib/translation/requestError";
+
+// The overlay's AI-review action reads the key at click time through this
+// provider; the hook is the boundary that owns localStorage access.
+const reviewApiKeyProvider = (): string => {
+  if (typeof localStorage === "undefined") return "";
+  return localStorage.getItem("gemini_api_key") || "";
+};
 import { applyTranslationOverlay } from "@/lib/translationOverlay";
 import type { TranslatedBubble } from "@/lib/translationOverlay";
 import {
@@ -886,18 +893,17 @@ export function useTranslation({
         const pageIndex = pagesRef.current.indexOf(currentUrl);
         const renderTarget =
           getPageTargetLanguage(currentUrl) || targetLangRef.current || "th";
-        void applyTranslationOverlay(
-          currentBubbles,
+        void applyTranslationOverlay({
+          bubbles: currentBubbles,
           viewMode,
-          pageIndex >= 0 ? pageIndex : currentPage,
+          currentPage: pageIndex >= 0 ? pageIndex : currentPage,
           setTranslationResult,
-          undefined,
           textStyleRef,
-          undefined,
-          currentUrl,
-          () => markPageDirty(currentUrl),
-          renderTarget,
-        );
+          pageKeyOverride: currentUrl,
+          onBubblesMutated: () => markPageDirty(currentUrl),
+          targetLanguage: renderTarget,
+          reviewApiKeyProvider,
+        });
       }
 
       setCacheRevision((rev) => rev + 1);
@@ -945,18 +951,17 @@ export function useTranslation({
       // Small delay so the DOM (pageContainer + img) is rendered first
       const timer = setTimeout(() => {
         if (suppressedOverlayPagesRef.current.has(currentKey)) return;
-        applyTranslationOverlay(
-          cached,
+        applyTranslationOverlay({
+          bubbles: cached,
           viewMode,
           currentPage,
           setTranslationResult,
-          undefined,
           textStyleRef,
-          undefined,
-          currentKey,
-          () => markPageDirty(currentKey),
-          getPageTargetLanguage(currentKey) || targetLangRef.current || "th",
-        );
+          pageKeyOverride: currentKey,
+          onBubblesMutated: () => markPageDirty(currentKey),
+          targetLanguage: getPageTargetLanguage(currentKey) || targetLangRef.current || "th",
+          reviewApiKeyProvider,
+        });
       }, 100);
       return () => clearTimeout(timer);
     } else {
@@ -992,18 +997,17 @@ export function useTranslation({
         if (timer) clearTimeout(timer);
         timer = setTimeout(() => {
           if (suppressedOverlayPagesRef.current.has(currentKey)) return;
-          void applyTranslationOverlay(
-            cached,
+          void applyTranslationOverlay({
+            bubbles: cached,
             viewMode,
-            effectiveIndex,
+            currentPage: effectiveIndex,
             setTranslationResult,
-            undefined,
             textStyleRef,
-            undefined,
-            currentKey,
-            () => markPageDirty(currentKey),
-            renderTarget,
-          );
+            pageKeyOverride: currentKey,
+            onBubblesMutated: () => markPageDirty(currentKey),
+            targetLanguage: renderTarget,
+            reviewApiKeyProvider,
+          });
         }, 50);
       }
     };
@@ -1440,11 +1444,22 @@ export function useTranslation({
 
       if (activePageRef.current === pages[currentPage]) {
         setActiveBubbles(updatedBubbles);
-        applyTranslationOverlay(updatedBubbles, viewMode, currentPage, setTranslationResult, (dataUrl) => {
-          translatedImageCacheRef.current.set(pages[currentPage], dataUrl);
-          markPageDirty(pages[currentPage], false);
-          setTranslatedImages(new Map(translatedImageCacheRef.current));
-        }, textStyleRef, undefined, pages[currentPage], () => markPageDirty(pages[currentPage]), targetLang);
+        applyTranslationOverlay({
+          bubbles: updatedBubbles,
+          viewMode,
+          currentPage,
+          setTranslationResult,
+          onComplete: (dataUrl) => {
+            translatedImageCacheRef.current.set(pages[currentPage], dataUrl);
+            markPageDirty(pages[currentPage], false);
+            setTranslatedImages(new Map(translatedImageCacheRef.current));
+          },
+          textStyleRef,
+          pageKeyOverride: pages[currentPage],
+          onBubblesMutated: () => markPageDirty(pages[currentPage]),
+          targetLanguage: targetLang,
+          reviewApiKeyProvider,
+        });
         setTranslationResult("✅ แปลเฉพาะจุดสำเร็จ!");
       }
       completedPagesRef.current.add(pages[currentPage]);
@@ -1531,18 +1546,18 @@ export function useTranslation({
           );
           void Promise.resolve()
             .then(() =>
-              applyTranslationOverlay(
+              applyTranslationOverlay({
                 bubbles,
-                "offscreen",
-                pageIndex,
-                () => {},
-                complete,
+                viewMode: "offscreen",
+                currentPage: pageIndex,
+                setTranslationResult: () => {},
+                onComplete: complete,
                 textStyleRef,
-                offscreenContainer,
-                pageUrl,
-                undefined,
-                renderTarget,
-              ),
+                containerOverride: offscreenContainer,
+                pageKeyOverride: pageUrl,
+                targetLanguage: renderTarget,
+                reviewApiKeyProvider,
+              }),
             )
             .catch(rejectOnce);
         });
@@ -1563,18 +1578,17 @@ export function useTranslation({
       suppressedOverlayPagesRef.current.delete(pageUrl);
       if (activePageRef.current === pageUrl) {
         setActiveBubbles(bubbles);
-        void applyTranslationOverlay(
+        void applyTranslationOverlay({
           bubbles,
           viewMode,
-          pageIndex,
+          currentPage: pageIndex,
           setTranslationResult,
-          undefined,
           textStyleRef,
-          undefined,
-          pageUrl,
-          () => markPageDirty(pageUrl),
-          renderTarget,
-        );
+          pageKeyOverride: pageUrl,
+          onBubblesMutated: () => markPageDirty(pageUrl),
+          targetLanguage: renderTarget,
+          reviewApiKeyProvider,
+        });
       }
     },
     [viewMode, markPageDirty,getPageRevision,renderedSignature],
@@ -2600,8 +2614,15 @@ async function compressImageForTranslation(
     setActiveBubbles([]);
     // Applying an empty overlay also invalidates pending paints and detaches
     // their listeners. Cached bubbles remain available for manual edit recovery.
-    void applyTranslationOverlay([], viewMode, pageIndex, setTranslationResult,
-      undefined, textStyleRef, undefined, pageUrl);
+    void applyTranslationOverlay({
+      bubbles: [],
+      viewMode,
+      currentPage: pageIndex,
+      setTranslationResult,
+      textStyleRef,
+      pageKeyOverride: pageUrl,
+      reviewApiKeyProvider,
+    });
     const container = viewMode === "scroll"
       ? document.getElementById(`spage-${pageIndex}`)
       : document.getElementById("pageContainer");
@@ -3433,18 +3454,17 @@ async function compressImageForTranslation(
           setActiveBubbles(bubbles);
           const renderTarget =
             getPageTargetLanguage(pageUrl) || targetLangRef.current || "th";
-          void applyTranslationOverlay(
+          void applyTranslationOverlay({
             bubbles,
             viewMode,
-            pageIndex >= 0 ? pageIndex : currentPageRef.current,
+            currentPage: pageIndex >= 0 ? pageIndex : currentPageRef.current,
             setTranslationResult,
-            undefined,
             textStyleRef,
-            undefined,
-            pageUrl,
-            () => markPageDirty(pageUrl),
-            renderTarget,
-          );
+            pageKeyOverride: pageUrl,
+            onBubblesMutated: () => markPageDirty(pageUrl),
+            targetLanguage: renderTarget,
+            reviewApiKeyProvider,
+          });
         }
       }
     },

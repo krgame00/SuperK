@@ -4,7 +4,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { applyTranslationOverlay } from '@/lib/translationOverlay';
 import { undoManager } from '@/lib/undoManager';
 
-vi.mock('@/lib/translationOverlay',async(importOriginal)=>({...(await importOriginal<typeof import('@/lib/translationOverlay')>()),applyTranslationOverlay:vi.fn(async(_b,_v,_i,_s,done)=>done?.('data:render'))}));
+vi.mock('@/lib/translationOverlay',async(importOriginal)=>({...(await importOriginal<typeof import('@/lib/translationOverlay')>()),applyTranslationOverlay:vi.fn(async(...a:unknown[])=>{const o=Array.isArray(a[0])?{onComplete:a[4] as((url:string)=>void)|undefined}:(a[0]as{onComplete?:(url:string)=>void});o.onComplete?.('data:render')})}));
 vi.mock('@/lib/projectStore',()=>({saveProjectSession:vi.fn().mockResolvedValue(undefined),loadProjectSession:vi.fn().mockResolvedValue(null),clearProjectSession:vi.fn(),deleteAsset:vi.fn()}));
 let imageSources:string[];
 beforeEach(()=>{
@@ -77,7 +77,7 @@ test('public new translation action measures pre-clean original, persists automa
   const {result}=renderHook(()=>useTranslation({currentPage:0,pages:['blob:original'],viewMode:'single',
     preparePageForTranslation:async()=>({recognitionUrl:'blob:scoped',backgroundUrl:'blob:clean'})}));
   await act(async()=>{expect(await result.current.handleTranslate()).toBe(true);});
-  const bubbles=vi.mocked(applyTranslationOverlay).mock.calls.filter(c=>c[1]==='offscreen').at(-1)?.[0]; // final render (the optimistic preview draws first)
+  const bubbles=((vi.mocked(applyTranslationOverlay).mock.calls.filter(c=>(c[0]as{viewMode?:string}).viewMode==='offscreen').at(-1)?.[0] as {bubbles?:Array<{targetFontSize?:number;sourceSizing?:{mode?:string;status?:string;evidence?:{bodyHeightPx?:number};font?:{bodyHeightPx:number;referencePx:number}}}>} | undefined)?.bubbles) ?? []; // final render (the optimistic preview draws first)
   expect(bubbles?.[0].sourceSizing).toMatchObject({mode:'auto',status:'matched',evidence:{bodyHeightPx:10,sourceRevision:expect.stringMatching(/^100x40:/)}});
   expect(bubbles![0].targetFontSize! * bubbles![0].sourceSizing!.font!.bodyHeightPx / bubbles![0].sourceSizing!.font!.referencePx).toBe(10);
   expect(imageSources).toContain('blob:original');
@@ -90,8 +90,8 @@ test('optimistic preview keeps the final render output when the final render lan
   const releaseOptimistic:Array<(url:string)=>void>=[];
   vi.mocked(applyTranslationOverlay)
     .mockImplementationOnce(async()=>{}) // clearVisibleTranslation's empty overlay carries no done callback
-    .mockImplementationOnce(async(_b,_v,_i,_s,done)=>{releaseOptimistic.push((url)=>done?.(url));}) // optimistic preview parks
-    .mockImplementationOnce(async(_b,_v,_i,_s,done)=>done?.('data:render')); // final render completes first
+    .mockImplementationOnce(async(...a:unknown[])=>{const done=Array.isArray(a[0])?(a[4] as((url:string)=>void)|undefined):(a[0] as{onComplete?:(url:string)=>void}).onComplete;releaseOptimistic.push((url)=>done?.(url));}) // optimistic preview parks
+    .mockImplementationOnce(async(...a:unknown[])=>{const done=Array.isArray(a[0])?(a[4] as((url:string)=>void)|undefined):(a[0] as{onComplete?:(url:string)=>void}).onComplete;done?.('data:render')}); // final render completes first
   const {result}=renderHook(()=>useTranslation({currentPage:0,pages:['blob:original'],viewMode:'single',
     preparePageForTranslation:async()=>({recognitionUrl:'blob:scoped',backgroundUrl:'blob:clean'})}));
   await act(async()=>{await result.current.handleTranslate();});
@@ -110,7 +110,7 @@ test('abort during the parked optimistic paint leaves no residue once the paint 
   const releasePaints:Array<(url:string)=>void>=[];
   vi.mocked(applyTranslationOverlay)
     .mockImplementationOnce(async()=>{}) // clearVisibleTranslation's empty overlay carries no done callback
-    .mockImplementationOnce(async(_b,_v,_i,_s,done)=>{releasePaints.push((url)=>done?.(url));}); // optimistic preview parks
+    .mockImplementationOnce(async(...a:unknown[])=>{const done=Array.isArray(a[0])?(a[4] as((url:string)=>void)|undefined):(a[0] as{onComplete?:(url:string)=>void}).onComplete;releasePaints.push((url)=>done?.(url));}); // optimistic preview parks
   vi.spyOn(globalThis,'fetch').mockImplementation(async input=>{
     if(String(input)==='blob:scoped')return new Response(new Blob(['scope'],{type:'image/png'}));
     if(String(input)==='/api/translate')return Response.json({text:JSON.stringify({bubbles:[{box:[0,0,1000,1000],original_text:'HELLO',t:'สวัสดี'}]})});
@@ -150,7 +150,7 @@ test.each(['abort','replace','revision'] as const)('source preparation discards 
     else rerender({pages:['blob:replacement']});
   });
   await act(async()=>{release();await work;});
-  expect(vi.mocked(applyTranslationOverlay).mock.calls.filter(c=>c[1]==='offscreen').length).toBeLessThanOrEqual(1); // optimistic preview may draw once
+  expect(vi.mocked(applyTranslationOverlay).mock.calls.filter(c=>(c[0]as{viewMode?:string}).viewMode==='offscreen').length).toBeLessThanOrEqual(1); // optimistic preview may draw once
   expect(result.current.getCurrentRenderedOutput('blob:original')).toBeUndefined(); // discarded, nothing persists
   expect(result.current.bubbleCacheRef.current.has('blob:original')).toBe(false);
   expect(result.current.translatedImageCacheRef.current.has('blob:original')).toBe(false);
@@ -193,7 +193,7 @@ test('original image wait discards work aborted before pixel preparation',async(
   act(()=>result.current.cancelTranslateAll());
   await act(async()=>{release();await work;});
   expect(document.fonts.load).not.toHaveBeenCalled();
-  expect(vi.mocked(applyTranslationOverlay).mock.calls.filter(c=>c[1]==='offscreen').length).toBeLessThanOrEqual(1); // optimistic preview may draw once
+  expect(vi.mocked(applyTranslationOverlay).mock.calls.filter(c=>(c[0]as{viewMode?:string}).viewMode==='offscreen').length).toBeLessThanOrEqual(1); // optimistic preview may draw once
   expect(result.current.getCurrentRenderedOutput('blob:original')).toBeUndefined(); // discarded, nothing persists
   expect(result.current.bubbleCacheRef.current.has('blob:original')).toBe(false);
   expect(result.current.translatedImageCacheRef.current.has('blob:original')).toBe(false);

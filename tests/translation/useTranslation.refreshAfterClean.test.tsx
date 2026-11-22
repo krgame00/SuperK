@@ -74,15 +74,20 @@ beforeEach(() => {
     "data:image/jpeg;base64,c2xpY2U=",
   );
   mockedOverlay.mockImplementation(
-    async (
-      _bubbles: unknown[],
-      _viewMode: "single" | "scroll" | "offscreen",
-      _pageIndex: number,
-      _setTranslationResult: (message: string | null) => void,
-      onComplete?: (dataUrl: string) => void,
-      _textStyle?: unknown,
-      container?: Element,
-    ) => {
+    async (firstArg: unknown, ...restArgs: unknown[]) => {
+      const normalizedCall = Array.isArray(firstArg)
+        ? {
+            onComplete: restArgs[4] as ((dataUrl: string) => void) | undefined,
+            container: restArgs[6] as Element | undefined,
+          }
+        : (firstArg as {
+            onComplete?: (dataUrl: string) => void;
+            containerOverride?: Element;
+          });
+      const { onComplete, containerOverride: container } = normalizedCall as {
+        onComplete?: (dataUrl: string) => void;
+        containerOverride?: Element;
+      };
       if (container) {
         state.offscreenBackground =
           container.querySelector("img")?.getAttribute("src") ?? null;
@@ -123,9 +128,9 @@ test("refreshPageTranslation re-renders cached bubbles over the new clean image"
   });
 
   expect(mockedOverlay).toHaveBeenCalled();
-  const renderCall = mockedOverlay.mock.calls.find((c) => c[1] === "offscreen")!;
-  expect(renderCall[0]).toBe(bubbles);
-  expect(renderCall[7]).toBe("blob:one");
+  const renderCall = mockedOverlay.mock.calls.find((c) => (c[0] as { viewMode?: string }).viewMode === "offscreen")!;
+  expect((renderCall[0] as { bubbles?: unknown[] }).bubbles).toBe(bubbles);
+  expect((renderCall[0] as { pageKeyOverride?: string }).pageKeyOverride).toBe("blob:one");
   // The render used the fresh cleaning, not the stale page or old background.
   expect(state.offscreenBackground).toBe("blob:clean-new");
   expect(result.current.translatedImageCacheRef.current.get("blob:one")).toBe(

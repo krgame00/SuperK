@@ -98,7 +98,22 @@ const wordWrapLocaleOf = (language?: string): string => {
 const overlayGenerations = new WeakMap<Element, number>();
 
 
-export const applyTranslationOverlay = async (
+export interface ApplyTranslationOverlayOptions {
+  bubbles: TranslatedBubble[];
+  viewMode: "single" | "scroll" | "offscreen";
+  currentPage: number;
+  setTranslationResult: (msg: string | null) => void;
+  onComplete?: (dataUrl: string) => void;
+  textStyleRef?: React.MutableRefObject<OverlayTextStyle>;
+  containerOverride?: Element;
+  pageKeyOverride?: string;
+  onBubblesMutated?: () => void;
+  targetLanguage?: string;
+  reviewApiKeyProvider?: ReviewApiKeyProvider;
+}
+
+export function applyTranslationOverlay(options: ApplyTranslationOverlayOptions): Promise<void>;
+export async function applyTranslationOverlay(
   bubbles: TranslatedBubble[],
   viewMode: "single" | "scroll" | "offscreen",
   currentPage: number,
@@ -108,9 +123,39 @@ export const applyTranslationOverlay = async (
   containerOverride?: Element,
   pageKeyOverride?: string,
   onBubblesMutated?: () => void,
-  targetLanguage: string = "th",
-  reviewApiKeyProvider: ReviewApiKeyProvider = defaultReviewApiKeyProvider,
-) => {
+  targetLanguage?: string,
+): Promise<void>;
+/** @deprecated positional signature kept for legacy callers; prefer the options object. */
+export async function applyTranslationOverlay(
+  argsOrBubbles: ApplyTranslationOverlayOptions | TranslatedBubble[],
+  ...rest: unknown[]
+): Promise<void> {
+  const options = Array.isArray(argsOrBubbles)
+    ? {
+        bubbles: argsOrBubbles,
+        viewMode: rest[0] as "single" | "scroll" | "offscreen",
+        currentPage: rest[1] as number,
+        setTranslationResult: rest[2] as (msg: string | null) => void,
+        onComplete: rest[3] as ((dataUrl: string) => void) | undefined,
+        textStyleRef: rest[4] as React.MutableRefObject<OverlayTextStyle> | undefined,
+        containerOverride: rest[5] as Element | undefined,
+        pageKeyOverride: rest[6] as string | undefined,
+        onBubblesMutated: rest[7] as (() => void) | undefined,
+        targetLanguage: (rest[8] as string | undefined) ?? "th",
+      }
+    : argsOrBubbles;
+  const {
+    bubbles,
+    viewMode,
+    currentPage,
+    onComplete,
+    textStyleRef,
+    containerOverride,
+    pageKeyOverride,
+    onBubblesMutated,
+    targetLanguage = "th",
+    reviewApiKeyProvider = defaultReviewApiKeyProvider,
+  } = options;
   const effectiveTarget = (targetLanguage && targetLanguage.trim()) || "th";
   const wordWrapLocale = wordWrapLocaleOf(effectiveTarget);
   let container: Element | null | undefined = containerOverride;
