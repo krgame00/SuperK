@@ -65,6 +65,11 @@ import {
 import { downloadTranslatedImage } from "./overlay/exportTranslatedImage";
 
 export { downloadTranslatedImage } from "./overlay/exportTranslatedImage";
+import {
+  defaultReviewApiKeyProvider,
+  requestTranslationReview,
+  type ReviewApiKeyProvider,
+} from "./overlay/qualityReviewActions";
 
 export { fitTextForBubble, layoutBubbleAtFixedFont, wrapTextForBubble } from "./overlay/bubbleTextFit";
 export type { BubbleTextFit } from "./overlay/bubbleTextFit";
@@ -205,6 +210,7 @@ export const applyTranslationOverlay = async (
   pageKeyOverride?: string,
   onBubblesMutated?: () => void,
   targetLanguage: string = "th",
+  reviewApiKeyProvider: ReviewApiKeyProvider = defaultReviewApiKeyProvider,
 ) => {
   const effectiveTarget = (targetLanguage && targetLanguage.trim()) || "th";
   const wordWrapLocale = wordWrapLocaleOf(effectiveTarget);
@@ -1801,22 +1807,15 @@ export const applyTranslationOverlay = async (
           updateReviewPanel();
           try {
             const currentText = b.t || b.translated || textarea.value || "";
-            const apiKey = typeof localStorage !== "undefined" ? (localStorage.getItem("gemini_api_key") || "") : "";
             const isBlocked = inspectTargetText(currentText, effectiveTarget).status === "blocked";
-            const res = await fetch("/api/translation-review", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                items: [{ id: "0", sourceText: b.original_text, translatedText: currentText }],
-                targetLang: effectiveTarget || "Thai",
-                apiKey,
-                ...(isBlocked ? { mode: "repair" } : {}),
-              }),
-            });
-            if (res.ok) {
-              const data = await res.json();
-              const row = Array.isArray(data?.reviews) ? data.reviews[0] : null;
-              if (row?.suggestion && typeof row.suggestion === "string" && row.suggestion.trim()) {
+            const row = await requestTranslationReview(
+              b.original_text,
+              currentText,
+              effectiveTarget,
+              reviewApiKeyProvider,
+              isBlocked,
+            );
+            if (row?.suggestion && typeof row.suggestion === "string" && row.suggestion.trim()) {
                 const prevText = currentText;
                 b.translationReview = {
                   ...(b.translationReview ?? {
@@ -1852,7 +1851,6 @@ export const applyTranslationOverlay = async (
                   reason: row.reason || "ควรตรวจสอบเทียบกับภาพต้นฉบับ",
                 };
               }
-            }
           } catch {
             // Fall back to local smart repair if offline/error
           } finally {
