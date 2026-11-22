@@ -97,7 +97,9 @@ export interface BubbleRenderSharedState {
   currentBy: number;
   currentBw: number;
   currentBh: number;
+  currentRotation: number;
   currentIsItalic: boolean;
+  widthSelectionPreview: boolean;
   manualMinHeightPx: number | undefined;
   adj: OverlayAdjustment | undefined;
   layoutOverflow: boolean;
