@@ -5,7 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 22 พ.ย. 00:58 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ทำ Phase 3"
+- 22 พ.ย. 19:33 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ทำ Phase 4"
 - 17 พ.ย. 22:31 · `2b8116b8` · "ทำต่อหน่อย" · ⚠️ · ↳ "ระบบตรวจ ai locel มันยังจับได้ไม่หมด และยังมีรอยจุดๆๆๆ เราพอจะแก้ได้ไหม [$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\pstack-poteto-…"
 - 15 พ.ย. 01:40 · `2b7e562b` · "ทำให้ระบบตรวจดีขึ้นอีกได้ไหมครับ ยังจับได้ไม่ครบ" · ⚠️
 - 15 พ.ย. 01:03 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ⚠️ · ↳ "เราทำให้ระบบตรวจมันจับให้ได้หมดเลยได้ไหม พอมีวิธีไหม"
@@ -33,6 +33,16 @@
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
 
 ---
+
+## Phase 5 ยูนิตแรก qualityReviewActions ลงแล้ว + แผนที่ paint สำหรับยูนิตถัดไป (poteto-mode, refactoring playbook) — 2026-11-22
+
+### Status: **push แล้ว** commit `7e47026` (CI รอยืนยันตอนจด) — Phase 5 ทำเป็นยูนิตย่อย 5.4 ก่อนเพราะโดดเดี่ยวสุด; ยูนิตหนัก 5.1/5.2/5.3 เริ่มรอบหน้าด้วย context เต็ม
+
+- **5.4 ที่ลง:** ย้าย fetch `/api/translation-review` ทั้งก้อนไป `lib/overlay/qualityReviewActions.ts` เป็น `requestTranslationReview(sourceText, translatedText, targetLang, apiKeyProvider, repairMode)` คืน row/null (กิ่ง !res.ok เงียบเหมือนเดิม, error ทิ้งให้ catch ของ paint กลืนเหมือนเดิม); mutation ของ bubble/panel อยู่ใน paint ครบ; `applyTranslationOverlay` เพิ่มพารามิเตอร์ที่ 11 `reviewApiKeyProvider` default = การอ่าน localStorage แบบเดิม (พฤติกรรมเป๊ะ, ผู้เรียก 8 จุดใน useTranslation ไม่ต้องแก้) — grep ยืนยัน `gemini_api_key` และ `translation-review` หายจาก renderer แล้ว; การให้ hook ส่ง provider จริงเข้ามา = งานของ Phase 6 (options object ทำให้ 8 call site สั้นลง)
+- **แผนที่ paint สำหรับยูนิตถัดไป (วัดจริงตอนหลัง 5.4):** ไฟล์เหลือ 3,475 บรรทัด; applyTranslationOverlay ที่ 197 → ~3460; paint closure เริ่ม ~256; กลุ่ม per-bubble render ~700-1400 (wrapper/canvas/selection/pointerdown 1421); editor+textarea ~1521-1930 (keydown 1925); review panel 1662-1907 (askAiReview 1798 ย้ายออกแล้ว, whitelist/accept/dismiss/restore ยังอยู่); dblclick 2078; keydown bubble 2186; resize handles 2392-2431; chrome buttons 2930; document-level pointerdown/keydown 3420-3433 + _cleanupListeners 3433; paintWhenReady 3453 — ยูนิต 5.3 (bubbleEditor) ต้องย้าย editor+review panel เป็นก้อนเดียวกับ textarea/renderBubble/updateReviewText เพราะผูกกันหนา; 5.2 (interaction) ต้องย้าย _cleanupListeners + overlayCleanups/overlayGenerations + detachDocumentListeners ทั้งชุดห้ามแยกครึ่ง
+- **พิสูจน์:** tsc 0 / eslint เหลือ warning เดียวที่ไฟล์แตะ (WarpEffectType เดิม) / เทสต์ครอบคลุม 16 ไฟล์ **229 เคสเขียว** (เพิ่ม personaGuard) / madge ยัง 2 วงจร / npm test เต็มรอบแรก 1 fail = flaky ตัวเดิมของ repo รันซ้ำ grep FAIL ว่าง = เขียวหมด
+- **บทเรียนซ้ำ:** ใช้ tail ตัดท้ายแล้วเสียรอบอีก ต่อไปจับชื่อด้วย `grep -E " FAIL |AssertionError"` ตั้งแต่แรกเสมอ (จดซ้ำเพราะยังพลาด)
+- **ต่อไป:** Phase 5.3 bubbleEditor → 5.2 bubbleInteraction (ทั้งก้อน listener/generation) → 5.1 bubbleRenderer → Phase 6 รัด type + options object (จุดที่ hook ส่ง reviewApiKeyProvider จริง) + ลบ shim + madge เข้า CI
 
 ## Phase 4 refactor translationOverlay แยก export รูปสำเร็จ (poteto-mode, refactoring playbook) — 2026-11-22
 
