@@ -35,12 +35,11 @@ import {
   type ReviewApiKeyProvider,
 } from "./overlay/qualityReviewActions";
 import { renderBubbleContent, type BubbleRenderSharedState, type WidthLayoutPreview } from "./overlay/bubbleRenderer";
-import {
-  wireBubbleSelectionAndMove,
-  wireBubbleResizeChrome,
-  createSelectionChrome,
-  pruneOverlayCleanups,
-} from "./overlay/bubbleInteraction";
+import { wireBubbleSelectionAndMove } from "./overlay/bubbleMove";
+import { wireBubbleResizeHandles } from "./overlay/bubbleResizeHandles";
+import { wireBubbleToolbar } from "./overlay/bubbleToolbar";
+import { createSelectionChrome } from "./overlay/selectionChrome";
+import { pruneOverlayCleanups } from "./overlay/overlayLifecycle";
 import { createBubbleStyleActions } from "./overlay/bubbleStyleActions";
 
 export { fitTextForBubble, layoutBubbleAtFixedFont, wrapTextForBubble } from "./overlay/bubbleTextFit";
@@ -815,7 +814,7 @@ export async function applyTranslationOverlay(
         openLiveEditor();
       });
 
-      wireBubbleResizeChrome({
+      const resizeChromeDeps = {
         bubble: b,
         wrapper,
         tlContainer,
@@ -841,6 +840,15 @@ export async function applyTranslationOverlay(
         visibleSelection,
         chrome: selection,
         state: sharedState,
+      };
+      const { chromeHandles } = wireBubbleResizeHandles({
+        ...resizeChromeDeps,
+        cancelDragPreviews: selection.cancelDragPreviews,
+      });
+      wireBubbleToolbar({
+        ...resizeChromeDeps,
+        chromeHandles,
+        chromeControlsByWrapper: selection.chromeControlsByWrapper,
       });
 
       }
