@@ -5,7 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 22 พ.ย. 19:33 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ทำ Phase 4"
+- 22 พ.ย. 19:59 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ต่อไป"
 - 17 พ.ย. 22:31 · `2b8116b8` · "ทำต่อหน่อย" · ⚠️ · ↳ "ระบบตรวจ ai locel มันยังจับได้ไม่หมด และยังมีรอยจุดๆๆๆ เราพอจะแก้ได้ไหม [$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\pstack-poteto-…"
 - 15 พ.ย. 01:40 · `2b7e562b` · "ทำให้ระบบตรวจดีขึ้นอีกได้ไหมครับ ยังจับได้ไม่ครบ" · ⚠️
 - 15 พ.ย. 01:03 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ⚠️ · ↳ "เราทำให้ระบบตรวจมันจับให้ได้หมดเลยได้ไหม พอมีวิธีไหม"
@@ -33,6 +33,15 @@
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
 
 ---
+
+## Phase 5 ยูนิตสอง bubbleEditor ลงแล้ว (poteto-mode, refactoring playbook) — 2026-11-22
+
+### Status: **push แล้ว** commit `a144dcd` (CI รอยืนยันตอนจด) — Phase 5 คืบ 2/4 ยูนิต (5.4 + 5.3) ไฟล์ลดเหลือ 3,076 บรรทัดจากเดิม 4,460
+
+- **ของที่ย้าย:** openLiveEditor ทั้งฟังก์ชัน (textarea + commit/cancel พร้อม undo transaction + script-warning actions + review panel ครบทุกปุ่ม + AI-suggestion) ย้ายคำต่อคำไป `lib/overlay/bubbleEditor.ts` เป็น `openBubbleLiveEditor(deps)` — deps = { bubble, wrapper, tlContainer, chromeRoot, chromeControls, pageWidth/Height, getCurrentRect (getter สดกัน stale ตอน drag), effectiveTarget, reviewApiKeyProvider, onBubblesMutated, renderBubble, saveAdjustment, setActiveEditorPosition }; paint เหลือ thin wrapper 19 บรรทัด และจุดเรียกเดิม 3 จุด (dblclick/keyboard/chrome button) ไม่ถูกแตะ; handoff ตำแหน่ง editor ไป resize handler ยังทำงานผ่าน setter เดิม
+- **เทคนิคที่ทำให้ย้ายปลอดภัย:** destructure `bubble: b` ที่หัวฟังก์ชันเพื่อให้เนื้อเดิมอ้าง `b.` ได้คำต่อคำโดยไม่ต้อง rename ~60 จุด; แทน closure ref เฉพาะ 6 กลุ่ม (chromeControls/chromeRoot/tlContainer/page size/geometry getter/position setter); พิสูจน์ก่อนย้ายว่า undoManager/languagePolicy/translation-qualityReview ไม่ย้อน import translationOverlay (grep) จึงไม่เกิดวงจร
+- **พิสูจน์:** tsc 0 / eslint เซต warning เท่า baseline 3 ตัว / เก็บ import ที่ย้ายบ้าน 8 ชื่อ (guardQualityReview กลุ่ม qualityReview + TranslationReview + LANGUAGE_POLICY_VERSION + saveCustomAllowedThaiTokens + requestTranslationReview) / เทสต์ครอบคลุม 16 ไฟล์ **229 เคสเขียว** (เทสต์ DOM ของ editor/review panel ผ่าน thin wrapper = pin จริง) / เต็มชุด **2392/2392** / madge ยัง 2 วงจร
+- **ต่อไป:** 5.2 bubbleInteraction (drag/resize/rotate/keyboard/chrome + document listeners + _cleanupListeners + generation WeakMap — ทั้งก้อนเดียวห้ามแยกครึ่ง ก้อนใหญ่สุดของ Phase 5) → 5.1 bubbleRenderer → Phase 6 รัด type + options object + ลบ shim + madge เข้า CI
 
 ## Phase 5 ยูนิตแรก qualityReviewActions ลงแล้ว + แผนที่ paint สำหรับยูนิตถัดไป (poteto-mode, refactoring playbook) — 2026-11-22
 
