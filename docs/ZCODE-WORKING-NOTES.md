@@ -5,7 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 22 พ.ย. 23:11 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅
+- 22 พ.ย. 23:45 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ทำซีรีส์ตัด index signature"
 - 17 พ.ย. 22:31 · `2b8116b8` · "ทำต่อหน่อย" · ⚠️ · ↳ "ระบบตรวจ ai locel มันยังจับได้ไม่หมด และยังมีรอยจุดๆๆๆ เราพอจะแก้ได้ไหม [$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\pstack-poteto-…"
 - 15 พ.ย. 01:40 · `2b7e562b` · "ทำให้ระบบตรวจดีขึ้นอีกได้ไหมครับ ยังจับได้ไม่ครบ" · ⚠️
 - 15 พ.ย. 01:03 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ⚠️ · ↳ "เราทำให้ระบบตรวจมันจับให้ได้หมดเลยได้ไหม พอมีวิธีไหม"
@@ -33,6 +33,16 @@
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
 
 ---
+
+## แผนแยก bubbleInteraction เริ่มแล้ว — Phase 0+1+2 ลงแล้ว (poteto-mode, refactoring playbook) — 2026-11-22
+
+### Status: **push แล้ว** commit `70b65d1` (CI รอยืนยันตอนจด) — แผนจาก Downloads/split-plan.md (baseline `2f700a0` ตรวจตัวเลขตรงทุกข้อ) เริ่มทำ Phase 0+1+2 เหลือ Phase 3 (style actions ตัด late-binding) / 4 (resize+toolbar) / 5 (move) / 6 (ลบ shim)
+
+- **Phase 0 (guardrails):** baseline เต็มชุด **2394 ผ่าน 0 ล้ม** ที่ `2f700a0` / smoke checklist สำหรับ interaction (เลือก bubble, ลาก 3 ชนิด, คีย์บอร์ด, toolbar, สลับหน้า) กำหนดไว้ใช้ซ้ำทุก phase จากแผนข้อ 6 / wiring diagram ปัจจุบัน = orchestrator → selectionChrome → move (keyboard deps) ⇄ resizeChrome (toggle/apply) ผ่าน deferred wrapper ที่ปิด over ตัวแปร declare ทีหลัง
+- **Phase 1:** types 4 ตัว (BubbleChromeControls/SelectedBubbleBridge/SelectionChromeDeps/SelectionChromeHandle) → `lib/overlay/interactionTypes.ts` (leaf type-only) + overlayCleanups registry + pruneOverlayCleanups → `lib/overlay/overlayLifecycle.ts`; bubbleInteraction re-export คืนทั้งหมด ผู้เรียกไม่ต้องแก้
+- **Phase 2:** createSelectionChrome ย้ายคำต่อคำ → `lib/overlay/selectionChrome.ts` (146 บรรทัด deps 4 ฟิลด์) import overlayCleanups จาก lifecycle ตรง; orchestrator รวม 2 import statement ของ bubbleInteraction เป็น 1 ตามงานเก็บกวาดของแผน
+- **พิสูจน์:** tsc 0 / eslint เหลือ baseline 2 warnings / เทสต์ชุดเกี่ยว 327 เคสเขียว (colorMatching+workspace+translation ย่อย) / เต็มชุด **2394 ผ่าน 0 ล้ม** / madge gate overlay เขียว / ตอนผ่าจอบพบจุดแก้ตัวเอง: Edit แรกแทนแค่บรรทัดเปิดฟังก์ชันทิ้ง body ค้าง 133 บรรทัด — จับได้ด้วยอ่านขอบเขตซ้ำแล้วลบด้วย node line-range ตรงจุด
+- **ต่อไป:** Phase 3 สร้าง `createBubbleStyleActions` (toggleBubbleItalic + applyBubbleRotationAndSlant + กลไก registration ให้ toolbar ลงทะเบียน sync function ของปุ่ม italic/warp — แก้จุดที่แผนมองข้าม: syncItalicBtnStyle อ้าง italicBtn ที่สร้างทีหลัง style actions) แล้วค่อยแยก resize/toolbar/move
 
 ## ซีรีส์ตัด index signature จบ (poteto-mode, refactoring playbook) — 2026-11-22
 
