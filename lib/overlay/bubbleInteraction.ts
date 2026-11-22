@@ -3,13 +3,16 @@
 // _cleanupListeners DOM contract and the document-level listeners as one
 // set; per-bubble handlers wire in through the returned facade.
 
-import type { TranslatedBubble } from "./overlayTypes";
+import type { TranslatedBubble, OverlayTextStyle } from "./overlayTypes";
 import { undoManager } from "../undoManager";
+import { manualSourceSizing } from "../sourceTextSize";
 import { sampleBubbleRegion } from "../colorMatching/canvasSampler";
 import { extractTextColors } from "../colorMatching/sampleTextColors";
 import { inferTextStyleCategory } from "../colorMatching/nearbyStyleFallback";
 import type { WarpConfig } from "../tools/TextWarpRenderer";
 import { openBubbleLiveEditor } from "./bubbleEditor";
+import { resolveCanvasFontFamily } from "./canvasFont";
+import { minimumBubbleWidthAtFixedFont } from "./bubbleTextFit";
 import type { BubbleRenderSharedState, WidthLayoutPreview } from "./bubbleRenderer";
 import type { ReviewApiKeyProvider } from "./qualityReviewActions";
 
@@ -201,10 +204,16 @@ export interface BubbleSelectionMoveDeps {
   bubbleId: string;
   pageWidth: number;
   pageHeight: number;
+  targetLocale: string;
   effectiveTarget: string;
+  textStyle: OverlayTextStyle;
+  textStyleRef?: { current?: OverlayTextStyle };
   reviewApiKeyProvider: ReviewApiKeyProvider;
   onBubblesMutated?: () => void;
   isStaleOverlay: () => boolean;
+  toggleBubbleItalic: () => void;
+  applyBubbleRotationAndSlant: (nextRot: number, nextItalic: boolean, label?: string) => void;
+  getCurrentRotation: () => number;
   renderBubble: (availableHeight?: number, snapshotScale?: number, widthLayoutPreview?: WidthLayoutPreview) => void;
   saveAdjustment: () => void;
   updateBubbleFrame: () => void;
@@ -216,6 +225,7 @@ export interface BubbleSelectionMoveDeps {
 export const wireBubbleSelectionAndMove = (deps: BubbleSelectionMoveDeps): {
   openLiveEditor: () => void;
   deleteBubbleWithUndo: () => void;
+  adjustBubbleFontSize: (delta: number) => void;
 } => {
   const {
     bubble: b,
@@ -227,10 +237,16 @@ export const wireBubbleSelectionAndMove = (deps: BubbleSelectionMoveDeps): {
     bubbleId,
     pageWidth: iw,
     pageHeight: ih,
+    targetLocale: wordWrapLocale,
     effectiveTarget,
+    textStyle: ts,
+    textStyleRef,
     reviewApiKeyProvider,
     onBubblesMutated,
     isStaleOverlay,
+    toggleBubbleItalic,
+    applyBubbleRotationAndSlant,
+    getCurrentRotation,
     renderBubble,
     saveAdjustment,
     updateBubbleFrame,
@@ -515,5 +531,234 @@ export const wireBubbleSelectionAndMove = (deps: BubbleSelectionMoveDeps): {
     setSelectedBubble(wrapper);
   });
 
-  return { openLiveEditor, deleteBubbleWithUndo };
+  const adjustBubbleFontSize = (delta: number) => {
+    const oldMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
+    const newMult = Math.max(0.4, Math.min(5.0, Number((oldMult + delta).toFixed(2))));
+    if (newMult === oldMult) return;
+    const snapshotBefore = b.layoutSnapshot;
+    const sizingBefore = b.sourceSizing;
+    const targetFsBefore = b.targetFontSize;
+    const bxBefore = state.currentBx;
+    const byBefore = state.currentBy;
+    const bwBefore = state.currentBw;
+    const bhBefore = state.currentBh;
+    const minHeightBefore = state.manualMinHeightPx;
+
+    b.sourceSizing = manualSourceSizing(b.sourceSizing,b.box);
+    const sizingAfter = b.sourceSizing;
+
+    const text = (b.t || b.translated || "").trim();
+    if (text && typeof b.targetFontSize !== "number" && state.renderedFontSize > 0) {
+      const currentStyle = textStyleRef?.current || ts;
+      const globalMult = currentStyle.fontSizeMultiplier || 1.0;
+      const divisor = globalMult * oldMult;
+      if (divisor > 0) {
+        b.targetFontSize = state.renderedFontSize / divisor;
+      }
+    }
+    const scaleRatio = oldMult > 0 ? newMult / oldMult : 1;
+    if (delta > 0 && text) {
+      const currentStyle = textStyleRef?.current || ts;
+      const currentFontFam = resolveCanvasFontFamily(currentStyle.fontFamily);
+      const globalMult = currentStyle.fontSizeMultiplier || 1.0;
+      const baseFs = typeof b.targetFontSize === "number" ? b.targetFontSize : 16;
+      const nextEffectiveFs = Math.max(8, Math.round(baseFs * globalMult * newMult));
+      const minWordW = Math.min(
+        iw,
+        Math.max(
+          30,
+          minimumBubbleWidthAtFixedFont(
+            text,
+            nextEffectiveFs,
+            currentFontFam,
+            !b.isInvalidBox,
+            wordWrapLocale,
+          ),
+        ),
+      );
+      if (state.currentBw < 160 || state.currentBw < minWordW) {
+        const grownW = Math.min(
+          iw,
+          Math.max(28, minWordW, Math.round(state.currentBw * scaleRatio)),
+        );
+        const grownH = Math.min(ih, Math.max(20, Math.round(state.currentBh * scaleRatio)));
+        state.currentBx = Math.max(0, Math.min(iw - grownW, state.currentBx));
+        state.currentBy = Math.max(0, Math.min(ih - grownH, state.currentBy));
+        state.currentBw = grownW;
+        state.currentBh = grownH;
+        if (typeof state.manualMinHeightPx === "number") {
+          state.manualMinHeightPx = Math.min(ih, Math.round(state.manualMinHeightPx * scaleRatio));
+        }
+      }
+    }
+
+    b.fontSizeMultiplier = newMult;
+    onBubblesMutated?.();
+    renderBubble();
+    const snapshotAfter = b.layoutSnapshot;
+    const targetFsAfter = b.targetFontSize;
+    const bxAfter = state.currentBx;
+    const byAfter = state.currentBy;
+    const bwAfter = state.currentBw;
+    const bhAfter = state.currentBh;
+    const minHeightAfter = state.manualMinHeightPx;
+    saveAdjustment();
+    undoManager.push({
+      label: delta > 0 ? "เพิ่มขนาดข้อความ" : "ลดขนาดข้อความ",
+      undo: () => {
+        state.currentBx = bxBefore;
+        state.currentBy = byBefore;
+        state.currentBw = bwBefore;
+        state.currentBh = bhBefore;
+        b.fontSizeMultiplier = oldMult;
+        b.targetFontSize = targetFsBefore;
+        state.manualMinHeightPx = minHeightBefore;
+        b.sourceSizing = sizingBefore;
+        b.layoutSnapshot = snapshotBefore;
+        renderBubble();
+        saveAdjustment();
+      },
+      redo: () => {
+        state.currentBx = bxAfter;
+        state.currentBy = byAfter;
+        state.currentBw = bwAfter;
+        state.currentBh = bhAfter;
+        b.fontSizeMultiplier = newMult;
+        b.targetFontSize = targetFsAfter;
+        state.manualMinHeightPx = minHeightAfter;
+        b.sourceSizing = sizingAfter;
+        b.layoutSnapshot = snapshotAfter;
+        renderBubble();
+        saveAdjustment();
+      },
+    });
+  };
+
+  wrapper.addEventListener("keydown", (e) => {
+    if (e.target !== wrapper) return;
+
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      openLiveEditor();
+      return;
+    }
+
+    if (e.key === "+" || e.key === "=") {
+      e.preventDefault();
+      e.stopPropagation();
+      adjustBubbleFontSize(0.12);
+      return;
+    }
+
+    if (e.key === "-" || e.key === "_") {
+      e.preventDefault();
+      e.stopPropagation();
+      adjustBubbleFontSize(-0.12);
+      return;
+    }
+
+    if ((e.key === "i" || e.key === "I") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleBubbleItalic();
+      return;
+    }
+
+    if ((e.key === "q" || e.key === "Q") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      const normRot = ((getCurrentRotation() + 540) % 360) - 180;
+      applyBubbleRotationAndSlant(Math.round((normRot - 4) * 10) / 10, Boolean(b.isItalic ?? b.italic ?? true), "หมุนข้อความเอียงขึ้น (-4°)");
+      return;
+    }
+
+    if ((e.key === "e" || e.key === "E") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      const normRot = ((getCurrentRotation() + 540) % 360) - 180;
+      applyBubbleRotationAndSlant(Math.round((normRot + 4) * 10) / 10, Boolean(b.isItalic ?? b.italic ?? true), "หมุนข้อความเอียงลง (+4°)");
+      return;
+    }
+
+    if (e.key === "0" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      applyBubbleRotationAndSlant(0, false, "รีเซ็ตมุมเอียงข้อความ");
+      return;
+    }
+
+    if (e.key === "Delete" || e.key === "Backspace") {
+      e.preventDefault();
+      e.stopPropagation();
+      deleteBubbleWithUndo();
+      return;
+    }
+
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      setSelectedBubble(null);
+      tlContainer.focus();
+      return;
+    }
+
+    if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const delta = e.shiftKey ? 10 : 1;
+      const initBx = state.currentBx;
+      const initBy = state.currentBy;
+      const initBw = state.currentBw;
+      const initBh = state.currentBh;
+      const initSnapshot = b.layoutSnapshot;
+
+      if (e.altKey) {
+        if (e.key === "ArrowRight") {
+          state.currentBw = Math.max(20, Math.min(iw - state.currentBx, state.currentBw + delta));
+        } else if (e.key === "ArrowLeft") {
+          state.currentBw = Math.max(20, state.currentBw - delta);
+        } else if (e.key === "ArrowDown") {
+          state.currentBh = Math.max(20, Math.min(ih - state.currentBy, state.currentBh + delta));
+        } else if (e.key === "ArrowUp") {
+          state.currentBh = Math.max(20, state.currentBh - delta);
+        }
+      } else {
+        if (e.key === "ArrowRight") {
+          state.currentBx = Math.max(0, Math.min(iw - state.currentBw, state.currentBx + delta));
+        } else if (e.key === "ArrowLeft") {
+          state.currentBx = Math.max(0, Math.min(iw - state.currentBw, state.currentBx - delta));
+        } else if (e.key === "ArrowDown") {
+          state.currentBy = Math.max(0, Math.min(ih - state.currentBh, state.currentBy + delta));
+        } else if (e.key === "ArrowUp") {
+          state.currentBy = Math.max(0, Math.min(ih - state.currentBh, state.currentBy - delta));
+        }
+      }
+
+      if (state.currentBx !== initBx || state.currentBy !== initBy || state.currentBw !== initBw || state.currentBh !== initBh) {
+        renderBubble();
+        const committedSnapshot = b.layoutSnapshot;
+        saveAdjustment();
+        const newBx = state.currentBx, newBy = state.currentBy, newBw = state.currentBw, newBh = state.currentBh;
+        undoManager.push({
+          label: e.altKey ? "ปรับขนาดกล่องข้อความ" : "ย้ายตำแหน่งกล่องข้อความ",
+          undo: () => {
+            state.currentBx = initBx; state.currentBy = initBy; state.currentBw = initBw; state.currentBh = initBh;
+            b.layoutSnapshot = initSnapshot;
+            renderBubble();
+            saveAdjustment();
+          },
+          redo: () => {
+            state.currentBx = newBx; state.currentBy = newBy; state.currentBw = newBw; state.currentBh = newBh;
+            b.layoutSnapshot = committedSnapshot;
+            renderBubble();
+            saveAdjustment();
+          },
+        });
+      }
+    }
+  });
+
+  return { openLiveEditor, deleteBubbleWithUndo, adjustBubbleFontSize };
 };

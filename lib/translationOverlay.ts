@@ -256,7 +256,6 @@ export const applyTranslationOverlay = async (
       viewMode,
     });
     const chromeControlsByWrapper = selection.chromeControlsByWrapper;
-    const setSelectedBubble = selection.setSelectedBubble;
     const cancelDragPreviews = selection.cancelDragPreviews;
     // Set once scheduleChromeSync exists (it is declared after the bubble
     // builders); selection updates that happen before it are harmless no-ops.
@@ -738,7 +737,7 @@ export const applyTranslationOverlay = async (
       b.render = renderBubble;
 
       if (viewMode !== "offscreen") {
-        const { openLiveEditor, deleteBubbleWithUndo } = wireBubbleSelectionAndMove({
+        const { openLiveEditor, deleteBubbleWithUndo, adjustBubbleFontSize } = wireBubbleSelectionAndMove({
           bubble: b,
           wrapper,
           tlContainer,
@@ -748,10 +747,20 @@ export const applyTranslationOverlay = async (
           bubbleId,
           pageWidth: iw,
           pageHeight: ih,
+          targetLocale: wordWrapLocale,
           effectiveTarget,
+          textStyle: ts,
+          textStyleRef,
           reviewApiKeyProvider,
           onBubblesMutated,
           isStaleOverlay,
+          toggleBubbleItalic: () => {
+            toggleBubbleItalic();
+          },
+          applyBubbleRotationAndSlant: (nextRot, nextItalic, label) => {
+            applyBubbleRotationAndSlant(nextRot, nextItalic, label);
+          },
+          getCurrentRotation: () => currentRotation,
           renderBubble,
           saveAdjustment,
           updateBubbleFrame,
@@ -767,234 +776,6 @@ export const applyTranslationOverlay = async (
         openLiveEditor();
       });
 
-      const adjustBubbleFontSize = (delta: number) => {
-        const oldMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
-        const newMult = Math.max(0.4, Math.min(5.0, Number((oldMult + delta).toFixed(2))));
-        if (newMult === oldMult) return;
-        const snapshotBefore = b.layoutSnapshot;
-        const sizingBefore = b.sourceSizing;
-        const targetFsBefore = b.targetFontSize;
-        const bxBefore = currentBx;
-        const byBefore = currentBy;
-        const bwBefore = currentBw;
-        const bhBefore = currentBh;
-        const minHeightBefore = manualMinHeightPx;
-
-        b.sourceSizing = manualSourceSizing(b.sourceSizing,b.box);
-        const sizingAfter = b.sourceSizing;
-
-        const text = (b.t || b.translated || "").trim();
-        if (text && typeof b.targetFontSize !== "number" && renderedFontSize > 0) {
-          const currentStyle = textStyleRef?.current || ts;
-          const globalMult = currentStyle.fontSizeMultiplier || 1.0;
-          const divisor = globalMult * oldMult;
-          if (divisor > 0) {
-            b.targetFontSize = renderedFontSize / divisor;
-          }
-        }
-        const scaleRatio = oldMult > 0 ? newMult / oldMult : 1;
-        if (delta > 0 && text) {
-          const currentStyle = textStyleRef?.current || ts;
-          const currentFontFam = resolveCanvasFontFamily(currentStyle.fontFamily);
-          const globalMult = currentStyle.fontSizeMultiplier || 1.0;
-          const baseFs = typeof b.targetFontSize === "number" ? b.targetFontSize : 16;
-          const nextEffectiveFs = Math.max(8, Math.round(baseFs * globalMult * newMult));
-          const minWordW = Math.min(
-            iw,
-            Math.max(
-              30,
-              minimumBubbleWidthAtFixedFont(
-                text,
-                nextEffectiveFs,
-                currentFontFam,
-                !b.isInvalidBox,
-                wordWrapLocale,
-              ),
-            ),
-          );
-          if (currentBw < 160 || currentBw < minWordW) {
-            const grownW = Math.min(
-              iw,
-              Math.max(28, minWordW, Math.round(currentBw * scaleRatio)),
-            );
-            const grownH = Math.min(ih, Math.max(20, Math.round(currentBh * scaleRatio)));
-            currentBx = Math.max(0, Math.min(iw - grownW, currentBx));
-            currentBy = Math.max(0, Math.min(ih - grownH, currentBy));
-            currentBw = grownW;
-            currentBh = grownH;
-            if (typeof manualMinHeightPx === "number") {
-              manualMinHeightPx = Math.min(ih, Math.round(manualMinHeightPx * scaleRatio));
-            }
-          }
-        }
-
-        b.fontSizeMultiplier = newMult;
-        onBubblesMutated?.();
-        renderBubble();
-        const snapshotAfter = b.layoutSnapshot;
-        const targetFsAfter = b.targetFontSize;
-        const bxAfter = currentBx;
-        const byAfter = currentBy;
-        const bwAfter = currentBw;
-        const bhAfter = currentBh;
-        const minHeightAfter = manualMinHeightPx;
-        saveAdjustment();
-        undoManager.push({
-          label: delta > 0 ? "เพิ่มขนาดข้อความ" : "ลดขนาดข้อความ",
-          undo: () => {
-            currentBx = bxBefore;
-            currentBy = byBefore;
-            currentBw = bwBefore;
-            currentBh = bhBefore;
-            b.fontSizeMultiplier = oldMult;
-            b.targetFontSize = targetFsBefore;
-            manualMinHeightPx = minHeightBefore;
-            b.sourceSizing = sizingBefore;
-            b.layoutSnapshot = snapshotBefore;
-            renderBubble();
-            saveAdjustment();
-          },
-          redo: () => {
-            currentBx = bxAfter;
-            currentBy = byAfter;
-            currentBw = bwAfter;
-            currentBh = bhAfter;
-            b.fontSizeMultiplier = newMult;
-            b.targetFontSize = targetFsAfter;
-            manualMinHeightPx = minHeightAfter;
-            b.sourceSizing = sizingAfter;
-            b.layoutSnapshot = snapshotAfter;
-            renderBubble();
-            saveAdjustment();
-          },
-        });
-      };
-
-      wrapper.addEventListener("keydown", (e) => {
-        if (e.target !== wrapper) return;
-
-        if (e.key === "Enter") {
-          e.preventDefault();
-          e.stopPropagation();
-          openLiveEditor();
-          return;
-        }
-
-        if (e.key === "+" || e.key === "=") {
-          e.preventDefault();
-          e.stopPropagation();
-          adjustBubbleFontSize(0.12);
-          return;
-        }
-
-        if (e.key === "-" || e.key === "_") {
-          e.preventDefault();
-          e.stopPropagation();
-          adjustBubbleFontSize(-0.12);
-          return;
-        }
-
-        if ((e.key === "i" || e.key === "I") && !e.ctrlKey && !e.metaKey && !e.altKey) {
-          e.preventDefault();
-          e.stopPropagation();
-          toggleBubbleItalic();
-          return;
-        }
-
-        if ((e.key === "q" || e.key === "Q") && !e.ctrlKey && !e.metaKey && !e.altKey) {
-          e.preventDefault();
-          e.stopPropagation();
-          const normRot = ((currentRotation + 540) % 360) - 180;
-          applyBubbleRotationAndSlant(Math.round((normRot - 4) * 10) / 10, Boolean(b.isItalic ?? b.italic ?? true), "หมุนข้อความเอียงขึ้น (-4°)");
-          return;
-        }
-
-        if ((e.key === "e" || e.key === "E") && !e.ctrlKey && !e.metaKey && !e.altKey) {
-          e.preventDefault();
-          e.stopPropagation();
-          const normRot = ((currentRotation + 540) % 360) - 180;
-          applyBubbleRotationAndSlant(Math.round((normRot + 4) * 10) / 10, Boolean(b.isItalic ?? b.italic ?? true), "หมุนข้อความเอียงลง (+4°)");
-          return;
-        }
-
-        if (e.key === "0" && !e.ctrlKey && !e.metaKey && !e.altKey) {
-          e.preventDefault();
-          e.stopPropagation();
-          applyBubbleRotationAndSlant(0, false, "รีเซ็ตมุมเอียงข้อความ");
-          return;
-        }
-
-        if (e.key === "Delete" || e.key === "Backspace") {
-          e.preventDefault();
-          e.stopPropagation();
-          deleteBubbleWithUndo();
-          return;
-        }
-
-        if (e.key === "Escape") {
-          e.preventDefault();
-          e.stopPropagation();
-          setSelectedBubble(null);
-          tlContainer.focus();
-          return;
-        }
-
-        if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
-          e.preventDefault();
-          e.stopPropagation();
-
-          const delta = e.shiftKey ? 10 : 1;
-          const initBx = currentBx;
-          const initBy = currentBy;
-          const initBw = currentBw;
-          const initBh = currentBh;
-          const initSnapshot = b.layoutSnapshot;
-
-          if (e.altKey) {
-            if (e.key === "ArrowRight") {
-              currentBw = Math.max(20, Math.min(iw - currentBx, currentBw + delta));
-            } else if (e.key === "ArrowLeft") {
-              currentBw = Math.max(20, currentBw - delta);
-            } else if (e.key === "ArrowDown") {
-              currentBh = Math.max(20, Math.min(ih - currentBy, currentBh + delta));
-            } else if (e.key === "ArrowUp") {
-              currentBh = Math.max(20, currentBh - delta);
-            }
-          } else {
-            if (e.key === "ArrowRight") {
-              currentBx = Math.max(0, Math.min(iw - currentBw, currentBx + delta));
-            } else if (e.key === "ArrowLeft") {
-              currentBx = Math.max(0, Math.min(iw - currentBw, currentBx - delta));
-            } else if (e.key === "ArrowDown") {
-              currentBy = Math.max(0, Math.min(ih - currentBh, currentBy + delta));
-            } else if (e.key === "ArrowUp") {
-              currentBy = Math.max(0, Math.min(ih - currentBh, currentBy - delta));
-            }
-          }
-
-          if (currentBx !== initBx || currentBy !== initBy || currentBw !== initBw || currentBh !== initBh) {
-            renderBubble();
-            const committedSnapshot = b.layoutSnapshot;
-            saveAdjustment();
-            const newBx = currentBx, newBy = currentBy, newBw = currentBw, newBh = currentBh;
-            undoManager.push({
-              label: e.altKey ? "ปรับขนาดกล่องข้อความ" : "ย้ายตำแหน่งกล่องข้อความ",
-              undo: () => {
-                currentBx = initBx; currentBy = initBy; currentBw = initBw; currentBh = initBh;
-                b.layoutSnapshot = initSnapshot;
-                renderBubble();
-                saveAdjustment();
-              },
-              redo: () => {
-                currentBx = newBx; currentBy = newBy; currentBw = newBw; currentBh = newBh;
-                b.layoutSnapshot = committedSnapshot;
-                renderBubble();
-                saveAdjustment();
-              },
-            });
-          }
-        }
-      });
 
       // 1. Interactive handles live in the unscaled chrome layer.
       const chromeHandles: HTMLElement[] = [];
