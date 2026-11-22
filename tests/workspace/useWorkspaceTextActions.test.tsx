@@ -115,7 +115,7 @@ describe("useWorkspaceTextActions", () => {
     expect(callArgs.pageUrls).toEqual(["http://example.com/p1.jpg"]);
 
     // Test the transform function logic
-    const testBubble: TranslatedBubble = {
+    const testBubble = {
       x: 0,
       y: 0,
       w: 10,
@@ -123,7 +123,7 @@ describe("useWorkspaceTextActions", () => {
       text: "Hello",
       translated: "สวัสดีชาวโลก",
       t: "สวัสดีชาวโลก",
-    };
+    } as unknown as TranslatedBubble;
     const changed = callArgs.transform(testBubble);
     expect(changed).toBe(true);
     expect(testBubble.t).toBe("ฮัลโหลชาวโลก");

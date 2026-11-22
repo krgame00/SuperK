@@ -67,7 +67,49 @@ export interface TranslatedBubble {
   speaker?: string;
   /** Whether the speaker was confirmed/edited by the user */
   speakerConfirmed?: boolean;
-  [key: string]: unknown;
+  /** Stable identity used by persistence keys and layout dedup. */
+  id?: string | number;
+  /** Category hint written by style-inference passes (aliases of bubbleCategory). */
+  styleCategory?: string;
+  /** Raw LLM payload category fields read by style inference. */
+  category?: string;
+  type?: string;
+  kind?: string;
+  role?: string;
+  textType?: string;
+  text_type?: string;
+  /** SFX / narration / subtitle payload flags (multiple alias shapes from LLM). */
+  sfx?: boolean;
+  is_sfx?: boolean;
+  narration?: boolean;
+  is_narration?: boolean;
+  subtitle?: boolean;
+  is_subtitle?: boolean;
+  isOverlay?: boolean;
+  is_overlay?: boolean;
+  isSubtitle?: boolean;
+  isNarration?: boolean;
+  /** Payload text aliases carried by LLM responses and test fixtures. */
+  text?: string;
+  translation?: string;
+  translated_text?: string;
+  originalText?: string;
+  /** Identity used by test fixtures and persistence-key assertions. */
+  bubble_id?: string;
+  /** LLM payload page/ language metadata carried on bubbles. */
+  page_num?: number;
+  detected_language?: string;
+  /** LLM payload 2D box (top-left/bottom-right pixel form) alongside box. */
+  box_2d?: number[];
+  /** Voronoi split metadata marking a merged double-bubble pair. */
+  isDoubleBubble?: boolean;
+  /** Review tracking metadata written by the whole-book confirmation pipeline. */
+  needsReview?: boolean;
+  isLowConfidence?: boolean;
+  confidence?: number;
+  /** Source-size evidence inputs for the auto sizing key. */
+  writingMode?: string;
+  sourceRotation?: number;
 }
 
 /** Style options for the translation text overlay. */
@@ -77,7 +119,6 @@ export interface OverlayTextStyle {
   textColor?: string;
   textOutline?: string;
   categoryFonts?: Partial<Record<string, string>>;
-  [key: string]: unknown;
 }
 
 export interface OverlayAdjustment {
