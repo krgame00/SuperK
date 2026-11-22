@@ -5,7 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 22 พ.ย. 21:41 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ทำ Phase 5 ต่อ"
+- 22 พ.ย. 21:46 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ทำ Phase 5 ต่อ"
 - 17 พ.ย. 22:31 · `2b8116b8` · "ทำต่อหน่อย" · ⚠️ · ↳ "ระบบตรวจ ai locel มันยังจับได้ไม่หมด และยังมีรอยจุดๆๆๆ เราพอจะแก้ได้ไหม [$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\pstack-poteto-…"
 - 15 พ.ย. 01:40 · `2b7e562b` · "ทำให้ระบบตรวจดีขึ้นอีกได้ไหมครับ ยังจับได้ไม่ครบ" · ⚠️
 - 15 พ.ย. 01:03 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ⚠️ · ↳ "เราทำให้ระบบตรวจมันจับให้ได้หมดเลยได้ไหม พอมีวิธีไหม"
@@ -33,6 +33,16 @@
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
 
 ---
+
+## Phase 5 เสร็จสมบูรณ์ 7/7 ยูนิต (poteto-mode, refactoring playbook) — 2026-11-22
+
+### Status: **push แล้ว** commit `e77bff9` (CI รอยืนยันตอนจด) — translationOverlay เหลือ **846 บรรทัดจากเดิม 4,460 (−81%)** เหลือเพียง orchestrator + sharedState wiring + export dispatch + paint ตัวประกอบ ตามเป้า orchestrator ≤300 ของแผนเกือบถึงแล้ว งานเหลือคือ Phase 6
+
+- **5.2b-iii ที่ลง:** resize handles ทั้งชุด (rotate/scale/width/move + bitmap corner preview + pinScaleAnchor + widthGeometryForDrag + rAF preview + undo/redo ครบทุก id), floating toolbar (A-/A+/แก้ไข/italic/tilt/warp/bw-contrast/ลบ), toggleBubbleItalic + applyBubbleRotationAndSlant ย้ายบ้าน, positionChromeControls (compact padding + chromeScale zoom logic) + setChromeVisible + chromeControlsByWrapper.set → `wireBubbleResizeChrome(deps)` ใน bubbleInteraction.ts คืน { toggleBubbleItalic, applyBubbleRotationAndSlant }
+- **โครงร่วม:** BubbleRenderSharedState เพิ่ม accessor currentRotation + widthSelectionPreview (visibleSelection ใน paint ยังอ่าน widthSelectionPreview ผ่าน accessor จึง sync กับ handler ที่ย้ายไป); 5.2b-i keyboard wrapper (`() => { toggleBubbleItalic(); }`) ยังปิด over ตัวแปรที่ declare ทีหลังจุด wiring — ปลอดภัยเพราะ TDZ ประเมินตอน keypress ไม่ใช่ตอน wiring; resize factory รับ openLiveEditor/deleteBubbleWithUndo/adjustBubbleFontSize จาก return ของ selection factory = ลำดับ wiring ไม่วนกลับ
+- **พิสูจน์:** tsc 0 (จับ import BubbleProportionalLayout ผิดที่ 2 รอบ แก้เป็นชี้ overlayTypes ตรง) / eslint เหลือ baseline 2 warnings เก็บ import กำพร้า 16 ชื่อ (undoManager/manualSourceSizing/rotateLocalPoint/applyBwContrastModeToBubble/BwContrastMode/WarpConfig group/layoutBubbleAtFixedFont/measureBubbleRenderFit/minimumBubbleWidthAtFixedFont/sourceGeometry pair/cancelDragPreviews) / เทสต์ครอบคลุม 16 ไฟล์ **229 เคสเขียว** / เต็มชุด **2392/2392** / madge ยัง 2 วงจร
+- **สรุป Phase 5 (7 ยูนิต):** 5.4 qualityReviewActions `7e47026` → 5.3 bubbleEditor `a144dcd` → 5.1 bubbleRenderer `97c655f` → 5.2a createSelectionChrome `820aee8` → 5.2b-i selectionAndMove `0bad2ad` → 5.2b-ii-a keyboard `78dc296` → 5.2b-iii resizeChrome `e77bff9` — applyTranslationOverlay เหลือหน้าที่หา container → generation guard → จัดข้อมูล → เรียก factories → คืนผล ตามเป้า Phase 5 ของแผนเป๊ะ
+- **ต่อไป: Phase 6 ปิดแผน** = ตัด index signature ทีละกลุ่มฟิลด์ (สำรวจผู้ใช้ก่อน) + เปลี่ยนพารามิเตอร์ 11 ตัวเป็น options object (จุดที่ hook ส่ง reviewApiKeyProvider จริง) + ย้าย import กลางไฟล์ขึ้นบน + ลบ shim re-export เมื่อผู้เรียกทั้งหมดชี้โมดูลใหม่ (135 ไฟล์) + ใส่ madge --circular เข้า CI
 
 ## Phase 5.2b-iii survey เสร็จ — แผนที่ deps พร้อมผ่า (poteto-mode, refactoring playbook) — 2026-11-22
 
