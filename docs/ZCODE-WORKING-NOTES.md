@@ -5,7 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 22 พ.ย. 21:46 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ทำ Phase 5 ต่อ"
+- 22 พ.ย. 22:07 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ทำ Phase 5 ต่อ"
 - 17 พ.ย. 22:31 · `2b8116b8` · "ทำต่อหน่อย" · ⚠️ · ↳ "ระบบตรวจ ai locel มันยังจับได้ไม่หมด และยังมีรอยจุดๆๆๆ เราพอจะแก้ได้ไหม [$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\pstack-poteto-…"
 - 15 พ.ย. 01:40 · `2b7e562b` · "ทำให้ระบบตรวจดีขึ้นอีกได้ไหมครับ ยังจับได้ไม่ครบ" · ⚠️
 - 15 พ.ย. 01:03 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ⚠️ · ↳ "เราทำให้ระบบตรวจมันจับให้ได้หมดเลยได้ไหม พอมีวิธีไหม"
@@ -33,6 +33,23 @@
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
 
 ---
+
+## CI fix: madge gate ยึด overlay เท่านั้น (poteto-mode, refactoring playbook) — 2026-11-22
+
+### Status: **push แล้ว** commit `7ef7333` (CI รอยืนยันตอนจด) — บทเรียน: `madge --circular` exit 1 เมื่อเจอวงจรใด ๆ รวมวงจรเก่า 2 วงจรนอกแผน ทำ gate แรกแดงทันที (run 45041618865 fail 1m52s) แก้ด้วย step ที่รายงาน `|| true` แล้ว grep -qi "overlay" ค่อย exit 1 เฉพาะวงจร overlay
+
+## Phase 6 ลงแล้ว — แผน refactor translationOverlay ปิดครบ (poteto-mode, refactoring playbook) — 2026-11-22
+
+### Status: **push แล้ว** commit `c0e3818` (CI รอยืนยันตอนจด) — **แผน 7 เฟสจบทั้งหมด** translationOverlay = orchestrator 846→~890 บรรทัด (เพิ่ม interface+overload) จากเดิม 4,460 และ lib/overlay/* 10 โมดูลคือโครงสร้างถาวร
+
+- **6a options object:** applyTranslationOverlay เปลี่ยนเป็น `ApplyTranslationOverlayOptions` เป็น signature หลัก + **deprecated positional overload คงไว้ให้ 49 ไฟล์เทสต์เดิมเรียกได้ทันที** (ตามคำว่า "คง wrapper เดิมไว้ชั่วคราว" ของแผน); hook ย้ายครบ 8 จุดเรียกเป็น options และส่ง `reviewApiKeyProvider` อ่าน gemini_api_key ที่ hook (boundary) — ปิด nit สุดท้ายของ audit 5.4; `setTranslationResult` พิสูจน์ว่า body ไม่เคยใช้จริง (vestigial param) จึงตัดจาก destructure แต่คงใน interface เพื่อไม่ให้ผู้เรียกพัง
+- **6b import กลางไฟล์:** พิสูจน์แล้วว่าจบตั้งแต่ Phase 3 (BUILTIN_CANVAS_FONT_VARS ย้ายไป canvasFont) ไม่มีงานเหลือ
+- **6c madge เข้า CI:** เพิ่ม madge devDep + step `npx madge --circular --extensions ts,tsx lib` ใน frontend job หลัง lint — 2 วงจรที่เหลือเป็นงานเก่านอกแผน (cleaning + translation) จะแดงถ้าวงจร overlay กลับมา
+- **6d index signature ตามกติกาแผน:** ทดลองตัด `[key: string]: unknown` จริง → **266 tsc errors กระจาย 12+ ไฟล์** (nearbyStyleFallback 19, bubbleLayoutOptimizer tests 31 ฯลฯ) = งานแยก PR ย่อยตามกลุ่มฟิลด์ตามที่แผนกำหนด ไม่ใช่ PR เดียว — กู้คืนไฟล์และจด survey ไว้ขอเกตผู้ใช้ก่อนเริ่มซีรีส์ย่อย
+- **shim:** คง re-export บาง ๆ ไว้ ตามดุลยพินิจของแผนเอง ("ตัดสินจากจำนวนผู้เรียกที่เหลือ" = 135 ไฟล์ มากเกินคุ้มลบใน PR เดียว) — เมื่อไรจะลบ = ตอนไล่ผู้เรียกชี้ lib/overlay/* ตรงแบบทีละกลุ่ม
+- **พิสูจน์:** tsc 0 / eslint เหลือ hook warnings เดิม 6 + baseline 2 / เทสต์ครอบคลุม 16 ไฟล์ **229 เคสเขียว** / เต็มชุด **2394 ผ่าน 0 ล้ม** / madge 2 วงจรเดิม
+- **วิกฤตกลางทางที่แก้แล้ว:** hook เรียก options แต่ 20 ไฟล์เทสต์ vi.mock แบบ positional → **97 เคสล้ม** — แก้ด้วย codemod node script normalize 21 mock factory (`async(firstArg, ...restArgs)` + destructure ทั้งสอง shape) + แก้มือ 13 assertion จุด (call[1]→call[0].viewMode, call[9]→call[0].targetLanguage, ?.[0]→?.[0].bubbles, toHaveBeenCalledWith เป็น object shape + เติม reviewApiKeyProvider ที่มองข้าม 3 จุด) + เก็บ syntax ที่ codemod ใส่วงเบล้นซ้ำ 2 จุด (sourceSize `}))}` กับ `async ((`)
+- **ค้าง/เปิด:** ซีรีส์ตัด index signature แยกตามกลุ่มฟิลด์ (266 errors, รอเกต) / ลบ shim เมื่อไล่ผู้เรียกตรงทีละกลุ่ม / manual smoke checklist ของ Phase 5 ยังรอผู้ใช้ทดสอบมือ
 
 ## Phase 5 เสร็จสมบูรณ์ 7/7 ยูนิต (poteto-mode, refactoring playbook) — 2026-11-22
 
