@@ -5,7 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 22 พ.ย. 22:07 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ทำ Phase 5 ต่อ"
+- 22 พ.ย. 23:11 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅
 - 17 พ.ย. 22:31 · `2b8116b8` · "ทำต่อหน่อย" · ⚠️ · ↳ "ระบบตรวจ ai locel มันยังจับได้ไม่หมด และยังมีรอยจุดๆๆๆ เราพอจะแก้ได้ไหม [$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\pstack-poteto-…"
 - 15 พ.ย. 01:40 · `2b7e562b` · "ทำให้ระบบตรวจดีขึ้นอีกได้ไหมครับ ยังจับได้ไม่ครบ" · ⚠️
 - 15 พ.ย. 01:03 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ⚠️ · ↳ "เราทำให้ระบบตรวจมันจับให้ได้หมดเลยได้ไหม พอมีวิธีไหม"
@@ -34,9 +34,18 @@
 
 ---
 
+## ซีรีส์ตัด index signature จบ (poteto-mode, refactoring playbook) — 2026-11-22
+
+### Status: **push แล้ว** commit `f230559` (CI รอยืนยันตอนจด) — TranslatedBubble + OverlayTextStyle ไม่มี `[key: string]: unknown` แล้ว ฟิลด์ metadata ทั้งหมดประกาศชัด 26 ฟิลด์ ตาม DoD "TranslatedBubble ไม่มี index signature" ของแผนครบ
+
+- **วิธีทำตามกลุ่มฟิลด์ของแผน:** ตัด signature → เก็บ 266 errors → จัดกลุ่มด้วย `grep "Property '...'"` พบ 4 กลุ่ม (1) ฟิลด์จริงที่ lib อ่าน/เขียน: id (string|number), styleCategory, needsReview/isLowConfidence/confidence, writingMode/sourceRotation (2) payload alias ของ LLM ที่ nearbyStyleFallback/bridge ใช้: แฟล็ก sfx/narration/subtitle/overlay ทั้ง 10 รูปแบบ + category candidates 7 แบบ (3) payload text alias: text/translation/translated_text/originalText (4) fixture identity: bubble_id/page_num/detected_language/box_2d/isDoubleBubble — ทุกกลุ่มประกาศใน TranslatedBubble พร้อมคอมเมนต์ที่มา
+- **ข้อยกเว้นเดียวที่แก้ในเทสต์แทนการประกาศ:** useWorkspaceTextActions ใช้ literal `x/y/w/h` เป็น geometry ก่อนเรียก transform — เป็นพิกัดก่อนสร้าง ไม่ใช่ของ domain จึง cast `as unknown as TranslatedBubble` (สอดคล้อง principle-boundary-discipline)
+- **พิสูจน์:** tsc 0 โดยไม่มี index signature / eslint สะอาด / เต็มชุด **2394 ผ่าน 0 ล้ม** / madge gate เขียว
+- **ต่อไป:** เหลือข้อเดียวของ DoD คือ manual smoke checklist ของ Phase 5 (รอผู้ใช้ทดสอบมือ) และการลบ shim ทีละกลุ่มเมื่อต้องการ (135 ผู้เรียก ตามดุลยพินิจแผนยังไม่คุ้ม)
+
 ## CI fix: madge gate ยึด overlay เท่านั้น (poteto-mode, refactoring playbook) — 2026-11-22
 
-### Status: **push แล้ว** commit `7ef7333` (CI รอยืนยันตอนจด) — บทเรียน: `madge --circular` exit 1 เมื่อเจอวงจรใด ๆ รวมวงจรเก่า 2 วงจรนอกแผน ทำ gate แรกแดงทันที (run 45041618865 fail 1m52s) แก้ด้วย step ที่รายงาน `|| true` แล้ว grep -qi "overlay" ค่อย exit 1 เฉพาะวงจร overlay
+### Status: **push แล้ว CI เขียวยืนยัน** commit `7ef7333` run `45041939775` success (5m28s) — บทเรียน: `madge --circular` exit 1 เมื่อเจอวงจรใด ๆ รวมวงจรเก่า 2 วงจรนอกแผน ทำ gate แรกแดงทันที (run 45041618865 fail 1m52s) แก้ด้วย step ที่รายงาน `|| true` แล้ว grep -qi "overlay" ค่อย exit 1 เฉพาะวงจร overlay
 
 ## Phase 6 ลงแล้ว — แผน refactor translationOverlay ปิดครบ (poteto-mode, refactoring playbook) — 2026-11-22
 
