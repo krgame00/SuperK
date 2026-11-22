@@ -5,7 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 22 พ.ย. 19:59 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ต่อไป"
+- 22 พ.ย. 20:15 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ทำ Phase 5 ต่อ""
 - 17 พ.ย. 22:31 · `2b8116b8` · "ทำต่อหน่อย" · ⚠️ · ↳ "ระบบตรวจ ai locel มันยังจับได้ไม่หมด และยังมีรอยจุดๆๆๆ เราพอจะแก้ได้ไหม [$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\pstack-poteto-…"
 - 15 พ.ย. 01:40 · `2b7e562b` · "ทำให้ระบบตรวจดีขึ้นอีกได้ไหมครับ ยังจับได้ไม่ครบ" · ⚠️
 - 15 พ.ย. 01:03 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ⚠️ · ↳ "เราทำให้ระบบตรวจมันจับให้ได้หมดเลยได้ไหม พอมีวิธีไหม"
@@ -33,6 +33,16 @@
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
 
 ---
+
+## Phase 5 ยูนิตสาม bubbleRenderer ลงแล้ว (poteto-mode, refactoring playbook) — 2026-11-22
+
+### Status: **push แล้ว** commit `97c655f` (CI รอยืนยันตอนจด) — Phase 5 คืบ 3/4 ยูนิต (5.4 + 5.3 + 5.1) translationOverlay เหลือ **2,480 บรรทัด** จากเดิม 4,460 (ลด 44%)
+
+- **ของที่ย้าย:** renderBubble ทั้งฟังก์ชัน (~582 บรรทัด) ย้ายคำต่อคำไป `lib/overlay/bubbleRenderer.ts` เป็น `renderBubbleContent(deps, availableHeight?, snapshotScale?, widthLayoutPreview?)` — ประเด็นออกแบบสำคัญคือ drag/resize/keyboard handler แชร์ตัวแปร per-bubble แบบ let กับ renderer จึงส่งผ่าน **accessor-backed state object** (`BubbleRenderSharedState`: currentBx/By/Bw/Bh, currentIsItalic, manualMinHeightPx, adj, layoutOverflow, resizeDragActive, floorBase, textSelection, textLayoutOverflow, renderedFontSize, scriptNotice, sourceFontLoaded) ที่ paint สร้างด้วย get/set ครอบ local เดิม — ทั้งสองฝั่งยัง mutate ตัวแปรเดียวกัน ไม่มี copy เหลื่อม (ยืนยัน reassignment ข้ามขอบเขตด้วย grep ก่อนออกแบบ: drag 1420+, keyboard 1584/1729+, resize 2058+)
+- **ย้ายบ้านตามผู้บริโภคเดียว:** isUsableLayoutSnapshot + LAYOUT_SNAPSHOT_MAX_LINES + canvasShadowColor + WidthLayoutPreview ย้ายเข้า bubbleRenderer.ts (grep ยืนยัน renderBubble เป็นผู้ใช้เดียวหลัง editor ย้ายไปก่อนหน้า); paint เหลือ thin wrapper ~55 บรรทัดที่ประกอบ deps + accessor object; เก็บ import กำพร้า 24 ชื่อรวมทั้ง WarpEffectType ตัวเดิม
+- **พิสูจน์:** tsc 0 / eslint **เหลือ 2 warnings** (ดีขึ้นจาก baseline 3 เพราะ WarpEffectType import ที่ไม่ใช้หายไปพร้อมการ prune — ไม่ใช่ regression) / เทสต์ครอบคลุม 16 ไฟล์ **229 เคสเขียว** / เต็มชุด **2392/2392** / madge ยัง 2 วงจร
+- **บทเรียน:** (1) ระวังเขียน garbage ตอน Write ยาว รอบแรกใส่ label-block ไร้ความหมาย + ลืม import hasBrokenThaiLineBreak + ลืม wrapper ใน deps จับได้ทันทีก่อนรันเพราะทบทวนไฟล์ที่เขียนเองเสมอ (2) Edit ใหญ่ 582 บรรทัด match สำเร็จรอบเดียวเพราะอ่านมาสดใน turn เดียวกัน — ห้ามอ่านทิ้งไว้ข้าม turn แล้วเผลอเชื่อว่ายังตรง
+- **ต่อไป:** 5.2 bubbleInteraction ยูนิตสุดท้ายของ Phase 5 (drag/resize/rotate/keyboard/chrome + document listeners + _cleanupListeners + generation WeakMap — ทั้งก้อนเดียวห้ามแยกครึ่ง) → Phase 6 รัด type + options object + ลบ shim + madge เข้า CI
 
 ## Phase 5 ยูนิตสอง bubbleEditor ลงแล้ว (poteto-mode, refactoring playbook) — 2026-11-22
 
