@@ -1,8 +1,7 @@
 import { undoManager } from "./undoManager";
-import { constrainSourceLayoutHeight } from './sourceTextSpace';
-import { calibrateOutputBodyMetric, resolveSourceFontSize, sourceRegionKey, manualSourceSizing, SOURCE_SIZE_POLICY, SOURCE_SIZE_FALLBACK_LABEL, type SourceSizing } from './sourceTextSize';
-import { measureTextSelection, rotateLocalPoint, type SelectionRect } from "./textSelectionBounds";
-import { inspectTargetText, formatOffendingCharacters, repairExcludedScriptText } from "./languagePolicy";
+import { manualSourceSizing, type SourceSizing } from './sourceTextSize';
+import { rotateLocalPoint, type SelectionRect } from "./textSelectionBounds";
+import { repairExcludedScriptText } from "./languagePolicy";
 
 export { repairExcludedScriptText };
 import {
@@ -10,7 +9,6 @@ import {
   cloneTextStyleProfile,
   measureFootprintBackgroundLuminance,
   recomputeAdaptiveReadableOnLayoutCommit,
-  resolveBubbleTextStyle,
 } from "./colorMatching/resolveTextStyle";
 import { sampleBubbleRegion, sampleRectRegion } from "./colorMatching/canvasSampler";
 import { extractTextColors } from "./colorMatching/sampleTextColors";
@@ -20,33 +18,15 @@ import {
 } from "./colorMatching/nearbyStyleFallback";
 import type { BwContrastMode } from "./colorMatching/types";
 import {
-  hasBrokenThaiLineBreak,
-  isStructuredMangaList,
-  isStructuredSectionHeaderLine,
-  type FixedFontWidthResult,
-} from "./textBoxWidthLayout";
-import {
   detectBubbleCollisions,
   autoOrganizePageBubbles,
   isCorruptedAutoAdjustment,
 } from "./bubbleLayoutOptimizer";
 import {
-  renderWarpedText,
   type WarpConfig,
-  type WarpEffectType,
   getNextWarpType,
   getWarpLabel,
 } from "./tools/TextWarpRenderer";
-import {
-  resolveCategoryTypography,
-  type BubbleCategory,
-} from "./typography/comicTypography";
-import {
-  fitTextVertically,
-  isCJKLanguage,
-  shouldPreferVerticalTypesetting,
-  type VerticalTypesetResult,
-} from "./typeset/verticalTypography";
 import { readPageImageLayers } from "./editing/imageLayerStore";
 import type {
   TranslatedBubble,
@@ -58,7 +38,6 @@ import type {
 export type { TranslatedBubble, OverlayTextStyle, OverlayAdjustment, BubbleProportionalLayout };
 import {
   layoutBubbleAtFixedFont,
-  type BubbleTextFit,
 } from "./overlay/bubbleTextFit";
 import { downloadTranslatedImage } from "./overlay/exportTranslatedImage";
 
@@ -68,6 +47,7 @@ import {
   type ReviewApiKeyProvider,
 } from "./overlay/qualityReviewActions";
 import { openBubbleLiveEditor } from "./overlay/bubbleEditor";
+import { renderBubbleContent, type WidthLayoutPreview } from "./overlay/bubbleRenderer";
 
 export { fitTextForBubble, layoutBubbleAtFixedFont, wrapTextForBubble } from "./overlay/bubbleTextFit";
 export type { BubbleTextFit } from "./overlay/bubbleTextFit";
@@ -93,7 +73,6 @@ export {
 import {
   fitTextInAdaptiveBubble,
   getReadableMinimumFontSize,
-  growBubbleFrameToFit,
   measureBubbleRenderFit,
   minimumBubbleWidthAtFixedFont,
 } from "./overlay/bubbleTextFit";
@@ -127,44 +106,6 @@ const wordWrapLocaleOf = (language?: string): string => {
   return WORD_WRAP_LOCALES[normalized] ?? normalized;
 };
 
-const canvasShadowColor = (color: string, opacity: number): string => {
-  const hex = color.trim().match(/^#([0-9a-f]{6})$/i);
-  if (!hex) return color;
-  const value = hex[1];
-  const r = parseInt(value.slice(0, 2), 16);
-  const g = parseInt(value.slice(2, 4), 16);
-  const b = parseInt(value.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${Math.max(0, Math.min(1, opacity))})`;
-};
-
-const LAYOUT_SNAPSHOT_MAX_LINES = 400;
-
-const isUsableLayoutSnapshot = (
-  snapshot: BubbleProportionalLayout | undefined,
-  text: string,
-  fontFamily: string,
-): snapshot is BubbleProportionalLayout =>
-  !!snapshot
-  && snapshot.text === text
-  && snapshot.fontFamily === fontFamily
-  && Array.isArray(snapshot.lines)
-  && snapshot.lines.length > 0
-  && snapshot.lines.length <= LAYOUT_SNAPSHOT_MAX_LINES
-  && !hasBrokenThaiLineBreak(snapshot.lines)
-  && (!isStructuredMangaList(text) || snapshot.selectionHeight >= (snapshot.lines.length - 1) * snapshot.fontSizePx * 1.15 + snapshot.fontSizePx * 0.85)
-  && [
-    snapshot.fontSizePx,
-    snapshot.lineHeightPx,
-    snapshot.frameWidthPx,
-    snapshot.frameHeightPx,
-    snapshot.selectionX,
-    snapshot.selectionY,
-    snapshot.selectionWidth,
-    snapshot.selectionHeight,
-    snapshot.bubbleMult,
-    snapshot.globalMult,
-  ].every((value) => typeof value === "number" && Number.isFinite(value));
-
 // Document-level overlay listeners must not outlive their container —
 // #pageContainer remounts on page switches, orphaning the previous
 // generation's listeners. Registry keyed by container; stale (disconnected)
@@ -185,17 +126,6 @@ const pruneOverlayCleanups = (): void => {
   }
 };
 
-interface WidthLayoutPreview {
-  layout: FixedFontWidthResult;
-  text: string;
-  widthPx: number;
-  fontSizePx: number;
-  fontFamily: string;
-  isOval: boolean;
-  manualMinHeightPx: number;
-  availableHeightPx: number;
-  locale: string;
-}
 
 export const applyTranslationOverlay = async (
   bubbles: TranslatedBubble[],
@@ -814,586 +744,60 @@ export const applyTranslationOverlay = async (
         chromeControlsByWrapper.get(wrapper)?.position();
       };
       const renderBubble = (
-        availableHeight = Math.max(0, ih - currentBy),
+        availableHeight?: number,
         snapshotScale = 1,
         widthLayoutPreview?: WidthLayoutPreview,
       ) => {
-        const currentStyle = textStyleRef?.current || ts;
-        const rawText = b.t || b.translated || "";
-        const scriptInspection = inspectTargetText(rawText, effectiveTarget);
-        const text = scriptInspection.status === "eligible" ? scriptInspection.normalizedText.trim() : scriptInspection.normalizedText;
-        wrapper.dataset.scriptStatus = scriptInspection.status;
-        scriptNotice = scriptInspection.status === "blocked"
-          ? scriptInspection.reason === "excluded-script"
-            ? `ซ่อนคำแปลที่ผิดอักษร: ${formatOffendingCharacters(scriptInspection.offendingCharacters)} — เปิดแก้ไขข้อความ`
-            : "ยังไม่ยืนยันภาษาของหน้า — เปิดแก้ไขข้อความ"
-          : scriptInspection.normalizedText !== rawText ? "แสดงตัวเลขในรูปแบบที่รองรับ โดยเก็บข้อความเดิมไว้" : "";
-        if (rawText && scriptInspection.status === "blocked" && viewMode !== "offscreen") {
-          scriptWarningBadge.hidden = false;
-          scriptWarningBadge.textContent = scriptInspection.reason === "excluded-script"
-            ? `⚠️ พบอักษรปน (${formatOffendingCharacters(scriptInspection.offendingCharacters)}) — ดับเบิลคลิกเพื่อแก้`
-            : "⚠️ ยังไม่ยืนยันภาษา — ดับเบิลคลิกเพื่อแก้";
-        } else {
-          scriptWarningBadge.hidden = true;
-          scriptWarningBadge.textContent = "";
-        }
-        wrapper.title = scriptNotice;
-        wrapper.setAttribute("aria-label", [baseAriaLabel, scriptNotice].filter(Boolean).join("; "));
-        const currentFontFam = resolveBubbleFontFamily(b, currentStyle);
-        const isExplicitlyLaidOut = Boolean(
-          b.layoutAdjustment?.isAutoOptimized
-          || b.layoutAdjustment?.userModified
-          || adj?.isAutoOptimized
-          || adj?.userModified,
-        );
-        const autoSizing = !isExplicitlyLaidOut && b.sourceSizing?.mode === 'auto' ? b.sourceSizing : undefined;
-        const discardDerivedSize = () => {
-          if (b.targetFontSize === autoSizing?.baseFontSizePx) delete b.targetFontSize;
-          if (adj && autoSizing?.baseFontSizePx !== undefined && adj.targetFontSize === autoSizing.baseFontSizePx) delete adj.targetFontSize;
-          if (legacyAdj && autoSizing?.baseFontSizePx !== undefined && legacyAdj.targetFontSize === autoSizing.baseFontSizePx) delete legacyAdj.targetFontSize;
-        };
-        if (autoSizing) {
-          const evidence = autoSizing.evidence;
-          if (evidence.regionKey !== sourceRegionKey(b.box) || evidence.policyVersion !== SOURCE_SIZE_POLICY) {
-            b.sourceSizing = { mode: 'auto', status: 'fallback',
-              evidence: { ...evidence, quality: 'unreliable', confidence: 0, reason: 'stale-source-region-or-policy' },
-              fallbackLabel: SOURCE_SIZE_FALLBACK_LABEL };
-            discardDerivedSize();
-          } else if (autoSizing.font?.family !== currentFontFam || autoSizing.font?.textKey !== text || !sourceFontLoaded) {
-            const metricContext = bCanvas.getContext('2d');
-            if (metricContext) {
-              b.sourceSizing = { ...autoSizing, ...resolveSourceFontSize(evidence, calibrateOutputBodyMetric(metricContext, evidence, currentFontFam, text, sourceFontLoaded)) };
-              if (b.sourceSizing.status === 'matched') b.targetFontSize = b.sourceSizing.baseFontSizePx;
-              else discardDerivedSize();
-            }
-          }
-        }
-        const bubbleMult = typeof b.fontSizeMultiplier === "number" ? b.fontSizeMultiplier : 1.0;
-        const globalMult = currentStyle.fontSizeMultiplier || 1.0;
-        const rawLockedFs = typeof b.targetFontSize === "number" && Number.isFinite(b.targetFontSize) && b.targetFontSize > 0
-          ? b.targetFontSize
-          : (typeof adj?.targetFontSize === "number" && Number.isFinite(adj.targetFontSize) && adj.targetFontSize > 0
-            ? adj.targetFontSize
-            : undefined);
-        const lockedFs = typeof rawLockedFs === "number" && adjSx !== 1
-          ? Math.max(8, Math.round(rawLockedFs * adjSx))
-          : rawLockedFs;
-        let fixedLayout: FixedFontWidthResult | null = null;
-        let legacyFit: BubbleTextFit | null = null;
-        let snapshotFit: { layout: BubbleProportionalLayout; scale: number } | null = null;
-
-        // A usable proportional snapshot replaces re-wrapping: movement,
-        // rotation, Undo/Redo and reopening re-render the committed layout
-        // exactly (float font size, same lines). A corner release passes an
-        // explicit scale to rescale the captured layout crisply in one pass.
-        // Matched-auto bubbles always keep the fresh constrained layout so
-        // source-space evidence and neighbor caps govern every render.
-        const isMatchedAuto = !isExplicitlyLaidOut && b.sourceSizing?.mode === "auto" && b.sourceSizing.status === "matched";
-        if (text && !isMatchedAuto && isUsableLayoutSnapshot(b.layoutSnapshot, text, currentFontFam)) {
-          if (snapshotScale !== 1) {
-            snapshotFit = { layout: b.layoutSnapshot, scale: snapshotScale };
-          } else if (
-            b.layoutSnapshot.globalMult === globalMult
-            && b.layoutSnapshot.bubbleMult === bubbleMult
-            && Boolean(b.layoutSnapshot.isItalic) === Boolean(b.isItalic ?? b.italic ?? currentIsItalic)
-            && Math.abs(currentBw - b.layoutSnapshot.frameWidthPx) < 0.5
-            && Math.abs(currentBh - b.layoutSnapshot.frameHeightPx) < 0.5
-          ) {
-            snapshotFit = { layout: b.layoutSnapshot, scale: 1 };
-          }
-        }
-
-        if (snapshotFit) {
-          textLayoutOverflow = snapshotFit.layout.overflow === true;
-        } else {
-        if (text && typeof lockedFs === "number") {
-          const matchedAuto = !isExplicitlyLaidOut && b.sourceSizing?.mode === 'auto' && b.sourceSizing.status === 'matched';
-          const scaledFs = lockedFs * (currentStyle.fontSizeMultiplier || 1.0) * bubbleMult;
-          const effectiveFs = matchedAuto ? scaledFs : Math.max(8, Math.round(scaledFs));
-          const savedManualMinimum = manualMinHeightPx
-            ?? adj?.manualMinHeightPx
-            ?? (adj ? currentBh : 25);
-          const canReuseWidthPreview = widthLayoutPreview
-            && widthLayoutPreview.text === text
-            && widthLayoutPreview.widthPx === currentBw
-            && widthLayoutPreview.fontSizePx === effectiveFs
-            && widthLayoutPreview.fontFamily === currentFontFam
-            && widthLayoutPreview.isOval === !b.isInvalidBox
-            && widthLayoutPreview.manualMinHeightPx === savedManualMinimum
-            && widthLayoutPreview.availableHeightPx === availableHeight
-            && widthLayoutPreview.locale === wordWrapLocale;
-          fixedLayout = canReuseWidthPreview
-            ? widthLayoutPreview.layout
-            : layoutBubbleAtFixedFont(
-                text,
-                currentBw,
-                effectiveFs,
-                currentFontFam,
-                !b.isInvalidBox,
-                savedManualMinimum,
-                availableHeight,
-                wordWrapLocale,
-                false,
-                b.scanlineRatios,
-              );
-          if (matchedAuto) {
-            const neighbors = real.filter(other => other !== b && !other.deleted).flatMap(other => {
-              const layout = other.layoutAdjustment;
-              if (!layout) return [];
-              const sx = iw / layout.iw, sy = ih / layout.ih;
-              const width = layout.bw * sx, height = layout.bh * sy;
-              const radians = (layout.rotation || 0) * Math.PI / 180;
-              const boundWidth = Math.abs(width * Math.cos(radians)) + Math.abs(height * Math.sin(radians));
-              const boundHeight = Math.abs(width * Math.sin(radians)) + Math.abs(height * Math.cos(radians));
-              return [{ x: layout.bx * sx + (width - boundWidth) / 2,
-                y: layout.by * sy + (height - boundHeight) / 2, width: boundWidth, height: boundHeight }];
-            });
-            const space = b.sourceSizing?.space;
-            const evidence = space && space.sourceRevision === b.sourceSizing?.evidence.sourceRevision &&
-              space.regionKey === b.sourceSizing?.evidence.regionKey ? space : undefined;
-            const constrained = constrainSourceLayoutHeight({x: currentBx, y: currentBy, width: currentBw, height: currentBh},
-              Math.max(fixedLayout.requiredHeightPx, savedManualMinimum), evidence,
-              b.userTextSpace && b.userTextSpace.imageWidth === iw && b.userTextSpace.imageHeight === ih ? b.userTextSpace.rect : undefined, neighbors);
-            currentBh = constrained.height;
-            fixedLayout = {...fixedLayout, heightPx: currentBh, overflow: fixedLayout.overflow || constrained.overflow};
-          } else currentBh = fixedLayout.heightPx;
-        } else {
-          legacyFit = null;
-        }
-
-        // Frame floor: when the font has already reached its floor and the
-        // text still cannot fit, grow the frame around its center instead of
-        // letting the text overflow the bubble. Growth is anchored to the
-        // last committed/fitting size (floorBase) so re-renders never
-        // compound it, and it pauses entirely while a resize drag is live —
-        // otherwise dragging smaller made the frame snap back and balloon.
-        if (text && !resizeDragActive && !fixedLayout) {
-          legacyFit = measureBubbleRenderFit(
-            text, currentBw, currentBh, iw, currentFontFam,
-            currentStyle.fontSizeMultiplier || 1.0, bubbleMult, !b.isInvalidBox,
-            lockedFs,
-            wordWrapLocale,
-            false,
-            b.scanlineRatios,
-          );
-          if (legacyFit.fits) {
-            floorBase = { w: currentBw, h: currentBh };
-          } else {
-            if (!floorBase) floorBase = { w: currentBw, h: currentBh };
-            const lockWidth = Boolean(adj || b.layoutAdjustment || lockedFs);
-            const baseW = lockWidth ? currentBw : floorBase.w;
-            const grown = growBubbleFrameToFit(
-              text, baseW, floorBase.h, iw, ih, currentFontFam,
-              currentStyle.fontSizeMultiplier || 1.0, bubbleMult, !b.isInvalidBox,
-              lockWidth,
-              lockedFs,
-              wordWrapLocale,
-              false,
-              b.scanlineRatios,
-            );
-            currentBw = grown.width;
-            currentBh = grown.height;
-            floorBase = { w: currentBw, h: currentBh };
-            if (!lockWidth) {
-              const cx = currentBx + currentBw / 2;
-              const cy = currentBy + currentBh / 2;
-              currentBx = Math.max(0, Math.min(iw - currentBw, cx - currentBw / 2));
-              currentBy = Math.max(0, Math.min(ih - currentBh, cy - currentBh / 2));
-            }
-            legacyFit = measureBubbleRenderFit(
-              text, currentBw, currentBh, iw, currentFontFam,
-              currentStyle.fontSizeMultiplier || 1.0, bubbleMult, !b.isInvalidBox,
-              lockedFs, wordWrapLocale,
-              false,
-              b.scanlineRatios,
-            );
-          }
-        }
-
-        if (text && !fixedLayout && !legacyFit) {
-          legacyFit = measureBubbleRenderFit(
-            text, currentBw, currentBh, iw, currentFontFam,
-            currentStyle.fontSizeMultiplier || 1.0, bubbleMult, !b.isInvalidBox,
-            lockedFs, wordWrapLocale,
-            false,
-            b.scanlineRatios,
-          );
-        }
-        textLayoutOverflow = fixedLayout ? fixedLayout.overflow : Boolean(text && !legacyFit?.fits);
-        }
-        bCanvas.width = Math.round(currentBw);
-        bCanvas.height = Math.round(currentBh);
-        const ctx = bCanvas.getContext("2d");
-        if (!ctx) return;
-        ctx.clearRect(0, 0, currentBw, currentBh);
-        if (!text || scriptInspection.status === "blocked") {
-          textSelection = { x: 0, y: 0, width: currentBw, height: currentBh };
-          // An empty frame has no proportional layout to reuse later.
-          if (!text) delete b.layoutSnapshot;
-          updateBubbleFrame();
-          return;
-        }
-        const resolvedStyle = resolveBubbleTextStyle(b, currentStyle);
-        const textColor = resolvedStyle.textColor;
-        const outlineColor = resolvedStyle.textOutline;
-        const customOpacity = (b as { opacity?: number }).opacity;
-        const opacity = typeof customOpacity === "number" ? customOpacity : (resolvedStyle.opacity ?? 1.0);
-        const fit = snapshotFit
-          ? {
-              fontSize: snapshotFit.layout.fontSizePx * snapshotFit.scale,
-              lines: snapshotFit.layout.lines,
-              lineHeight: snapshotFit.layout.lineHeightPx * snapshotFit.scale,
-              fits: true,
-            }
-          : fixedLayout
-          ? {
-              fontSize: fixedLayout.fontSizePx,
-              lines: fixedLayout.lines,
-              lineHeight: fixedLayout.fontSizePx * 1.30,
-              fits: !layoutOverflow,
-            }
-          : legacyFit ?? measureBubbleRenderFit(
-              text,
-              currentBw,
-              currentBh,
-              iw,
-              currentFontFam,
-              currentStyle.fontSizeMultiplier || 1.0,
-              bubbleMult,
-              !b.isInvalidBox,
-              lockedFs,
-              wordWrapLocale,
-              false,
-              b.scanlineRatios,
-            );
-        const isVerticalRequested = Boolean(
-          (b as { vertical?: boolean }).vertical ??
-          (isCJKLanguage(wordWrapLocale) && shouldPreferVerticalTypesetting(currentBw, currentBh, wordWrapLocale))
-        );
-        const verticalFit: VerticalTypesetResult | null = isVerticalRequested
-          ? fitTextVertically(
-              text,
-              {
-                x: 0,
-                y: 0,
-                width: currentBw,
-                height: currentBh,
-                scanlineRatios: b.scanlineRatios ?? [],
-              },
-              10,
-              Math.max(14, Math.round(Math.min(currentBh * 0.45, currentBw * 0.45, 96) * bubbleMult)),
-            )
-          : null;
-        const isVerticalActive = Boolean(verticalFit && verticalFit.columns.length > 0);
-        const fontSize = isVerticalActive && verticalFit ? verticalFit.fontSize : fit.fontSize;
-        renderedFontSize = fontSize;
-        const lines = fit.lines;
-        const lineH = snapshotFit
-          ? snapshotFit.layout.lineHeightPx * snapshotFit.scale
-          : fixedLayout ? fontSize * 1.30 : Math.min(fontSize * 1.30, currentBh / Math.max(1, lines.length));
-
-        const comicCategory = (b.bubbleCategory || (b as { category?: BubbleCategory }).category) as BubbleCategory | undefined;
-        const categoryRules = comicCategory ? resolveCategoryTypography(comicCategory, fontSize, b.warp) : undefined;
-
-        currentIsItalic = Boolean(
-          b.isItalic ?? b.italic ?? (categoryRules?.fontStyle === "italic" ? true : currentIsItalic),
-        );
-        const isBoldFlag = (b as { isBold?: boolean }).isBold ?? true;
-        const weightToken = categoryRules?.fontWeight ?? (isBoldFlag ? "bold" : "normal");
-        const fontStylePrefix = currentIsItalic ? `italic ${weightToken}` : weightToken;
-        ctx.globalAlpha = opacity;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.font = `${fontStylePrefix} ${fontSize}px ${currentFontFam}`;
-        ctx.lineJoin = "round";
-        ctx.lineCap = "round";
-        ctx.miterLimit = 2;
-        ctx.strokeStyle = outlineColor;
-        const customStrokeWidth = (b as { strokeWidth?: number }).strokeWidth;
-        const baseOutlineWidth = resolvedStyle.hasOutline
-          ? Math.max(
-              categoryRules?.dynamicStrokeWidth ?? (resolvedStyle.outlineWidthRatio >= 0.18 ? 3.2 : 1),
-              fontSize * resolvedStyle.outlineWidthRatio,
-            )
-          : 0;
-        ctx.lineWidth =
-          typeof customStrokeWidth === "number"
-            ? customStrokeWidth
-            : baseOutlineWidth;
-
-        let fillPaint: string | CanvasGradient = textColor;
-        const gradient = resolvedStyle.fillGradient;
-        if (gradient && gradient.stops.length >= 2) {
-          const angle = (gradient.angleDeg * Math.PI) / 180;
-          const half = Math.max(currentBw, currentBh) / 2;
-          const cx = currentBw / 2;
-          const cy = currentBh / 2;
-          const dx = Math.cos(angle) * half;
-          const dy = Math.sin(angle) * half;
-          const canvasGradient = ctx.createLinearGradient(cx - dx, cy - dy, cx + dx, cy + dy);
-          for (const stop of gradient.stops) {
-            canvasGradient.addColorStop(Math.max(0, Math.min(1, stop.offset)), stop.color);
-          }
-          fillPaint = canvasGradient;
-        }
-
-        const visualEffect = resolvedStyle.shadow;
-        if (visualEffect) {
-          ctx.shadowColor = canvasShadowColor(visualEffect.color, visualEffect.opacity);
-          ctx.shadowBlur = Math.max(0, fontSize * visualEffect.blurRatio);
-          ctx.shadowOffsetX = fontSize * visualEffect.offsetXRatio;
-          ctx.shadowOffsetY = fontSize * visualEffect.offsetYRatio;
-        } else {
-          ctx.shadowColor = "rgba(0,0,0,0)";
-          ctx.shadowBlur = 0;
-          ctx.shadowOffsetX = 0;
-          ctx.shadowOffsetY = 0;
-        }
-
-        const structuredRender = isStructuredMangaList(text);
-        const lineYOffsets: number[] = [];
-        let seenBullet = false;
-        if (structuredRender && lines.length > 0) {
-          let accY = 0;
-          for (let i = 0; i < lines.length; i++) {
-            const trimmed = lines[i].trim();
-            const isBulletStart = trimmed.startsWith("•") || trimmed.startsWith("-");
-            const isHeader = !isBulletStart && isStructuredSectionHeaderLine(trimmed);
-            if (i > 0) {
-              if (isHeader) {
-                accY += fontSize * (seenBullet ? 1.62 : 1.42);
-              } else if (isBulletStart) {
-                accY += fontSize * 1.36;
-              } else {
-                accY += fontSize * 1.22;
-              }
-            }
-            if (isBulletStart) seenBullet = true;
-            else if (isHeader) seenBullet = false;
-            lineYOffsets.push(accY);
-          }
-        } else {
-          for (let i = 0; i < lines.length; i++) {
-            lineYOffsets.push(i * lineH);
-          }
-        }
-
-        const totalH = lineYOffsets.length > 0 ? lineYOffsets[lineYOffsets.length - 1] : 0;
-        const neededCanvasH = lines.length > 0 ? Math.ceil(totalH + fontSize * 1.55) : currentBh;
-        if (structuredRender && !resizeDragActive && snapshotScale === 1 && currentBh < neededCanvasH) {
-          currentBh = Math.min(ih, Math.max(currentBh, neededCanvasH));
-          if (currentBy + currentBh > ih) {
-            currentBy = Math.max(0, ih - currentBh);
-          }
-          textLayoutOverflow = neededCanvasH > ih;
-          bCanvas.height = Math.round(currentBh);
-          ctx.clearRect(0, 0, currentBw, currentBh);
-          ctx.globalAlpha = opacity;
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.font = `${fontStylePrefix} ${fontSize}px ${currentFontFam}`;
-          ctx.lineJoin = "round";
-          ctx.lineCap = "round";
-          ctx.miterLimit = 2;
-          ctx.strokeStyle = outlineColor;
-          ctx.lineWidth = resolvedStyle.hasOutline
-            ? Math.max(resolvedStyle.outlineWidthRatio >= 0.18 ? 3.2 : 1, fontSize * resolvedStyle.outlineWidthRatio)
-            : 0;
-          if (visualEffect) {
-            ctx.shadowColor = canvasShadowColor(visualEffect.color, visualEffect.opacity);
-            ctx.shadowBlur = Math.max(0, fontSize * visualEffect.blurRatio);
-            ctx.shadowOffsetX = fontSize * visualEffect.offsetXRatio;
-            ctx.shadowOffsetY = fontSize * visualEffect.offsetYRatio;
-          }
-        }
-
-        // Overflow frames anchor the first line to the top padding so the
-        // leading lines stay readable instead of symmetric clipping that can
-        // hide both the first and last lines behind the frame edges.
-        const startY = textLayoutOverflow
-          ? Math.max(fontSize * 0.75, lineH / 2)
-          : (currentBh / 2) - (totalH / 2);
-        let inBulletItem = false;
-        const leftPad = Math.max(6, Math.round(currentBw * 0.04));
-        const indentPad = leftPad + Math.round(fontSize * 0.85);
-
-        const effectiveWarp =
-          b.warp && b.warp.type !== "none"
-            ? b.warp
-            : categoryRules?.warpConfig;
-        const isWarped = Boolean(
-          effectiveWarp &&
-          (effectiveWarp.type !== "none" ||
-            (typeof effectiveWarp.horizontal === "number" && Math.abs(effectiveWarp.horizontal) >= 0.001) ||
-            (typeof effectiveWarp.vertical === "number" && Math.abs(effectiveWarp.vertical) >= 0.001))
-        );
-        let activeCtx: CanvasRenderingContext2D = ctx;
-        let warpCanvas: HTMLCanvasElement | OffscreenCanvas | null = null;
-        if (isWarped) {
-          warpCanvas =
-            typeof OffscreenCanvas !== "undefined"
-              ? new OffscreenCanvas(bCanvas.width, bCanvas.height)
-              : document.createElement("canvas");
-          warpCanvas.width = bCanvas.width;
-          warpCanvas.height = bCanvas.height;
-          activeCtx = warpCanvas.getContext("2d") as CanvasRenderingContext2D;
-          activeCtx.globalAlpha = opacity;
-          activeCtx.textAlign = "center";
-          activeCtx.textBaseline = "middle";
-          activeCtx.font = `${fontStylePrefix} ${fontSize}px ${currentFontFam}`;
-          activeCtx.lineJoin = "round";
-          activeCtx.lineCap = "round";
-          activeCtx.miterLimit = 2;
-          activeCtx.strokeStyle = outlineColor;
-          activeCtx.lineWidth = ctx.lineWidth;
-          if (visualEffect) {
-            activeCtx.shadowColor = ctx.shadowColor;
-            activeCtx.shadowBlur = ctx.shadowBlur;
-            activeCtx.shadowOffsetX = ctx.shadowOffsetX;
-            activeCtx.shadowOffsetY = ctx.shadowOffsetY;
-          }
-        }
-
-        const customBoxFill = (b as { boxFill?: string }).boxFill;
-        if (typeof customBoxFill === "string" && customBoxFill.trim()) {
-          activeCtx.save();
-          activeCtx.fillStyle = customBoxFill;
-          activeCtx.fillRect(0, 0, currentBw, currentBh);
-          activeCtx.restore();
-        }
-
-        const drawLineWithOptionalSlant = (lineText: string, drawX: number, drawY: number) => {
-          if (currentIsItalic && typeof activeCtx.save === "function" && typeof activeCtx.transform === "function" && typeof activeCtx.restore === "function") {
-            activeCtx.save();
-            const slant = -0.18;
-            activeCtx.transform(1, 0, slant, 1, -drawY * slant, 0);
-            if (resolvedStyle.hasOutline && activeCtx.lineWidth > 0) {
-              activeCtx.strokeText(lineText, drawX, drawY);
-            }
-            activeCtx.fillStyle = fillPaint;
-            activeCtx.fillText(lineText, drawX, drawY);
-            activeCtx.restore();
-          } else {
-            if (resolvedStyle.hasOutline && activeCtx.lineWidth > 0) {
-              activeCtx.strokeText(lineText, drawX, drawY);
-            }
-            activeCtx.fillStyle = fillPaint;
-            activeCtx.fillText(lineText, drawX, drawY);
-          }
-        };
-
-        if (isVerticalActive && verticalFit) {
-          activeCtx.textAlign = "center";
-          activeCtx.textBaseline = "middle";
-          for (const col of verticalFit.columns) {
-            for (const glyph of col.glyphs) {
-              const drawX = col.x + (glyph.offsetX ?? 0);
-              const drawY = glyph.y;
-              if (glyph.rotateDeg) {
-                activeCtx.save();
-                activeCtx.translate(drawX, drawY);
-                activeCtx.rotate((glyph.rotateDeg * Math.PI) / 180);
-                drawLineWithOptionalSlant(glyph.char, 0, 0);
-                activeCtx.restore();
-              } else {
-                drawLineWithOptionalSlant(glyph.char, drawX, drawY);
-              }
-            }
-          }
-        } else {
-          lines.forEach((l, i) => {
-            const yPos = startY + (lineYOffsets[i] ?? i * lineH);
-            if (structuredRender) {
-              const trimmed = l.trim();
-              const isBulletStart = trimmed.startsWith("•") || trimmed.startsWith("-");
-              const isSectionHeader = !isBulletStart && (isStructuredSectionHeaderLine(trimmed) || !inBulletItem);
-              if (isBulletStart) {
-                inBulletItem = true;
-                activeCtx.textAlign = "left";
-                drawLineWithOptionalSlant(l, leftPad, yPos);
-              } else if (isSectionHeader) {
-                inBulletItem = false;
-                activeCtx.textAlign = "center";
-                drawLineWithOptionalSlant(l, currentBw / 2, yPos);
-              } else {
-                activeCtx.textAlign = "left";
-                drawLineWithOptionalSlant(l, indentPad, yPos);
-              }
-            } else {
-              const customAlign = (b as { align?: "left" | "center" | "right" }).align || "center";
-              activeCtx.textAlign = customAlign;
-              const alignX =
-                customAlign === "left"
-                  ? leftPad
-                  : customAlign === "right"
-                    ? currentBw - leftPad
-                    : currentBw / 2;
-              drawLineWithOptionalSlant(l, alignX, yPos);
-            }
-          });
-        }
-        activeCtx.textAlign = "center";
-
-        if (isWarped && warpCanvas && effectiveWarp) {
-          ctx.clearRect(0, 0, currentBw, currentBh);
-          renderWarpedText(ctx, warpCanvas, 0, 0, effectiveWarp);
-        }
-        // Snapshot renders keep the captured selection (scaled for a corner
-        // release) so the crisp redraw, reopening, and Undo/Redo all show the
-        // exact previewed geometry; its padding is additive while scaling is
-        // proportional, so re-measuring would shift the anchor between the
-        // previewed and committed states. Fresh renders take the measurement.
-        const avgLineH = lines.length > 1 ? totalH / (lines.length - 1) : lineH;
-        const baseMeasuredSelection = snapshotFit
-          ? { x: snapshotFit.layout.selectionX * snapshotFit.scale,
-              y: snapshotFit.layout.selectionY * snapshotFit.scale,
-              width: snapshotFit.layout.selectionWidth * snapshotFit.scale,
-              height: snapshotFit.layout.selectionHeight * snapshotFit.scale }
-          : measureTextSelection(ctx, lines, fontSize, avgLineH, currentBw, currentBh);
-        if (structuredRender && lines.length > 0) {
-          const strokePad = (ctx.lineWidth > 0 ? ctx.lineWidth / 2 : 0) + 4;
-          const topY = Math.max(0, Math.floor(startY - fontSize * 0.85 - strokePad));
-          const botY = Math.min(currentBh, Math.ceil(startY + totalH + fontSize * 0.65 + strokePad));
-          const minX = Math.max(0, Math.min(Math.floor(leftPad - strokePad), Math.floor(baseMeasuredSelection.x)));
-          const maxX = Math.min(
-            currentBw,
-            Math.max(
-              Math.ceil(currentBw - leftPad + strokePad),
-              Math.ceil(baseMeasuredSelection.x + baseMeasuredSelection.width),
-            ),
-          );
-          textSelection = {
-            x: minX,
-            y: topY,
-            width: Math.max(20, maxX - minX),
-            height: Math.max(20, botY - topY),
-          };
-        } else {
-          textSelection = baseMeasuredSelection;
-        }
-        // Capture the bounded proportional layout of this render so corner
-        // drags preview with this bitmap and later re-renders (movement,
-        // rotation, Undo/Redo, reopen) reproduce it exactly.
-        if (lines.length > 0 && lines.length <= LAYOUT_SNAPSHOT_MAX_LINES) {
-          b.layoutSnapshot = {
-            text,
-            fontFamily: currentFontFam,
-            fontSizePx: fontSize,
-            lineHeightPx: lineH,
-            lines: [...lines],
-            frameWidthPx: currentBw,
-            frameHeightPx: currentBh,
-            selectionX: textSelection.x,
-            selectionY: textSelection.y,
-            selectionWidth: textSelection.width,
-            selectionHeight: textSelection.height,
-            bubbleMult,
-            globalMult,
-            isItalic: currentIsItalic,
-            overflow: textLayoutOverflow,
-          };
-        }
-        updateBubbleFrame();
+        renderBubbleContent({
+          bubble: b,
+          wrapper,
+          canvas: bCanvas,
+          scriptWarningBadge,
+          textStyle: ts,
+          textStyleRef,
+          viewMode,
+          pageWidth: iw,
+          pageHeight: ih,
+          targetLocale: wordWrapLocale,
+          effectiveTarget,
+          baseAriaLabel,
+          realBubbles: real,
+          legacyAdjustment: legacyAdj,
+          adjustmentScaleX: adjSx,
+          updateBubbleFrame,
+          state: {
+            get currentBx() { return currentBx; },
+            set currentBx(value: number) { currentBx = value; },
+            get currentBy() { return currentBy; },
+            set currentBy(value: number) { currentBy = value; },
+            get currentBw() { return currentBw; },
+            set currentBw(value: number) { currentBw = value; },
+            get currentBh() { return currentBh; },
+            set currentBh(value: number) { currentBh = value; },
+            get currentIsItalic() { return currentIsItalic; },
+            set currentIsItalic(value: boolean) { currentIsItalic = value; },
+            get manualMinHeightPx() { return manualMinHeightPx; },
+            set manualMinHeightPx(value: number | undefined) { manualMinHeightPx = value; },
+            get adj() { return adj; },
+            set adj(value: OverlayAdjustment | undefined) { adj = value; },
+            get layoutOverflow() { return layoutOverflow; },
+            set layoutOverflow(value: boolean) { layoutOverflow = value; },
+            get resizeDragActive() { return resizeDragActive; },
+            set resizeDragActive(value: boolean) { resizeDragActive = value; },
+            get floorBase() { return floorBase; },
+            set floorBase(value: { w: number; h: number } | null) { floorBase = value; },
+            get textSelection() { return textSelection; },
+            set textSelection(value: SelectionRect) { textSelection = value; },
+            get textLayoutOverflow() { return textLayoutOverflow; },
+            set textLayoutOverflow(value: boolean) { textLayoutOverflow = value; },
+            get renderedFontSize() { return renderedFontSize; },
+            set renderedFontSize(value: number) { renderedFontSize = value; },
+            get scriptNotice() { return scriptNotice; },
+            set scriptNotice(value: string) { scriptNotice = value; },
+            get sourceFontLoaded() { return sourceFontLoaded; },
+            set sourceFontLoaded(value: boolean) { sourceFontLoaded = value; },
+          },
+        }, availableHeight, snapshotScale, widthLayoutPreview);
       };
 
       b.render = renderBubble;
