@@ -44,7 +44,6 @@
 - **เต็มชุดบนเครื่องเจอ noise ตามแพตเทิร์นเดิม:** รอบแรกล้ม workspaceAccessibility SettingsModal (เดี่ยวผ่าน 8/8) รอบสองล้ม productionWatchdog+serviceOwnership timeout (เดี่ยวผ่าน 13/13) — ล้มต่างกันทุกรอบ ไม่เกี่ยว diff overlay สรุปเป็น contention และใช้ CI เป็นเกตจริง ตามบทเรียน Phase 2
 - **ต่อไป:** Phase 6 เปลี่ยนผู้เรียกเดียวให้ import ตรง lib/overlay/* แล้วลบ shim bubbleInteraction.ts — ปิดแผนแยก bubbleInteraction
 
-
 ## แผนแยก bubbleInteraction — Phase 4 แยก resize chrome เป็น handles + toolbar (poteto-mode, refactoring playbook) — 2026-11-23
 
 ### Status: **push แล้ว** commit `019611b` (CI `45051443976` success ทั้ง Frontend+Backend) — wireBubbleResizeChrome (997 บรรทัด) ถูกตัดเป็น composer ~16 บรรทัด lib/overlay/* มี 13 โมดูลแล้ว เหลือ Phase 5 (bubbleMove) กับ Phase 6 (ลบ shim)
