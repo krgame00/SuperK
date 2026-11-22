@@ -5,7 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
-- 22 พ.ย. 23:45 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ทำซีรีส์ตัด index signature"
+- 23 พ.ย. 00:02 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "เริ่ม Phase 0+1+2"
 - 17 พ.ย. 22:31 · `2b8116b8` · "ทำต่อหน่อย" · ⚠️ · ↳ "ระบบตรวจ ai locel มันยังจับได้ไม่หมด และยังมีรอยจุดๆๆๆ เราพอจะแก้ได้ไหม [$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\pstack-poteto-…"
 - 15 พ.ย. 01:40 · `2b7e562b` · "ทำให้ระบบตรวจดีขึ้นอีกได้ไหมครับ ยังจับได้ไม่ครบ" · ⚠️
 - 15 พ.ย. 01:03 · `be1b25f1` · "superk-ui-redesign-proto Project Session" · ⚠️ · ↳ "เราทำให้ระบบตรวจมันจับให้ได้หมดเลยได้ไหม พอมีวิธีไหม"
@@ -33,6 +33,16 @@
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
 
 ---
+
+## แผนแยก bubbleInteraction — Phase 3 ตัด late-binding ด้วย style actions (poteto-mode, refactoring playbook) — 2026-11-23
+
+### Status: **push แล้ว** commit `b16cfdb` (CI รอยืนยันตอนจด) — phase เดียวของแผนที่เปลี่ยน wiring: วงจร late-binding เดิม (keyboard wrappers ปิด over ตัวแปร declare ทีหลัง) หายทั้งก้อน lib/overlay/* มี 11 โมดูลแล้ว
+
+- **ของที่ย้าย:** toggleBubbleItalic + applyBubbleRotationAndSlant ออกจาก wireBubbleResizeChrome ไป `lib/overlay/bubbleStyleActions.ts` เป็น `createBubbleStyleActions(deps)` — deps เพียง 5 ฟิลด์ (bubble/state/onBubblesMutated/renderBubble/saveAdjustment) คืน { toggleBubbleItalic, applyBubbleRotationAndSlant, registerItalicButton }
+- **กลไก registration ที่ผมเสริมจาก verdict:** syncItalicBtnStyle อ้าง italicBtn ที่สร้างทีหลังใน toolbar จึงให้ actions ถือ `italicButtonEl` เป็น state และคืน `registerItalicButton(btnEl)` ให้ resize chrome เรียกหลังสร้างปุ่ม — late-binding ที่เหลือเป็นทางเดียวและชัดเจน; orchestrator สร้าง styleActions ก่อนเรียกทั้งสอง factory แล้วส่ง reference เดียวกัน
+- **การเปลี่ยน wiring ใน orchestrator:** deferred wrappers + getCurrentRotation getter ถูกลบ (บรรทัด 794-799 เดิม); keyboard ใน selection factory อ่าน rotation ผ่าน sharedState.currentRotation และเรียก styleActions ตรง; selection deps ลดลง 3 ฟิลด์, resize deps เพิ่ม styleActions, resize factory คง return helper เดิมเพื่อคุม API
+- **พิสูจน์:** tsc 0 / eslint hook warnings เดิม 6 + baseline 2 / เทสต์ครอบคลุม 343 เคส (1 ล้ม = SettingsModalGeminiCatalog contention ผ่านเดี่ยว 6/6 และผ่านเต็มชุด) / เต็มชุด **2394 ผ่าน 0 ล้ม** / madge gate overlay เขียว
+- **ต่อไป:** Phase 4 แยก resize chrome เป็น bubbleResizeHandles.ts + bubbleToolbar.ts → Phase 5 bubbleMove.ts → Phase 6 ลบ shim
 
 ## แผนแยก bubbleInteraction เริ่มแล้ว — Phase 0+1+2 ลงแล้ว (poteto-mode, refactoring playbook) — 2026-11-22
 
