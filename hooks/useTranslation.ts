@@ -80,7 +80,7 @@ import {
   deduplicateGlobalBubbles,
   type GlobalBubbleRecord,
 } from "@/lib/webtoon";
-import { logError, logWarn } from "@/lib/logger/clientLogger";
+import { logError, logWarn, logInfo } from "@/lib/logger/clientLogger";
 
 export type SaveStatus = "idle" | "saving" | "saved" | "error";
 export type TranslationWorkflowPhase = "cleaning" | "translating";
@@ -1724,6 +1724,7 @@ async function compressImageForTranslation(
     isAutoRetry: boolean = false,
     signal?: AbortSignal,
     requestedTarget = targetLangRef.current,
+    skipFullPagePrePass: boolean = false,
   ): Promise<boolean> => {
     const jobTargetIdentity = createPageTargetIdentity(requestedTarget);
     if (!jobTargetIdentity) throw new Error("กรุณาเลือกภาษาปลายทางที่รองรับพร้อมรูปแบบอักษร");
@@ -1939,45 +1940,46 @@ async function compressImageForTranslation(
         let successCount = 0;
         let validPayloadCount = 0;
         let fullPageUsed = false;
-        // Token saver: one full-page attempt first. Only when it comes back
-        // empty (soft refusal / recognition miss) do we pay the 6-slice cost —
-        // most pages pass full-page, cutting bypass from ~6x to ~1x usage.
-        try {
-          if (activePageRef.current === pageUrl) {
-            setTranslationResult("กำลังแปลทั้งหน้าก่อน (ประหยัดโทเคน) — จะซอยเฉพาะเมื่อโมเดลปฏิเสธ…");
+        // Token saver: one full-page attempt first if not already escalated via skipFullPagePrePass.
+        // Only when it comes back empty (soft refusal / recognition miss) do we pay the slicing cost.
+        if (!skipFullPagePrePass) {
+          try {
+            if (activePageRef.current === pageUrl) {
+              setTranslationResult("กำลังแปลทั้งหน้าก่อน (ประหยัดโทเคน) — จะซอยเฉพาะเมื่อโมเดลปฏิเสธ…");
+            }
+            const fullRes = await fetch("/api/translate", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                imageBase64: base64,
+                mimeType: actualMimeType,
+                targetLang,
+                sourceLang,
+                modelPreference,
+                apiKey: userApiKey,
+                allowPreview: allowPreviewModels, glossary: glossaryRef.current, pronounMatrix: pronounMatrixRef.current,
+                policy: { sfx: sfxModeRef.current },
+                context: priorContext || undefined,
+              }),
+              signal,
+            });
+            const fullData = await readTranslationResponse<{ text: string }>(fullRes);
+            const fullParsed = (fullData.text ? parseLLMJSON(fullData.text) : null) as
+              | { bubbles?: TranslatedBubble[] }
+              | null;
+            const fullBubbles = fullParsed && Array.isArray(fullParsed.bubbles)
+              ? normalizeTargetTranslationPayload(fullParsed, targetLang).bubbles ?? []
+              : [];
+            if (fullBubbles.length > 0) {
+              allBubbles = fullBubbles.filter((b) => b.box?.length === 4 && b.box.every(Number.isFinite));
+              successCount = 1;
+              validPayloadCount = 1;
+              fullPageUsed = true;
+            }
+          } catch (err: unknown) {
+            console.warn("Full-page pre-pass failed; falling back to NSFW slicing:", err);
+            if (isUserCancelledError(err)) throw err;
           }
-          const fullRes = await fetch("/api/translate", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              imageBase64: base64,
-              mimeType: actualMimeType,
-              targetLang,
-              sourceLang,
-              modelPreference,
-              apiKey: userApiKey,
-              allowPreview: allowPreviewModels, glossary: glossaryRef.current, pronounMatrix: pronounMatrixRef.current,
-              policy: { sfx: sfxModeRef.current },
-              context: priorContext || undefined,
-            }),
-            signal,
-          });
-          const fullData = await readTranslationResponse<{ text: string }>(fullRes);
-          const fullParsed = (fullData.text ? parseLLMJSON(fullData.text) : null) as
-            | { bubbles?: TranslatedBubble[] }
-            | null;
-          const fullBubbles = fullParsed && Array.isArray(fullParsed.bubbles)
-            ? normalizeTargetTranslationPayload(fullParsed, targetLang).bubbles ?? []
-            : [];
-          if (fullBubbles.length > 0) {
-            allBubbles = fullBubbles.filter((b) => b.box?.length === 4 && b.box.every(Number.isFinite));
-            successCount = 1;
-            validPayloadCount = 1;
-            fullPageUsed = true;
-          }
-        } catch (err: unknown) {
-          console.warn("Full-page pre-pass failed; falling back to NSFW slicing:", err);
-          if (isUserCancelledError(err)) throw err;
         }
         if (!fullPageUsed) {
         const imgEl = await waitForImageReady(recognitionUrl);
@@ -2155,8 +2157,8 @@ async function compressImageForTranslation(
           };
 
           const adaptiveResult = await runAdaptiveSlicing({
-            pageWidth: imgEl.naturalWidth,
-            pageHeight: imgEl.naturalHeight,
+            pageWidth: imgEl.naturalWidth || 1000,
+            pageHeight: imgEl.naturalHeight || 1600,
             translator: sliceTranslator,
             onSliceStart: (slice, totalSoFar) => {
               setTranslationResult(`กำลังแปลชิ้นส่วน Adaptive Slicing (${slice.id}, รวม ${totalSoFar} ชิ้น)...`);
@@ -2279,10 +2281,40 @@ async function compressImageForTranslation(
         );
       }
 
-      const data = await readTranslationResponse<{
-        text: string;
-        meta?: TranslationObservabilityMeta;
-      }>(res, wantsProgress ? reportModelSwitch : undefined);
+      let data: { text: string; meta?: TranslationObservabilityMeta };
+      try {
+        data = await readTranslationResponse<{
+          text: string;
+          meta?: TranslationObservabilityMeta;
+        }>(res, wantsProgress ? reportModelSwitch : undefined);
+      } catch (err: unknown) {
+        if (!forceNsfwBypass && !nsfwBypassMode) {
+          const isSafety =
+            (err instanceof TranslationRequestError && err.code === "SAFETY_BLOCKED") ||
+            classifyTranslationError(err).code === "SAFETY_BLOCKED";
+          if (isSafety) {
+            console.log(
+              `[Auto-Ladder] Page ${pageIndex + 1} safety-blocked on whole-page attempt. Escalating to Adaptive Slicing...`
+            );
+            if (activePageRef.current === pageUrl) {
+              setTranslationResult(
+                "🛡️ ติดระบบคัดกรองเนื้อหา — กำลังไต่บันไดไป Adaptive Slicing อัตโนมัติ...",
+              );
+            }
+            return await performTranslation(
+              preparedPage,
+              pageUrl,
+              pageIndex,
+              true, // forceNsfwBypass = true
+              isAutoRetry,
+              signal,
+              requestedTarget,
+              true, // skipFullPagePrePass = true
+            );
+          }
+        }
+        throw err;
+      }
       let responseMeta = data.meta;
       let parsed = (data.text ? parseLLMJSON(data.text) : data) as
         | ({ bubbles?: unknown[] } & Record<string, unknown>)
@@ -2513,6 +2545,18 @@ async function compressImageForTranslation(
         }
         setShowTranslate(false);
       }
+
+      logInfo(
+        "translate",
+        `แปลหน้า ${pageIndex + 1} สำเร็จ (${responseMeta?.model || "unknown"}, ladder=${responseMeta?.ladderStep || (forceNsfwBypass ? "slice" : "full")}${responseMeta?.usageMetadata ? `, tokens=${responseMeta.usageMetadata.totalTokenCount}` : ""})`,
+        {
+          page: pageIndex + 1,
+          model: responseMeta?.model,
+          ladderStep: responseMeta?.ladderStep || (forceNsfwBypass ? "slice" : "full"),
+          usageMetadata: responseMeta?.usageMetadata,
+          elapsedMs: responseMeta?.elapsedMs,
+        },
+      );
 
       return true;
     } catch (error: unknown) {
@@ -2782,7 +2826,7 @@ async function compressImageForTranslation(
       // Continuous local cleaning is the default; retain the explicit opt-out.
       const legacyPerformanceMode =
         typeof window !== "undefined"
-        && window.localStorage.getItem("superk:legacy-performance-mode") === "1";
+        && window.localStorage?.getItem("superk:legacy-performance-mode") === "1";
       const preparationQueue = new Map<number, Promise<PreparationOutcome>>();
       let producerStep = 1;
       let producerRunning = false;

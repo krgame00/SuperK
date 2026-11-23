@@ -1,5 +1,32 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Cost Ladder Architecture Phase 4 (Batch Auto-Laddering on SAFETY_BLOCKED & Diagnostics) — 2026-11-23
+
+### Status: VERIFIED WORKING (Integrated transparent auto-escalation from whole-page SAFETY_BLOCKED to Adaptive Slicing in both single-page and batch jobs, updated diagnostics taxonomy, and verified token metrics logging per principles: `principle-fix-root-causes`, `principle-prove-it-works`, `principle-experience-first`, `principle-laziness-protocol`):
+
+1) Changes & Implementation:
+   - 1. Batch & Single-Page Auto-Laddering on SAFETY_BLOCKED (`hooks/useTranslation.ts`):
+     - When whole-page `/api/translate` returns `SAFETY_BLOCKED` (400) after server-side model-hopping (Phase 1), client catches the error and auto-escalates via `performTranslation(..., forceNsfwBypass = true, isAutoRetry, signal, requestedTarget, skipFullPagePrePass = true)`.
+     - Added `skipFullPagePrePass: boolean = false` parameter to `performTranslation`: prevents repeating the whole-page pre-pass when escalating from an already safety-blocked full-page attempt, saving 1 redundant API call while retaining token-saver pre-pass for manual `nsfwBypassMode`.
+     - Preserves session `nsfwBypassMode` state unchanged (transparent per-page escalation without permanent side-effects).
+     - Emits real-time UI notification: `🛡️ ติดระบบคัดกรองเนื้อหา — กำลังไต่บันไดไป Adaptive Slicing อัตโนมัติ...`.
+     - Emits structured `logInfo` recording `ladderStep` (`"full"`, `"hop"`, or `"slice"`) and `usageMetadata` (prompt, candidates, totalTokenCount).
+     - Added defensive optional chaining `window.localStorage?.getItem("superk:legacy-performance-mode")` in `handleTranslateAll` loop for headless test and SSR resilience.
+   - 2. Diagnostics Taxonomy & Action Label Update (`lib/translation/diagnostics.ts`):
+     - Updated `DIAGNOSTIC_TAXONOMY.SAFETY_BLOCKED`: description now explains automated laddering (model hop + adaptive slicing), and action label updated to `"บังคับโหมด NSFW Bypass แล้วลองใหม่"` while retaining `recommendedAction: "enable_nsfw_bypass"` for modal button compatibility.
+   - 3. Unit and Batch Integration Tests (`tests/translation/autoLadder.test.ts`, `tests/translation/diagnostics.test.ts`):
+     - Created `autoLadder.test.ts` testing both single-page translation escalation (verifying exact 3 calls: 1 whole-page + 2 level-1 slices, 0 wasted pre-pass calls) and batch `handleTranslateAll` across multiple pages where blocked pages auto-ladder seamlessly without failing the batch job.
+     - Verified `diagnostics.test.ts` (12/12 passed) and `TranslationDiagnosticModal.test.tsx` (7/7 passed).
+
+2) Verification Evidence:
+   - Vitest Auto-Ladder & Diagnostics: `npx vitest run tests/translation/autoLadder.test.ts tests/translation/diagnostics.test.ts tests/unit/TranslationDiagnosticModal.test.tsx tests/translation/useTranslation.imageLatency.test.tsx tests/translation/useTranslation.imageLateEdges.test.tsx` passed (27/27 passed).
+   - Broad Translation Suite: `npx vitest run tests/translation/` passed (68 test files, 666/666 tests passed).
+   - TypeScript Check: `npx tsc --noEmit` passed with 0 errors.
+   - ESLint Check: `npm run lint` passed with 0 errors.
+   - Python Ruff Check: `.\ocr-service\.venv\Scripts\python.exe -m ruff check ocr-service` passed with 0 errors.
+
+
+
 ## Cost Ladder Architecture Phase 3 (Adaptive Slicing) — 2026-11-23
 
 ### Status: VERIFIED WORKING (Replaced rigid 6-slice 3x2 grid with hierarchical Adaptive Slicing, starting with 2 horizontal halves and selectively subdividing only blocked/empty regions down to Level 2 columns with a hard ceiling of 6 total calls per principles: `principle-laziness-protocol`, `principle-model-the-domain`, `principle-fix-root-causes`, `principle-prove-it-works`):

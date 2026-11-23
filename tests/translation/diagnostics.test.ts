@@ -24,6 +24,8 @@ describe("Translation Failure Diagnostics Taxonomy", () => {
     );
     expect(res.code).toBe("SAFETY_BLOCKED");
     expect(res.recommendedAction).toBe("enable_nsfw_bypass");
+    expect(res.actionLabel).toBe("บังคับโหมด NSFW Bypass แล้วลองใหม่");
+    expect(res.description).toContain("Adaptive Slicing");
     expect(res.retryable).toBe(true);
   });
 

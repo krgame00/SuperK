@@ -63,9 +63,9 @@ export const DIAGNOSTIC_TAXONOMY: Record<DiagnosticErrorCode, DiagnosticDetail> 
     code: "SAFETY_BLOCKED",
     title: "ภาพติดระบบคัดกรองเนื้อหา (Safety Filter)",
     description:
-      "Google Gemini ปฏิเสธการประมวลผลเนื่องจากตรวจพบลักษณะภาพสุ่มเสี่ยง/18+ สามารถแก้ไขได้โดยเปิดโหมด Comic Slicing (NSFW Bypass) เพื่อตัดแบ่งภาพก่อนส่ง",
+      "Google Gemini ปฏิเสธการประมวลผลเนื่องจากตรวจพบลักษณะภาพสุ่มเสี่ยง/18+ แม้ระบบจะไต่บันไดสลับโมเดลและทดลองตัดแบ่งภาพ (Adaptive Slicing) อัตโนมัติแล้วแต่ยังติดตัวกรองความปลอดภัย",
     recommendedAction: "enable_nsfw_bypass",
-    actionLabel: "เปิดโหมด NSFW Bypass แล้วลองใหม่",
+    actionLabel: "บังคับโหมด NSFW Bypass แล้วลองใหม่",
     retryable: true,
   },
   LOCAL_SIDECAR_OFFLINE: {
