@@ -1,5 +1,27 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Documentation & Launcher Entrypoint Consolidation — 2026-11-23
+
+### Status: VERIFIED WORKING (Consolidated Windows launchers and pruned redundant documentation at project root per principles: `principle-subtract-before-you-add`, `principle-laziness-protocol`, `principle-prove-it-works`):
+
+1) Changes & Implementation:
+   - 1. Fixed Canonical Launchers in `README.md`:
+     - Updated line 123 `start_superk.bat` -> `start.bat` and line 125 `stop_superk.bat` -> `stop.bat`.
+     - Updated troubleshooting line 211 `start_superk.bat` -> `start.bat`.
+     - Clarified that `start.bat` launches the production pipeline with watchdog supervision automatically.
+     - Documented `start-prod.bat` as an explicit non-watchdog alternative for single-run testing.
+     - Verified with `git grep` that 0 instances of `start_superk` or `stop_superk` remain anywhere in the repository.
+   - 2. Pruned Redundant Documentation at Project Root:
+     - `START.md`: Replaced outdated dev instructions with an explicit pointer to `README.md` ("วิธีเปิดใช้งานระบบ").
+     - `clean-then-translate-plan.edit.md`: Moved to `docs/archive/clean-then-translate-plan.edit.md`.
+     - `README_SAAS.md` & `DEV_SUMMARY.md`: Removed from root (archived versions already exist in `docs/archive/`).
+     - Kept intact role-specific root files: `CONTEXT.md` (Domain Glossary), `PRODUCT.md` & `DESIGN.md` (Design system & Impeccable context), and `AGENTS.md` / `GEMINI.md` / `CLAUDE.md` (Agent instructions).
+
+2) Verification Evidence:
+   - Zero occurrences of `start_superk` and `stop_superk` verified via `git grep`.
+   - `npx vitest run tests/scripts/productionLauncher.test.ts tests/scripts/desktopLauncher.test.ts` passed (100%).
+   - Root markdown file audit confirms non-overlapping roles for all remaining documents.
+
 ## Deep Code Audit & Hygiene Hardening (DOM Observer Thrashing & Memory Lifecycle) — 2026-11-22
 
 ### Status: VERIFIED WORKING (Eliminated unthrottled MutationObserver on document.body, closed blob: URL and IndexedDB connection leaks in imageLayerStore/DirtyRectInpainter, and added unmount cancellation to scroll overlay per principles: `principle-subtract-before-you-add`, `principle-fix-root-causes`, `principle-boundary-discipline`, `principle-make-operations-idempotent`, `principle-prove-it-works`):
@@ -5452,3 +5474,43 @@ Verification evidence:
   - `pytest ocr-service/tests/`: 41/41 passed (100%).
   - `npm run build`: Compiled successfully in 2.3s, 0 TypeScript errors.
   - ผลการวัดจริง: VRAM ลดจาก 7,700 MiB เหลือเพียง 950 MiB (คืน VRAM ได้ 6.75 GB) และ Working Set ลดเหลือ 25 MB.
+
+
+## Novel Full AutoRender: Synchronization of Full Audio to Google Drive — 2026-11-22
+
+Status: **VERIFIED WORKING (Successfully uploaded and synchronized novel_voice_emma_soft_slow.mp3 to Google Drive Novel_Full_AutoRender_Project in both 04_AutoRender and 03_Audio_AutoVoice folders; verified file size 199,067,565 bytes matching local source 100%; duration 2h 45m 53s intact)**.
+
+- **Synchronized Cloud Assets**:
+  1. `G:\My Drive\Novel_Full_AutoRender_Project\04_AutoRender\Novel_Full_AutoRender\output\novel_voice_emma_soft_slow.mp3` (199,067,565 bytes).
+  2. `G:\My Drive\Novel_Full_AutoRender_Project\03_Audio_AutoVoice\output\novel_voice_emma_soft_slow.mp3` (199,067,565 bytes).
+- **Local Synchronized Assets**:
+  1. `F:\Projects\EP1_AutoRender\output\novel_voice_emma_soft_slow.mp3` (199,067,565 bytes).
+  2. `F:\Projects\EP1_AutoRender\Novel_Full_AutoRender\output\novel_voice_emma_soft_slow.mp3` (199,067,565 bytes).
+  3. `F:\Projects\EP1_AutoRender\Novel_Full_AutoRender\subtitles\` (novel_emma.srt, novel_emma.vtt - 2,505 subtitle cues).
+  4. `F:\Projects\EP1_AutoRender\Novel_Full_AutoRender\chapters\` (chapters.json, chapters.txt, chapters.ffmetadata - 29 chapters).
+- **Verification Evidence**:
+  - `dest_file_1.stat().st_size`: 199,067,565 bytes (matches source).
+  - `dest_file_2.stat().st_size`: 199,067,565 bytes (matches source).
+  - `ffprobe`: Exact duration 9953.304s, 160 kbps MP3 CBR, 24 kHz Mono, Mean volume -18.0 dB.
+
+
+## Novel Auto Voice V2: Pilot Pipeline Test & Mastering Verification (novel_voice_tts_v2.py) — 2026-11-23
+
+Status: **VERIFIED WORKING (Successfully verified upgraded novel_voice_tts_v2.py; ran test run on 3 segments with en-US-EmmaMultilingualNeural at rate=-8%, pitch=-2Hz, target-lufs=-14; generated novel_voice_v2.mp3 145.296s at 44.1 kHz 128 kbps; EBU R128 integrated loudness verified at -14.8 LUFS; synchronized test output to Google Drive and local workspace)**.
+
+- **Pipeline Upgrades Tested**:
+  1. **Text Sanitization & Pronunciation Mapping**: Cleans emojis, mojibake, quotes, and applies custom pronunciation mappings (e.g. 'ร่างยักษ์' -> 'ร่างยัก', 'ไป๋หนิงปิง' -> 'ป๋ายหนิงปิง').
+  2. **Pause Insertion**: Automatic 2.4s pause insertion between chapters/acts (`--chapter-pause-ms`, `--segment-pause-ms`).
+  3. **Mastering & Loudnorm**: Upgraded audio from 24 kHz to 44.1 kHz; highpass filter + loudnorm tuned to YouTube target (-14.8 LUFS measured).
+- **Execution CLI Tip**:
+  - In Python `argparse`, negative numerical options must be passed with an equals sign (e.g. `--rate=-8%`, `--pitch=-2Hz`, `--target-lufs=-14`) to prevent being parsed as separate flags.
+- **Deliverables**:
+  - Local: `F:\Projects\EP1_AutoRender\output\novel_voice_v2.mp3` (2,325,986 bytes, 145.3s).
+  - Google Drive: `G:\My Drive\Novel_Full_AutoRender_Project\03_Audio_AutoVoice\output\novel_voice_v2_test_3segments.mp3`.
+- **Verification Evidence**:
+  - `python novel_voice_tts_v2.py --input novel_edited.txt --voice en-US-EmmaMultilingualNeural --rate=-8% --pitch=-2Hz --target-lufs=-14 --test-limit 3`: Return code 0.
+  - `ffmpeg -i novel_voice_v2.mp3 -af ebur128 -f null -`: Integrated loudness -14.8 LUFS, LRA 3.3 LU, sample rate 44,100 Hz.
+
+- **Google Drive Root Folder Placement**:
+  - Copied `novel_voice_v2.mp3` (2,325,986 bytes), `novel_edited.txt` (352,361 bytes), and `novel_voice_v2_test_report.md` directly into the root of `G:\My Drive\Novel_Full_AutoRender_Project\03_Audio_AutoVoice\`.
+  - Synced raw segment mp3 and txt files for segments 1–3 into `03_Audio_AutoVoice\novel_voice\segments\`.
