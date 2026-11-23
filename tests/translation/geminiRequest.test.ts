@@ -892,4 +892,41 @@ test("tries all keys in multi-key pool before considering model fallback", async
   expect(fetchImpl).toHaveBeenCalledTimes(1);
 });
 
+test("HTTP 503 high demand sets a 5-minute model cooldown and falls back to next model", async () => {
+  defaultModelCooldowns.clear();
+  const startTime = 1_000_000;
+  const fetchImpl = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(
+      jsonResponse(
+        {
+          error: {
+            message:
+              "This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.",
+            code: 503,
+            status: "UNAVAILABLE",
+          },
+        },
+        503,
+      ),
+    )
+    .mockResolvedValueOnce(jsonResponse(successBody));
+
+  const result = await requestGemini({
+    apiKeys: ["key-1"],
+    models: ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
+    payload: { contents: [] },
+    fetchImpl,
+    now: () => startTime,
+    sleep: async () => undefined,
+  });
+
+  expect(result.model).toBe("gemini-3.8-flash");
+  expect(fetchImpl).toHaveBeenCalledTimes(2);
+  expect(defaultModelCooldowns.get("gemini-3.5-flash-lite")).toBe(
+    startTime + 5 * 60_000,
+  );
+});
+
+
 

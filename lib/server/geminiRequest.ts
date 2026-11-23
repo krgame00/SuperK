@@ -470,6 +470,8 @@ export async function requestGemini<T = unknown>(
         const rawMsg = upstreamMessage(data, response.status);
         if (isDailyQuotaExhausted(response.status, rawMsg)) {
           defaultModelCooldowns.set(model, now() + 30 * 60_000);
+        } else if (isHighDemandError(response.status, rawMsg)) {
+          defaultModelCooldowns.set(model, now() + 5 * 60_000);
         }
 
         if (shouldFastFallbackModel(response.status, rawMsg, modelIdx, models.length)) {

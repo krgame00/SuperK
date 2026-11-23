@@ -5514,3 +5514,57 @@ Status: **VERIFIED WORKING (Successfully verified upgraded novel_voice_tts_v2.py
 - **Google Drive Root Folder Placement**:
   - Copied `novel_voice_v2.mp3` (2,325,986 bytes), `novel_edited.txt` (352,361 bytes), and `novel_voice_v2_test_report.md` directly into the root of `G:\My Drive\Novel_Full_AutoRender_Project\03_Audio_AutoVoice\`.
   - Synced raw segment mp3 and txt files for segments 1–3 into `03_Audio_AutoVoice\novel_voice\segments\`.
+
+
+## Novel Auto Voice V3: Dynamic Emotion & BGM Pipeline Verification (novel_voice_tts_v3.py) — 2026-11-23
+
+Status: **VERIFIED WORKING (Successfully verified upgraded novel_voice_tts_v3.py; features single-voice dynamic emotion prosody, Thai breath pauses, BGM mixing with sidechain ducking; test run on 3 segments demonstrated automatic prosody adaptation for tense mood shift from base -8%/-2Hz to -1%/+1Hz/+6%; output novel_voice_v3.mp3 measured at -14.9 LUFS; synchronized script and test audio to Google Drive 03_Audio_AutoVoice and local workspace)**.
+
+- **V3 Core Upgrades**:
+  1. **Dynamic Emotion Prosody**: Single voice (Emma) dynamically modulates rate, pitch, and volume per sentence mood (`narration`, `dialogue`, `tense`, `soft`, `whisper`, `question`, `chapter`).
+  2. **Thai Breath Pauses**: `add_thai_breath_pauses` automatically spaces out conjunctions and clauses to let TTS breathe naturally.
+  3. **BGM / Ambient Mixer & Ducking**: `--bgm <path>` loops background music with fade-in/out and sidechain ducking under voice narration.
+- **Deliverables**:
+  - Script Local: `F:\Projects\EP1_AutoRender\novel_voice_tts_v3.py` (36,028 bytes).
+  - Script Google Drive: `G:\My Drive\Novel_Full_AutoRender_Project\03_Audio_AutoVoice\novel_voice_tts_v3.py`.
+  - Output Audio Local: `F:\Projects\EP1_AutoRender\output\novel_voice_v3.mp3` (457,709 bytes, 28.536s).
+  - Output Audio Google Drive: `G:\My Drive\Novel_Full_AutoRender_Project\03_Audio_AutoVoice\novel_voice_v3.mp3`.
+- **Verification Evidence**:
+  - `python novel_voice_tts_v3.py --input novel_edited.txt --voice en-US-EmmaMultilingualNeural --rate=-8% --pitch=-2Hz --target-lufs=-14 --test-limit 3`: Return code 0.
+  - Prosody logs verified: segment 1 `narration (-8%, -2Hz, +0%)`, segment 2 `tense (-1%, +1Hz, +6%)`, segment 3 `narration (-8%, -2Hz, +0%)`.
+  - Integrated loudness: -14.9 LUFS, Sample rate: 44,100 Hz.
+
+
+## Novel Auto Voice V3: 15-Segment Story & BGM Ducking Test — 2026-11-23
+
+Status: **VERIFIED WORKING (Successfully generated and mastered 15 segments of novel_voice_tts_v3.py spanning actual story beats from preface into Act 1 & 2; merged soft_rain_ambient.wav BGM at -24 dB with active sidechain ducking; total duration 242.740s / 4m 02s; loudness -14.6 LUFS; verified 5 distinct emotion moods: narration, tense, chapter, soft, question; synced novel_voice_v3_test15_rain.mp3 to Google Drive 03_Audio_AutoVoice and local workspace)**.
+
+- **15-Beat Emotional Arc Verified**:
+  - `narration` (3 beats): Base rate -8%, pitch -2Hz, vol +0%.
+  - `tense` (5 beats): Action/danger lines accelerated to -1%, pitch +1Hz, vol +6%.
+  - `chapter` (3 beats): Title announcements slowed down to -13%, pitch -3Hz, vol +0% with 1.2s pause.
+  - `soft` (2 beats): Gentle descriptions slowed to -14%, pitch -4Hz, vol -4%.
+  - `question` (2 beats): Dialogues/queries inflected to -6%, pitch +1Hz, vol +2%.
+- **Audio Mastering & BGM**:
+  - BGM: `soft_rain_ambient.wav` looped seamlessly at -24 dB volume with sidechain ducking under voice narration.
+  - EBU R128 Loudness: Integrated -14.6 LUFS, LRA 2.4 LU, 44,100 Hz, 128 kbps.
+- **Deliverables**:
+  - Google Drive: `G:\My Drive\Novel_Full_AutoRender_Project\03_Audio_AutoVoice\novel_voice_v3_test15_rain.mp3` (3,884,974 bytes).
+  - Local Project: `F:\Projects\EP1_AutoRender\output\novel_voice_v3_test15_rain.mp3`.
+  - JSON Report: `novel_voice_v3_test15_report.json`.
+
+
+## Fix Gemini 503 High Demand Model Cooldown (`lib/server/geminiRequest.ts`) — 2026-11-23
+
+Status: **VERIFIED WORKING (Investigated 41-page batch diagnostic report with 10 SAFETY_BLOCKED, 8 GEMINI_UPSTREAM 503, and 1 OCR timeout; identified that while shouldFastFallbackModel broke keyLoop on 503, defaultModelCooldowns only stored 429 Daily Quota, causing every subsequent page in the batch to hammer the congested model; added 5-minute cooldown for isHighDemandError in requestGemini; verified 36/36 vitest passed in geminiRequest.test.ts, tsc clean)**.
+
+- **Root Cause Analysis (`principle-fix-root-causes`, `debug-mantra`)**:
+  - In `lib/server/geminiRequest.ts`, `defaultModelCooldowns` only cached models hitting `isDailyQuotaExhausted()` (30 mins).
+  - When Google returned HTTP 503 (`This model is currently experiencing high demand`), `isHighDemandError` triggered fast fallback for that single request, but did NOT register the model in `defaultModelCooldowns`.
+  - Consequently, subsequent batch pages restarted at `models[0]`, encountering repeated 503 errors and burning attempt latency across 8 pages.
+- **Architectural Solution (`principle-model-the-domain`, `principle-prove-it-works`)**:
+  - Added `else if (isHighDemandError(response.status, rawMsg)) { defaultModelCooldowns.set(model, now() + 5 * 60_000); }` in `lib/server/geminiRequest.ts`.
+  - Once a model reports high demand, it is bypassed immediately for 5 minutes across all concurrent/subsequent requests, seamlessly shifting batch workload to fallback models (`gemini-3.8-flash` / `gemini-2.5-flash`).
+- **Verification Evidence**:
+  - Vitest: `npx vitest run tests/translation/geminiRequest.test.ts` passed 36/36 tests (including new 503 cooldown unit test).
+  - TypeScript: `npx tsc --noEmit` 0 errors.
