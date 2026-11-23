@@ -22,6 +22,12 @@ export interface TranslationObservabilityMeta {
   keyOwner?: "user" | "server";
   cooldownReason?: "quota" | "overload";
   finalErrorCode?: TranslationErrorCode;
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    totalTokenCount?: number;
+  };
+  ladderStep?: "full" | "hop" | "crop" | "slice";
 }
 
 export function normalizeTranslationErrorCode(

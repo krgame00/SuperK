@@ -928,5 +928,118 @@ test("HTTP 503 high demand sets a 5-minute model cooldown and falls back to next
   );
 });
 
+test("Phase 1: model-hop when first model is blocked by safety filter", async () => {
+  const modelSwitches: Array<{ model: string; fallbackCount: number }> = [];
+  const fetchImpl = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(
+      jsonResponse({
+        promptFeedback: { blockReason: "OTHER" },
+      }),
+    )
+    .mockResolvedValueOnce(
+      jsonResponse({
+        candidates: [
+          {
+            content: {
+              parts: [{ text: '{"bubbles":[{"t":"สวัสดี","box":[10,10,50,50]}]}' }],
+            },
+          },
+        ],
+        usageMetadata: {
+          promptTokenCount: 150,
+          candidatesTokenCount: 30,
+          totalTokenCount: 180,
+        },
+      }),
+    );
+
+  const result = await requestGemini({
+    apiKeys: ["key-1"],
+    models: ["gemini-3.8-flash", "gemini-3.5-flash-lite"],
+    payload: { contents: [] },
+    fetchImpl,
+    maxValidationHops: 3,
+    onModelSwitch: (evt) => modelSwitches.push(evt),
+    validateResponse: (data) => {
+      const resp = data as { promptFeedback?: { blockReason?: string } };
+      if (resp.promptFeedback?.blockReason) {
+        return { valid: false, reason: "safety", blockReason: resp.promptFeedback.blockReason };
+      }
+      return { valid: true };
+    },
+  });
+
+  expect(result.model).toBe("gemini-3.5-flash-lite");
+  expect(result.meta.attemptCount).toBe(2);
+  expect(result.meta.fallbackCount).toBe(1);
+  expect(result.meta.ladderStep).toBe("hop");
+  expect(result.meta.usageMetadata).toEqual({
+    promptTokenCount: 150,
+    candidatesTokenCount: 30,
+    totalTokenCount: 180,
+  });
+  expect(modelSwitches).toEqual([
+    { model: "gemini-3.5-flash-lite", fallbackCount: 1 },
+  ]);
+});
+
+test("Phase 1: throws SAFETY_BLOCKED with status 400 when all models are blocked up to maxValidationHops", async () => {
+  const fetchImpl = vi
+    .fn<typeof fetch>()
+    .mockImplementation(async () =>
+      jsonResponse({
+        promptFeedback: { blockReason: "OTHER" },
+      }),
+    );
+
+  await expect(
+    requestGemini({
+      apiKeys: ["key-1"],
+      models: ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.7-flash", "gemini-3.6-flash"],
+      payload: { contents: [] },
+      fetchImpl,
+      maxValidationHops: 3,
+      validateResponse: (data) => {
+        const resp = data as { promptFeedback?: { blockReason?: string } };
+        if (resp.promptFeedback?.blockReason) {
+          return { valid: false, reason: "safety", blockReason: resp.promptFeedback.blockReason };
+        }
+        return { valid: true };
+      },
+    }),
+  ).rejects.toMatchObject({
+    code: "SAFETY_BLOCKED",
+    status: 400,
+  });
+
+  // Hops are bounded by maxValidationHops (3 attempts), does not exhaust 4th model
+  expect(fetchImpl).toHaveBeenCalledTimes(3);
+});
+
+test("Phase 0: unblocked first-attempt returns ladderStep full", async () => {
+  const fetchImpl = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(
+      jsonResponse({
+        candidates: [{ content: { parts: [{ text: '{"bubbles":[]}' }] } }],
+        usageMetadata: { promptTokenCount: 80, candidatesTokenCount: 5, totalTokenCount: 85 },
+      }),
+    );
+
+  const result = await requestGemini({
+    apiKeys: ["key-1"],
+    models: ["gemini-3.5-flash-lite"],
+    payload: { contents: [] },
+    fetchImpl,
+    validateResponse: () => ({ valid: true }),
+  });
+
+  expect(result.meta.ladderStep).toBe("full");
+  expect(result.meta.fallbackCount).toBe(0);
+  expect(result.meta.usageMetadata?.totalTokenCount).toBe(85);
+});
+
+
 
 

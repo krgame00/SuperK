@@ -10,7 +10,9 @@ export type GeminiErrorCode =
   | "GEMINI_TIMEOUT"
   | "GEMINI_QUOTA"
   | "GEMINI_UPSTREAM"
-  | "REQUEST_ABORTED";
+  | "REQUEST_ABORTED"
+  | "SAFETY_BLOCKED"
+  | "PROVIDER_RESPONSE_INVALID";
 
 export class GeminiRequestError extends Error {
   readonly code: GeminiErrorCode;
@@ -83,6 +85,10 @@ export interface GeminiRouteRequestOptions {
     error: GeminiRequestError,
   ) => GeminiRouteFailureDirective | void | Promise<GeminiRouteFailureDirective | void>;
   onModelSwitch?: (event: { model: string; fallbackCount: number }) => void;
+  /** Optional response validator for content safety, empty output, or echo. Return false or { valid: false } to rotate. */
+  validateResponse?: (data: unknown) => GeminiResponseValidationResult;
+  /** Maximum number of model hops allowed when validateResponse fails (default: 3). */
+  maxValidationHops?: number;
 }
 
 export interface OpenAICompatibleResult<T> {
@@ -209,6 +215,34 @@ export function clearKeyCooldowns(
   cooldowns.clear();
 }
 
+export type GeminiResponseValidationResult =
+  | boolean
+  | {
+      valid: boolean;
+      reason?: "safety" | "empty" | "echo" | "malformed";
+      blockReason?: string;
+    };
+
+export function extractUsageMetadata(
+  data: unknown,
+): TranslationObservabilityMeta["usageMetadata"] {
+  const usage = (
+    data as {
+      usageMetadata?: {
+        promptTokenCount?: number;
+        candidatesTokenCount?: number;
+        totalTokenCount?: number;
+      };
+    }
+  )?.usageMetadata;
+  if (!usage) return undefined;
+  return {
+    promptTokenCount: usage.promptTokenCount,
+    candidatesTokenCount: usage.candidatesTokenCount,
+    totalTokenCount: usage.totalTokenCount,
+  };
+}
+
 export interface GeminiRequestOptions {
   apiKeys: string[];
   models: string[];
@@ -224,6 +258,11 @@ export interface GeminiRequestOptions {
   defaultCooldownMs?: number;
   /** Aborts the in-flight upstream attempt and stops further attempts. */
   signal?: AbortSignal;
+  /** Optional response validator for content safety, empty output, or echo. Return false or { valid: false } to rotate. */
+  validateResponse?: (data: unknown) => GeminiResponseValidationResult;
+  /** Maximum number of model hops allowed when validateResponse fails (default: 3). */
+  maxValidationHops?: number;
+  onModelSwitch?: (event: { model: string; fallbackCount: number }) => void;
 }
 
 interface GeminiErrorBody {
@@ -361,12 +400,19 @@ export async function requestGemini<T = unknown>(
     keyCooldowns,
     defaultCooldownMs,
     signal,
+    validateResponse,
+    maxValidationHops = 3,
+    onModelSwitch,
   } = options;
   const cooldownMap =
     keyCooldowns === false ? undefined : (keyCooldowns ?? defaultKeyCooldowns);
   const defaultCooldownDuration = defaultCooldownMs ?? 30_000;
   const startedAt = now();
   let firstHttpError: GeminiRequestError | undefined;
+  let lastValidationFailure:
+    | { reason?: string; blockReason?: string; model?: string }
+    | undefined;
+  let validationHopCount = 0;
   let sawTransportFailure = false;
   let attemptCount = 0;
   let fallbackCount = 0;
@@ -443,9 +489,55 @@ export async function requestGemini<T = unknown>(
         }
 
         if (response.ok) {
+          if (validateResponse) {
+            const validation = validateResponse(data);
+            const isValid =
+              typeof validation === "boolean" ? validation : validation.valid;
+            if (!isValid) {
+              const reason =
+                typeof validation === "object" ? validation.reason : undefined;
+              const blockReason =
+                typeof validation === "object"
+                  ? validation.blockReason
+                  : undefined;
+              lastValidationFailure = { reason, blockReason, model };
+              validationHopCount++;
+              if (
+                validationHopCount < maxValidationHops &&
+                modelIdx < models.length - 1
+              ) {
+                fallbackCount++;
+                const nextModel = models[modelIdx + 1];
+                onModelSwitch?.({ model: nextModel, fallbackCount });
+                break keyLoop;
+              }
+              const isSafety = reason === "safety" || Boolean(blockReason);
+              throw new GeminiRequestError(
+                isSafety
+                  ? `ภาพนี้ถูกปฏิเสธโดยระบบคัดกรองของ Google (เหตุผล: ${blockReason || "OTHER"})`
+                  : "Gemini returned invalid or empty translation response across all models",
+                isSafety ? "SAFETY_BLOCKED" : "PROVIDER_RESPONSE_INVALID",
+                isSafety ? 400 : 500,
+                false,
+                undefined,
+                undefined,
+                {
+                  provider: "gemini",
+                  model,
+                  attemptCount,
+                  elapsedMs: now() - startedAt,
+                  fallbackCount,
+                  usageMetadata: extractUsageMetadata(data),
+                  ladderStep: fallbackCount > 0 ? "hop" : "full",
+                },
+              );
+            }
+          }
+
           if (cooldownMap) {
             cooldownMap.delete(apiKey);
           }
+          const usage = extractUsageMetadata(data);
           return {
             data: data as T,
             keyIndex,
@@ -456,6 +548,8 @@ export async function requestGemini<T = unknown>(
               attemptCount,
               elapsedMs: now() - startedAt,
               fallbackCount,
+              usageMetadata: usage,
+              ladderStep: fallbackCount > 0 ? "hop" : "full",
             },
           };
         }
@@ -531,6 +625,32 @@ export async function requestGemini<T = unknown>(
     }
   }
 
+  if (lastValidationFailure) {
+    const isSafety =
+      lastValidationFailure.reason === "safety" ||
+      Boolean(lastValidationFailure.blockReason);
+    throw new GeminiRequestError(
+      isSafety
+        ? `ภาพนี้ถูกปฏิเสธโดยระบบคัดกรองของ Google (เหตุผล: ${lastValidationFailure.blockReason || "OTHER"})`
+        : "Gemini returned invalid or empty translation response across all models",
+      isSafety ? "SAFETY_BLOCKED" : "PROVIDER_RESPONSE_INVALID",
+      isSafety ? 400 : 500,
+      false,
+      undefined,
+      undefined,
+      {
+        provider: "gemini",
+        model:
+          lastValidationFailure.model ||
+          (models[models.length - 1] ?? "unknown"),
+        attemptCount,
+        elapsedMs: now() - startedAt,
+        fallbackCount,
+        ladderStep: fallbackCount > 0 ? "hop" : "full",
+      },
+    );
+  }
+
   if (firstHttpError) {
     throw firstHttpError;
   }
@@ -560,9 +680,12 @@ export async function requestGeminiRoutes<T = unknown>(
     onRouteFailure,
     onModelSwitch,
     signal,
+    validateResponse,
+    maxValidationHops = 3,
   } = options;
   const startedAt = options.startedAt ?? now();
   let lastError: GeminiRequestError | undefined;
+  let validationHopCount = 0;
   let attemptCount = 0;
   let fallbackCount = 0;
   let skippedRouteCount = 0;
@@ -683,6 +806,58 @@ export async function requestGeminiRoutes<T = unknown>(
       }
 
       if (response.ok) {
+        if (options.validateResponse) {
+          const validation = options.validateResponse(data);
+          const isValid =
+            typeof validation === "boolean" ? validation : validation.valid;
+          if (!isValid) {
+            const reason =
+              typeof validation === "object" ? validation.reason : undefined;
+            const blockReason =
+              typeof validation === "object"
+                ? validation.blockReason
+                : undefined;
+            const isSafety = reason === "safety" || Boolean(blockReason);
+            const validationError = new GeminiRequestError(
+              isSafety
+                ? `ภาพนี้ถูกปฏิเสธโดยระบบคัดกรองของ Google (เหตุผล: ${blockReason || "OTHER"})`
+                : "Gemini returned invalid or empty translation response across all models",
+              isSafety ? "SAFETY_BLOCKED" : "PROVIDER_RESPONSE_INVALID",
+              isSafety ? 400 : 500,
+              false,
+              undefined,
+              route,
+              {
+                provider: "gemini",
+                model: route.model,
+                keyId: route.keyId,
+                keySlot: route.keySlot,
+                keyOwner: route.keyOwner,
+                attemptCount,
+                elapsedMs: now() - startedAt,
+                routeElapsedMs: now() - routeAttemptStartedAt,
+                fallbackCount,
+                skippedRouteCount,
+                usageMetadata: extractUsageMetadata(data),
+                ladderStep: fallbackCount > 0 ? "hop" : "full",
+              },
+            );
+            lastError = validationError;
+            validationHopCount++;
+            if (
+              validationHopCount < maxValidationHops &&
+              routeIndex < routes.length - 1
+            ) {
+              fallbackCount++;
+              skippedModels.add(route.model);
+              await reportFailure(route, validationError);
+              break;
+            }
+            throw validationError;
+          }
+        }
+
+        const usage = extractUsageMetadata(data);
         return {
           data: data as T,
           keyIndex: route.keyIndex,
@@ -700,6 +875,8 @@ export async function requestGeminiRoutes<T = unknown>(
             routeElapsedMs: now() - routeAttemptStartedAt,
             fallbackCount,
             skippedRouteCount,
+            usageMetadata: usage,
+            ladderStep: fallbackCount > 0 ? "hop" : "full",
           },
         };
       }

@@ -25,6 +25,7 @@ import {
 } from "@/lib/server/geminiRequest";
 import { executeGeminiTranslation } from "@/lib/server/geminiTranslationRouter";
 import { POST as translateImage } from "@/src/app/api/translate/route";
+import { validateTranslationResponse } from "@/src/app/api/translate/handler";
 import { POST as translateText } from "@/src/app/api/translate-text/route";
 import { POST as validateGeminiKey } from "@/src/app/api/translate/validate-key/route";
 import { POST as syncExtensionSettings, _resetSettingsForTest } from "@/src/app/api/extension/settings/handler";
@@ -754,4 +755,98 @@ test("image route falls back to synced extension settings API key and glossary w
   expect(prompt).toContain("Furina");
   expect(prompt).toContain("ฟูริน่า");
 });
+
+test("Phase 1: validateTranslationResponse guards against safety, echo, and empty payloads", () => {
+  // Safety blockReason
+  expect(validateTranslationResponse({ promptFeedback: { blockReason: "OTHER" } })).toEqual({
+    valid: false,
+    reason: "safety",
+    blockReason: "OTHER",
+  });
+
+  // FinishReason SAFETY
+  expect(validateTranslationResponse({ candidates: [{ finishReason: "SAFETY" }] })).toEqual({
+    valid: false,
+    reason: "safety",
+    blockReason: "SAFETY",
+  });
+
+  // Empty bubbles (placeholder)
+  expect(
+    validateTranslationResponse({
+      candidates: [{ content: { parts: [{ text: '{"bubbles":[{"t":""}]}' }] } }],
+    }),
+  ).toEqual({ valid: false, reason: "empty" });
+
+  // Valid empty page
+  expect(
+    validateTranslationResponse({
+      candidates: [{ content: { parts: [{ text: '{"bubbles":[]}' }] } }],
+    }),
+  ).toEqual({ valid: true });
+
+  // Thai echo guard (CJK > Thai)
+  expect(
+    validateTranslationResponse(
+      {
+        candidates: [{ content: { parts: [{ text: '{"bubbles":[{"t":"这是中文句子"}]}' }] } }],
+      },
+      "Thai",
+    ),
+  ).toEqual({ valid: false, reason: "echo" });
+
+  // Valid Thai translation
+  expect(
+    validateTranslationResponse(
+      {
+        candidates: [{ content: { parts: [{ text: '{"bubbles":[{"t":"สวัสดีครับ"}]}' }] } }],
+      },
+      "Thai",
+    ),
+  ).toEqual({ valid: true });
+});
+
+test("Phase 1: translateImage configures validateResponse and maxValidationHops in requestGemini", async () => {
+  delete process.env.SUPERK_GEMINI_IMAGE_ROUTER;
+  process.env.GEMINI_API_KEY = "server-key";
+  requestGeminiMock.mockResolvedValue({
+    data: { candidates: [{ content: { parts: [{ text: '{"bubbles":[]}' }] } }] },
+    keyIndex: 0,
+    model: "gemini-3.5-flash-lite",
+    meta: {
+      provider: "gemini",
+      model: "gemini-3.5-flash-lite",
+      attemptCount: 1,
+      elapsedMs: 250,
+      fallbackCount: 0,
+      ladderStep: "full",
+      usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 10, totalTokenCount: 110 },
+    },
+  });
+
+  const response = await translateImage(
+    new Request("http://localhost/api/translate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        imageBase64: "valid-base64",
+        mimeType: "image/png",
+        targetLang: "Thai",
+      }),
+    }),
+  );
+
+  expect(response.status).toBe(200);
+  const options = requestGeminiMock.mock.calls[0][0];
+  expect(options.validateResponse).toBeTypeOf("function");
+  expect(options.maxValidationHops).toBe(3);
+  const data = await response.json();
+  expect(data.meta.ladderStep).toBe("full");
+  expect(data.meta.usageMetadata).toEqual({
+    promptTokenCount: 100,
+    candidatesTokenCount: 10,
+    totalTokenCount: 110,
+  });
+});
+
 

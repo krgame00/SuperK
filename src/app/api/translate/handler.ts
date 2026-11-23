@@ -148,6 +148,60 @@ export function buildTranslationPrompt({
   );
 }
 
+export function validateTranslationResponse(
+  data: unknown,
+  targetLang?: string,
+): { valid: boolean; reason?: "safety" | "empty" | "echo" | "malformed"; blockReason?: string } {
+  if (!data || typeof data !== "object") {
+    return { valid: false, reason: "malformed" };
+  }
+  const response = data as GeminiResponseData;
+  if (response.promptFeedback?.blockReason) {
+    return {
+      valid: false,
+      reason: "safety",
+      blockReason: response.promptFeedback.blockReason,
+    };
+  }
+  const candidate = response.candidates?.[0];
+  if (
+    candidate?.finishReason === "SAFETY" ||
+    candidate?.finishReason === "PROHIBITED_CONTENT"
+  ) {
+    return {
+      valid: false,
+      reason: "safety",
+      blockReason: candidate.finishReason,
+    };
+  }
+  const text = candidate?.content?.parts?.[0]?.text;
+  if (!text) return { valid: false, reason: "malformed" };
+  try {
+    const parsed = JSON.parse(text.replace(/```json/gi, "").replace(/```/g, "").trim());
+    if (!Array.isArray(parsed?.bubbles)) return { valid: false, reason: "malformed" };
+    // "No text found" is a legitimate answer for a blank page.
+    if (parsed.bubbles.length === 0) return { valid: true };
+    // Bubbles with no text at all are placeholders, not a translation
+    const joined = parsed.bubbles.map((b: { t?: unknown }) => String(b?.t ?? "")).join(" ");
+    if (!joined.trim()) return { valid: false, reason: "empty" };
+    // Thai-target echo guard: Gemini sometimes copies the Chinese
+    // source back instead of translating — treat it as a failure so
+    // the model rotation tries a different model.
+    const isThai =
+      !targetLang ||
+      /^(th(?:-[a-z0-9]+)?|thai|ไทย)$/i.test(String(targetLang).trim()) ||
+      /thai|ไทย/i.test(String(targetLang));
+    if (isThai) {
+      const cjk = (joined.match(/[\u3400-\u9FFF\uF900-\uFAFF]/g) ?? []).length;
+      const thai = (joined.match(/[\u0E00-\u0E7F]/g) ?? []).length;
+      if (cjk > thai) return { valid: false, reason: "echo" };
+    }
+    return { valid: true };
+  } catch {
+    return { valid: false, reason: "malformed" };
+  }
+}
+
 export async function POST(req: Request) {
   const denial = requireLocalRequest(req);
   if (denial) return denial;
@@ -437,7 +491,7 @@ async function handleTranslationRequest(
         ...FIXED_IMAGE_MODELS.filter((m) => m !== "gemini-3.8-flash" && m !== "gemini-3.5-flash-lite"),
       ];
       const models = modelPreference && modelPreference !== "auto"
-        ? [modelPreference]
+        ? [modelPreference, ...FIXED_IMAGE_MODELS.filter((m) => m !== modelPreference)]
         : isRetry
           ? retryModels
           : [...FIXED_IMAGE_MODELS];
@@ -455,6 +509,9 @@ async function handleTranslationRequest(
             attemptTimeoutMs: 28_000,
             totalBudgetMs: 120_000,
             signal,
+            onModelSwitch,
+            validateResponse: (resp) => validateTranslationResponse(resp, targetLang),
+            maxValidationHops: 3,
           })
         : await executeGeminiTranslation<GeminiResponseData>({
         workflow: "image",
@@ -468,36 +525,8 @@ async function handleTranslationRequest(
         totalBudgetMs: 60_000,
         onModelSwitch,
         validateSuccess: (response) => {
-          if (response.promptFeedback?.blockReason) return false;
-          const candidate = response.candidates?.[0];
-          if (
-            candidate?.finishReason === "SAFETY" ||
-            candidate?.finishReason === "PROHIBITED_CONTENT"
-          ) return false;
-          const text = candidate?.content?.parts?.[0]?.text;
-          if (!text) return false;
-          try {
-            const parsed = JSON.parse(text.replace(/```json/gi, "").replace(/```/g, "").trim());
-            if (!Array.isArray(parsed?.bubbles)) return false;
-            // "No text found" is a legitimate answer for a blank page.
-            if (parsed.bubbles.length === 0) return true;
-            // Bubbles with no text at all are placeholders, not a translation —
-            // rotate to the next model instead of accepting them.
-            const joined = parsed.bubbles.map((b: { t?: unknown }) => String(b?.t ?? "")).join(" ");
-            if (!joined.trim()) return false;
-            // Thai-target echo guard: Gemini sometimes copies the Chinese
-            // source back instead of translating — treat it as a failure so
-            // the model rotation tries a different model.
-            const isThai = !targetLang || /^(th(?:-[a-z0-9]+)?|thai|ไทย)$/i.test(String(targetLang).trim()) || /thai|ไทย/i.test(String(targetLang));
-            if (isThai) {
-              const cjk = (joined.match(/[\u3400-\u9FFF\uF900-\uFAFF]/g) ?? []).length;
-              const thai = (joined.match(/[\u0E00-\u0E7F]/g) ?? []).length;
-              if (cjk > thai) return false;
-            }
-            return true;
-          } catch {
-            return false;
-          }
+          const res = validateTranslationResponse(response, targetLang);
+          return res.valid;
         },
       });
       if (useFixedRouter && rotationLength > 0) {
@@ -609,6 +638,19 @@ async function handleTranslationRequest(
 
     const cleanText = text.replace(/```json/gi, "").replace(/```/g, "").trim();
     const sanitizedText = sanitizeTranslationPayloadJson(cleanText, targetLang);
+    writeServerLog({
+      level: "info",
+      category: "translate",
+      message: `Page translation succeeded using ${translationMeta?.model || "model"} [ladder: ${translationMeta?.ladderStep || "full"}]`,
+      details: {
+        model: translationMeta?.model,
+        ladderStep: translationMeta?.ladderStep,
+        attemptCount: translationMeta?.attemptCount,
+        fallbackCount: translationMeta?.fallbackCount,
+        elapsedMs: translationMeta?.elapsedMs,
+        usageMetadata: translationMeta?.usageMetadata,
+      },
+    });
     return NextResponse.json({ text: sanitizedText, meta: translationMeta });
   } catch (error) {
     console.error("Translation Error:", error);

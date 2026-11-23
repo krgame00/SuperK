@@ -1,5 +1,27 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Cost Ladder Architecture Phase 0 (Metrics) & Phase 1 (Model-Hop on Safety Block) — 2026-11-23
+
+### Status: VERIFIED WORKING (Implemented upstream prompt token metrics logging and intelligent server-side model-hopping fallback when Gemini safety filter triggers blockReason: OTHER per principles: `principle-fix-root-causes`, `principle-prove-it-works`, `principle-laziness-protocol`, `principle-model-the-domain`):
+
+1) Changes & Implementation:
+   - 1. Phase 0: Translation Observability & Token Counting:
+     - In `lib/translation/requestError.ts`: Added `usageMetadata` (`promptTokenCount`, `candidatesTokenCount`, `totalTokenCount`) and `ladderStep` (`"full"` | `"hop"` | `"crop"` | `"slice"`) to `TranslationObservabilityMeta`.
+     - In `lib/server/geminiRequest.ts`: Added `extractUsageMetadata(data)` parser and populated `usageMetadata` + `ladderStep` on successful Gemini responses.
+     - In `src/app/api/translate/handler.ts`: Added structured server logging for token usage and ladder execution steps upon translation completion.
+   - 2. Phase 1: Model-Hop on Upstream Safety Blocks / Invalid Outputs:
+     - In `lib/server/geminiRequest.ts`: Added `validateResponse?: (data: unknown) => GeminiResponseValidationResult` and `maxValidationHops?: number` (default: 3) to `requestGemini` and `requestGeminiRoutes`.
+     - When `validateResponse` fails (e.g. `promptFeedback.blockReason` or `finishReason: "SAFETY"`), the request layer advances to the next fallback model in the hierarchy instead of aborting or jumping directly to 7-call image slicing.
+     - Preserves HTTP 400 `SAFETY_BLOCKED` error if all models up to `maxValidationHops` remain blocked.
+   - 3. In `src/app/api/translate/handler.ts`: Exported `validateTranslationResponse()` to catch safety blocks, empty placeholder bubbles, and untranslated Chinese-to-Thai echoes. Configured `models` array to respect user model preference while retaining automated fallback hops (`[modelPreference, ...FIXED_IMAGE_MODELS.filter(m => m !== modelPreference)]`).
+
+2) Verification Evidence:
+   - TypeScript Check: `npx tsc --noEmit` passed with 0 errors.
+   - Vitest Unit Tests: `npx vitest run tests/translation/geminiRequest.test.ts tests/translation/routes.test.ts` passed (2 test files, 78/78 tests passed).
+   - ESLint Check: `npm run lint` passed with 0 errors.
+   - Python Ruff Check: `ocr-service/.venv/Scripts/python.exe -m ruff check ocr-service` passed with 0 errors.
+
+
 ## Documentation & Launcher Entrypoint Consolidation — 2026-11-23
 
 ### Status: VERIFIED WORKING (Consolidated Windows launchers and pruned redundant documentation at project root per principles: `principle-subtract-before-you-add`, `principle-laziness-protocol`, `principle-prove-it-works`):
