@@ -1,5 +1,29 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Cost Ladder Architecture Phase 3 (Adaptive Slicing) — 2026-11-23
+
+### Status: VERIFIED WORKING (Replaced rigid 6-slice 3x2 grid with hierarchical Adaptive Slicing, starting with 2 horizontal halves and selectively subdividing only blocked/empty regions down to Level 2 columns with a hard ceiling of 6 total calls per principles: `principle-laziness-protocol`, `principle-model-the-domain`, `principle-fix-root-causes`, `principle-prove-it-works`):
+
+1) Changes & Implementation:
+   - 1. Adaptive Slicing Engine (`lib/translation/adaptiveSlicing.ts`):
+     - Implemented `createInitialAdaptiveSlices(pageWidth, pageHeight, overlapRatio)`: Divides page horizontally into 2 halves (Top, Bottom) with 15% overlap.
+     - Implemented `subdivideSlice(slice, overlapRatio)`: Subdivides failed or empty Level 1 slices into Level 2 vertical columns with 15% overlap; halts once `depth >= 2`.
+     - Implemented `remapSliceBubbleToPage(bubble, slice)`: Remaps slice-local normalized coordinates (0..1000) to global page coordinates with invalid-box centering protection.
+     - Implemented `deduplicateSliceBubbles(existing, incoming)`: Deduplicates overlapping bubbles using IoU (>0.7), containment (>=0.8), and centroid distance (<50).
+     - Implemented `runAdaptiveSlicing(options)`: Hierarchical orchestrator translating Level 1 halves first, then only translating subdivided slices for failed/empty regions. Total calls strictly capped at 6.
+   - 2. Client Translation Hook Integration (`hooks/useTranslation.ts`):
+     - Replaced 162 lines of legacy 3x2 grid creation and manual deduplication with `runAdaptiveSlicing`.
+     - Connected `sliceTranslator` canvas extraction, `/api/translate` calling, and live status progress reporting.
+     - Cleanly propagates bubbles into `allBubbles` while preserving cancellation and error delay contracts.
+
+2) Verification Evidence:
+   - TypeScript Check: `npx tsc --noEmit` passed with 0 errors.
+   - Vitest Unit Tests: `npx vitest run tests/translation/adaptiveSlicing.test.ts` passed (9/9 passed).
+   - Broad Translation Suite: `npx vitest run tests/translation/` passed (67 test files, 664/664 tests passed).
+   - ESLint Check: `npm run lint` passed with 0 errors.
+   - Python Ruff Check: `ocr-service/.venv/Scripts/python.exe -m ruff check ocr-service` passed with 0 errors.
+
+
 ## Cost Ladder Architecture Phase 0 (Metrics) & Phase 1 (Model-Hop on Safety Block) — 2026-11-23
 
 ### Status: VERIFIED WORKING (Implemented upstream prompt token metrics logging and intelligent server-side model-hopping fallback when Gemini safety filter triggers blockReason: OTHER per principles: `principle-fix-root-causes`, `principle-prove-it-works`, `principle-laziness-protocol`, `principle-model-the-domain`):

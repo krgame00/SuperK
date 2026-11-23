@@ -60,6 +60,7 @@ import {
 } from "@/lib/colorMatching/nearbyStyleFallback";
 import { type GlossaryEntry, extractGlossaryCandidatesFromBubbles, mergeGlossaryEntries } from "@/lib/translation/glossary";
 import { type PronounRelation } from "@/lib/translation/pronounMatrix";
+import { runAdaptiveSlicing, type SliceTranslator } from "@/lib/translation/adaptiveSlicing";
 import {
   classifyTranslationError,
   type DiagnosticDetail,
@@ -2081,171 +2082,94 @@ async function compressImageForTranslation(
             allBubbles.push(b as TranslatedBubble);
           }
         } else {
-        const slices = [];
-        const rows = 3;
-        const cols = 2;
-        const baseSliceWidth = imgEl.naturalWidth / cols;
-        const baseSliceHeight = imgEl.naturalHeight / rows;
-        const overlapX = baseSliceWidth * 0.15;
-        const overlapY = baseSliceHeight * 0.15;
-
-        for (let row = 0; row < rows; row++) {
-          for (let col = 0; col < cols; col++) {
-            const sx = Math.max(0, col * baseSliceWidth - (col > 0 ? overlapX : 0));
-            const sy = Math.max(0, row * baseSliceHeight - (row > 0 ? overlapY : 0));
-            const ex = Math.min(imgEl.naturalWidth, (col + 1) * baseSliceWidth + (col < cols - 1 ? overlapX : 0));
-            const ey = Math.min(imgEl.naturalHeight, (row + 1) * baseSliceHeight + (row < rows - 1 ? overlapY : 0));
-            const sWidth = ex - sx;
-            const sHeight = ey - sy;
-
+          // Adaptive Slicing (Ladder Plan Phase 3):
+          // Begins with 2 horizontal slices (Level 1). Subdivides only slices that
+          // encounter SAFETY_BLOCKED, errors, or empty bubbles down to Level 2 (columns).
+          setTranslationResult("กำลังเริ่มแปลด้วย Adaptive Slicing...");
+          const sliceTranslator: SliceTranslator = async (slice) => {
             const canvas = document.createElement("canvas");
-            canvas.width = sWidth;
-            canvas.height = sHeight;
+            canvas.width = slice.sWidth;
+            canvas.height = slice.sHeight;
             const ctx = canvas.getContext("2d");
             if (!ctx) {
-              throw new Error("Canvas 2D context is unavailable for NSFW slicing");
+              throw new Error("Canvas 2D context is unavailable for adaptive slicing");
             }
-            ctx.drawImage(imgEl, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
+            ctx.drawImage(imgEl, slice.sx, slice.sy, slice.sWidth, slice.sHeight, 0, 0, slice.sWidth, slice.sHeight);
             const sliceBase64 = canvas.toDataURL("image/jpeg", 0.95).split(",")[1];
             canvas.width = 0;
             canvas.height = 0;
-            slices.push({ row, col, sx, sy, sWidth, sHeight, base64: sliceBase64 });
-          }
-        }
 
-        // All slices fire concurrently — they are independent regions, and the
-        // server round-robins its key pool per request. Results are merged in
-        // slice order below so dedupe priority matches the old sequential pass.
-        setTranslationResult(`กำลังแปลชิ้นส่วนทั้งหมด ${slices.length} ชิ้นพร้อมกัน...`);
-        const sliceResults = await Promise.all(slices.map(async (slice) => {
-          try {
-            const res = await fetch("/api/translate", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                imageBase64: slice.base64,
-                mimeType: "image/jpeg",
-                targetLang,
-                sourceLang,
-                modelPreference,
-                apiKey: userApiKey,
-                allowPreview: allowPreviewModels, glossary: glossaryRef.current, pronounMatrix: pronounMatrixRef.current,
-                policy: { sfx: sfxModeRef.current },
-                context: priorContext || undefined,
-              }),
-              signal,
-            });
-            const data = await readTranslationResponse<{ text: string }>(res);
+            try {
+              const res = await fetch("/api/translate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  imageBase64: sliceBase64,
+                  mimeType: "image/jpeg",
+                  targetLang,
+                  sourceLang,
+                  modelPreference,
+                  apiKey: userApiKey,
+                  allowPreview: allowPreviewModels,
+                  glossary: glossaryRef.current,
+                  pronounMatrix: pronounMatrixRef.current,
+                  policy: { sfx: sfxModeRef.current },
+                  context: priorContext || undefined,
+                }),
+                signal,
+              });
+              const data = await readTranslationResponse<{ text: string }>(res);
 
-            let parsed = parseLLMJSON(data.text) as
-              | { bubbles?: TranslatedBubble[] }
-              | null;
-            if (!parsed || !Array.isArray(parsed.bubbles)) {
-              throw new Error("Translation response malformed: bubbles array missing.");
-            }
-            parsed = normalizeTargetTranslationPayload(parsed, targetLang);
-            const sliceBubbles =
-              pronounMatrixRef.current && pronounMatrixRef.current.length > 0 && Array.isArray(parsed.bubbles)
-                ? parsed.bubbles.map((b) => auditBubbleWithPersona(b, pronounMatrixRef.current).bubble)
-                : (parsed.bubbles ?? []);
-            return { ok: true as const, slice, sliceBubbles };
-          } catch (err: unknown) {
-            console.warn(`Slice failed:`, err);
-            return { ok: false as const, err };
-          }
-        }));
-
-        for (const result of sliceResults) {
-          if (!result.ok) {
-            const err = result.err;
-            if (isUserCancelledError(err)) throw err;
-            if (getTranslationRetryDelay(err) !== null) {
-              throw err;
-            }
-            continue;
-          }
-          const slice = result.slice;
-          const sliceBubbles = result.sliceBubbles;
-          if (sliceBubbles.length > 0) {
-            const { sx, sy, sWidth, sHeight } = slice;
-
-            for (const b of sliceBubbles) {
-              if (!b.box || b.box.length !== 4) {
-                b.box = [0, 0, 1000, 1000];
-                b.isInvalidBox = true;
-              } else if ((b.box[3] - b.box[1] >= 950 && b.box[2] - b.box[0] >= 950) || (b.box[3] === b.box[1] && b.box[2] === b.box[0])) {
-                // Invalid box: shrink to a centered 20% patch so it can't
-                // white-out the whole page; the invalid marker still shows.
-                const cx = (b.box[1] + b.box[3]) / 2;
-                const cy = (b.box[0] + b.box[2]) / 2;
-                b.box = [cy - 100, cx - 100, cy + 100, cx + 100];
-                b.isInvalidBox = true;
+              let parsed = parseLLMJSON(data.text) as
+                | { bubbles?: TranslatedBubble[] }
+                | null;
+              if (!parsed || !Array.isArray(parsed.bubbles)) {
+                throw new Error("Translation response malformed: bubbles array missing.");
               }
+              parsed = normalizeTargetTranslationPayload(parsed, targetLang);
+              const sliceBubbles =
+                pronounMatrixRef.current && pronounMatrixRef.current.length > 0 && Array.isArray(parsed.bubbles)
+                  ? parsed.bubbles.map((b) => auditBubbleWithPersona(b, pronounMatrixRef.current).bubble)
+                  : (parsed.bubbles ?? []);
 
-              const ymin_px = (b.box[0] / 1000) * sHeight;
-              const xmin_px = (b.box[1] / 1000) * sWidth;
-              const ymax_px = (b.box[2] / 1000) * sHeight;
-              const xmax_px = (b.box[3] / 1000) * sWidth;
-
-              const global_ymin_px = ymin_px + sy;
-              const global_xmin_px = xmin_px + sx;
-              const global_ymax_px = ymax_px + sy;
-              const global_xmax_px = xmax_px + sx;
-
-              b.box[0] = Math.round((global_ymin_px / imgEl.naturalHeight) * 1000);
-              b.box[1] = Math.round((global_xmin_px / imgEl.naturalWidth) * 1000);
-              b.box[2] = Math.round((global_ymax_px / imgEl.naturalHeight) * 1000);
-              b.box[3] = Math.round((global_xmax_px / imgEl.naturalWidth) * 1000);
-
-              let isDuplicate = false;
-              // Dedupe against ALL bubbles (invalid boxes too) to stop
-              // overlapping white patches stacking on the same spot.
-              for (const existing of allBubbles) {
-                if (!existing.box || existing.box.length < 4) continue;
-                const xA = Math.max(b.box[1], existing.box[1]);
-                const yA = Math.max(b.box[0], existing.box[0]);
-                const xB = Math.min(b.box[3], existing.box[3]);
-                const yB = Math.min(b.box[2], existing.box[2]);
-                const interWidth = Math.max(0, xB - xA);
-                const interHeight = Math.max(0, yB - yA);
-                const interArea = interWidth * interHeight;
-                const boxAArea = (b.box[3] - b.box[1]) * (b.box[2] - b.box[0]);
-                const boxBArea = (existing.box[3] - existing.box[1]) * (existing.box[2] - existing.box[0]);
-                const iou = interArea / (boxAArea + boxBArea - interArea);
-
-                // Containment: if either box covers ≥80% of the other, they
-                // are the same bubble. 60% was too aggressive — adjacent
-                // speech balloons that touch each other were wrongly merged.
-                const bInExisting = boxBArea > 0 && interArea / boxBArea >= 0.8;
-                const existingInB = boxAArea > 0 && interArea / boxAArea >= 0.8;
-
-                // Centroid distance: only merge when centers are very close
-                // (≤5% of the page). 120/1000 merged distinct adjacent
-                // bubbles that sit side by side.
-                const bCx = (b.box[1] + b.box[3]) / 2;
-                const bCy = (b.box[0] + b.box[2]) / 2;
-                const eCx = (existing.box[1] + existing.box[3]) / 2;
-                const eCy = (existing.box[0] + existing.box[2]) / 2;
-                const dist = Math.hypot(bCx - eCx, bCy - eCy);
-
-                if (iou > 0.7 || bInExisting || existingInB || dist < 50) {
-                  isDuplicate = true;
-                  break;
-                }
+              validPayloadCount++;
+              successCount++;
+              return {
+                ok: true,
+                bubbles: sliceBubbles,
+                isBlockedOrEmpty: sliceBubbles.length === 0,
+              };
+            } catch (err: unknown) {
+              if (isUserCancelledError(err)) throw err;
+              if (getTranslationRetryDelay(err) !== null) {
+                throw err;
               }
-
-              if (!isDuplicate) {
-                allBubbles.push(b);
-              }
+              console.warn(`Adaptive slice ${slice.id} failed:`, err);
+              return {
+                ok: false,
+                bubbles: [],
+                isBlockedOrEmpty: true,
+                error: err,
+              };
             }
-          }
-          validPayloadCount++;
-          successCount++;
-        }
+          };
 
-        if (validPayloadCount === 0) {
-          throw new Error("Translation failed: no valid NSFW slice responses.");
-        }
+          const adaptiveResult = await runAdaptiveSlicing({
+            pageWidth: imgEl.naturalWidth,
+            pageHeight: imgEl.naturalHeight,
+            translator: sliceTranslator,
+            onSliceStart: (slice, totalSoFar) => {
+              setTranslationResult(`กำลังแปลชิ้นส่วน Adaptive Slicing (${slice.id}, รวม ${totalSoFar} ชิ้น)...`);
+            },
+          });
+
+          if (adaptiveResult.successfulSlices.length === 0 && adaptiveResult.bubbles.length === 0) {
+            throw new Error("Translation failed: no valid NSFW slice responses.");
+          }
+
+          for (const b of adaptiveResult.bubbles) {
+            allBubbles.push(b);
+          }
         }
         }
 
