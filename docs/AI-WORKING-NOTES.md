@@ -5782,3 +5782,18 @@ Status: **VERIFIED WORKING (Resolved GitHub Actions CI run 45445579030 failure o
   - TypeScript: `npx tsc --noEmit` exited 0 (0 errors).
   - Linter: `npm run lint` exited 0 (0 errors).
   - Python Ruff: `python -m ruff check ocr-service` exited 0 (All checks passed).
+
+
+## CI JSDOM matchMedia Polyfill Fix — 2026-11-25
+
+Status: **VERIFIED WORKING (Resolved GitHub Actions CI run 45447953147 failure on tests/unit/workspaceAccessibility.test.tsx; 1) Added standard window.matchMedia polyfill stub to tests/setup.ts so JSDOM test environment safely supports react-hot-toast and media query checks across all 297 test suites; 2) Verified tests/unit/workspaceAccessibility.test.tsx passes 8/8 tests cleanly and tests/unit/pageViewer.test.tsx passes 6/6 tests; 3) All pre-push gates verified)**.
+
+- **Root Cause & Forensic Breakdown (`debug-mantra`)**:
+  - `Fail Path`: On CI run 45447953147, 2,420 tests passed and only `tests/unit/workspaceAccessibility.test.tsx` failed. In `workspaceAccessibility.test.tsx`, rendering `<WorkspacePage />` mounts `<Toaster />` from `react-hot-toast`, which invokes `prefersReducedMotion` -> `window.matchMedia('(prefers-reduced-motion: reduce)')`. Because JSDOM does not implement CSS Media Queries natively and `tests/setup.ts` lacked a stub, this threw `TypeError: matchMedia is not a function`.
+  - `Fix`: Added `Object.defineProperty(window, "matchMedia", ...)` polyfill in `tests/setup.ts` returning standard MediaQueryList structure.
+- **Verification Evidence**:
+  - `tests/unit/workspaceAccessibility.test.tsx`: 8/8 tests passing.
+  - `tests/unit/pageViewer.test.tsx`: 6/6 tests passing.
+  - TypeScript: `npx tsc --noEmit` exited 0 (0 errors).
+  - ESLint: `npm run lint` exited 0 (0 errors).
+  - Python Ruff: `python -m ruff check ocr-service` exited 0 (All checks passed).

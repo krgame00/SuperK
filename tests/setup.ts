@@ -2,6 +2,23 @@ import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
 
+if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    configurable: true,
+    value: (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+}
+
 if (typeof globalThis.ImageData === "undefined") {
   class ImageDataPolyfill {
     readonly data: Uint8ClampedArray;
