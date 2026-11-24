@@ -40,7 +40,6 @@ import { deduplicateTranslations, excludeDeletedTranslations, findMissingTransla
 import { reviewTranslatedBubbles, type ReviewFailure } from "@/lib/translation/qualityReviewClient";
 import { showSupplementFailureToast } from "@/lib/notify/supplementFailureToast";
 import {
-  AUTO_MODEL_PREFERENCE,
   readPersistedModelPreference,
   writePersistedModelPreference,
   type ModelPreference,
@@ -1225,7 +1224,7 @@ export function useTranslation({
     }, 1000);
 
     return () => clearTimeout(timer);
-  }, [stablePagesRef.current, currentPage, activeBubbles, cacheRevision, sourceSelectionKey, performSave]);
+  }, [pages.length, currentPage, activeBubbles, cacheRevision, sourceSelectionKey, performSave]);
 
   // Restore saved session helper
   const restoreSavedSession = useCallback(async () => {

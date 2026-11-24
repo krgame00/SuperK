@@ -5756,3 +5756,29 @@ Status: **VERIFIED WORKING (Executed all 9 Addendum tasks from fix-plan (1).md o
   - Vitest Cleaning Suite: `tests/cleaning/` passed 30 files, 453/453 tests.
   - Vitest Translation Suite: `tests/translation/` passed 70 files, 682/682 tests.
   - Total Vitest Tests: **1,414 / 1,414 tests passing (100% green)**.
+
+
+## CI & PageViewer Navigation Docking Fix — 2026-11-25
+
+Status: **VERIFIED WORKING (Resolved GitHub Actions CI run 45445579030 failure on tests/unit/pageViewer.test.tsx and cleaned up React hook/unused variable lint warnings; 1) Next button docking in PageViewer.tsx now maintains hidden 2xl:flex right-3 2xl:right-[22rem] when hasInspectorOpen is true, while shifting to 2xl:right-[28rem] when remnant panel is open on the right and inspector is closed; 2) Added unit test coverage for remnant panel docking on both right and left sides; 3) Cleaned unused imports and unnecessary React hook dependencies across hooks/useTranslation.ts, hooks/useCleaningOrchestrator.ts, and hooks/useCleaning.ts; full verification: tests/unit/pageViewer.test.tsx 6/6 pass, tests/workflow/WorkspacePage.test.tsx 54/54 pass, npx tsc --noEmit exit 0 with 0 errors, ESLint exit 0 with 0 errors, python -m ruff check ocr-service all checks passed)**.
+
+- **Root Cause Forensic Breakdown (Debug Mantra Recital & Application)**:
+  - Recited Debug Mantra verbatim:
+    1. First is reproducibility. Can the issue be reproduced reliably?
+    2. Know the fail path. Debugger first; then source trace + knob enumeration; then in-code instrumentation.
+    3. Question your hypothesis. What would disprove it?
+    4. Every run is a breadcrumb. Cross-reference all of them.
+  - Fail Path Traced:
+    - During A5 layout adjustments in commit `b40af82`, the Next Page navigation button styling in `components/workspace/PageViewer.tsx` was unified into `hasInspectorOpen || (remnantPanelState.open && remnantPanelState.side === "right") ? "flex right-3 2xl:right-[28rem]" : "flex right-3 sm:right-6"`.
+    - This removed the `hidden` class on viewports below `2xl` when `hasInspectorOpen` was true, violating `tests/unit/pageViewer.test.tsx:58` (`expect(nextBtn).toHaveClass("hidden")`) and allowing the button to collide with the right inspector on narrow screens.
+  - Fix Implemented:
+    - Restructured conditional classes so `hasInspectorOpen` strictly preserves `hidden 2xl:flex right-3 2xl:right-[22rem]`, and only applies `2xl:right-[28rem]` when `remnantPanelState.open && remnantPanelState.side === "right"` without the inspector open.
+    - Added unit test cases for remnant panel docking on both left (`2xl:left-[28rem]`) and right (`2xl:right-[28rem]`) wrapped in `act(...)`.
+    - Removed unused `AUTO_MODEL_PREFERENCE` and corrected `useEffect` dependencies (`pages.length`) in `hooks/useTranslation.ts`.
+    - Removed unused destructured properties in `hooks/useCleaningOrchestrator.ts` and unnecessary `revokeResult` dependency in `hooks/useCleaning.ts`.
+- **Verification Evidence**:
+  - `tests/unit/pageViewer.test.tsx`: 6/6 tests passing.
+  - `tests/workflow/WorkspacePage.test.tsx`: 54/54 tests passing.
+  - TypeScript: `npx tsc --noEmit` exited 0 (0 errors).
+  - Linter: `npm run lint` exited 0 (0 errors).
+  - Python Ruff: `python -m ruff check ocr-service` exited 0 (All checks passed).

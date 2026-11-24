@@ -322,7 +322,7 @@ export function useCleaning({ pages, pageIds, currentPage }: UseCleaningInput) {
       setResultsByPage(updated);
       setCacheRevision((revision) => revision + 1);
     },
-    [revokeResult],
+    [],
   );
 
   const publishRemnantReview = useCallback(

@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { PageViewer } from "@/components/workspace/PageViewer";
 
@@ -107,5 +107,64 @@ describe("PageViewer navigation", () => {
     const badge = screen.getByText("2 / 3");
     expect(badge).toHaveClass("top-2", "left-2", "text-[10px]");
     expect(badge).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("shifts the Next Page button when remnantPanel is open on the right without inspector", () => {
+    render(
+      <PageViewer
+        pages={pages}
+        currentPage={0}
+        viewLayout="single"
+        workspaceLayer="original"
+        currentCleaningResult={null}
+        cleaningResultsByPage={new Map()}
+        brokenPages={new Set()}
+        onPageChange={vi.fn()}
+        onViewLayoutChange={vi.fn()}
+        onRemovePage={vi.fn()}
+        onImageError={vi.fn()}
+        hasInspectorOpen={false}
+      />
+    );
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("superk:remnant-state", {
+          detail: { open: true, side: "right" },
+        })
+      );
+    });
+
+    const nextBtn = screen.getByTitle("Next Page (Right Arrow)");
+    expect(nextBtn).toHaveClass("2xl:right-[28rem]");
+  });
+
+  it("shifts the Previous Page button when remnantPanel is open on the left", () => {
+    render(
+      <PageViewer
+        pages={pages}
+        currentPage={1}
+        viewLayout="single"
+        workspaceLayer="original"
+        currentCleaningResult={null}
+        cleaningResultsByPage={new Map()}
+        brokenPages={new Set()}
+        onPageChange={vi.fn()}
+        onViewLayoutChange={vi.fn()}
+        onRemovePage={vi.fn()}
+        onImageError={vi.fn()}
+      />
+    );
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("superk:remnant-state", {
+          detail: { open: true, side: "left" },
+        })
+      );
+    });
+
+    const prevBtn = screen.getByTitle("Previous Page (Left Arrow)");
+    expect(prevBtn).toHaveClass("2xl:left-[28rem]");
   });
 });
