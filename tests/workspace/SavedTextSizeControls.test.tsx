@@ -15,7 +15,8 @@ test('actual controls select explicit point and invoke point/page/book plus expl
   await waitFor(()=>expect(resize).toHaveBeenLastCalledWith({scope:'book'}));
 });
 test('point actions require explicit selection and busy disables all resizing',()=>{
-  render(<SavedTextSizeControls pageUrl="original" points={[{t:'หนึ่ง'}]} busy={true} onResize={vi.fn()}/>);
+  render(<SavedTextSizeControls pageUrl="original" points={[{t:'หนึ่ง'},{original_text:'Original Japanese'}]} busy={true} onResize={vi.fn()}/>);
   expect(screen.getByRole('button',{name:'กลับเป็น Auto จุดที่เลือก'})).toBeDisabled();
   expect(screen.getByRole('button',{name:'เทียบขนาดทั้งเล่ม'})).toBeDisabled();
+  expect(screen.getByText(/#2 Original Japanese/)).toBeInTheDocument();
 });

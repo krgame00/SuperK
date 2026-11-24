@@ -22,7 +22,7 @@ export function SavedTextSizeControls({pageUrl,points,busy,onResize}:{pageUrl?:s
       <p>เทียบขนาดกับต้นฉบับ · จุดที่ตั้งขนาดเองจะไม่ถูกทับ</p>
       <select aria-label="เลือกจุดปรับขนาด" value={selected} onChange={e=>setSelected(e.target.value)} disabled={disabled} className="bg-surface rounded p-2">
         <option value="">เลือกจุด…</option>
-        {points.map((point,index)=>point.deleted?null:<option key={index} value={index}>#{index+1} {(point.t||point.translated||'').slice(0,32)} · {point.sourceSizing?.mode==='manual'?'ตั้งเอง':point.sourceSizing?.status==='matched'?'Auto':'ยังไม่ได้เทียบ'}</option>)}
+        {points.map((point,index)=>point.deleted?null:<option key={index} value={index}>#{index+1} {(point.t||point.translated||point.original_text||`จุดที่ ${index+1}`).slice(0,32)} · {point.sourceSizing?.mode==='manual'?'ตั้งเอง':point.sourceSizing?.status==='matched'?'Auto':'ยังไม่ได้เทียบ'}</option>)}
       </select>
       <button type="button" className={cls} disabled={disabled||!hasPoint} onClick={()=>void run({scope:'point',pageUrl,pointIndex:Number(selected)})}>เทียบขนาดจุดที่เลือก</button>
       <button type="button" className={cls} disabled={disabled||!hasPoint} onClick={()=>void run({scope:'point',pageUrl,pointIndex:Number(selected),returnToAuto:true})}>กลับเป็น Auto จุดที่เลือก</button>

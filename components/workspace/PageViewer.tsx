@@ -11,6 +11,7 @@ import type { WorkspaceLayer } from "@/components/cleaning/CleaningToolbar";
 import { CompareSlider } from "@/components/workspace/CompareSlider";
 import { ViewportCanvasEngine, WEBTOON_LONG_STRIP_THRESHOLD } from "@/lib/canvas/ViewportCanvasEngine";
 import { applyTranslationOverlay, type TranslatedBubble, type OverlayTextStyle } from "@/lib/translationOverlay";
+import type { PixelRect } from "@/lib/cleaning/types";
 
 export interface PageViewerProps {
   pages: { url: string; name: string }[];
@@ -334,6 +335,59 @@ export function PageViewer({
     prevViewLayoutRef.current = viewLayout;
   }, [viewLayout, currentPage, virtualizer]);
 
+  const [highlightedRegion, setHighlightedRegion] = useState<{
+    id: string;
+    rect: PixelRect;
+  } | null>(null);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const handleFocusCandidate = (e: Event) => {
+      const custom = e as CustomEvent<{ id: string; rect: PixelRect }>;
+      if (!custom.detail?.rect) return;
+      const { id, rect } = custom.detail;
+      setHighlightedRegion({ id, rect });
+
+      if (viewLayout === "scroll") {
+        const el = document.getElementById(`spage-${currentPage}`);
+        el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      } else {
+        const cx = rect.x + rect.width / 2;
+        const cy = rect.y + rect.height / 2;
+        zoom.zoomTo(Math.max(zoom.scale, 1.1), { x: cx, y: cy });
+      }
+
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        setHighlightedRegion(null);
+      }, 4000);
+    };
+
+    window.addEventListener("superk:focus-candidate-region", handleFocusCandidate);
+    return () => {
+      window.removeEventListener("superk:focus-candidate-region", handleFocusCandidate);
+      if (timer) clearTimeout(timer);
+    };
+  }, [viewLayout, currentPage, zoom]);
+
+  const [remnantPanelState, setRemnantPanelState] = useState<{ open: boolean; side: "left" | "right" }>({
+    open: false,
+    side: "right",
+  });
+
+  useEffect(() => {
+    const handleRemnantState = (e: Event) => {
+      const custom = e as CustomEvent<{ open: boolean; side: "left" | "right" }>;
+      if (custom.detail) {
+        setRemnantPanelState(custom.detail);
+      }
+    };
+    window.addEventListener("superk:remnant-state", handleRemnantState);
+    return () => {
+      window.removeEventListener("superk:remnant-state", handleRemnantState);
+    };
+  }, []);
+
   if (pages.length === 0) return null;
 
   const handleTouchStart = (e: React.TouchEvent) => {
@@ -462,8 +516,12 @@ export function PageViewer({
               type="button"
               onClick={() => onPageChange((prev) => prev - 1)}
               aria-label={`หน้าที่แล้ว (หน้า ${currentPage} จาก ${pages.length})`}
-              className={`absolute top-1/2 -translate-y-1/2 flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-full border border-border/80 bg-background/80 text-foreground/90 shadow-xl backdrop-blur-md transition-all duration-150 hover:bg-surface hover:text-white hover:scale-110 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background z-30 ${
-                isFocusMode ? "left-3 sm:left-6" : "left-3 sm:left-6 lg:left-20"
+              className={`absolute top-1/2 -translate-y-1/2 flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-full border border-border/80 bg-background/80 text-foreground/90 shadow-xl backdrop-blur-md transition-all duration-150 hover:bg-surface hover:text-white hover:scale-110 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background z-50 ${
+                remnantPanelState.open && remnantPanelState.side === "left"
+                  ? "left-3 2xl:left-[28rem]"
+                  : isFocusMode
+                    ? "left-3 sm:left-6"
+                    : "left-3 sm:left-6 lg:left-20"
               }`}
               title="Previous Page (Left Arrow)"
             >
@@ -815,6 +873,22 @@ export function PageViewer({
                   <MaskLegend regions={currentCleaningResult.regions} />
                 </>
               )}
+              {highlightedRegion && (
+                <div
+                  data-testid="candidate-highlight-box"
+                  className="absolute pointer-events-none rounded-lg border-2 border-amber-400 bg-amber-400/25 ring-4 ring-amber-400/40 animate-pulse z-50 transition-all duration-200"
+                  style={{
+                    left: `${highlightedRegion.rect.x}px`,
+                    top: `${highlightedRegion.rect.y}px`,
+                    width: `${highlightedRegion.rect.width}px`,
+                    height: `${highlightedRegion.rect.height}px`,
+                  }}
+                >
+                  <span className="absolute -top-6 left-0 px-1.5 py-0.5 rounded bg-amber-500 text-black font-bold text-[10px] shadow whitespace-nowrap">
+                    จุดตรวจ #{highlightedRegion.id}
+                  </span>
+                </div>
+              )}
             </div>
           )}
 
@@ -830,8 +904,10 @@ export function PageViewer({
               type="button"
               onClick={() => onPageChange((prev) => prev + 1)}
               aria-label={`หน้าถัดไป (หน้า ${currentPage + 2} จาก ${pages.length})`}
-              className={`absolute top-1/2 -translate-y-1/2 flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-full border border-border/80 bg-background/80 text-foreground/90 shadow-xl backdrop-blur-md transition-all duration-150 hover:bg-surface hover:text-white hover:scale-110 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background z-30 ${
-                hasInspectorOpen ? "hidden 2xl:flex right-3 2xl:right-[22rem]" : "flex right-3 sm:right-6"
+              className={`absolute top-1/2 -translate-y-1/2 flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-full border border-border/80 bg-background/80 text-foreground/90 shadow-xl backdrop-blur-md transition-all duration-150 hover:bg-surface hover:text-white hover:scale-110 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background z-50 ${
+                hasInspectorOpen || (remnantPanelState.open && remnantPanelState.side === "right")
+                  ? "flex right-3 2xl:right-[28rem]"
+                  : "flex right-3 sm:right-6"
               }`}
               title="Next Page (Right Arrow)"
             >

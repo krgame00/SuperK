@@ -57,7 +57,7 @@ import {
   type PageExportSource,
 } from "@/lib/export/pageSource";
 import type { WorkspaceExportPage } from "@/hooks/useExportOrchestrator";
-import type { BatchPageFailure } from "@/hooks/useTranslation";
+import type { BatchPageFailure, PageTranslationFailure } from "@/hooks/useTranslation";
 import { resolveTargetLanguage } from "@/lib/languagePolicy";
 
 export type OrganizeTargetMode = "readable" | "xlarge" | "original";
@@ -149,6 +149,8 @@ export interface WorkspaceCanvasHostProps {
   isPageReviewRequired: boolean;
   onConfirmPageReview: () => void;
   batchFailures: BatchPageFailure[];
+  pageTranslationFailures?: Record<string, PageTranslationFailure>;
+  onTranslateCurrentPage?: () => void;
   onOpenDiagnostics: () => void;
   onRetryFailedPages: () => void;
 
@@ -230,6 +232,8 @@ export function WorkspaceCanvasHost({
   isPageReviewRequired,
   onConfirmPageReview,
   batchFailures,
+  pageTranslationFailures,
+  onTranslateCurrentPage,
   onOpenDiagnostics,
   onRetryFailedPages,
   cleaningResultsByPage,
@@ -385,8 +389,18 @@ export function WorkspaceCanvasHost({
         setIsBwContrastMenuOpen(false);
       }
     };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setIsOrganizeMenuOpen(false);
+        setIsBwContrastMenuOpen(false);
+      }
+    };
     window.addEventListener("mousedown", handleClickOutside);
-    return () => window.removeEventListener("mousedown", handleClickOutside);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", handleClickOutside);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
   }, [isOrganizeMenuOpen, isBwContrastMenuOpen]);
 
   const activePage = pages[currentPage];
@@ -994,6 +1008,50 @@ export function WorkspaceCanvasHost({
                       onConfirm={onConfirmPageReview}
                     />
                   )}
+                  {(() => {
+                    const activeFailure = activePage?.url ? pageTranslationFailures?.[activePage.url] : undefined;
+                    if (!activeFailure) return null;
+                    return (
+                      <div
+                        role="alert"
+                        data-testid="page-translation-failure-bar"
+                        className="w-full flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg border border-red-500/40 bg-red-500/15 text-xs backdrop-blur-md shadow-md animate-in fade-in"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-red-400 font-semibold shrink-0">
+                            ❌ แปลหน้านี้ไม่สำเร็จ{activeFailure.code ? ` (${activeFailure.code})` : ""}
+                          </span>
+                          <span className="text-muted text-[11px] truncate">
+                            {activeFailure.message}
+                          </span>
+                          {activeFailure.cropOutcome && (
+                            <span
+                              data-testid="page-failure-crop-outcome"
+                              className="text-red-400 font-mono text-[10px] bg-red-950/40 px-1 py-0.5 rounded border border-red-500/30 shrink-0"
+                            >
+                              {activeFailure.cropOutcome}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={onOpenDiagnostics}
+                            className="px-2.5 py-1 rounded bg-red-600 hover:bg-red-500 text-white font-medium text-xs transition-colors cursor-pointer shadow-sm"
+                          >
+                            ดูสาเหตุและแก้ไข
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void onTranslateCurrentPage?.()}
+                            className="px-2 py-1 rounded bg-surface-hover hover:bg-surface-active text-foreground text-xs transition-colors cursor-pointer border border-surface-hover"
+                          >
+                            ลองใหม่
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {batchFailures.length > 0 && (
                     <div className="w-full flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg border border-red-500/40 bg-red-500/15 text-xs backdrop-blur-md shadow-md animate-in fade-in">
                       <div className="flex items-center gap-2">

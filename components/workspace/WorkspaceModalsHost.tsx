@@ -161,6 +161,12 @@ export interface WorkspaceModalsHostProps {
   isLogsOpen?: boolean;
   onCloseLogs?: () => void;
   onOpenLogs?: () => void;
+
+  // 11. Translate Book Confirm Dialog
+  isTranslateBookConfirmOpen?: boolean;
+  translateBookPagesCount?: number;
+  onConfirmTranslateBook?: () => void;
+  onCloseTranslateBookConfirm?: () => void;
 }
 
 export function WorkspaceModalsHost(props: WorkspaceModalsHostProps): ReactNode {
@@ -270,6 +276,11 @@ export function WorkspaceModalsHost(props: WorkspaceModalsHostProps): ReactNode 
     isLogsOpen,
     onCloseLogs,
     onOpenLogs,
+
+    isTranslateBookConfirmOpen,
+    translateBookPagesCount,
+    onConfirmTranslateBook,
+    onCloseTranslateBookConfirm,
   } = props;
 
   return (
@@ -728,6 +739,60 @@ export function WorkspaceModalsHost(props: WorkspaceModalsHostProps): ReactNode 
         isOpen={Boolean(isLogsOpen)}
         onClose={onCloseLogs ?? (() => {})}
       />
+
+      {/* 11. Translate Book Confirm Dialog */}
+      {isTranslateBookConfirmOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="ยืนยันการแปลและจัดหน้าทั้งเล่ม"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-border bg-surface p-5 shadow-2xl flex flex-col gap-4">
+            <div className="flex items-center gap-2.5 text-foreground font-semibold text-base">
+              <Sparkles className="h-5 w-5 text-amber-400 shrink-0" />
+              <span>ยืนยันการแปลและจัดหน้าทั้งเล่ม</span>
+            </div>
+            <div className="text-xs text-muted leading-relaxed flex flex-col gap-2">
+              <p>ระบบจะทำการคลีน แปลทุกหน้า และจัดระเบียบบับเบิลอัตโนมัติทั้งเล่ม</p>
+              <div className="rounded-xl border border-border/80 bg-background/80 p-3 flex flex-col gap-1.5 font-medium">
+                <div className="flex justify-between text-foreground">
+                  <span>จำนวนหน้าทั้งหมด:</span>
+                  <span className="font-semibold">{translateBookPagesCount ?? 0} หน้า</span>
+                </div>
+                <div className="flex justify-between text-muted text-[11px]">
+                  <span>ประมาณการใช้ Token:</span>
+                  <span className="font-mono text-amber-400">
+                    ~{((translateBookPagesCount ?? 0) * 1500).toLocaleString()} – {((translateBookPagesCount ?? 0) * 3000).toLocaleString()} tokens
+                  </span>
+                </div>
+              </div>
+              <p className="text-[11px] text-muted/80">สามารถกดปุ่ม &quot;ยกเลิก&quot; บนแถบควบคุมหลักได้ตลอดเวลาเพื่อหยุดการทำงานระหว่างหน้า</p>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-1 border-t border-border/60">
+              <button
+                type="button"
+                onClick={onCloseTranslateBookConfirm}
+                className="px-3.5 py-2 rounded-xl text-xs font-semibold text-muted hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                data-testid="confirm-translate-book-btn"
+                onClick={() => {
+                  onCloseTranslateBookConfirm?.();
+                  onConfirmTranslateBook?.();
+                }}
+                className="px-4 py-2 rounded-xl bg-primary hover:bg-primary-hover text-primary-content text-xs font-semibold shadow-md transition-colors cursor-pointer flex items-center gap-1.5"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                <span>เริ่มแปลทั้งเล่ม ({translateBookPagesCount ?? 0} หน้า)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

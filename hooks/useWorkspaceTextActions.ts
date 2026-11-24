@@ -39,28 +39,35 @@ export function useWorkspaceTextActions({
   cleaningResultsByPage,
   replaceBubbleText,
 }: UseWorkspaceTextActionsOptions) {
-  const currentPageUrl = pages[currentPage]?.url;
+  const currentPageItem = pages[currentPage];
+  const currentPageUrl = currentPageItem?.url;
+  const pageKeys = [
+    currentPageUrl,
+    currentPageItem?.originUrl,
+    currentPageItem?.id,
+  ].filter(Boolean) as string[];
   const translatedImagesMap = translatedImages ?? new Map<string, string>();
   const hasPageBubbles = Boolean(
     currentPageUrl &&
       ((activeBubbles.length > 0 && activeBubbles.some((b) => !b.deleted)) ||
-        (bubbleCacheRef.current.get(currentPageUrl)?.some((b) => !b.deleted) ?? false)),
+        pageKeys.some((k) =>
+          bubbleCacheRef.current.get(k)?.some((b) => !b.deleted),
+        )),
   );
   const hasRenderedTranslation = Boolean(
-    currentPageUrl && (translatedImagesMap?.has(currentPageUrl) ?? false),
+    currentPageUrl && pageKeys.some((k) => translatedImagesMap.has(k)),
   );
   const hasCurrentTranslation = Boolean(
-    currentPageUrl &&
-      translationCacheRevision >= 0 &&
-      (hasPageBubbles || hasRenderedTranslation),
+    currentPageUrl && (hasPageBubbles || hasRenderedTranslation),
   );
 
   const toggleOriginalTranslated = useCallback(() => {
-    setWorkspaceLayer((currentLayer) =>
-      currentLayer === "original" && hasCurrentTranslation
-        ? "translated"
-        : "original",
-    );
+    setWorkspaceLayer((currentLayer) => {
+      if (currentLayer === "original") {
+        return hasCurrentTranslation ? "translated" : "clean";
+      }
+      return "original";
+    });
   }, [hasCurrentTranslation, setWorkspaceLayer]);
 
   const handleAutoExtractGlossary = useCallback(async () => {

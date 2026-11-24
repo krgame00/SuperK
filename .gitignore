@@ -109,6 +109,8 @@ patch-probe.md
 
 # Browser extension packages
 *.crx
+/*.zip
+madge-report.txt
 
 /.cache/
 

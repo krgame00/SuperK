@@ -197,7 +197,8 @@ export function classifyTranslationError(
     msg.includes("คัดกรอง") ||
     msg.includes("แบนโดยระบบ safety") ||
     msg.includes("prohibited_content") ||
-    msg.includes("blockreason")
+    msg.includes("blockreason") ||
+    msg.includes("no valid nsfw slice responses")
   ) {
     return DIAGNOSTIC_TAXONOMY.SAFETY_BLOCKED;
   }

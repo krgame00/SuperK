@@ -9,6 +9,7 @@ import { createRegionMaskBlob, createInkMaskBlob } from "@/lib/cleaning/maskUtil
 import { findRegionForCandidate } from "@/lib/cleaning/remnantReview";
 import type { RemnantCandidate } from "@/lib/cleaning/backgroundRemnantInspection";
 import type { CleaningRegion } from "@/lib/cleaning/types";
+import type { TranslatedBubble } from "@/lib/translationOverlay";
 import {
   useExportOrchestrator,
   type WorkspaceExportPage,
@@ -288,6 +289,8 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     resizeSavedText,
     markPageDirty,
     translationCacheRevision,
+    pageTranslationFailures,
+    clearPageTranslationFailure,
     handleAutoOrganizeCurrentPage,
     handleAutoOrganizeAllPages,
     handleApplyBwContrastCurrentPage,
@@ -425,6 +428,9 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     handlePrimaryAction,
     handleTranslateCurrent,
     handleTranslateBook,
+    isTranslateBookConfirmOpen,
+    closeTranslateBookConfirm,
+    confirmTranslateBook,
     workflowMessage,
     contaminatedScan,
     reviewIssues,
@@ -508,6 +514,26 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     onToggleSplitView: toggleSplitView,
   });
 
+  const textSizePageKeys = [
+    currentPageUrl,
+    pages[currentPage]?.originUrl,
+    pages[currentPage]?.id,
+    pages[currentPage]?.url,
+  ].filter(Boolean) as string[];
+
+  let cachedTextSizeBubbles: TranslatedBubble[] | undefined;
+  for (const k of textSizePageKeys) {
+    const list = bubbleCacheRef?.current?.get(k);
+    if (list && list.length > 0) {
+      cachedTextSizeBubbles = list;
+      break;
+    }
+  }
+
+  const resolvedTextSizePoints = (activeBubbles && activeBubbles.length > 0)
+    ? activeBubbles
+    : (cachedTextSizeBubbles ?? []);
+
   const headerProps: WorkspaceHeaderHostProps = {
     isFocusMode,
     pages,
@@ -528,7 +554,7 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     onToggleViewLayout: toggleViewLayout,
     isSplitView,
     onToggleSplitView: toggleSplitView,
-    textSizePoints: bubbleCacheRef?.current?.get(currentPageUrl ?? "") ?? activeBubbles,
+    textSizePoints: resolvedTextSizePoints,
     operationBusy,
     onResizeSavedText: resizeSavedText,
     currentCleaningResult,
@@ -731,6 +757,8 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
       setConfirmedPages((prev) => new Set(prev).add(currentPageUrl));
     },
     batchFailures,
+    pageTranslationFailures,
+    onTranslateCurrentPage: () => void handleTranslate(),
     onOpenDiagnostics: openDiagnostics,
     onRetryFailedPages: () => void retryFailedPages(),
     cleaningResultsByPage,
@@ -910,20 +938,26 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
   );
 
   const handleCleanCandidate = useCallback(
-    async (candidate: RemnantCandidate, region?: CleaningRegion) => {
+    async (
+      candidate: RemnantCandidate,
+      region?: CleaningRegion,
+      options?: { silentToast?: boolean },
+    ) => {
       const pageUrl = currentPageUrl;
-      if (!pageUrl || !currentCleaningResult) return;
+      const cleaning = pageUrl ? cleaningResultsByPage.get(pageUrl) : undefined;
+      const activeCleaning = cleaning ?? currentCleaningResult;
+      if (!pageUrl || !activeCleaning) return;
       unconfirmArtworkCandidate(pageUrl, candidate);
       const targetRegion =
         region ??
-        findRegionForCandidate(currentCleaningResult.regions, candidate.rect) ??
-        currentCleaningResult.regions.find((r) =>
+        findRegionForCandidate(activeCleaning.regions, candidate.rect) ??
+        activeCleaning.regions.find((r) =>
           candidate.evidence.removalRegionIds.includes(r.id),
         );
 
       if (!targetRegion) return;
 
-      const { width, height } = currentCleaningResult;
+      const { width, height } = activeCleaning;
       // Extract ONLY dark text ink pixels from candidate.rect with 2px dilation
       // Never use a solid bounding box, which causes inpainting to erase characters and artwork!
       const maskBlob = await createInkMaskBlob(pageUrl, width, height, candidate.rect);
@@ -932,12 +966,16 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
       }
       const outcome = await handleRetryRegion(targetRegion.id, maskBlob, "auto", "force-clean");
       if (!outcome) {
-        void import("react-hot-toast").then((m) => m.default.error("คลีนจุดนี้ไม่สำเร็จ กรุณาลองอีกครั้ง"));
+        if (!options?.silentToast) {
+          void import("react-hot-toast").then((m) => m.default.error("คลีนจุดนี้ไม่สำเร็จ กรุณาลองอีกครั้ง"));
+        }
         return;
       }
-      void import("react-hot-toast").then((m) => m.default.success("คลีนจุดนี้เรียบร้อย"));
+      if (!options?.silentToast) {
+        void import("react-hot-toast").then((m) => m.default.success("คลีนจุดนี้เรียบร้อย"));
+      }
     },
-    [currentPageUrl, currentCleaningResult, handleRetryRegion, unconfirmArtworkCandidate],
+    [currentPageUrl, cleaningResultsByPage, currentCleaningResult, handleRetryRegion, unconfirmArtworkCandidate],
   );
 
   const bottomStripProps: WorkspaceBottomStripHostProps = {
@@ -951,6 +989,8 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     isThumbnailsCollapsed,
     onToggleCollapse: toggleThumbnailsCollapse,
     isFocusMode,
+    pageTranslationFailures,
+    onTranslateCurrentPage: () => void handleTranslate(),
     currentCleaningResult,
     currentPageUrl,
     canConfirmHumanInspection: pages[currentPage]
@@ -1110,6 +1150,10 @@ export function useWorkspaceController(): WorkspaceControllerOutput {
     isLogsOpen,
     onCloseLogs: closeLogs,
     onOpenLogs: openLogs,
+    isTranslateBookConfirmOpen,
+    translateBookPagesCount: pages.length,
+    onConfirmTranslateBook: () => void confirmTranslateBook(),
+    onCloseTranslateBookConfirm: closeTranslateBookConfirm,
   };
 
   return {

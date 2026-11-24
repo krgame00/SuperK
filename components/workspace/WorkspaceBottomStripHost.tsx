@@ -3,6 +3,7 @@
 import { type ChangeEvent, type ReactElement } from "react";
 import { PageFilmstrip } from "@/components/workspace/PageFilmstrip";
 import { RemnantReviewPanel } from "@/components/cleaning/RemnantReviewPanel";
+import type { PageTranslationFailure } from "@/hooks/useTranslation";
 import type { WorkspaceExportPage } from "@/hooks/useExportOrchestrator";
 import type { PageCleaningResult } from "@/hooks/useCleaning";
 import type { PixelRect, CleaningRegion } from "@/lib/cleaning/types";
@@ -37,6 +38,7 @@ export interface WorkspaceBottomStripHostProps {
   onCleanRemnantCandidate?: (
     candidate: RemnantCandidate,
     region: CleaningRegion | undefined,
+    options?: { silentToast?: boolean },
   ) => Promise<void> | void;
   onConfirmArtworkCandidate: (candidateId: string, rect?: PixelRect) => void;
   onUnconfirmArtworkCandidate?: (candidate: RemnantCandidate) => void;
@@ -50,6 +52,8 @@ export interface WorkspaceBottomStripHostProps {
   toolbarPosition?: "top" | "bottom";
   isPageReviewRequired?: boolean;
   isInspectorOpen?: boolean;
+  pageTranslationFailures?: Record<string, PageTranslationFailure>;
+  onTranslateCurrentPage?: () => void;
 }
 
 export function WorkspaceBottomStripHost({
@@ -78,6 +82,8 @@ export function WorkspaceBottomStripHost({
   toolbarPosition,
   isPageReviewRequired,
   isInspectorOpen,
+  pageTranslationFailures,
+  onTranslateCurrentPage,
 }: WorkspaceBottomStripHostProps): ReactElement {
   const activePage = pages[currentPage];
 
@@ -95,6 +101,7 @@ export function WorkspaceBottomStripHost({
         isCollapsed={isThumbnailsCollapsed}
         onToggleCollapse={onToggleCollapse}
         isFocusMode={isFocusMode}
+        pageTranslationFailures={pageTranslationFailures}
       />
 
       <RemnantReviewPanel
@@ -111,6 +118,8 @@ export function WorkspaceBottomStripHost({
         canConfirmHumanInspection={canConfirmHumanInspection ?? false}
         inspection={remnantInspection}
         regions={currentCleaningResult?.regions ?? []}
+        pageTranslationFailure={activePage?.url ? pageTranslationFailures?.[activePage.url] : undefined}
+        onRetryTranslation={onTranslateCurrentPage}
         onOpenMask={onOpenMaskCandidate}
         onRestoreOriginal={onRestoreOriginalRemnant}
         onCleanCandidate={onCleanRemnantCandidate}

@@ -116,17 +116,62 @@ describe("useTranslationWorkspaceCoordinator", () => {
     expect(handleTranslate).not.toHaveBeenCalled();
   });
 
-  it("handleTranslateBook translates all pages and auto-organizes bubbles", async () => {
+  it("handleTranslateBook opens confirmation dialog and confirmTranslateBook translates all pages and auto-organizes bubbles", async () => {
     const props = createHookProps();
     const { result } = renderHook(() => useTranslationWorkspaceCoordinator(props));
 
     await act(async () => {
       await result.current.handleTranslateBook();
     });
+    expect(result.current.isTranslateBookConfirmOpen).toBe(true);
+
+    await act(async () => {
+      await result.current.confirmTranslateBook();
+    });
 
     expect(setWorkspaceLayer).toHaveBeenCalledWith("translated");
     expect(handleTranslateAll).toHaveBeenCalledTimes(1);
     expect(handleAutoOrganizeAllPages).toHaveBeenCalledTimes(1);
+    expect(uiOperationLockRef.current).toBe(false);
+  });
+
+  it("confirmTranslateBook does not auto-organize if batch translation is cancelled", async () => {
+    const props = createHookProps();
+    handleTranslateAll.mockResolvedValueOnce({
+      cancelled: true,
+      total: 2,
+      succeeded: 1,
+      failed: 0,
+      failedPages: [],
+    });
+    const { result } = renderHook(() => useTranslationWorkspaceCoordinator(props));
+
+    await act(async () => {
+      await result.current.confirmTranslateBook();
+    });
+
+    expect(handleTranslateAll).toHaveBeenCalledTimes(1);
+    expect(handleAutoOrganizeAllPages).not.toHaveBeenCalled();
+    expect(uiOperationLockRef.current).toBe(false);
+  });
+
+  it("confirmTranslateBook does not claim 100% success if pages failed", async () => {
+    const props = createHookProps();
+    handleTranslateAll.mockResolvedValueOnce({
+      cancelled: false,
+      total: 2,
+      succeeded: 1,
+      failed: 1,
+      failedPages: [2],
+    });
+    const { result } = renderHook(() => useTranslationWorkspaceCoordinator(props));
+
+    await act(async () => {
+      await result.current.confirmTranslateBook();
+    });
+
+    expect(handleTranslateAll).toHaveBeenCalledTimes(1);
+    expect(handleAutoOrganizeAllPages).not.toHaveBeenCalled();
     expect(uiOperationLockRef.current).toBe(false);
   });
 

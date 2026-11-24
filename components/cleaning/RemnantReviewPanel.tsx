@@ -11,6 +11,13 @@ import type {
 import { findRegionForCandidate } from "@/lib/cleaning/remnantReview";
 import type { CleaningRegion } from "@/lib/cleaning/types";
 
+export function isSevereFinding(candidate: RemnantCandidate): boolean {
+  return (
+    candidate.state !== "human-confirmed-artwork" &&
+    (candidate.detail === "unchanged" || candidate.detail === "full-glyph")
+  );
+}
+
 export interface RemnantReviewPanelProps {
   inspection?: BackgroundInspectionResult;
   regions: CleaningRegion[];
@@ -25,7 +32,11 @@ export interface RemnantReviewPanelProps {
   /** Revert / restore original artwork pixels for this candidate or its enclosing region. */
   onRestoreOriginal?: (candidate: RemnantCandidate, region: CleaningRegion | undefined) => Promise<void> | void;
   /** Immediately inpaint / clean this remnant candidate or its enclosing region. */
-  onCleanCandidate?: (candidate: RemnantCandidate, region: CleaningRegion | undefined) => Promise<void> | void;
+  onCleanCandidate?: (
+    candidate: RemnantCandidate,
+    region: CleaningRegion | undefined,
+    options?: { silentToast?: boolean },
+  ) => Promise<void> | void;
   /** Confirm this exact candidate (this revision) is artwork. */
   onConfirmArtwork?: (candidate: RemnantCandidate) => void;
   /** Unconfirm / revert artwork confirmation for a candidate spot. */
@@ -39,6 +50,14 @@ export interface RemnantReviewPanelProps {
   /** Whether the active page requires review before export (displays PageReviewNotice below toolbar). */
   isPageReviewRequired?: boolean;
   isInspectorOpen?: boolean;
+  pageTranslationFailure?: {
+    status: "failed";
+    code?: string;
+    message: string;
+    at: number;
+    cropOutcome?: string;
+  };
+  onRetryTranslation?: () => void;
 }
 
 const UNVERIFIED_LABELS: Record<BackgroundInspectionUnverifiedReason, string> = {
@@ -90,11 +109,18 @@ export function RemnantReviewPanel({
   toolbarPosition = "top",
   isPageReviewRequired = false,
   isInspectorOpen = false,
+  pageTranslationFailure,
+  onRetryTranslation,
 }: RemnantReviewPanelProps) {
   const [side, setSide] = useState<"right" | "left">("right");
   const [isCollapsed, setIsCollapsed] = useState(false);
   const effectiveSide = isInspectorOpen ? "left" : side;
   const [busyCandidateId, setBusyCandidateId] = useState<string | null>(null);
+  const [bulkCleaningProgress, setBulkCleaningProgress] = useState<{
+    current: number;
+    total: number;
+  } | null>(null);
+  const bulkCancelRef = useRef<boolean>(false);
 
   // Auto-collapse and move to the left when the user selects a text bubble or when
   // the inspector is open: the inspector takes over the right edge of the screen,
@@ -132,8 +158,19 @@ export function RemnantReviewPanel({
   const [busyAction, setBusyAction] = useState<"restore" | "clean" | null>(null);
   const [comparison, setComparison] = useState<{ candidate: RemnantCandidate; revisionKey: string; sourceUrl: string; cleanUrl: string }>();
   const [wholeComparison, setWholeComparison] = useState<{ revisionKey: string; sourceUrl: string; cleanUrl: string; loaded: number }>();
+  const [highlightedCandidateId, setHighlightedCandidateId] = useState<string | null>(null);
   const returnFocus = useRef<HTMLButtonElement | null>(null);
   const closeComparison = () => { setComparison(undefined); returnFocus.current?.focus(); };
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("superk:remnant-state", {
+          detail: { open: !isCollapsed, side: effectiveSide },
+        }),
+      );
+    }
+  }, [isCollapsed, effectiveSide]);
   if (!inspection) return null;
 
   if (inspection.status === "unverified") {
@@ -252,6 +289,52 @@ export function RemnantReviewPanel({
 
   const openCandidates = inspection.candidates.filter((candidate) => candidate.state !== "human-confirmed-artwork");
   const confirmedCandidates = inspection.candidates.filter((candidate) => candidate.state === "human-confirmed-artwork");
+  const severeCandidates = openCandidates.filter(isSevereFinding);
+
+  const handleSelectCandidate = (candidate: RemnantCandidate) => {
+    setHighlightedCandidateId(candidate.id);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("superk:focus-candidate-region", {
+          detail: {
+            id: candidate.id,
+            rect: candidate.rect,
+          },
+        }),
+      );
+    }
+  };
+
+  const handleCleanAllSevere = async () => {
+    if (!onCleanCandidate || severeCandidates.length === 0) return;
+    bulkCancelRef.current = false;
+    const targetCandidates = [...severeCandidates];
+    setBulkCleaningProgress({ current: 0, total: targetCandidates.length });
+    let completedCount = 0;
+    try {
+      for (let i = 0; i < targetCandidates.length; i++) {
+        if (bulkCancelRef.current) break;
+        setBulkCleaningProgress({ current: i + 1, total: targetCandidates.length });
+        const candidate = targetCandidates[i];
+        const region = findRegionForCandidate(regions, candidate.rect);
+        await onCleanCandidate(candidate, region, { silentToast: true });
+        completedCount++;
+      }
+    } finally {
+      const wasCancelled = bulkCancelRef.current;
+      setBulkCleaningProgress(null);
+      bulkCancelRef.current = false;
+      if (wasCancelled) {
+        void import("react-hot-toast").then((m) =>
+          m.default(`หยุดการคลีนซ้ำแล้ว (ทำไป ${completedCount}/${targetCandidates.length} จุด)`, { icon: "⏹️" })
+        );
+      } else if (completedCount > 0) {
+        void import("react-hot-toast").then((m) =>
+          m.default.success(`คลีนซ้ำจุดรุนแรงเสร็จสิ้น (${completedCount} จุด)`)
+        );
+      }
+    }
+  };
   if (inspection.candidates.length === 0) return (
     <p role="status" className="w-full rounded-lg border border-border/70 bg-surface/90 px-3 py-2 text-xs text-muted">
       {inspection.truncated
@@ -334,6 +417,37 @@ export function RemnantReviewPanel({
         </div>
       ) : (
         <div className="flex flex-col gap-2.5 animate-in fade-in zoom-in-95 duration-200">
+          {pageTranslationFailure && (
+            <div
+              role="alert"
+              data-testid="remnant-translation-failure"
+              className="p-2.5 rounded-xl border border-red-500/40 bg-red-500/10 text-xs flex flex-col gap-1.5"
+            >
+              <div className="flex items-center justify-between gap-1 font-semibold text-red-400">
+                <span>❌ แปลหน้านี้ไม่สำเร็จ{pageTranslationFailure.code ? ` (${pageTranslationFailure.code})` : ""}</span>
+                {onRetryTranslation && (
+                  <button
+                    type="button"
+                    onClick={onRetryTranslation}
+                    className="px-2 py-0.5 rounded bg-red-600 hover:bg-red-500 text-white text-[11px] font-medium transition-colors cursor-pointer"
+                  >
+                    ลองใหม่
+                  </button>
+                )}
+              </div>
+              <p className="text-[11px] text-muted leading-tight">
+                {pageTranslationFailure.message}
+              </p>
+              {pageTranslationFailure.cropOutcome && (
+                <div
+                  data-testid="remnant-failure-crop-outcome"
+                  className="text-[10px] text-red-400 font-mono bg-red-950/40 px-1.5 py-0.5 rounded border border-red-500/20"
+                >
+                  Ladder: {pageTranslationFailure.cropOutcome}
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex items-start justify-between gap-2 border-b border-border/60 pb-2">
             <div className="flex items-start gap-2 min-w-0">
               <span className="relative flex h-2.5 w-2.5 shrink-0 mt-1">
@@ -366,16 +480,49 @@ export function RemnantReviewPanel({
                 )}
               </div>
             </div>
-            <div className="flex items-center gap-1 shrink-0">
+            <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
+              {severeCandidates.length > 0 && onCleanCandidate && (
+                <button
+                  type="button"
+                  data-testid="bulk-clean-severe-btn"
+                  disabled={Boolean(busyCandidateId) || bulkCleaningProgress !== null}
+                  onClick={() => void handleCleanAllSevere()}
+                  className="rounded-lg bg-red-600 hover:bg-red-500 active:bg-red-700 disabled:opacity-50 px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm transition-all cursor-pointer flex items-center gap-1"
+                >
+                  {bulkCleaningProgress !== null ? (
+                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Sparkles className="h-3 w-3" aria-hidden="true" />
+                  )}
+                  <span>
+                    {bulkCleaningProgress !== null
+                      ? `กำลังคลีน ${bulkCleaningProgress.current}/${bulkCleaningProgress.total}…`
+                      : `คลีนซ้ำจุดรุนแรงทั้งหมด (${severeCandidates.length} จุด)`}
+                  </span>
+                </button>
+              )}
+              {bulkCleaningProgress !== null && (
+                <button
+                  type="button"
+                  data-testid="cancel-bulk-clean-btn"
+                  onClick={() => {
+                    bulkCancelRef.current = true;
+                  }}
+                  className="rounded-lg bg-surface hover:bg-surface-hover px-2 py-1 text-[11px] font-medium text-foreground transition-all cursor-pointer border border-border"
+                >
+                  หยุด
+                </button>
+              )}
               {openCandidates.length > 0 && onConfirmAllArtwork && (
                 <button
                   type="button"
+                  disabled={bulkCleaningProgress !== null}
                   onClick={() => {
                     onConfirmAllArtwork();
                     setIsCollapsed(true);
                   }}
                   title="อนุมัติทุกจุดในหน้านี้ว่าเป็นลายภาพ/คลีนผ่านแล้ว"
-                  className="rounded-lg bg-emerald-600/90 hover:bg-emerald-500 px-2 py-1 text-[11px] font-semibold text-white shadow-sm transition-all cursor-pointer"
+                  className="rounded-lg bg-emerald-600/90 hover:bg-emerald-500 disabled:opacity-50 px-2 py-1 text-[11px] font-semibold text-white shadow-sm transition-all cursor-pointer"
                 >
                   อนุมัติลายภาพทั้งหน้า
                 </button>
@@ -443,7 +590,12 @@ export function RemnantReviewPanel({
                 <li
                   key={candidate.id}
                   data-testid={`remnant-candidate-${candidate.id}`}
-                  className="flex flex-col gap-2 rounded-xl border border-border/70 bg-background/80 p-2.5 text-xs shadow-sm transition-all hover:border-border"
+                  onClick={() => handleSelectCandidate(candidate)}
+                  className={`flex flex-col gap-2 rounded-xl border p-2.5 text-xs shadow-sm transition-all cursor-pointer ${
+                    highlightedCandidateId === candidate.id
+                      ? "border-amber-500/80 bg-amber-500/10 ring-1 ring-amber-500/50"
+                      : "border-border/70 bg-background/80 hover:border-border"
+                  }`}
                 >
                   <div className="flex flex-col gap-1 min-w-0">
                     <div className="flex items-center justify-between gap-1.5 flex-wrap">
@@ -525,10 +677,10 @@ export function RemnantReviewPanel({
                         <div className="grid grid-cols-2 gap-1.5">
                           <button
                             type="button"
-                            disabled={!region || Boolean(busyCandidateId)}
+                            disabled={!region || Boolean(busyCandidateId) || bulkCleaningProgress !== null}
                             title={region ? "กู้คืนลายเส้น/ภาพเดิมของบริเวณนี้กลับมา" : "จุดนี้ไม่อยู่ในพื้นที่คลีนที่อนุมัติ จึงกู้คืนไม่ได้"}
                             onClick={async () => {
-                              if (!region || busyCandidateId) return;
+                              if (!region || busyCandidateId || bulkCleaningProgress !== null) return;
                               setBusyCandidateId(candidate.id);
                               setBusyAction("restore");
                               try {
@@ -550,10 +702,10 @@ export function RemnantReviewPanel({
 
                           <button
                             type="button"
-                            disabled={!region || Boolean(busyCandidateId)}
+                            disabled={!region || Boolean(busyCandidateId) || bulkCleaningProgress !== null}
                             title={region ? "คลีน/ลบข้อความที่ยังเหลือในจุดนี้ทันที" : "จุดนี้ไม่อยู่ในพื้นที่คลีนที่อนุมัติ จึงคลีนอัตโนมัติไม่ได้"}
                             onClick={async () => {
-                              if (!region || busyCandidateId) return;
+                              if (!region || busyCandidateId || bulkCleaningProgress !== null) return;
                               setBusyCandidateId(candidate.id);
                               setBusyAction("clean");
                               try {
@@ -577,7 +729,7 @@ export function RemnantReviewPanel({
                         <div className="grid grid-cols-2 gap-1.5">
                           <button
                             type="button"
-                            disabled={!region || Boolean(busyCandidateId)}
+                            disabled={!region || Boolean(busyCandidateId) || bulkCleaningProgress !== null}
                             title={region ? "เปิดแก้ Mask ที่บริเวณนี้ (เทียบภาพเดิม/ภาพคลีน พร้อมเครื่องมือแปรง)" : "จุดนี้ไม่อยู่ในพื้นที่คลีนที่อนุมัติ จึงแก้ Mask ไม่ได้"}
                             onClick={() => region && onOpenMask?.(candidate, region)}
                             className="flex items-center justify-center gap-1 rounded-lg bg-surface hover:bg-surface-hover active:bg-surface/80 px-2 py-1.5 font-medium text-foreground text-xs border border-border/60 transition-colors disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
@@ -586,7 +738,7 @@ export function RemnantReviewPanel({
                           </button>
                           <button
                             type="button"
-                            disabled={Boolean(busyCandidateId)}
+                            disabled={Boolean(busyCandidateId) || bulkCleaningProgress !== null}
                             title="อนุมัติว่าจุดนี้คือลายเส้นภาพที่ถูกต้องแล้ว โดยไม่ต้องเปลี่ยนพิกเซล"
                             onClick={() => onConfirmArtwork?.(candidate)}
                             className="flex items-center justify-center gap-1 rounded-lg bg-surface hover:bg-surface-hover active:bg-surface/80 px-2 py-1.5 font-medium text-foreground text-xs border border-border/60 transition-colors disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"

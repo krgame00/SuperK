@@ -2,6 +2,8 @@
 // picker intersects this list with live discovery and current route health.
 // gemini-3-flash is excluded: it 404s against the live API (re-verified
 // 2026-11-03) and only burned rotation attempts when reached.
+// gemini-2.5-pro is excluded: it 404s for new users ("models/gemini-2.5-pro is no longer
+// available to new users", verified 2026-11-24) and only burned rotation attempts.
 export const FIXED_IMAGE_MODELS = [
   "gemini-3.5-flash-lite",
   "gemini-3.8-flash",
@@ -14,7 +16,6 @@ export const FIXED_IMAGE_MODELS = [
   "gemini-3.1-pro-preview",
   "gemini-3.1-flash-lite",
   "gemini-3.1-flash-lite-preview",
-  "gemini-2.5-pro",
   "gemini-2.5-flash",
   "gemini-2.5-flash-lite",
 ] as const;

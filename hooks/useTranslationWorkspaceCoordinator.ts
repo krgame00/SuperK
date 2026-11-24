@@ -4,6 +4,7 @@ import { stageLabel, formatWaitTime, type WorkspaceLayer } from "@/components/cl
 import { formatStopwatchTime } from "@/components/workspace/WorkspaceHeaderHost";
 import type { ReviewIssuePage } from "@/components/workspace/WorkspaceModalsHost";
 import type { CleaningProgress } from "@/lib/cleaning/types";
+import type { TranslateAllSummary } from "@/hooks/useTranslation";
 
 export interface UseTranslationWorkspaceCoordinatorOptions {
   // Page & Workspace State
@@ -173,8 +174,19 @@ export function useTranslationWorkspaceCoordinator({
     }
   }, [handleTranslate, operationBusy, pagesCount, setIsUiOperationBusy, setWorkspaceLayer, uiOperationLockRef]);
 
-  // Execute whole-book batch translation and auto-organize (One-Click Complete Project)
-  const handleTranslateBook = useCallback(async (): Promise<void> => {
+  const [isTranslateBookConfirmOpen, setIsTranslateBookConfirmOpen] = useState(false);
+
+  const openTranslateBookConfirm = useCallback(() => {
+    if (uiOperationLockRef.current || operationBusy || pagesCount === 0) return;
+    setIsTranslateBookConfirmOpen(true);
+  }, [operationBusy, pagesCount, uiOperationLockRef]);
+
+  const closeTranslateBookConfirm = useCallback(() => {
+    setIsTranslateBookConfirmOpen(false);
+  }, []);
+
+  const confirmTranslateBook = useCallback(async (): Promise<void> => {
+    setIsTranslateBookConfirmOpen(false);
     if (
       uiOperationLockRef.current ||
       operationBusy ||
@@ -185,13 +197,36 @@ export function useTranslationWorkspaceCoordinator({
     setIsUiOperationBusy(true);
     try {
       setWorkspaceLayer("translated");
-      await handleTranslateAll();
-      await handleAutoOrganizeAllPages();
+      const summary = (await handleTranslateAll()) as unknown as TranslateAllSummary | undefined;
       const toastModule = await import("react-hot-toast");
       const toastObj = toastModule.default as unknown as {
         success?: (msg: string, opts?: unknown) => void;
+        error?: (msg: string, opts?: unknown) => void;
         (msg: string, opts?: unknown): void;
       };
+
+      if (summary?.cancelled) {
+        const cancelMsg = `⏹️ หยุดการแปลทั้งเล่มแล้ว (แปลสำเร็จ ${summary.succeeded}/${summary.total} หน้า)`;
+        if (typeof toastObj === "function") {
+          toastObj(cancelMsg, { icon: "⏹️", duration: 4000 });
+        }
+        return;
+      }
+
+      if (summary && summary.failed > 0) {
+        const failedStr = summary.failedPages.length > 5
+          ? `${summary.failedPages.slice(0, 5).join(", ")}... (รวม ${summary.failed} หน้า)`
+          : summary.failedPages.join(", ");
+        const errorMsg = `⚠️ แปลเสร็จสิ้น ${summary.succeeded}/${summary.total} หน้า (ไม่สำเร็จ ${summary.failed} หน้า: หน้า ${failedStr})`;
+        if (typeof toastObj?.error === "function") {
+          toastObj.error(errorMsg, { duration: 6000 });
+        } else if (typeof toastObj === "function") {
+          toastObj(errorMsg, { duration: 6000 });
+        }
+        return;
+      }
+
+      await handleAutoOrganizeAllPages();
       if (typeof toastObj?.success === "function") {
         toastObj.success(
           `🎉 เสร็จสิ้นทั้งเล่มในคลิกเดียว! คลีน แปล และจัดหน้าครบทั้ง ${pagesCount} หน้าเรียบร้อย พร้อมส่งออก`,
@@ -208,6 +243,15 @@ export function useTranslationWorkspaceCoordinator({
       setIsUiOperationBusy(false);
     }
   }, [handleAutoOrganizeAllPages, handleTranslateAll, operationBusy, pagesCount, setIsUiOperationBusy, setWorkspaceLayer, uiOperationLockRef]);
+
+  // Execute whole-book batch translation and auto-organize (One-Click Complete Project)
+  const handleTranslateBook = useCallback(async (options?: { skipConfirm?: boolean }): Promise<void> => {
+    if (options?.skipConfirm) {
+      await confirmTranslateBook();
+    } else {
+      openTranslateBookConfirm();
+    }
+  }, [confirmTranslateBook, openTranslateBookConfirm]);
 
   // Contamination scan
   const handleScanTranslations = useCallback(() => {
@@ -432,6 +476,10 @@ export function useTranslationWorkspaceCoordinator({
     // Direct Translation Triggers
     handleTranslateCurrent,
     handleTranslateBook,
+    isTranslateBookConfirmOpen,
+    openTranslateBookConfirm,
+    closeTranslateBookConfirm,
+    confirmTranslateBook,
 
     // Status & Notification
     workflowMessage,

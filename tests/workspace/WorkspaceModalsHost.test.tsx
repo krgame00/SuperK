@@ -142,4 +142,22 @@ describe("WorkspaceModalsHost", () => {
     fireEvent.click(confirmBtn);
     expect(props.onConfirmLegacyTarget).toHaveBeenCalled();
   });
+
+  it("renders Translate Book confirmation dialog and handles confirm / cancel", () => {
+    const props = createDefaultProps();
+    props.isTranslateBookConfirmOpen = true;
+    props.translateBookPagesCount = 41;
+    props.onConfirmTranslateBook = vi.fn();
+    props.onCloseTranslateBookConfirm = vi.fn();
+    render(<WorkspaceModalsHost {...props} />);
+
+    expect(screen.getByRole("dialog", { name: "ยืนยันการแปลและจัดหน้าทั้งเล่ม" })).toBeDefined();
+    expect(screen.getByText("41 หน้า")).toBeDefined();
+    expect(screen.getByText(/~61,500 – 123,000 tokens/)).toBeDefined();
+
+    const confirmBtn = screen.getByTestId("confirm-translate-book-btn");
+    fireEvent.click(confirmBtn);
+    expect(props.onCloseTranslateBookConfirm).toHaveBeenCalled();
+    expect(props.onConfirmTranslateBook).toHaveBeenCalled();
+  });
 });

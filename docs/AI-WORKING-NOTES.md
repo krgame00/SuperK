@@ -1,5 +1,43 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Fix Plan Real-World Test Recovery (Phases 0, 1, 2, 3) — 2026-11-24
+
+### Status: VERIFIED WORKING (Completed Phase 0 Quick Wins, Phase 1 Workspace Translation Error Display, Phase 2 Crop Pack Instrumentation & Context-Free Recovery, and Phase 3 Bulk Severe Cleaning Action with 100% test pass rate per principles: `principle-fix-root-causes`, `principle-prove-it-works`, `principle-subtract-before-you-add`, `principle-experience-first`, `principle-laziness-protocol`, `principle-model-the-domain`):
+
+1) Changes & Implementation:
+   - 1. Phase 0.1 Pruned `gemini-2.5-pro` (`lib/translation/imageModelChoices.ts`):
+     - Removed `"gemini-2.5-pro"` from `FIXED_IMAGE_MODELS` with explanatory header comment noting 404 deprecation for new users to prevent burning rotation hops.
+   - 2. Phase 0.2 Next Page Navigation Button Visibility (`components/workspace/PageViewer.tsx`):
+     - Elevated Prev/Next navigation arrow buttons to `z-50` and removed `hidden` breakpoint class when review panel is open, ensuring Next Page button remains visible and clickable across all window viewports.
+   - 3. Phase 1 Workspace Error Display (`hooks/useTranslation.ts`, `components/workspace/WorkspaceCanvasHost.tsx`, `components/workspace/PageFilmstrip.tsx`, `components/cleaning/RemnantReviewPanel.tsx`):
+     - Added `PageTranslationFailure` state recording per-page failure status, error code, friendly message, timestamp, and ladder crop outcome.
+     - Added top error bar on active workspace canvas (`data-testid="page-translation-failure-bar"`) with "ดูสาเหตุและแก้ไข" and "ลองใหม่" buttons.
+     - Added prominent red callout card at the top of Remnant Review Panel (`data-testid="remnant-translation-failure"`).
+     - Added filmstrip thumbnail failure badge (`data-testid="page-failure-badge-${i}"`).
+     - Automatically clears page translation failure on re-translation start and on successful translation.
+   - 4. Phase 2 Crop Pack Instrumentation & Context-Free Recovery (`src/app/api/translate/handler.ts`, `hooks/useTranslation.ts`):
+     - Structured logging for all crop pack outcomes: `crop:skipped-no-regions`, `crop:skipped-no-plan`, `crop:request-failed:<code>`, `crop:invalid-response`, and `crop:recovered`.
+     - Recorded `cropOutcome` in `PageTranslationFailure` so failed pages display ladder diagnostics in the error bar and remnant panel without needing browser DevTools.
+     - Implemented Phase 2.2 recovery: when crop pack with full-page context thumbnail encounters `SAFETY_BLOCKED`, client automatically retries crop pack without the context thumbnail (`omitContextThumbnail: true`), sending only the clean speech crops.
+     - Updated `/api/translate` server handler: added `CROP_PACK_NO_CONTEXT_PROMPT_SUFFIX` and allowed empty/omitted context image when `omitContextThumbnail` is requested.
+   - 5. Phase 3 Bulk Severe Clean Button in Remnant Review Panel (`components/cleaning/RemnantReviewPanel.tsx`, `hooks/useWorkspaceController.ts`):
+     - Added `isSevereFinding` helper identifying unconfirmed candidates with detail `"unchanged"` ("ยังไม่ถูกลบเลย") or `"full-glyph"` ("เหลือทั้งอักขระ").
+     - Rendered "คลีนซ้ำจุดรุนแรงทั้งหมด (N จุด)" action button (`data-testid="bulk-clean-severe-btn"`) in panel header when severe findings exist.
+     - Sequentially executes `onCleanCandidate` with progress tracking (`กำลังคลีน X/N…`), disables sibling buttons during run, and provides a "หยุด" button (`data-testid="cancel-bulk-clean-btn"`) for instant mid-sequence cancellation.
+     - Suppressed intermediate individual toasts during bulk clean in favor of a single completion toast (`คลีนซ้ำจุดรุนแรงเสร็จสิ้น (N จุด)`).
+
+2) Verification Evidence:
+   - TypeScript Check: `npx tsc --noEmit` passed with 0 errors.
+   - ESLint Check: `npx eslint --quiet` passed with 0 errors.
+   - Python Ruff: `.\ocr-service\.venv\Scripts\python.exe -m ruff check ocr-service` passed with 0 errors.
+   - New TDD Unit & Integration Tests:
+     - `tests/translation/pageTranslationFailure.test.ts`: 4/4 passed (verifying failure recording, clearing upon success, context-free crop pack recovery, and `crop:request-failed:SAFETY_BLOCKED` logging).
+     - `tests/translation/bubbleCropPack.test.ts`: 11/11 passed (including `buildCropPackParts` with `omitContextThumbnail`).
+     - `tests/cleaning/RemnantReviewPanel.test.tsx`: 20/20 passed (including severe finding classification, bulk clean execution, progress reporting, and cancellation).
+     - `tests/workflow/WorkspacePage.test.tsx`: 54/54 passed.
+     - `tests/translation`: 70 files, 682/682 tests passed.
+     - `tests/cleaning`: 30 files, 452/452 tests passed.
+
 ## Cost Ladder Architecture Phase 2 (Bubble Crop Pack) — 2026-11-24
 
 ### Status: IMPLEMENTED, SANDBOX-VERIFIED (unit + integration tests and typecheck pass; live Gemini smoke test on a real safety-blocked page still pending — requires a production API key and a page that blocks on all models):
@@ -5672,3 +5710,49 @@ Status: **VERIFIED WORKING (Investigated 41-page batch diagnostic report with 10
 - **Verification Evidence**:
   - Vitest: `npx vitest run tests/translation/geminiRequest.test.ts` passed 36/36 tests (including new 503 cooldown unit test).
   - TypeScript: `npx tsc --noEmit` 0 errors.
+
+
+## Novel AutoRender V2: Bilibili 2D Sprite Stage Hook Test — 2026-11-24
+
+Status: **VERIFIED WORKING (Successfully rendered 6-shot Visual Novel hook using novel_autorender_v2.py and ep1_hook_storyboard.json; incorporated newly updated bnb_normal.png and bg_rain_alley_ferrari.jpg; animated character sprites with bounce, shake, slide_in, and idle motions; overlaid double-border comic speech bubbles with Thai Tahoma font; muxed with novel_voice_v3.mp3 hook audio; 1080p 30fps h264 duration 28.567s, size 3.98 MB; synced to Google Drive and Brain)**.
+
+- **Visual Assets & Motion Verified**:
+  - `Shot 1` (0.0s - 4.4s): Penthouse rain BG + Fang Yuan blush (shake) + Bubble "คบมาสามปี... แต่คืนนี้เธอวางยาผม!".
+  - `Shot 2` (4.4s - 9.9s): Penthouse rain BG + Fang Yuan angry (shake) + Commentator (bounce) + Bubble "วางยาแฟนส่งให้ป้าสองร้อยโล?!".
+  - `Shot 3` (9.9s - 14.3s): **NEW** Rain alley Ferrari BG (`bg_rain_alley_ferrari.jpg`) + Fang Yuan blush (idle) + Bubble "หนิงปิง... ช่วยฉันด้วย...".
+  - `Shot 4` (14.3s - 19.4s): **NEW** Rain alley Ferrari BG + Bai Ningbing silhouette (`bnb_shadow.png`, slide_in) + Fang Yuan (idle) + Bubble "ถ้ากล้าตายก่อนฉันถึง... จะตามไปหักคอ!".
+  - `Shot 5` (19.4s - 24.1s): Pastel dramatic BG + **NEW** Bai Ningbing sprite (`bnb_normal.png`, bounce) + Fang Yuan blush (bounce) + Bubble "ขึ้นรถ! ฉันจะพานายกลับบ้าน!".
+  - `Shot 6` (24.1s - 28.5s): Bai mansion living room BG + Fang Yuan normal (idle) + **NEW** Bai Ningbing sprite (`bnb_normal.png`, idle) + Bubble "นี่เพิ่งจุดเริ่มต้นของหายนะ...".
+- **Video & Audio Metrics**:
+  - Resolution: 1920x1080 @ 30.0 fps (H.264 / libx264 veryfast CRF 20, yuvj420p).
+  - Audio: AAC Mono 44,100 Hz, 160 kbps, duration 28.567s (delta < 0.03s from source MP3).
+  - Subtitle / Bubble Engine: Advanced SubStation Alpha (.ass) with dual-layer border callouts (`\bord16` black + `\bord11` white).
+- **Deliverables**:
+  - Google Drive: `G:\\My Drive\\Novel_Full_AutoRender_Project\\04_AutoRender\\Bilibili_Asset_Kit\\output\\novel_ep1_hook_bilibili_v2.mp4`
+  - Google Drive: `G:\\My Drive\\Novel_Full_AutoRender_Project\\04_AutoRender\\EP1_Hook_Bilibili_Style_16x9\\novel_ep1_hook_bilibili_v2.mp4`
+  - Local Project: `F:\\Projects\\EP1_AutoRender\\output\\novel_ep1_hook_bilibili_v2.mp4`
+  - ASS Subtitles: `novel_ep1_hook_bilibili_v2.ass`
+
+
+## Fix Plan Addendum: Full Suite UX/UI and Interaction Polish (A1–A9) — 2026-11-24
+
+Status: **VERIFIED WORKING (Executed all 9 Addendum tasks from fix-plan (1).md on SuperK Manga Translator F:\Projects\manga-translator under /poteto-mode; 1) A1: Added confirmation dialog for ⚡ จบทั้งเล่ม with page count and token estimates, graceful cancellation stopping between pages with accurate toast summary, and success auto-organization only on 100% completion; 2) A2 & A3: Fixed Layer tab 'Translated' and peek toggle disable conditions across cache keys [url, originUrl, id] and hydrated activeBubbles on session restore; 3) A4: Remnant candidate card click now smooth-scrolls and highlights candidate region on canvas with animated glowing pulse box; 4) A5: Z-index and layout polish resolved banner covering 'ย้ายแถบไปด้านบน', remnant panel covering banner close button, and left/right navigation button shifts; 5) A6: Menus 'จัดระเบียบบับเบิล' and 'โหมดสีขาว-ดำ' cleanly close on Escape key; 6) A7: 'รีเฟรชรายการโมเดล' Gemini catalog button displays spinning loader and toast notifications; 7) A8: Floating text toolbar and resize handles now cleanly hide with display: none on deletion and unmount cleanup from chromeRoot; 8) A9: Fixed text size comparison points dropdown population condition checking activeBubbles and all cache keys, preventing empty options and permanently disabled buttons; Verified with npx tsc --noEmit 0 errors, eslint 0 problems, ruff clean, and 1,414/1,414 tests passing across workspace, cleaning, translation, and workflow suites)**.
+
+- **Root Cause Analysis & Fix Implementations (`principle-fix-root-causes`, `debug-mantra`)**:
+  - `A1: Batch Confirmation & Cancellation`: `handleTranslateAll` in `hooks/useTranslation.ts` tracks `completedSuccessfully` and returns `TranslateAllSummary` (`{ cancelled, total, succeeded, failed, failedPages }`). Added `isTranslateBookConfirmOpen` modal in `WorkspaceModalsHost.tsx` with token estimation (`~1500–3000 tokens/page`). In `useTranslationWorkspaceCoordinator.ts`, cancellation displays `⏹️ หยุดการแปลทั้งเล่มแล้ว (แปลสำเร็จ X/N หน้า)`, failures display error toast with page numbers, and `handleAutoOrganizeAllPages` runs only on 100% success.
+  - `A2 & A3: Layer Switching and Peek Toggle`: `hasCurrentTranslation` in `useWorkspaceTextActions.ts` checks fallback keys (`url`, `originUrl`, `id`) across `bubbleCacheRef`, `activeBubbles`, and `translatedImagesMap`. In `useTranslation.ts:restoreSavedSession`, hydrated `activeBubbles` and bumped `cacheRevision`. Updated peek toggle button in `WorkspaceHeaderHost.tsx` and `MobileToolsMenu.tsx` so users on `translated`, `clean`, or `mask` can always peek at `original` without being disabled.
+  - `A4: Remnant Candidate Card Click Highlight`: In `RemnantReviewPanel.tsx`, added `handleSelectCandidate` dispatching `superk:focus-candidate-region` event and applied amber glow styling to active card. In `PageViewer.tsx`, added event listener to smooth-pan to candidate coordinates and render an animated glowing box `data-testid="candidate-highlight-box"` with badge `จุดตรวจ #{id}`.
+  - `A5: Layering & Z-Index Polish`: In `PageReviewNotice.tsx`, constrained width to `xl:max-w-[calc(100%-28rem)] relative z-20` to prevent right-docked panels from obscuring banner close `X`. In `RemnantReviewPanel.tsx`, dispatched `superk:remnant-state` with panel open/dock side state. In `PageViewer.tsx`, dynamically shifted Left/Right arrow navigation buttons when panel is docked left or right (`2xl:left-[28rem]` / `2xl:right-[28rem]`).
+  - `A6: Escape Key on Dropdown Menus`: In `WorkspaceCanvasHost.tsx`, added `Escape` key event listener closing `isOrganizeMenuOpen` and `isBwContrastMenuOpen`.
+  - `A7: Gemini Model Refresh Feedback`: In `SettingsModal.tsx`, added spinning `Loader2` indicator to refresh button and dispatched `toast.success("รีเฟรชรายการโมเดลสำเร็จ (N โมเดล)")` or `toast.error(...)`.
+  - `A8: Floating Toolbar Cleanup on Delete & Unmount`: In `bubbleToolbar.ts`, initialized toolbar `display: none` and updated `setChromeVisible` to toggle `display = visible ? "flex" : "none"` and handles `display = visible ? "block" : "none"`. Added `MutationObserver` on `wrapper` unmount to remove `toolbar` and `chromeHandles` from `chromeRoot`. In `bubbleMove.ts:deleteBubbleWithUndo`, explicitly hid controls on delete/redo and restored on undo.
+  - `A9: Text Size Comparison Points Dropdown`: In `useWorkspaceController.ts`, fixed `textSizePoints` calculation: prioritizes `activeBubbles` when `activeBubbles.length > 0`, otherwise falls back to checking `bubbleCacheRef` across all keys (`currentPageUrl`, `originUrl`, `id`, `url`), eliminating the bug where `[] ?? activeBubbles` evaluated to empty `[]`. In `SavedTextSizeControls.tsx`, added `point.original_text` fallback.
+- **Verification Evidence**:
+  - TypeScript: `npx tsc --noEmit` exited with code 0 (0 errors).
+  - Linter: `npx eslint --quiet` exited with code 0 (0 warnings, 0 errors).
+  - Python Ruff: `python -m ruff check ocr-service` exited with code 0 (All checks passed).
+  - Vitest Workflow Suite: `tests/workflow/WorkspacePage.test.tsx` passed 54/54 tests.
+  - Vitest Workspace Suite: `tests/workspace/` passed 44 files, 225/225 tests.
+  - Vitest Cleaning Suite: `tests/cleaning/` passed 30 files, 453/453 tests.
+  - Vitest Translation Suite: `tests/translation/` passed 70 files, 682/682 tests.
+  - Total Vitest Tests: **1,414 / 1,414 tests passing (100% green)**.

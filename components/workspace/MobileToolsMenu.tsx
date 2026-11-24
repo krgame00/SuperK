@@ -89,7 +89,7 @@ export function MobileToolsMenu({
                 onToggleOriginalTranslated();
                 onClose();
               }}
-              disabled={!hasCurrentTranslation}
+              disabled={workspaceLayer === "original" ? !hasCurrentTranslation : false}
               className={`flex flex-col items-center justify-center gap-1.5 rounded-lg border p-2.5 text-xs font-medium transition-all duration-150 ${workspaceLayer === "original" ? "border-transparent bg-surface text-foreground" : "border-primary/20 bg-primary/10 text-primary"}`}
             >
               {workspaceLayer === "original" ? (

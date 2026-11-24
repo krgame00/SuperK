@@ -195,4 +195,19 @@ describe("WorkspaceCanvasHost", () => {
     fireEvent.click(retryBtn);
     expect(props.onRetryFailedPages).toHaveBeenCalledTimes(1);
   });
+
+  it("closes organize and BW contrast menus on Escape key press", () => {
+    const props = createDefaultProps();
+    props.pages = [{ url: "blob:page1", name: "01.png" }];
+    props.workspaceLayer = "translated";
+    props.hasCurrentTranslation = true;
+    render(<WorkspaceCanvasHost {...props} />);
+
+    const organizeChevron = screen.getByRole("button", { name: "ตัวเลือกจัดระเบียบบับเบิล" });
+    fireEvent.click(organizeChevron);
+    expect(screen.getByRole("menu", { name: "เมนูตัวเลือกจัดระเบียบบับเบิล" })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("menu", { name: "เมนูตัวเลือกจัดระเบียบบับเบิล" })).not.toBeInTheDocument();
+  });
 });

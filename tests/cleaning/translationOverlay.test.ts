@@ -742,11 +742,19 @@ describe("translation overlay live editor and keyboard controls", () => {
   });
 
   test("supports deletion and undo", async () => {
-    const { wrapper, toolbar } = await renderOverlay("จะลบ");
+    const { wrapper, toolbar, chromeRoot } = await renderOverlay("จะลบ");
     toolbar.querySelector<HTMLButtonElement>('[aria-label="ลบกล่องข้อความ"]')!.click();
     expect(wrapper.style.display).toBe("none");
+    expect(toolbar.style.display).toBe("none");
     expect(undoManager.undo()).toBe("ลบกล่องข้อความ");
     expect(wrapper.style.display).toBe("block");
+    expect(toolbar.style.display).not.toBe("none");
+
+    // Unmounting the wrapper cleans up the floating toolbar from chromeRoot
+    wrapper.remove();
+    await vi.waitFor(() => {
+      expect(chromeRoot.contains(toolbar)).toBe(false);
+    });
   });
 
   test("chrome toolbar scales down for small bubbles and restores for large ones", async () => {

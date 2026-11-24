@@ -420,12 +420,21 @@ export function SettingsModal({
       });
       if (!response.ok) throw new Error(`Catalog HTTP ${response.status}`);
       const nextCatalog = (await response.json()) as GeminiCatalogView;
+      const count = nextCatalog && Array.isArray(nextCatalog.models) ? nextCatalog.models.length : 0;
       if (nextCatalog && Array.isArray(nextCatalog.models)) {
         setGeminiCatalog(nextCatalog);
       }
       setCatalogStatus("idle");
+      if (force) {
+        const toast = (await import("react-hot-toast")).default;
+        toast.success(`รีเฟรชรายการโมเดลสำเร็จ (${count} โมเดล)`);
+      }
     } catch {
       setCatalogStatus("error");
+      if (force) {
+        const toast = (await import("react-hot-toast")).default;
+        toast.error("รีเฟรชรายการโมเดลไม่สำเร็จ กรุณาตรวจสอบ API Key หรือการเชื่อมต่อ");
+      }
     }
   }, [userApiKey]);
 
@@ -1983,9 +1992,16 @@ export function SettingsModal({
                 aria-label="รีเฟรชรายการโมเดล"
                 onClick={() => void loadGeminiCatalog(true)}
                 disabled={catalogStatus === "loading"}
-                className="rounded px-2 py-1 text-[10px] font-medium text-primary hover:bg-surface-hover disabled:cursor-wait disabled:opacity-60"
+                className="inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-medium text-primary hover:bg-surface-hover disabled:cursor-wait disabled:opacity-60 cursor-pointer"
               >
-                {catalogStatus === "loading" ? "กำลังรีเฟรช..." : "รีเฟรช"}
+                {catalogStatus === "loading" ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    <span>กำลังรีเฟรช...</span>
+                  </>
+                ) : (
+                  <span>รีเฟรช</span>
+                )}
               </button>
             </div>
 

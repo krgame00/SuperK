@@ -7,7 +7,7 @@ export function PageReviewNotice({ onConfirm }: { onConfirm: () => void }) {
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
   return (
-    <div className="flex w-full items-center justify-between gap-2 rounded-xl border border-amber-500/50 bg-amber-950/40 backdrop-blur-md px-3 sm:px-3.5 py-1.5 shadow-xl text-xs transition-all">
+    <div className="flex w-full xl:max-w-[calc(100%-28rem)] items-center justify-between gap-2 rounded-xl border border-amber-500/50 bg-amber-950/40 backdrop-blur-md px-3 sm:px-3.5 py-1.5 shadow-xl text-xs transition-all relative z-20">
       <div className="flex items-center gap-2 min-w-0">
         <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" aria-hidden="true" />
         <span className="font-medium text-amber-300 truncate text-[11px] sm:text-xs">

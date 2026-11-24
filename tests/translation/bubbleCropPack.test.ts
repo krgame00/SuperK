@@ -110,6 +110,15 @@ describe("crop pack request helpers (handler)", () => {
     expect(parts[3]).toEqual({ inlineData: { mimeType: "image/jpeg", data: "C2" } });
   });
 
+  test("buildCropPackParts omits context thumbnail when requested", () => {
+    const parts = buildCropPackParts("PROMPT", "", "image/jpeg", ["C1", "C2"], true);
+    expect(parts).toHaveLength(3);
+    expect((parts[0] as { text: string }).text).toContain("PROMPT");
+    expect((parts[0] as { text: string }).text).toContain("CROP PACK MODE");
+    expect(parts[1]).toEqual({ inlineData: { mimeType: "image/jpeg", data: "C1" } });
+    expect(parts[2]).toEqual({ inlineData: { mimeType: "image/jpeg", data: "C2" } });
+  });
+
   test("parseCropPack accepts a valid pack and rejects malformed ones", () => {
     expect(parseCropPack(undefined)).toBeNull();
     expect(parseCropPack({ crops: [{ base64: "AAA" }, { base64: "BBB" }] })).toEqual([

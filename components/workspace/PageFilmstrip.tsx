@@ -10,6 +10,7 @@ import {
 } from "react";
 import { Check, ChevronDown, ChevronUp, Trash2, Upload } from "lucide-react";
 import { generateThumbnail } from "@/lib/thumbnail";
+import type { PageTranslationFailure } from "@/hooks/useTranslation";
 
 export interface WorkspacePageItem {
   url: string;
@@ -27,6 +28,7 @@ export interface PageFilmstripProps {
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   isFocusMode?: boolean;
+  pageTranslationFailures?: Record<string, PageTranslationFailure>;
 }
 
 export function PageFilmstrip({
@@ -40,6 +42,7 @@ export function PageFilmstrip({
   isCollapsed,
   onToggleCollapse,
   isFocusMode = false,
+  pageTranslationFailures,
 }: PageFilmstripProps): ReactElement | null {
   const thumbnailContainerRef = useRef<HTMLDivElement>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -261,6 +264,18 @@ export function PageFilmstrip({
                     aria-hidden="true"
                   >
                     <Check className="h-3 w-3 stroke-[3]" />
+                  </span>
+                )}
+
+                {/* Translation Failure Badge */}
+                {pageTranslationFailures?.[page.url] && (
+                  <span
+                    data-testid={`page-failure-badge-${i}`}
+                    className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-white shadow-xs font-bold text-[10px]"
+                    title={`แปลหน้านี้ไม่สำเร็จ (${pageTranslationFailures[page.url].code || "ERROR"}): ${pageTranslationFailures[page.url].message}`}
+                    aria-label={`การแปลหน้า ${i + 1} ล้มเหลว`}
+                  >
+                    !
                   </span>
                 )}
 

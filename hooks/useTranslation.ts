@@ -95,6 +95,14 @@ export interface BatchPageFailure {
   diagnostic?: DiagnosticDetail;
 }
 
+export interface PageTranslationFailure {
+  status: "failed";
+  code?: string;
+  message: string;
+  at: number;
+  cropOutcome?: string;
+}
+
 export interface BatchPerformanceMetrics {
   recordedAt: number;
   wallClockMs: number;
@@ -104,6 +112,14 @@ export interface BatchPerformanceMetrics {
   completedPages: number;
   failedPages: number;
   cancelled: boolean;
+}
+
+export interface TranslateAllSummary {
+  cancelled: boolean;
+  total: number;
+  succeeded: number;
+  failed: number;
+  failedPages: number[];
 }
 
 /** One actionable finding for the per-point review list. */
@@ -434,6 +450,7 @@ export function useTranslation({
   suppliedSourceFingerprintsRef.current = pageSourceFingerprints;
   const getPageSourceRevision = useCallback((pageUrl:string):string|undefined=>
     suppliedSourceFingerprintsRef.current?.get(pageUrl) ?? preparedSourceFingerprintsRef.current.get(pageUrl),[]);
+  const lastCropOutcomeRef = useRef<string | undefined>(undefined);
   const [isTranslatingAll, setIsTranslatingAll] = useState(false);
   const isTranslatingAllRef = useRef(isTranslatingAll);
   isTranslatingAllRef.current = isTranslatingAll;
@@ -608,6 +625,18 @@ export function useTranslation({
   const [showTranslate, setShowTranslate] = useState(false);
   const [activeBubbles, setActiveBubbles] = useState<TranslatedBubble[]>([]);
   const [cacheRevision, setCacheRevision] = useState(0);
+  const [pageTranslationFailures, setPageTranslationFailures] = useState<
+    Record<string, PageTranslationFailure>
+  >({});
+
+  const clearPageTranslationFailure = useCallback((pageUrl: string) => {
+    setPageTranslationFailures((prev) => {
+      if (!prev[pageUrl]) return prev;
+      const next = { ...prev };
+      delete next[pageUrl];
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     textStyleRef.current = textStyle;
@@ -1259,6 +1288,14 @@ export function useTranslation({
     setSaveStatus("saved");
     setSaveError(null);
     for (const pageUrl of outlineRefreshedPages) markPageDirty(pageUrl);
+    setCacheRevision((r) => r + 1);
+    const restoredCurrentUrl = saved.pages[saved.currentPage || 0]?.url;
+    if (restoredCurrentUrl) {
+      const restoredActive = saved.bubbleCache.get(restoredCurrentUrl);
+      if (restoredActive && restoredActive.length > 0) {
+        setActiveBubbles(restoredActive);
+      }
+    }
     return saved;
   }, [markPageDirty, getPageTargetLanguage]);
 
@@ -1735,6 +1772,10 @@ async function compressImageForTranslation(
     // final render. A revision invalidation is not residue —
     // invalidatePageTranslation already deletes the caches itself.
     let discardOptimisticResidue = false;
+    clearPageTranslationFailure(pageUrl);
+    if (!forceNsfwBypass) {
+      lastCropOutcomeRef.current = undefined;
+    }
     try {
       const targetLang = jobTargetIdentity.targetId;
       const priorContext = collectPreviousPagesContext(
@@ -2167,7 +2208,11 @@ async function compressImageForTranslation(
           });
 
           if (adaptiveResult.successfulSlices.length === 0 && adaptiveResult.bubbles.length === 0) {
-            throw new Error("Translation failed: no valid NSFW slice responses.");
+            throw new TranslationRequestError(
+              "Translation failed: no valid NSFW slice responses.",
+              400,
+              "SAFETY_BLOCKED",
+            );
           }
 
           for (const b of adaptiveResult.bubbles) {
@@ -2263,13 +2308,41 @@ async function compressImageForTranslation(
         meta?: TranslationObservabilityMeta;
       } | null> => {
         try {
-          const cleaningResult = cleaningResultsByPageRef.current?.get(pageUrl);
+          const cleaningResult =
+            cleaningResultsByPageRef.current?.get(pageUrl) ??
+            (pagesRef.current?.[pageIndex]
+              ? cleaningResultsByPageRef.current?.get(pagesRef.current[pageIndex])
+              : undefined);
           const regions = cleaningResult?.regions ?? [];
-          if (regions.length === 0) return null;
+          if (regions.length === 0) {
+            logWarn(
+              "translate",
+              `แปลหน้า ${pageIndex + 1}: ข้าม Bubble Crop Pack (ไม่มี text regions ในผลคลีน)`,
+              {
+                page: pageIndex + 1,
+                pageUrl,
+                reason: "crop:skipped-no-regions",
+              },
+            );
+            lastCropOutcomeRef.current = "crop:skipped-no-regions";
+            return null;
+          }
           const imgEl = await waitForImageReady(preparedPage.recognitionUrl, 2000);
           const pageW = imgEl.naturalWidth;
           const pageH = imgEl.naturalHeight;
-          if (!pageW || !pageH) return null;
+          if (!pageW || !pageH) {
+            logWarn(
+              "translate",
+              `แปลหน้า ${pageIndex + 1}: ข้าม Bubble Crop Pack (ขนาดภาพไม่ถูกต้อง)`,
+              {
+                page: pageIndex + 1,
+                pageUrl,
+                reason: "crop:skipped-no-plan",
+              },
+            );
+            lastCropOutcomeRef.current = "crop:skipped-no-plan";
+            return null;
+          }
           // Region rects live in cleaning-source pixel space; rescale to
           // the recognition image if its dimensions differ.
           const scaleX = cleaningResult?.width ? pageW / cleaningResult.width : 1;
@@ -2281,7 +2354,20 @@ async function compressImageForTranslation(
             height: r.rect.height * scaleY,
           }));
           const plan = planBubbleCrops(rects, pageW, pageH);
-          if (!plan) return null;
+          if (!plan) {
+            logWarn(
+              "translate",
+              `แปลหน้า ${pageIndex + 1}: ข้าม Bubble Crop Pack (planBubbleCrops คืนค่า null)`,
+              {
+                page: pageIndex + 1,
+                pageUrl,
+                reason: "crop:skipped-no-plan",
+                regionsCount: regions.length,
+              },
+            );
+            lastCropOutcomeRef.current = "crop:skipped-no-plan";
+            return null;
+          }
           const renderCrop = (
             rect: { x: number; y: number; width: number; height: number },
             maxDim?: number,
@@ -2310,41 +2396,109 @@ async function compressImageForTranslation(
             canvas.height = 0;
             return data;
           };
-          const thumbnailBase64 = renderCrop(
-            { x: 0, y: 0, width: pageW, height: pageH },
-            640,
-          );
           const crops = plan.crops.map((c) => ({ base64: renderCrop(c.rect) }));
-          const cropRes = await fetch("/api/translate", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...(wantsProgress ? { Accept: "application/x-ndjson" } : {}),
-            },
-            body: JSON.stringify({
-              imageBase64: thumbnailBase64,
-              mimeType: "image/jpeg",
-              targetLang,
-              sourceLang,
-              modelPreference,
-              apiKey: userApiKey,
-              allowPreview: allowPreviewModels,
-              glossary: glossaryRef.current,
-              pronounMatrix: pronounMatrixRef.current,
-              policy: { sfx: sfxModeRef.current },
-              context: priorContext || undefined,
-              cropPack: { crops },
-            }),
-            signal,
-          });
-          const cropData = await readTranslationResponse<{
-            text: string;
-            meta?: TranslationObservabilityMeta;
-          }>(cropRes, wantsProgress ? reportModelSwitch : undefined);
+
+          const executeCropRequest = async (omitContextThumbnail: boolean) => {
+            const thumbnailBase64 = omitContextThumbnail
+              ? undefined
+              : renderCrop({ x: 0, y: 0, width: pageW, height: pageH }, 640);
+            const cropRes = await fetch("/api/translate", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(wantsProgress ? { Accept: "application/x-ndjson" } : {}),
+              },
+              body: JSON.stringify({
+                imageBase64: thumbnailBase64,
+                mimeType: "image/jpeg",
+                targetLang,
+                sourceLang,
+                modelPreference,
+                apiKey: userApiKey,
+                allowPreview: allowPreviewModels,
+                glossary: glossaryRef.current,
+                pronounMatrix: pronounMatrixRef.current,
+                policy: { sfx: sfxModeRef.current },
+                context: priorContext || undefined,
+                cropPack: { crops, omitContextThumbnail },
+              }),
+              signal,
+            });
+            return await readTranslationResponse<{
+              text: string;
+              meta?: TranslationObservabilityMeta;
+            }>(cropRes, wantsProgress ? reportModelSwitch : undefined);
+          };
+
+          let cropData: { text: string; meta?: TranslationObservabilityMeta } | null = null;
+          let omittedContext = false;
+          try {
+            cropData = await executeCropRequest(false);
+          } catch (firstErr) {
+            const isSafety =
+              (firstErr instanceof TranslationRequestError && firstErr.code === "SAFETY_BLOCKED") ||
+              classifyTranslationError(firstErr).code === "SAFETY_BLOCKED";
+            if (isSafety) {
+              logWarn(
+                "translate",
+                `แปลหน้า ${pageIndex + 1}: Crop Pack ติดคัดกรอง (SAFETY_BLOCKED) มีแนวโน้มเกิดจากภาพบริบททั้งหน้า — กำลังลองใหม่แบบตัด context thumbnail ออก...`,
+                { page: pageIndex + 1, pageUrl },
+              );
+              try {
+                cropData = await executeCropRequest(true);
+                omittedContext = true;
+              } catch (secondErr) {
+                const classified = classifyTranslationError(secondErr);
+                const code =
+                  (secondErr instanceof TranslationRequestError &&
+                  secondErr.code &&
+                  secondErr.code !== "bad_request"
+                    ? secondErr.code
+                    : classified.code) || "UNKNOWN";
+                const outcome = `crop:request-failed:${code}`;
+                logWarn("translate", `แปลหน้า ${pageIndex + 1}: Crop Pack ล้มเหลว (${outcome})`, {
+                  page: pageIndex + 1,
+                  pageUrl,
+                  reason: outcome,
+                  error: secondErr instanceof Error ? secondErr.message : String(secondErr),
+                });
+                lastCropOutcomeRef.current = outcome;
+                return null;
+              }
+            } else {
+              const classified = classifyTranslationError(firstErr);
+              const code =
+                (firstErr instanceof TranslationRequestError &&
+                firstErr.code &&
+                firstErr.code !== "bad_request"
+                  ? firstErr.code
+                  : classified.code) || "UNKNOWN";
+              const outcome = `crop:request-failed:${code}`;
+              logWarn("translate", `แปลหน้า ${pageIndex + 1}: Crop Pack ล้มเหลว (${outcome})`, {
+                page: pageIndex + 1,
+                pageUrl,
+                reason: outcome,
+                error: firstErr instanceof Error ? firstErr.message : String(firstErr),
+              });
+              lastCropOutcomeRef.current = outcome;
+              return null;
+            }
+          }
+
+          if (!cropData) return null;
           const cropParsed = (cropData.text ? parseLLMJSON(cropData.text) : cropData) as
             | { bubbles?: unknown[] }
             | null;
-          if (!cropParsed || !Array.isArray(cropParsed.bubbles)) return null;
+          if (!cropParsed || !Array.isArray(cropParsed.bubbles)) {
+            const outcome = "crop:invalid-response";
+            logWarn("translate", `แปลหน้า ${pageIndex + 1}: Crop Pack ตอบกลับไม่ถูกต้อง (${outcome})`, {
+              page: pageIndex + 1,
+              pageUrl,
+              reason: outcome,
+            });
+            lastCropOutcomeRef.current = outcome;
+            return null;
+          }
           const remapped: Record<string, unknown>[] = [];
           for (const raw of cropParsed.bubbles) {
             if (!raw || typeof raw !== "object") continue;
@@ -2364,12 +2518,41 @@ async function compressImageForTranslation(
               ),
             });
           }
-          if (remapped.length === 0) return null;
+          if (remapped.length === 0) {
+            const outcome = "crop:invalid-response";
+            logWarn("translate", `แปลหน้า ${pageIndex + 1}: Crop Pack ไม่มีบับเบิลที่ remap ได้ (${outcome})`, {
+              page: pageIndex + 1,
+              pageUrl,
+              reason: outcome,
+            });
+            lastCropOutcomeRef.current = outcome;
+            return null;
+          }
+          logInfo(
+            "translate",
+            `แปลหน้า ${pageIndex + 1}: กู้คืนสำเร็จด้วย Bubble Crop Pack (crop:recovered)`,
+            {
+              page: pageIndex + 1,
+              pageUrl,
+              reason: "crop:recovered",
+              bubbleCount: remapped.length,
+              omittedContext,
+            },
+          );
+          lastCropOutcomeRef.current = "crop:recovered";
           return {
             text: JSON.stringify({ bubbles: remapped }),
             meta: cropData.meta,
           };
-        } catch {
+        } catch (unhandledErr) {
+          const outcome = "crop:invalid-response";
+          logWarn("translate", `แปลหน้า ${pageIndex + 1}: Crop Pack ขัดข้อง (${outcome})`, {
+            page: pageIndex + 1,
+            pageUrl,
+            reason: outcome,
+            error: unhandledErr instanceof Error ? unhandledErr.message : String(unhandledErr),
+          });
+          lastCropOutcomeRef.current = outcome;
           return null;
         }
       };
@@ -2699,8 +2882,29 @@ async function compressImageForTranslation(
         },
       );
 
+      clearPageTranslationFailure(pageUrl);
+    if (!forceNsfwBypass) {
+      lastCropOutcomeRef.current = undefined;
+    }
       return true;
     } catch (error: unknown) {
+      if (!isUserCancelledError(error)) {
+        const classified = classifyTranslationError(error);
+        const failure: PageTranslationFailure = {
+          status: "failed",
+          code: classified.code,
+          message:
+            classified.description ||
+            (error instanceof Error ? error.message : String(error)),
+          // eslint-disable-next-line react-hooks/purity
+          at: Date.now(),
+          cropOutcome: lastCropOutcomeRef.current,
+        };
+        setPageTranslationFailures((prev) => ({
+          ...prev,
+          [pageUrl]: failure,
+        }));
+      }
       if (
         activePageRef.current === pageUrl
         && !isUserCancelledError(error)
@@ -2810,15 +3014,17 @@ async function compressImageForTranslation(
     }
   };
 
+  const lastTranslateAllSummaryRef = useRef<TranslateAllSummary | null>(null);
+
   const handleTranslateAll = async (
     targetIndices?: number[],
     options?: { forceNsfw?: boolean },
-  ) => {
+  ): Promise<void> => {
     if (
       translationOperationLockRef.current ||
       isTranslating ||
       isTranslatingAll
-    ) return;
+    ) return { cancelled: false, total: 0, succeeded: 0, failed: 0, failedPages: [] } as unknown as void;
       translationOperationLockRef.current = true;
       if (
         typeof window !== "undefined" &&
@@ -2850,6 +3056,7 @@ async function compressImageForTranslation(
         const failureGroupIdFor = (diagnostic: DiagnosticDetail) =>
           `${failureOperationId}:${diagnostic.code}`;
       const failures: BatchPageFailure[] = [];
+      let completedSuccessfully = 0;
       const pageDurationsMs: number[] = [];
       let batchMetricsRecorded = false;
       recordBatchMetrics = (cancelled: boolean) => {
@@ -3269,6 +3476,7 @@ async function compressImageForTranslation(
         }
 
         if (success) {
+          completedSuccessfully += 1;
           batchReadyPages.add(pageUrl);
           const durationMs = Math.max(0, Date.now() - pageStartedAt - excludedWaitMs);
           pageDurationsMs.push(durationMs);
@@ -3313,13 +3521,21 @@ async function compressImageForTranslation(
         ),
       );
 
+      const failedPages = failures.map(({ pageIndex }) => pageIndex + 1);
       if (cancelTranslateAllRef.current) {
         recordBatchMetrics(true);
         setTimeout(() => setTranslationResult(null), 1500);
-        return;
+        const summary: TranslateAllSummary = {
+          cancelled: true,
+          total: indicesToProcess.length,
+          succeeded: completedSuccessfully,
+          failed: failures.length,
+          failedPages,
+        };
+        lastTranslateAllSummaryRef.current = summary;
+        return summary as unknown as void;
       }
 
-      const failedPages = failures.map(({ pageIndex }) => pageIndex + 1);
       const totalElapsedMs = Math.max(0, Date.now() - batchStartTime);
       const totalElapsedSeconds = totalElapsedMs / 1000;
       const totalElapsedLabel = totalElapsedSeconds < 60
@@ -3335,6 +3551,15 @@ async function compressImageForTranslation(
       recordBatchMetrics(false);
       sendDesktopNotification("SuperK — Manga Translator", finalResultText);
       setTimeout(() => setTranslationResult(null), 4000);
+      const summary: TranslateAllSummary = {
+        cancelled: false,
+        total: indicesToProcess.length,
+        succeeded: completedSuccessfully,
+        failed: failures.length,
+        failedPages,
+      };
+      lastTranslateAllSummaryRef.current = summary;
+      return summary as unknown as void;
     } finally {
       batchController.abort();
       suppressedOverlayPagesRef.current.clear();
@@ -4257,9 +4482,12 @@ async function compressImageForTranslation(
     translateAllProgress,
     batchPerformanceMetrics,
     handleTranslateAll,
+    lastTranslateAllSummaryRef,
     cancelTranslateAll,
     translateCrop,
     activeBubbles, setActiveBubbles,
+    pageTranslationFailures,
+    clearPageTranslationFailure,
     cacheRevision,
     translatedImages,
     translatedImageCacheRef,

@@ -366,7 +366,7 @@ export function WorkspaceHeaderHost({
               <button
                 type="button"
                 onClick={onToggleOriginalTranslated}
-                disabled={!hasCurrentTranslation}
+                disabled={workspaceLayer === "original" ? !hasCurrentTranslation : false}
                 aria-label={
                   workspaceLayer === "original"
                     ? "สลับไปแสดงคำแปล"
@@ -867,7 +867,7 @@ export function WorkspaceHeaderHost({
                     onToggleOriginalTranslated();
                     onCloseMobileMenu();
                   }}
-                  disabled={!hasCurrentTranslation}
+                  disabled={workspaceLayer === "original" ? !hasCurrentTranslation : false}
                   className={`p-2.5 rounded-lg text-xs font-medium flex flex-col items-center justify-center gap-1.5 transition-all duration-150 border ${
                     workspaceLayer === "original"
                       ? "bg-surface text-foreground border-transparent"

@@ -228,12 +228,27 @@ export const wireBubbleSelectionAndMove = (deps: BubbleSelectionMoveDeps): {
     wrapper.style.display = "none";
     wrapper.dataset.deleted = "true";
     setSelectedBubble(null);
+    const controls = chrome.chromeControlsByWrapper.get(wrapper);
+    if (controls) {
+      controls.setVisible(false);
+      controls.toolbar.style.display = "none";
+      controls.handles.forEach((h) => {
+        h.style.display = "none";
+      });
+    }
     undoManager.push({
       label: "ลบกล่องข้อความ",
       undo: () => {
         b.deleted = false;
         wrapper.style.display = "block";
         delete wrapper.dataset.deleted;
+        const currentControls = chrome.chromeControlsByWrapper.get(wrapper);
+        if (currentControls) {
+          currentControls.toolbar.style.display = "";
+          currentControls.handles.forEach((h) => {
+            h.style.display = "";
+          });
+        }
         renderBubble();
         onBubblesMutated?.();
       },
@@ -242,6 +257,14 @@ export const wireBubbleSelectionAndMove = (deps: BubbleSelectionMoveDeps): {
         wrapper.style.display = "none";
         wrapper.dataset.deleted = "true";
         setSelectedBubble(null);
+        const currentControls = chrome.chromeControlsByWrapper.get(wrapper);
+        if (currentControls) {
+          currentControls.setVisible(false);
+          currentControls.toolbar.style.display = "none";
+          currentControls.handles.forEach((h) => {
+            h.style.display = "none";
+          });
+        }
         onBubblesMutated?.();
       },
     });

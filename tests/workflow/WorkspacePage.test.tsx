@@ -1219,6 +1219,11 @@ test("batch translate book runs auto-organization after batch translation comple
     fireEvent.click(translateBookItem);
   });
 
+  const confirmBtn = await screen.findByTestId("confirm-translate-book-btn");
+  await act(async () => {
+    fireEvent.click(confirmBtn);
+  });
+
   expect(mockHandleTranslateAll).toHaveBeenCalled();
   expect(autoOrganizePageBubbles).toHaveBeenCalled();
 });

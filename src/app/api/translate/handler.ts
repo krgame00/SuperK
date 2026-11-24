@@ -62,6 +62,7 @@ interface TranslationRequestPayload {
    * sent as an additional image part in order. */
   cropPack?: {
     crops?: Array<{ base64?: unknown }>;
+    omitContextThumbnail?: boolean;
   };
 }
 
@@ -71,6 +72,10 @@ export const MAX_CROP_PACK_CROPS = 24;
 export const CROP_PACK_PROMPT_SUFFIX = `
 
 CROP PACK MODE: This request contains multiple images. The FIRST image is a low-resolution view of the full page, provided ONLY as layout context — do NOT translate text from it. Each FOLLOWING image is a numbered crop (Crop 1, Crop 2, ...) cut from that page, in reading order. Translate ONLY the text visible inside the crops. For every bubble you return, add a field "crop" with the 1-based number of the crop image it came from, and express its "box" coordinates relative to THAT CROP image (0-1000 scale, [ymin, xmin, ymax, xmax]), not relative to the full page. If the same text appears in two overlapping crops, return it only once, under the crop where it is most fully visible.`;
+
+export const CROP_PACK_NO_CONTEXT_PROMPT_SUFFIX = `
+
+CROP PACK MODE: This request contains multiple crop images cut from a manga page, in reading order (Crop 1, Crop 2, ...). Translate ONLY the text visible inside the crops. For every bubble you return, add a field "crop" with the 1-based number of the crop image it came from, and express its "box" coordinates relative to THAT CROP image (0-1000 scale, [ymin, xmin, ymax, xmax]). If the same text appears in two overlapping crops, return it only once, under the crop where it is most fully visible.`;
 
 export interface CropPackImagePart {
   inlineData: { mimeType: string; data: string };
@@ -82,7 +87,16 @@ export function buildCropPackParts(
   contextBase64: string,
   contextMimeType: string,
   crops: readonly string[],
+  omitContextThumbnail: boolean = false,
 ): Array<{ text: string } | CropPackImagePart> {
+  if (omitContextThumbnail || !contextBase64) {
+    return [
+      { text: promptText + CROP_PACK_NO_CONTEXT_PROMPT_SUFFIX },
+      ...crops.map((data) => ({
+        inlineData: { mimeType: "image/jpeg", data },
+      })),
+    ];
+  }
   return [
     { text: promptText + CROP_PACK_PROMPT_SUFFIX },
     { inlineData: { mimeType: contextMimeType || "image/jpeg", data: contextBase64 } },
@@ -389,20 +403,26 @@ async function handleTranslationRequest(
         { status: 400 },
       );
     }
+    const cropPackOmitThumbnail = Boolean(
+      cropPackRaw &&
+      typeof cropPackRaw === "object" &&
+      (cropPackRaw as { omitContextThumbnail?: unknown }).omitContextThumbnail === true,
+    );
 
-    if (!imageBase64) {
+    if (!imageBase64 && !(cropPackCrops && cropPackOmitThumbnail)) {
       return NextResponse.json({ error: "Missing image data" }, { status: 400 });
     }
     if (
-      typeof imageBase64 !== "string" ||
-      imageBase64.length > Math.ceil((MAX_TRANSLATION_IMAGE_BYTES * 4) / 3) + 4
+      imageBase64 &&
+      (typeof imageBase64 !== "string" ||
+        imageBase64.length > Math.ceil((MAX_TRANSLATION_IMAGE_BYTES * 4) / 3) + 4)
     ) {
       return NextResponse.json(
         { error: "Translation image is too large" },
         { status: 413 },
       );
     }
-    if (typeof mimeType !== "string" || !mimeType.startsWith("image/")) {
+    if (imageBase64 && (typeof mimeType !== "string" || !mimeType.startsWith("image/"))) {
       return NextResponse.json(
         { error: "Unsupported image MIME type" },
         { status: 415 },
@@ -428,6 +448,9 @@ async function handleTranslationRequest(
       return NextResponse.json({ error: "Invalid translation payload", code: "INVALID_REQUEST" }, { status: 400 });
     }
     if (parsedPreference.engine === "local") {
+      if (!imageBase64 || !mimeType) {
+        return NextResponse.json({ error: "Missing image data for local engine" }, { status: 400 });
+      }
       return handleLocalTranslate({
         imageBase64,
         mimeType,
@@ -454,8 +477,8 @@ async function handleTranslationRequest(
     if (translateBaseUrl && translateApiKey && !cropPackCrops) {
       try {
         const openAiResponse = await handleOpenAICompatible({
-          imageBase64,
-          mimeType,
+          imageBase64: imageBase64!,
+          mimeType: mimeType!,
           targetLang,
           sourceLang,
           isRetry,
@@ -498,7 +521,13 @@ async function handleTranslationRequest(
       contents: [
         {
           parts: cropPackCrops
-            ? buildCropPackParts(promptText, imageBase64, mimeType || "image/jpeg", cropPackCrops)
+            ? buildCropPackParts(
+                promptText,
+                imageBase64 || "",
+                mimeType || "image/jpeg",
+                cropPackCrops,
+                cropPackOmitThumbnail,
+              )
             : [
                 { text: promptText },
                 {

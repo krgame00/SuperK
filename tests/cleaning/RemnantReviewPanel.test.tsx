@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 
-import { RemnantReviewPanel } from "@/components/cleaning/RemnantReviewPanel";
+import { RemnantReviewPanel, isSevereFinding } from "@/components/cleaning/RemnantReviewPanel";
 import type {
   BackgroundInspectionResult,
   RemnantCandidate,
@@ -325,5 +325,128 @@ describe("RemnantReviewPanel", () => {
       fireEvent.click(changeMindBtn);
     });
     expect(onCleanCandidate).toHaveBeenCalledWith(confirmedCand, region);
+  });
+
+  describe("Phase 3: Bulk Severe Clean Action", () => {
+    test("isSevereFinding identifies unchanged and full-glyph unconfirmed candidates", () => {
+      expect(isSevereFinding(candidate({ detail: "unchanged", state: "unchanged-candidate" }))).toBe(true);
+      expect(isSevereFinding(candidate({ detail: "full-glyph", state: "suspected-remnant" }))).toBe(true);
+      expect(isSevereFinding(candidate({ detail: "partial-glyph", state: "suspected-remnant" }))).toBe(false);
+      expect(isSevereFinding(candidate({ detail: "line-like", state: "uncertain" }))).toBe(false);
+      expect(
+        isSevereFinding(candidate({ detail: "full-glyph", state: "human-confirmed-artwork" })),
+      ).toBe(false);
+    });
+
+    test("renders bulk severe clean button with exact count", () => {
+      const c1 = candidate({ id: "c1", detail: "unchanged" });
+      const c2 = candidate({ id: "c2", detail: "full-glyph" });
+      const c3 = candidate({ id: "c3", detail: "partial-glyph" });
+
+      render(
+        <RemnantReviewPanel
+          inspection={inspected([c1, c2, c3])}
+          regions={[region]}
+          onCleanCandidate={vi.fn()}
+        />,
+      );
+
+      const bulkBtn = screen.getByTestId("bulk-clean-severe-btn");
+      expect(bulkBtn).toBeInTheDocument();
+      expect(bulkBtn).toHaveTextContent("คลีนซ้ำจุดรุนแรงทั้งหมด (2 จุด)");
+    });
+
+    test("sequentially calls onCleanCandidate for only severe candidates in order", async () => {
+      const c1 = candidate({ id: "c1", detail: "unchanged" });
+      const c2 = candidate({ id: "c2", detail: "partial-glyph" }); // non-severe
+      const c3 = candidate({ id: "c3", detail: "full-glyph" });
+
+      const onCleanCandidate = vi.fn().mockResolvedValue(undefined);
+
+      render(
+        <RemnantReviewPanel
+          inspection={inspected([c1, c2, c3])}
+          regions={[region]}
+          onCleanCandidate={onCleanCandidate}
+        />,
+      );
+
+      const bulkBtn = screen.getByTestId("bulk-clean-severe-btn");
+      await act(async () => {
+        fireEvent.click(bulkBtn);
+      });
+
+      expect(onCleanCandidate).toHaveBeenCalledTimes(2);
+      expect(onCleanCandidate).toHaveBeenNthCalledWith(1, c1, region, { silentToast: true });
+      expect(onCleanCandidate).toHaveBeenNthCalledWith(2, c3, region, { silentToast: true });
+    });
+
+    test("allows cancelling bulk clean mid-way", async () => {
+      const c1 = candidate({ id: "c1", detail: "unchanged" });
+      const c2 = candidate({ id: "c2", detail: "full-glyph" });
+      const c3 = candidate({ id: "c3", detail: "full-glyph" });
+
+      let resolveFirst: () => void = () => {};
+      const firstCleanPromise = new Promise<void>((r) => {
+        resolveFirst = r;
+      });
+
+      const onCleanCandidate = vi.fn().mockImplementation(async (cand) => {
+        if (cand.id === "c1") {
+          await firstCleanPromise;
+        }
+      });
+
+      render(
+        <RemnantReviewPanel
+          inspection={inspected([c1, c2, c3])}
+          regions={[region]}
+          onCleanCandidate={onCleanCandidate}
+        />,
+      );
+
+      const bulkBtn = screen.getByTestId("bulk-clean-severe-btn");
+      // Start bulk cleaning
+      act(() => {
+        fireEvent.click(bulkBtn);
+      });
+
+      // Stop button should now be visible
+      const cancelBtn = screen.getByTestId("cancel-bulk-clean-btn");
+      expect(cancelBtn).toBeInTheDocument();
+
+      // Click cancel while first is in flight
+      act(() => {
+        fireEvent.click(cancelBtn);
+      });
+
+      // Finish first call
+      await act(async () => {
+        resolveFirst();
+      });
+
+      // Should have stopped after c1, never calling c2 or c3
+      expect(onCleanCandidate).toHaveBeenCalledTimes(1);
+    });
+
+    test("clicking candidate card dispatches superk:focus-candidate-region event", () => {
+      const c1 = candidate({ id: "cand-focus-1", rect: { x: 50, y: 80, width: 60, height: 40 } });
+      const dispatchSpy = vi.spyOn(window, "dispatchEvent");
+      render(<RemnantReviewPanel inspection={inspected([c1])} regions={[]} />);
+
+      const card = screen.getByTestId("remnant-candidate-cand-focus-1");
+      fireEvent.click(card);
+
+      expect(dispatchSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "superk:focus-candidate-region",
+          detail: {
+            id: "cand-focus-1",
+            rect: { x: 50, y: 80, width: 60, height: 40 },
+          },
+        }),
+      );
+      dispatchSpy.mockRestore();
+    });
   });
 });

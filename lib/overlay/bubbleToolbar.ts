@@ -446,13 +446,31 @@ export const wireBubbleToolbar = (deps: BubbleToolbarDeps): void => {
   };
 
   const setChromeVisible = (visible: boolean) => {
+    toolbar.style.display = visible ? "flex" : "none";
     toolbar.style.opacity = visible ? "1" : "0";
     toolbar.style.pointerEvents = visible ? "auto" : "none";
     chromeHandles.forEach((handle) => {
+      handle.style.display = visible ? "block" : "none";
       handle.style.opacity = visible ? "1" : "0";
       handle.style.pointerEvents = visible ? "auto" : "none";
     });
   };
+
+  const cleanupChrome = () => {
+    toolbar.remove();
+    chromeHandles.forEach((handle) => handle.remove());
+  };
+
+  if (typeof MutationObserver !== "undefined") {
+    const parent = wrapper.parentElement ?? tlContainer;
+    const unmountObserver = new MutationObserver(() => {
+      if (!wrapper.isConnected) {
+        cleanupChrome();
+        unmountObserver.disconnect();
+      }
+    });
+    unmountObserver.observe(parent, { childList: true });
+  }
 
   chromeControlsByWrapper.set(wrapper, {
     toolbar,
