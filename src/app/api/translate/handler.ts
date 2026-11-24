@@ -57,6 +57,60 @@ interface TranslationRequestPayload {
   policy?: Partial<TranslationPolicy>;
   glossary?: FlexibleGlossaryEntry[];
   pronounMatrix?: PronounRelation[];
+  /** Ladder Phase 2 (opt-in): bubble crop pack. When present, imageBase64 is
+   * treated as a low-resolution full-page context thumbnail and each crop is
+   * sent as an additional image part in order. */
+  cropPack?: {
+    crops?: Array<{ base64?: unknown }>;
+  };
+}
+
+/** Maximum crops accepted in one crop-pack request (mirrors client cap). */
+export const MAX_CROP_PACK_CROPS = 24;
+
+export const CROP_PACK_PROMPT_SUFFIX = `
+
+CROP PACK MODE: This request contains multiple images. The FIRST image is a low-resolution view of the full page, provided ONLY as layout context — do NOT translate text from it. Each FOLLOWING image is a numbered crop (Crop 1, Crop 2, ...) cut from that page, in reading order. Translate ONLY the text visible inside the crops. For every bubble you return, add a field "crop" with the 1-based number of the crop image it came from, and express its "box" coordinates relative to THAT CROP image (0-1000 scale, [ymin, xmin, ymax, xmax]), not relative to the full page. If the same text appears in two overlapping crops, return it only once, under the crop where it is most fully visible.`;
+
+export interface CropPackImagePart {
+  inlineData: { mimeType: string; data: string };
+}
+
+/** Build the Gemini parts array for a crop-pack request (pure, testable). */
+export function buildCropPackParts(
+  promptText: string,
+  contextBase64: string,
+  contextMimeType: string,
+  crops: readonly string[],
+): Array<{ text: string } | CropPackImagePart> {
+  return [
+    { text: promptText + CROP_PACK_PROMPT_SUFFIX },
+    { inlineData: { mimeType: contextMimeType || "image/jpeg", data: contextBase64 } },
+    ...crops.map((data) => ({
+      inlineData: { mimeType: "image/jpeg", data },
+    })),
+  ];
+}
+
+/** Validate an opt-in cropPack field; returns crop base64 strings or null. */
+export function parseCropPack(raw: unknown): string[] | null {
+  if (raw === undefined) return null;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const crops = (raw as { crops?: unknown }).crops;
+  if (!Array.isArray(crops) || crops.length === 0 || crops.length > MAX_CROP_PACK_CROPS) {
+    return null;
+  }
+  const maxCropLength = Math.ceil((MAX_TRANSLATION_IMAGE_BYTES * 4) / 3) + 4;
+  const out: string[] = [];
+  for (const crop of crops) {
+    if (!crop || typeof crop !== "object") return null;
+    const base64 = (crop as { base64?: unknown }).base64;
+    if (typeof base64 !== "string" || base64.length === 0 || base64.length > maxCropLength) {
+      return null;
+    }
+    out.push(base64);
+  }
+  return out;
 }
 
 interface GeminiResponseData {
@@ -325,7 +379,16 @@ async function handleTranslationRequest(
       policy,
       glossary,
       pronounMatrix,
+      cropPack: cropPackRaw,
     } = body as TranslationRequestPayload;
+
+    const cropPackCrops = cropPackRaw === undefined ? null : parseCropPack(cropPackRaw);
+    if (cropPackRaw !== undefined && cropPackCrops === null) {
+      return NextResponse.json(
+        { error: "Invalid crop pack payload", code: "INVALID_REQUEST" },
+        { status: 400 },
+      );
+    }
 
     if (!imageBase64) {
       return NextResponse.json({ error: "Missing image data" }, { status: 400 });
@@ -386,7 +449,9 @@ async function handleTranslationRequest(
     const translateBaseUrl = process.env.SUPERK_TRANSLATE_BASE_URL;
     const translateApiKey = process.env.SUPERK_TRANSLATE_API_KEY;
 
-    if (translateBaseUrl && translateApiKey) {
+    // Crop-pack requests need Gemini's multi-image parts; the
+    // OpenAI-compatible route accepts a single image, so skip it for them.
+    if (translateBaseUrl && translateApiKey && !cropPackCrops) {
       try {
         const openAiResponse = await handleOpenAICompatible({
           imageBase64,
@@ -432,15 +497,17 @@ async function handleTranslationRequest(
     const payload = {
       contents: [
         {
-          parts: [
-            { text: promptText },
-            {
-              inlineData: {
-                mimeType: mimeType || "image/jpeg",
-                data: imageBase64,
-              },
-            },
-          ],
+          parts: cropPackCrops
+            ? buildCropPackParts(promptText, imageBase64, mimeType || "image/jpeg", cropPackCrops)
+            : [
+                { text: promptText },
+                {
+                  inlineData: {
+                    mimeType: mimeType || "image/jpeg",
+                    data: imageBase64,
+                  },
+                },
+              ],
         },
       ],
       safetySettings: [
@@ -651,7 +718,13 @@ async function handleTranslationRequest(
         usageMetadata: translationMeta?.usageMetadata,
       },
     });
-    return NextResponse.json({ text: sanitizedText, meta: translationMeta });
+    return NextResponse.json({
+      text: sanitizedText,
+      meta:
+        cropPackCrops && translationMeta
+          ? { ...translationMeta, ladderStep: "crop" as const }
+          : translationMeta,
+    });
   } catch (error) {
     console.error("Translation Error:", error);
     writeServerLog({

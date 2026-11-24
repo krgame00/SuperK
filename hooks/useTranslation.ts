@@ -61,6 +61,7 @@ import {
 import { type GlossaryEntry, extractGlossaryCandidatesFromBubbles, mergeGlossaryEntries } from "@/lib/translation/glossary";
 import { type PronounRelation } from "@/lib/translation/pronounMatrix";
 import { runAdaptiveSlicing, type SliceTranslator } from "@/lib/translation/adaptiveSlicing";
+import { planBubbleCrops, remapCropBubbleBox } from "@/lib/translation/bubbleCropPack";
 import {
   classifyTranslationError,
   type DiagnosticDetail,
@@ -2250,6 +2251,128 @@ async function compressImageForTranslation(
         }
       };
       const wantsProgress = modelPreference.engine === "auto";
+      // Ladder Phase 2: one crop-pack request (low-res page thumbnail as
+      // context + one tight crop per pre-detected text region from the
+      // cleaning pipeline). Tried when the whole-page attempt is
+      // safety-blocked on every model, before escalating to slicing.
+      // Returns a response payload shaped like a normal translation
+      // response (boxes already remapped to page coordinates), or null
+      // when the rung is not viable for this page.
+      const attemptBubbleCropPack = async (): Promise<{
+        text: string;
+        meta?: TranslationObservabilityMeta;
+      } | null> => {
+        try {
+          const cleaningResult = cleaningResultsByPageRef.current?.get(pageUrl);
+          const regions = cleaningResult?.regions ?? [];
+          if (regions.length === 0) return null;
+          const imgEl = await waitForImageReady(preparedPage.recognitionUrl, 2000);
+          const pageW = imgEl.naturalWidth;
+          const pageH = imgEl.naturalHeight;
+          if (!pageW || !pageH) return null;
+          // Region rects live in cleaning-source pixel space; rescale to
+          // the recognition image if its dimensions differ.
+          const scaleX = cleaningResult?.width ? pageW / cleaningResult.width : 1;
+          const scaleY = cleaningResult?.height ? pageH / cleaningResult.height : 1;
+          const rects = regions.map((r) => ({
+            x: r.rect.x * scaleX,
+            y: r.rect.y * scaleY,
+            width: r.rect.width * scaleX,
+            height: r.rect.height * scaleY,
+          }));
+          const plan = planBubbleCrops(rects, pageW, pageH);
+          if (!plan) return null;
+          const renderCrop = (
+            rect: { x: number; y: number; width: number; height: number },
+            maxDim?: number,
+          ): string => {
+            const scale = maxDim
+              ? Math.min(1, maxDim / Math.max(rect.width, rect.height))
+              : 1;
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.max(1, Math.round(rect.width * scale));
+            canvas.height = Math.max(1, Math.round(rect.height * scale));
+            const ctx = canvas.getContext("2d");
+            if (!ctx) throw new Error("Canvas 2D context is unavailable for crop pack");
+            ctx.drawImage(
+              imgEl,
+              rect.x,
+              rect.y,
+              rect.width,
+              rect.height,
+              0,
+              0,
+              canvas.width,
+              canvas.height,
+            );
+            const data = canvas.toDataURL("image/jpeg", 0.9).split(",")[1];
+            canvas.width = 0;
+            canvas.height = 0;
+            return data;
+          };
+          const thumbnailBase64 = renderCrop(
+            { x: 0, y: 0, width: pageW, height: pageH },
+            640,
+          );
+          const crops = plan.crops.map((c) => ({ base64: renderCrop(c.rect) }));
+          const cropRes = await fetch("/api/translate", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(wantsProgress ? { Accept: "application/x-ndjson" } : {}),
+            },
+            body: JSON.stringify({
+              imageBase64: thumbnailBase64,
+              mimeType: "image/jpeg",
+              targetLang,
+              sourceLang,
+              modelPreference,
+              apiKey: userApiKey,
+              allowPreview: allowPreviewModels,
+              glossary: glossaryRef.current,
+              pronounMatrix: pronounMatrixRef.current,
+              policy: { sfx: sfxModeRef.current },
+              context: priorContext || undefined,
+              cropPack: { crops },
+            }),
+            signal,
+          });
+          const cropData = await readTranslationResponse<{
+            text: string;
+            meta?: TranslationObservabilityMeta;
+          }>(cropRes, wantsProgress ? reportModelSwitch : undefined);
+          const cropParsed = (cropData.text ? parseLLMJSON(cropData.text) : cropData) as
+            | { bubbles?: unknown[] }
+            | null;
+          if (!cropParsed || !Array.isArray(cropParsed.bubbles)) return null;
+          const remapped: Record<string, unknown>[] = [];
+          for (const raw of cropParsed.bubbles) {
+            if (!raw || typeof raw !== "object") continue;
+            const bubble = raw as Record<string, unknown>;
+            const cropIndex = typeof bubble.crop === "number" ? bubble.crop : NaN;
+            const item = plan.crops.find((c) => c.index === cropIndex);
+            if (!item || !Array.isArray(bubble.box) || bubble.box.length !== 4) continue;
+            const rest: Record<string, unknown> = { ...bubble };
+            delete rest.crop;
+            remapped.push({
+              ...rest,
+              box: remapCropBubbleBox(
+                bubble.box as number[],
+                item.rect,
+                pageW,
+                pageH,
+              ),
+            });
+          }
+          if (remapped.length === 0) return null;
+          return {
+            text: JSON.stringify({ bubbles: remapped }),
+            meta: cropData.meta,
+          };
+        } catch {
+          return null;
+        }
+      };
       try {
         res = await fetch("/api/translate", {
           method: "POST",
@@ -2281,7 +2404,7 @@ async function compressImageForTranslation(
         );
       }
 
-      let data: { text: string; meta?: TranslationObservabilityMeta };
+      let data: { text: string; meta?: TranslationObservabilityMeta } = { text: "" };
       try {
         data = await readTranslationResponse<{
           text: string;
@@ -2293,27 +2416,45 @@ async function compressImageForTranslation(
             (err instanceof TranslationRequestError && err.code === "SAFETY_BLOCKED") ||
             classifyTranslationError(err).code === "SAFETY_BLOCKED";
           if (isSafety) {
-            console.log(
-              `[Auto-Ladder] Page ${pageIndex + 1} safety-blocked on whole-page attempt. Escalating to Adaptive Slicing...`
-            );
-            if (activePageRef.current === pageUrl) {
-              setTranslationResult(
-                "🛡️ ติดระบบคัดกรองเนื้อหา — กำลังไต่บันไดไป Adaptive Slicing อัตโนมัติ...",
+            // Ladder Phase 2 sits between the model hop (server-side) and
+            // adaptive slicing: try one crop-pack request first.
+            const cropData = await attemptBubbleCropPack();
+            if (cropData) {
+              console.log(
+                `[Auto-Ladder] Page ${pageIndex + 1} safety-blocked on whole-page attempt. Recovered via bubble crop pack.`,
+              );
+              if (activePageRef.current === pageUrl) {
+                setTranslationResult(
+                  "🛡️ ติดระบบคัดกรองเนื้อหา — แปลสำเร็จด้วยชุดภาพตัดบับเบิล (Crop Pack)...",
+                );
+              }
+              data = cropData;
+            } else {
+              console.log(
+                `[Auto-Ladder] Page ${pageIndex + 1} safety-blocked on whole-page attempt. Escalating to Adaptive Slicing...`
+              );
+              if (activePageRef.current === pageUrl) {
+                setTranslationResult(
+                  "🛡️ ติดระบบคัดกรองเนื้อหา — กำลังไต่บันไดไป Adaptive Slicing อัตโนมัติ...",
+                );
+              }
+              return await performTranslation(
+                preparedPage,
+                pageUrl,
+                pageIndex,
+                true, // forceNsfwBypass = true
+                isAutoRetry,
+                signal,
+                requestedTarget,
+                true, // skipFullPagePrePass = true
               );
             }
-            return await performTranslation(
-              preparedPage,
-              pageUrl,
-              pageIndex,
-              true, // forceNsfwBypass = true
-              isAutoRetry,
-              signal,
-              requestedTarget,
-              true, // skipFullPagePrePass = true
-            );
+          } else {
+            throw err;
           }
+        } else {
+          throw err;
         }
-        throw err;
       }
       let responseMeta = data.meta;
       let parsed = (data.text ? parseLLMJSON(data.text) : data) as

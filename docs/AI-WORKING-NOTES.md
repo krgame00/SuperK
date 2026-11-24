@@ -1,5 +1,36 @@
 # AI Working Notes — SuperK / Manga Translator
 
+## Cost Ladder Architecture Phase 2 (Bubble Crop Pack) — 2026-11-24
+
+### Status: IMPLEMENTED, SANDBOX-VERIFIED (unit + integration tests and typecheck pass; live Gemini smoke test on a real safety-blocked page still pending — requires a production API key and a page that blocks on all models):
+
+1) Changes & Implementation:
+   - 1. Crop Planning & Remapping (`lib/translation/bubbleCropPack.ts`, new):
+     - `planBubbleCrops(regions, pageWidth, pageHeight)`: filters degenerate regions (<10px), pads each rect by 18% (min 10px) clamped to page bounds, merges nearby rects (gap <=10px), sorts into reading order (horizontal bands, left-to-right), and returns null when no usable regions exist or the merged crop count exceeds `MAX_BUBBLE_CROPS = 24` (caller falls through to Adaptive Slicing).
+     - `remapCropBubbleBox(box, crop, pageWidth, pageHeight)`: converts a crop-relative box ([ymin, xmin, ymax, xmax], 0-1000) back to page coordinates with clamping and min/max normalization.
+   - 2. Server Crop-Pack Support (`src/app/api/translate/handler.ts`):
+     - New opt-in request field `cropPack: { crops: [{ base64 }] }`; `imageBase64` doubles as the low-resolution full-page context thumbnail. Existing callers are unaffected (field absent = previous behavior, byte-for-byte).
+     - `parseCropPack` validates shape and caps (1-24 crops, per-crop size cap mirrors the main image cap); malformed packs return 400 INVALID_REQUEST.
+     - `buildCropPackParts` builds Gemini parts as [prompt + `CROP_PACK_PROMPT_SUFFIX`, context thumbnail, ...crops in order]. The suffix instructs the model to translate only crops, tag each bubble with its 1-based `crop` index, and report boxes relative to that crop.
+     - Crop-pack requests skip the 9router OpenAI-compatible branch (single-image API) and go straight to the Gemini routers, so the Phase 1 model hop still applies per crop pack.
+     - Successful crop-pack responses report `meta.ladderStep = "crop"`.
+   - 3. Client Ladder Wiring (`hooks/useTranslation.ts`):
+     - New `attemptBubbleCropPack()` inside `performTranslation`: reads pre-detected CTD regions from `cleaningResultsByPageRef` (already populated by the cleaning pipeline before translation), rescales rects when the recognition image size differs from the cleaning source size, renders a 640px-max thumbnail plus one JPEG crop per planned rect from the recognition image, and posts a single `/api/translate` request with `cropPack`.
+     - Returned bubbles are filtered to those carrying a valid `crop` index, remapped to page coordinates, and re-injected into the normal response flow (`data`), so all downstream normalization/review/caching behaves exactly as for a whole-page success.
+     - Auto-Ladder order is now: whole page (with server-side model hop) -> Crop Pack -> Adaptive Slicing. Any crop-pack failure or non-viable plan returns null and escalates to slicing exactly as before (Phase 4 behavior preserved).
+
+2) Verification Evidence:
+   - New tests: `tests/translation/bubbleCropPack.test.ts` covers plan padding/clamping/merging/reading-order/cap, remap math (full-crop, center, clamping), `buildCropPackParts` part ordering, and `parseCropPack` accept/reject cases (10/10 passed).
+   - Integration test: `tests/translation/autoLadder.test.ts` covers full end-to-end recovery of safety-blocked page via Bubble Crop Pack when CTD cleaning regions exist (3/3 passed).
+   - Broad translation suite: `npx vitest run tests/translation` passed (69 files, 677/677 tests).
+   - API suite: `npx vitest run tests/api` passed (3 files, 35/35 tests).
+   - TypeScript: `npx tsc --noEmit` passed with 0 errors.
+   - ESLint: `npm run lint` passed with 0 errors (167 warnings).
+   - Python Ruff: `.\ocr-service\.venv\Scripts\python.exe -m ruff check ocr-service` passed with 0 errors.
+   - Not yet verified: live Gemini behavior (whether models reliably emit the `crop` field and crop-relative boxes) — needs one real blocked page run with a production key; the rung fails safe to Adaptive Slicing if the model ignores the format.
+
+
+
 ## Cost Ladder Architecture Phase 4 (Batch Auto-Laddering on SAFETY_BLOCKED & Diagnostics) — 2026-11-23
 
 ### Status: VERIFIED WORKING (Integrated transparent auto-escalation from whole-page SAFETY_BLOCKED to Adaptive Slicing in both single-page and batch jobs, updated diagnostics taxonomy, and verified token metrics logging per principles: `principle-fix-root-causes`, `principle-prove-it-works`, `principle-experience-first`, `principle-laziness-protocol`):
