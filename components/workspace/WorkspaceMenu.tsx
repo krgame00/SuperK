@@ -178,7 +178,7 @@ export const WorkspaceMenu = forwardRef<WorkspaceMenuHandle, WorkspaceMenuProps>
 
         {open && (
           <div
-            className="absolute right-0 z-50 mt-1.5 w-64 max-h-[calc(100dvh-5rem)] overflow-y-auto origin-top-right rounded-xl border border-border bg-surface p-1.5 shadow-xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-100 [scrollbar-width:thin]"
+            className="absolute right-0 z-[100] mt-1.5 w-64 max-h-[calc(100dvh-5rem)] overflow-y-auto origin-top-right rounded-xl border border-border bg-surface p-1.5 shadow-xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-100 [scrollbar-width:thin]"
             role="menu"
             aria-labelledby={menuId}
           >

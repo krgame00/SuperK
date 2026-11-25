@@ -561,7 +561,7 @@ export function RemnantReviewPanel({
                     data-testid="bulk-clean-severe-btn"
                     disabled={Boolean(busyCandidateId) || bulkCleaningProgress !== null}
                     onClick={() => void handleCleanAllSevere()}
-                    className="rounded-lg bg-red-600 hover:bg-red-500 active:bg-red-700 disabled:opacity-50 px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm transition-all cursor-pointer flex items-center gap-1"
+                    className="rounded-lg bg-red-600 hover:bg-red-500 active:bg-red-700 disabled:opacity-50 px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm transition-all cursor-pointer flex items-center gap-1 whitespace-nowrap"
                   >
                     {bulkCleaningProgress !== null ? (
                       <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
@@ -846,7 +846,7 @@ function WholeImageComparison({ comparison, dimensions, canConfirm, onLoaded, on
   const loaded = useRef(new Set<string>());
   const markLoaded = (key: string) => { if (!loaded.current.has(key)) { loaded.current.add(key); onLoaded(); } };
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
       <div ref={dialog} role="dialog" aria-modal="true" aria-label="เทียบภาพต้นฉบับกับภาพคลีนทั้งหน้า" tabIndex={-1}
         className="max-h-[94vh] max-w-[96vw] overflow-auto rounded-lg bg-surface p-4 text-foreground"
         onClick={(e) => e.stopPropagation()}
@@ -895,7 +895,7 @@ function CandidateComparison({ candidate, sourceUrl, cleanUrl, dimensions, onClo
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-3 sm:p-4 backdrop-blur-sm animate-in fade-in duration-150"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-3 sm:p-4 backdrop-blur-sm animate-in fade-in duration-150"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
