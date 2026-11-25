@@ -5846,3 +5846,14 @@ Status: **VERIFIED WORKING (Implemented by Muse in sandbox on top of the user's 
   - TypeScript: `npx tsc --noEmit` exited 0.
   - ESLint: `npx eslint --quiet` on all changed files exited 0.
   - New tests: requestError.test.ts +10 (abort taxonomy incl. REQUEST_ABORTED and quota originator vs bystander), RemnantReviewPanel.test.tsx +2 (success summary, failure precedence), PageFilmstripFocus.test.tsx +2 (translated badge, failure precedence).
+
+## RemnantReviewPanel Header Layout Fix (Squished Vertical Text) — 2026-11-25
+
+Status: **VERIFIED WORKING (Unit tests, TypeScript, ESLint passed; pushed to origin/main)**.
+
+- **Root cause (`components/cleaning/RemnantReviewPanel.tsx`)**: The header row placed the status text (`min-w-0`) beside a `shrink-0` action button group containing long Thai action labels (`คลีนซ้ำจุดรุนแรงทั้งหมด (N จุด)` + `อนุมัติลายภาพทั้งหน้า`) inside a `max-w-[420px]` panel, squeezing the text column to ~26px and forcing word-by-word vertical wrapping.
+- **Fix**: Split the header into a top row (status dot + `flex-1 min-w-0` status text alongside only the compact swap-side and collapse icon buttons) and a dedicated wrapping action row below it for the bulk-clean, cancel, and confirm-all buttons.
+- **Verification Evidence**:
+  - `npx tsc --noEmit`: exited 0.
+  - `npx eslint --quiet components/cleaning/RemnantReviewPanel.tsx`: exited 0.
+  - `npx vitest run tests/cleaning/RemnantReviewPanel.test.tsx`: 23 passed / 0 failed (1 file).

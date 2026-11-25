@@ -489,112 +489,120 @@ export function RemnantReviewPanel({
               )}
             </div>
           )}
-          <div className="flex items-start justify-between gap-2 border-b border-border/60 pb-2">
-            <div className="flex items-start gap-2 min-w-0">
-              <span className="relative flex h-2.5 w-2.5 shrink-0 mt-1">
-                {openCandidates.length > 0 ? (
-                  <>
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#e61972] opacity-75" />
-                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#e61972]" />
-                  </>
-                ) : (
-                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
-                )}
-              </span>
-              <div className="flex flex-col gap-0.5 min-w-0">
-                <p className="font-semibold text-foreground text-xs leading-snug">
+          <div className="flex flex-col gap-2 border-b border-border/60 pb-2">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-start gap-2 flex-1 min-w-0">
+                <span className="relative flex h-2.5 w-2.5 shrink-0 mt-1">
                   {openCandidates.length > 0 ? (
                     <>
-                      พบจุดสงสัยว่ามีข้อความต้นฉบับหลงเหลือบนภาพคลีน {openCandidates.length} จุด
-                      {confirmedCandidates.length > 0 && ` (ยืนยันลายภาพแล้ว ${confirmedCandidates.length} จุด)`}
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#e61972] opacity-75" />
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#e61972]" />
                     </>
                   ) : (
-                    <span className="text-emerald-400 font-semibold">
-                      อนุมัติลายภาพเรียบร้อยแล้วทั้งหมด ({confirmedCandidates.length} จุด)
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+                  )}
+                </span>
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <p className="font-semibold text-foreground text-xs leading-snug">
+                    {openCandidates.length > 0 ? (
+                      <>
+                        พบจุดสงสัยว่ามีข้อความต้นฉบับหลงเหลือบนภาพคลีน {openCandidates.length} จุด
+                        {confirmedCandidates.length > 0 && ` (ยืนยันลายภาพแล้ว ${confirmedCandidates.length} จุด)`}
+                      </>
+                    ) : (
+                      <span className="text-emerald-400 font-semibold">
+                        อนุมัติลายภาพเรียบร้อยแล้วทั้งหมด ({confirmedCandidates.length} จุด)
+                      </span>
+                    )}
+                  </p>
+                  {openCandidates.length > 4 && (
+                    <span className="text-[11px] font-normal text-muted">
+                      เลื่อนภายในกรอบเพื่อดูรายการที่เหลือ
                     </span>
                   )}
-                </p>
-                {openCandidates.length > 4 && (
-                  <span className="text-[11px] font-normal text-muted">
-                    เลื่อนภายในกรอบเพื่อดูรายการที่เหลือ
-                  </span>
-                )}
+                </div>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isInspectorOpen) {
+                      void import("react-hot-toast").then((m) =>
+                        m.default("พาเนลตรวจจุดสงสัยต้องอยู่ฝั่งซ้ายเนื่องจากพาเนลแก้ไขข้อความเปิดอยู่", { id: "remnant-dock-hint" })
+                      );
+                      return;
+                    }
+                    setSide((s) => (s === "right" ? "left" : "right"));
+                  }}
+                  title={effectiveSide === "right" ? "สลับพาเนลไปฝั่งซ้าย" : "สลับพาเนลไปฝั่งขวา"}
+                  aria-label={effectiveSide === "right" ? "สลับพาเนลไปฝั่งซ้าย" : "สลับพาเนลไปฝั่งขวา"}
+                  className="rounded-lg p-1 text-muted hover:bg-surface-hover hover:text-foreground transition-all hover:scale-105 active:scale-95 cursor-pointer"
+                >
+                  <ArrowLeftRight className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsCollapsed(true)}
+                  title="ย่อพาเนล"
+                  aria-label="ย่อพาเนล"
+                  className="rounded-lg p-1 text-muted hover:bg-surface-hover hover:text-foreground transition-all hover:scale-105 active:scale-95 cursor-pointer"
+                >
+                  <Minimize2 className="h-3.5 w-3.5" />
+                </button>
               </div>
             </div>
-            <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
-              {severeCandidates.length > 0 && onCleanCandidate && (
-                <button
-                  type="button"
-                  data-testid="bulk-clean-severe-btn"
-                  disabled={Boolean(busyCandidateId) || bulkCleaningProgress !== null}
-                  onClick={() => void handleCleanAllSevere()}
-                  className="rounded-lg bg-red-600 hover:bg-red-500 active:bg-red-700 disabled:opacity-50 px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm transition-all cursor-pointer flex items-center gap-1"
-                >
-                  {bulkCleaningProgress !== null ? (
-                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
-                  ) : (
-                    <Sparkles className="h-3 w-3" aria-hidden="true" />
-                  )}
-                  <span>
-                    {bulkCleaningProgress !== null
-                      ? `กำลังคลีน ${bulkCleaningProgress.current}/${bulkCleaningProgress.total}…`
-                      : `คลีนซ้ำจุดรุนแรงทั้งหมด (${severeCandidates.length} จุด)`}
-                  </span>
-                </button>
-              )}
-              {bulkCleaningProgress !== null && (
-                <button
-                  type="button"
-                  data-testid="cancel-bulk-clean-btn"
-                  onClick={() => {
-                    bulkCancelRef.current = true;
-                  }}
-                  className="rounded-lg bg-surface hover:bg-surface-hover px-2 py-1 text-[11px] font-medium text-foreground transition-all cursor-pointer border border-border"
-                >
-                  หยุด
-                </button>
-              )}
-              {openCandidates.length > 0 && onConfirmAllArtwork && (
-                <button
-                  type="button"
-                  disabled={bulkCleaningProgress !== null}
-                  onClick={() => {
-                    onConfirmAllArtwork();
-                    setIsCollapsed(true);
-                  }}
-                  title="อนุมัติทุกจุดในหน้านี้ว่าเป็นลายภาพ/คลีนผ่านแล้ว"
-                  className="rounded-lg bg-emerald-600/90 hover:bg-emerald-500 disabled:opacity-50 px-2 py-1 text-[11px] font-semibold text-white shadow-sm transition-all cursor-pointer"
-                >
-                  อนุมัติลายภาพทั้งหน้า
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => {
-                  if (isInspectorOpen) {
-                    void import("react-hot-toast").then((m) =>
-                      m.default("พาเนลตรวจจุดสงสัยต้องอยู่ฝั่งซ้ายเนื่องจากพาเนลแก้ไขข้อความเปิดอยู่", { id: "remnant-dock-hint" })
-                    );
-                    return;
-                  }
-                  setSide((s) => (s === "right" ? "left" : "right"));
-                }}
-                title={effectiveSide === "right" ? "สลับพาเนลไปฝั่งซ้าย" : "สลับพาเนลไปฝั่งขวา"}
-                aria-label={effectiveSide === "right" ? "สลับพาเนลไปฝั่งซ้าย" : "สลับพาเนลไปฝั่งขวา"}
-                className="rounded-lg p-1 text-muted hover:bg-surface-hover hover:text-foreground transition-all hover:scale-105 active:scale-95 cursor-pointer"
-              >
-                <ArrowLeftRight className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsCollapsed(true)}
-                title="ย่อพาเนล"
-                aria-label="ย่อพาเนล"
-                className="rounded-lg p-1 text-muted hover:bg-surface-hover hover:text-foreground transition-all hover:scale-105 active:scale-95 cursor-pointer"
-              >
-                <Minimize2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
+            {((severeCandidates.length > 0 && onCleanCandidate) ||
+              bulkCleaningProgress !== null ||
+              (openCandidates.length > 0 && onConfirmAllArtwork)) && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {severeCandidates.length > 0 && onCleanCandidate && (
+                  <button
+                    type="button"
+                    data-testid="bulk-clean-severe-btn"
+                    disabled={Boolean(busyCandidateId) || bulkCleaningProgress !== null}
+                    onClick={() => void handleCleanAllSevere()}
+                    className="rounded-lg bg-red-600 hover:bg-red-500 active:bg-red-700 disabled:opacity-50 px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm transition-all cursor-pointer flex items-center gap-1"
+                  >
+                    {bulkCleaningProgress !== null ? (
+                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Sparkles className="h-3 w-3" aria-hidden="true" />
+                    )}
+                    <span>
+                      {bulkCleaningProgress !== null
+                        ? `กำลังคลีน ${bulkCleaningProgress.current}/${bulkCleaningProgress.total}…`
+                        : `คลีนซ้ำจุดรุนแรงทั้งหมด (${severeCandidates.length} จุด)`}
+                    </span>
+                  </button>
+                )}
+                {bulkCleaningProgress !== null && (
+                  <button
+                    type="button"
+                    data-testid="cancel-bulk-clean-btn"
+                    onClick={() => {
+                      bulkCancelRef.current = true;
+                    }}
+                    className="rounded-lg bg-surface hover:bg-surface-hover px-2 py-1 text-[11px] font-medium text-foreground transition-all cursor-pointer border border-border"
+                  >
+                    หยุด
+                  </button>
+                )}
+                {openCandidates.length > 0 && onConfirmAllArtwork && (
+                  <button
+                    type="button"
+                    disabled={bulkCleaningProgress !== null}
+                    onClick={() => {
+                      onConfirmAllArtwork();
+                      setIsCollapsed(true);
+                    }}
+                    title="อนุมัติทุกจุดในหน้านี้ว่าเป็นลายภาพ/คลีนผ่านแล้ว"
+                    className="rounded-lg bg-emerald-600/90 hover:bg-emerald-500 disabled:opacity-50 px-2 py-1 text-[11px] font-semibold text-white shadow-sm transition-all cursor-pointer"
+                  >
+                    อนุมัติลายภาพทั้งหน้า
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {openCandidates.length === 0 && (
