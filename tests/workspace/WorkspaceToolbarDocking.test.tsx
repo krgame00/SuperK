@@ -180,7 +180,7 @@ describe("Workspace Toolbar Docking and Collapse", () => {
     // Bottom mode intentionally remains floating above the full PageFilmstrip (h-9 header + h-20/sm:h-22 strip).
     expect(container?.dataset.pageControlsDock).toBe("bottom");
     expect(container?.className).toContain("absolute");
-    expect(container?.className).toContain("z-40");
+    expect(container?.className).toContain("z-[55]");
     expect(container?.className).toContain("bottom-32");
     expect(container?.className).toContain("sm:bottom-34");
 

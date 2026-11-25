@@ -5798,3 +5798,30 @@ Status: **VERIFIED WORKING (Resolved GitHub Actions CI run 45447953147 failure o
   - ESLint: `npm run lint` exited 0 (0 errors).
   - Python Ruff: `python -m ruff check ocr-service` exited 0 (All checks passed).
   - Remote CI Run `45449512577`: 100% green (Frontend in 4m10s, Backend in 1m1s).
+
+
+## Gemini API Key Pool Replacement & Live Verification — 2026-11-25
+
+Status: **VERIFIED WORKING (Replaced previous 12-key pool in `.env.local` with the user-supplied 10-key pool [2 `AIzaSy...` + 8 `AQ.Ab8RN6...`] and verified all 10 keys live against Gemini API)**.
+
+- **Verification Evidence**:
+  - `GET /v1beta/models`: 10/10 keys returned HTTP 200 (`50 models`).
+  - `POST /v1beta/models/gemini-3.5-flash-lite:generateContent`: 10/10 keys returned HTTP 200 OK.
+  - Note: Newer `AQ.Ab8RN6...` keys (6 of 8 tested) return HTTP 404 on legacy `gemini-2.5-flash-lite` / `gemini-2.5-flash` ("no longer available to new users") while working 100% on `gemini-3.5-flash-lite` (Primary Default).
+  - `ocr-service/.env` retains key #1 (`AIzaSyDS-Y...aBGs`) which passed all tested models (`gemini-3.5-flash-lite`, `gemini-2.5-flash-lite`, `gemini-2.5-flash`).
+
+
+## Full UI Audit (Live Browser + 38 Components) — 2026-11-25
+
+Status: **VERIFIED AUDIT (Completed live browser inspection on http://localhost:3000 at 1440x900 & 390x844 plus static code audit across all 38 UI files in src/app and components/; 0 console errors and 0 network 4xx/5xx failures on initial load & workspace flows; identified concrete HIGH/MEDIUM/LOW UI defects for prioritized fixing)**.
+
+- **High-Priority Defects Found**:
+  1. **Mobile Header Overflow & Menu Close Trap (`WorkspaceHeaderHost.tsx:244-247, 661-1053`)**: Verified in live `390x844` browser; `เปิดเมนู` overflows past `390px` right edge, `backdrop-blur-md` on `<header>` traps `fixed inset-0` backdrop to 48px height, and neither `Escape` nor outside-click closes `MobileToolsMenu`.
+  2. **SettingsModal Pronoun Matrix Filter Deletion & Focus Trap (`SettingsModal.tsx:701-704, 870-876, 1662-1675`)**: Deleting while `pronounFilter` is active passes filtered index to unfiltered array, removing the wrong entry; forward-Tab on last focusable element focuses `last` instead of `first`.
+  3. **MaskEditor Active Blob Revocation & Stale Stroke Bounds (`MaskEditor.tsx:754, 821-826, 847`)**: `handleFastCropInpaint` revokes parent `blob:` URLs and mutates `.src` (resetting zoom/pan); `strokeTrackerRef` is not reset when switching `regionId`.
+  4. **OcrAreaTool Detached Portal on Page Change (`OcrAreaTool.tsx:40-77`)**: `useEffect` lacks `currentPage` dependency, leaving portal attached to unmounted `#pageContainer` after page navigation.
+  5. **Inspector Hidden < lg & Overlapping Toolbar Dropdowns (`WorkspaceCanvasHost.tsx:526, 769, 894, 1166-1179`, `PageViewer.tsx:519, 898, 907`)**: Inspector (`hidden lg:flex`) is inaccessible below `1024px`; `data-page-controls-dock` `z-40` caps dropdown menus behind `PageViewer` `z-50` navigation arrows.
+- **Live Desktop Visual Defects (`1440x900`)**:
+  - `เครื่องมือ` dropdown (`w-48`, `h-96`) wraps text and clips the bottom 2 items offscreen.
+  - `ขนาดข้อความ` (`SavedTextSizeControls.tsx`) `<details>` popover does not close on `Escape` or outside click.
+  - Native `<select>` elements in `SettingsModal` and floating bar show double downward carets.

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, type ReactElement, type ReactNode } from "react";
+import { useDismissable } from "@/hooks/useDismissable";
 import {
   X,
   ScrollText,
@@ -538,6 +539,8 @@ export function SystemLogsModal({
     );
   };
 
+  useDismissable(isOpen, onClose);
+
   if (!isOpen) return null;
 
   return (
@@ -546,8 +549,12 @@ export function SystemLogsModal({
       aria-modal="true"
       aria-labelledby="system-logs-modal-title"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm animate-in fade-in duration-200"
+      onClick={onClose}
     >
-      <div className="flex h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl">
+      <div
+        className="flex h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border bg-surface-hover/30 px-5 py-4">
           <div className="flex items-center gap-3">

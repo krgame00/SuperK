@@ -1,6 +1,8 @@
 "use client";
 
 import React from "react";
+import { createPortal } from "react-dom";
+import { useDismissable } from "@/hooks/useDismissable";
 import {
   Loader2,
   Check,
@@ -214,6 +216,7 @@ export function WorkspaceHeaderHost({
   nsfwBypassMode,
   onToggleNsfwBypassMode,
 }: WorkspaceHeaderHostProps) {
+  useDismissable(isMobileMenuOpen, onCloseMobileMenu);
   const handleUndo = () => {
     if (onUndo) {
       onUndo();
@@ -366,7 +369,7 @@ export function WorkspaceHeaderHost({
               <button
                 type="button"
                 onClick={onToggleOriginalTranslated}
-                disabled={workspaceLayer === "original" ? !hasCurrentTranslation : false}
+                disabled={workspaceLayer === "original" ? (!hasCurrentTranslation && !currentCleaningResult) : false}
                 aria-label={
                   workspaceLayer === "original"
                     ? "สลับไปแสดงคำแปล"
@@ -608,8 +611,9 @@ export function WorkspaceHeaderHost({
           </button>
         )}
         {pages.length > 0 && (
-          <WorkspaceAdvancedTools
-            canClean={Boolean(currentPageUrl)}
+          <div className="hidden sm:inline-flex">
+            <WorkspaceAdvancedTools
+              canClean={Boolean(currentPageUrl)}
             canEditMask={Boolean(currentCleaningResult)}
             busy={operationBusy}
             batchFailureCount={batchFailureCount}
@@ -630,6 +634,7 @@ export function WorkspaceHeaderHost({
             onImportProjectFile={onImportProjectFile}
             onOpenLogs={onOpenLogs}
           />
+          </div>
         )}
         {pages.length > 0 && (
           <WorkspacePrimaryAction
@@ -657,14 +662,14 @@ export function WorkspaceHeaderHost({
         </button>
       </div>
 
-      {/* Mobile Dropdown Menu with Backdrop */}
-      {isMobileMenuOpen && (
+      {/* Mobile Dropdown Menu with Backdrop (portaled to body so header backdrop-blur never traps fixed inset-0) */}
+      {isMobileMenuOpen && typeof document !== "undefined" && createPortal(
         <>
           <div
-            className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 lg:hidden animate-in fade-in duration-200"
+            className="fixed inset-0 bg-black/60 backdrop-blur-xs z-[60] lg:hidden animate-in fade-in duration-200"
             onClick={onCloseMobileMenu}
           />
-          <div className="absolute top-[60px] right-3 left-3 sm:right-6 sm:w-80 sm:left-auto bg-background border border-surface shadow-2xl rounded-xl p-3.5 z-50 lg:hidden flex flex-col gap-3 max-h-[calc(100vh-80px)] overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="fixed top-[60px] right-3 left-3 sm:right-6 sm:w-80 sm:left-auto bg-background border border-surface shadow-2xl rounded-xl p-3.5 z-[61] lg:hidden flex flex-col gap-3 max-h-[calc(100vh-80px)] overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-200">
             {/* ── Section: 🔤 การแปล ── */}
             <div>
               <div className="text-[10px] font-bold text-muted uppercase tracking-wider px-1 mb-1.5 flex items-center gap-1.5">
@@ -806,7 +811,7 @@ export function WorkspaceHeaderHost({
                     onScanTranslations();
                     onCloseMobileMenu();
                   }}
-                  disabled={operationBusy}
+                  disabled={operationBusy || pages.length === 0}
                   className="w-full bg-surface text-foreground hover:bg-surface-hover disabled:opacity-40 p-2.5 rounded-lg text-sm font-medium flex items-center gap-3 border border-transparent transition-colors"
                 >
                   <ScanSearch className="w-5 h-5 text-primary" />
@@ -961,6 +966,7 @@ export function WorkspaceHeaderHost({
                   onCloseMobileMenu();
                 }}
                 disabled={
+                  pages.length === 0 ||
                   isZipping ||
                   isChoosingExport ||
                   (normalizePageExportSource(pages[currentPage]?.exportSource) ===
@@ -1049,7 +1055,8 @@ export function WorkspaceHeaderHost({
               </div>
             </div>
           </div>
-        </>
+        </>,
+        document.body,
       )}
     </header>
   );

@@ -1,11 +1,15 @@
 'use client';
 import type {TranslatedBubble} from '@/lib/translationOverlay';
-import {useState} from 'react';
+import {useRef,useState} from 'react';
+import {useDismissable} from '@/hooks/useDismissable';
 export interface SavedSizeAction {scope:'point'|'page'|'book';pageUrl?:string;pointIndex?:number;returnToAuto?:boolean}
 export function SavedTextSizeControls({pageUrl,points,busy,onResize}:{pageUrl?:string;points:TranslatedBubble[];busy:boolean;onResize:(options:SavedSizeAction)=>Promise<number>}) {
+  const [isOpen,setIsOpen]=useState(false);
   const [selected,setSelected]=useState('');
   const [running,setRunning]=useState(false);
   const [message,setMessage]=useState('');
+  const containerRef=useRef<HTMLDivElement>(null);
+  useDismissable(isOpen,()=>setIsOpen(false),containerRef);
   const disabled=busy||running||!pageUrl;
   const hasPoint=selected!==''&&!!points[Number(selected)]&&!points[Number(selected)].deleted;
   const run=async(options:SavedSizeAction)=>{
@@ -16,9 +20,9 @@ export function SavedTextSizeControls({pageUrl,points,busy,onResize}:{pageUrl?:s
     finally {setRunning(false);}
   };
   const cls='px-2 py-1 rounded border border-border text-xs hover:bg-surface disabled:opacity-40';
-  return <details className="relative text-xs">
-    <summary className={cls}>ขนาดข้อความ</summary>
-    <div className="absolute right-0 top-full z-40 mt-2 p-3 w-80 rounded-xl border border-border bg-background shadow-xl flex flex-col gap-2">
+  return <div ref={containerRef} className="relative text-xs">
+    <button type="button" aria-expanded={isOpen} onClick={()=>setIsOpen(prev=>!prev)} className={cls}>ขนาดข้อความ</button>
+    <div className={`absolute right-0 top-full z-40 mt-2 p-3 w-80 rounded-xl border border-border bg-background shadow-xl flex flex-col gap-2${isOpen?'':' hidden'}`}>
       <p>เทียบขนาดกับต้นฉบับ · จุดที่ตั้งขนาดเองจะไม่ถูกทับ</p>
       <select aria-label="เลือกจุดปรับขนาด" value={selected} onChange={e=>setSelected(e.target.value)} disabled={disabled} className="bg-surface rounded p-2">
         <option value="">เลือกจุด…</option>
@@ -29,5 +33,5 @@ export function SavedTextSizeControls({pageUrl,points,busy,onResize}:{pageUrl?:s
       <div className="flex gap-2"><button type="button" className={cls} disabled={disabled} onClick={()=>void run({scope:'page',pageUrl})}>เทียบขนาดหน้านี้</button><button type="button" className={cls} disabled={disabled} onClick={()=>void run({scope:'book'})}>เทียบขนาดทั้งเล่ม</button></div>
       <p role="status">{message}</p>
     </div>
-  </details>;
+  </div>;
 }

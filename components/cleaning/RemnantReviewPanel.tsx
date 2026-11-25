@@ -112,9 +112,12 @@ export function RemnantReviewPanel({
   pageTranslationFailure,
   onRetryTranslation,
 }: RemnantReviewPanelProps) {
-  const [side, setSide] = useState<"right" | "left">("right");
+  const [side, setSide] = useState<"right" | "left">(() => {
+    try { return (localStorage.getItem("remnantPanelSide") as "right" | "left") || "right"; } catch { return "right"; }
+  });
   const [isCollapsed, setIsCollapsed] = useState(false);
   const effectiveSide = isInspectorOpen ? "left" : side;
+  useEffect(() => { try { localStorage.setItem("remnantPanelSide", side); } catch {} }, [side]);
   const [busyCandidateId, setBusyCandidateId] = useState<string | null>(null);
   const [bulkCleaningProgress, setBulkCleaningProgress] = useState<{
     current: number;
@@ -122,13 +125,11 @@ export function RemnantReviewPanel({
   } | null>(null);
   const bulkCancelRef = useRef<boolean>(false);
 
-  // Auto-collapse and move to the left when the user selects a text bubble or when
-  // the inspector is open: the inspector takes over the right edge of the screen,
-  // so docking to the left ensures it never covers the inspector tabs and typography controls.
+  // Auto-collapse when the user selects a text bubble or when the inspector is open:
+  // effectiveSide already docks left whenever isInspectorOpen is true without overwriting user's saved side.
   useEffect(() => {
     if (isInspectorOpen) {
       setIsCollapsed(true);
-      setSide("left");
     }
   }, [isInspectorOpen]);
 
@@ -137,14 +138,12 @@ export function RemnantReviewPanel({
       const custom = e as CustomEvent;
       if (custom.detail) {
         setIsCollapsed(true);
-        setSide("left");
       }
     };
     const handleInspectorToggle = (e: Event) => {
       const custom = e as CustomEvent;
       if (custom.detail?.isOpen) {
         setIsCollapsed(true);
-        setSide("left");
       }
     };
     window.addEventListener("superk:bubble-selected", handleBubbleSelected);
@@ -159,6 +158,9 @@ export function RemnantReviewPanel({
   const [comparison, setComparison] = useState<{ candidate: RemnantCandidate; revisionKey: string; sourceUrl: string; cleanUrl: string }>();
   const [wholeComparison, setWholeComparison] = useState<{ revisionKey: string; sourceUrl: string; cleanUrl: string; loaded: number }>();
   const [highlightedCandidateId, setHighlightedCandidateId] = useState<string | null>(null);
+  useEffect(() => {
+    setHighlightedCandidateId(null);
+  }, [sourceUrl, cleanUrl]);
   const returnFocus = useRef<HTMLButtonElement | null>(null);
   const closeComparison = () => { setComparison(undefined); returnFocus.current?.focus(); };
 
@@ -797,9 +799,10 @@ function WholeImageComparison({ comparison, dimensions, canConfirm, onLoaded, on
   const loaded = useRef(new Set<string>());
   const markLoaded = (key: string) => { if (!loaded.current.has(key)) { loaded.current.add(key); onLoaded(); } };
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
       <div ref={dialog} role="dialog" aria-modal="true" aria-label="เทียบภาพต้นฉบับกับภาพคลีนทั้งหน้า" tabIndex={-1}
         className="max-h-[94vh] max-w-[96vw] overflow-auto rounded-lg bg-surface p-4 text-foreground"
+        onClick={(e) => e.stopPropagation()}
         onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); onClose(); } }}>
         <p className="mb-3 font-semibold">ตรวจภาพทั้งหน้า · การยืนยันอนุมัติเฉพาะภาพและ Mask รอบนี้</p>
         <div className="flex flex-wrap items-start justify-center gap-4">

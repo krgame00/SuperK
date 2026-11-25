@@ -16,6 +16,7 @@ export interface OcrAreaToolProps {
   onDetectRegion: (rect: PixelRect) => void | Promise<void>;
   onClose: () => void;
   loading?: boolean;
+  pageKey?: string | number;
 }
 
 export function OcrAreaTool({
@@ -23,6 +24,7 @@ export function OcrAreaTool({
   onDetectRegion,
   onClose,
   loading = false,
+  pageKey,
 }: OcrAreaToolProps): ReactElement | null {
   const [container, setContainer] = useState<HTMLElement | null>(null);
   const [rect, setRect] = useState<PixelRect>({
@@ -36,45 +38,60 @@ export function OcrAreaTool({
     height: 1500,
   });
 
-  // Find and attach to #pageContainer when active
+  // Always allow Escape to dismiss active OCR tool regardless of container mount state
+  useEffect(() => {
+    if (!active || typeof window === "undefined") return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [active, onClose]);
+
+  // Find and re-attach to #pageContainer whenever active or pageKey changes
   useEffect(() => {
     if (!active || typeof document === "undefined") {
       setContainer(null);
       return;
     }
 
-    const pageContainerEl = document.getElementById("pageContainer");
-    if (!pageContainerEl) return;
+    const bindContainer = () => {
+      const pageContainerEl = document.getElementById("pageContainer");
+      if (!pageContainerEl) return false;
 
-    setContainer(pageContainerEl);
+      setContainer(pageContainerEl);
 
-    // Get image natural dimensions
-    const imgEl = pageContainerEl.querySelector("img");
-    const nw = imgEl?.naturalWidth || pageContainerEl.clientWidth || 1000;
-    const nh = imgEl?.naturalHeight || pageContainerEl.clientHeight || 1500;
-    naturalDimensionsRef.current = { width: nw, height: nh };
+      // Get image natural dimensions
+      const imgEl = pageContainerEl.querySelector("img");
+      const nw = imgEl?.naturalWidth || pageContainerEl.clientWidth || 1000;
+      const nh = imgEl?.naturalHeight || pageContainerEl.clientHeight || 1500;
+      naturalDimensionsRef.current = { width: nw, height: nh };
 
-    // Initial position: center-ish, comfortable size for a manga speech bubble
-    const initW = Math.max(140, Math.min(360, Math.round(nw * 0.35)));
-    const initH = Math.max(100, Math.min(260, Math.round(nh * 0.2)));
-    const initX = Math.round((nw - initW) / 2);
-    const initY = Math.round((nh - initH) * 0.35);
+      // Initial position: center-ish, comfortable size for a manga speech bubble
+      const initW = Math.max(140, Math.min(360, Math.round(nw * 0.35)));
+      const initH = Math.max(100, Math.min(260, Math.round(nh * 0.2)));
+      const initX = Math.round((nw - initW) / 2);
+      const initY = Math.round((nh - initH) * 0.35);
 
-    setRect({
-      x: initX,
-      y: initY,
-      width: initW,
-      height: initH,
-    });
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-      }
+      setRect({
+        x: initX,
+        y: initY,
+        width: initW,
+        height: initH,
+      });
+      return true;
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [active, onClose]);
+
+    if (bindContainer()) return;
+    const rafId = requestAnimationFrame(() => {
+      bindContainer();
+    });
+    return () => cancelAnimationFrame(rafId);
+  }, [active, pageKey]);
 
   if (!active) return null;
 

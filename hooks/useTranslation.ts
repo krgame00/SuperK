@@ -2857,11 +2857,15 @@ async function compressImageForTranslation(
           setTranslationResult("⚠️ แปลสำเร็จ แต่มีคำแปลที่ต้องตรวจ เปิดแก้ไขข้อความเพื่อเทียบต้นฉบับและดูคำแนะนำ");
         } else if (responseMeta) {
           const elapsedSeconds = Math.max(0, responseMeta.elapsedMs / 1000).toFixed(1);
+          const stepLabel = responseMeta.ladderStep || (forceNsfwBypass ? "slice" : "full");
+          const tokensText = responseMeta.usageMetadata?.totalTokenCount
+            ? ` · ${responseMeta.usageMetadata.totalTokenCount.toLocaleString()} tokens`
+            : "";
           const fallbackText = responseMeta.fallbackCount > 0
             ? ` · fallback ${responseMeta.fallbackCount} ครั้ง`
             : "";
           setTranslationResult(
-            `✅ ${responseMeta.model} · ${elapsedSeconds} วิ${fallbackText}`,
+            `✅ แปลล่าสุด: ${stepLabel} · ${responseMeta.model}${tokensText} · ${elapsedSeconds} วิ${fallbackText}`,
           );
         } else {
           setTranslationResult("✅ แปลสำเร็จ! ข้อความถูกวาดทับลงบนภาพแล้ว");
@@ -2887,7 +2891,12 @@ async function compressImageForTranslation(
     }
       return true;
     } catch (error: unknown) {
-      if (!isUserCancelledError(error)) {
+      const explicitUserCancel = signal
+        ? (signal.aborted ||
+            (error instanceof TranslationRequestError &&
+              (error.category === "cancelled" || error.code === "cancelled")))
+        : isUserCancelledError(error);
+      if (!explicitUserCancel) {
         const classified = classifyTranslationError(error);
         const failure: PageTranslationFailure = {
           status: "failed",
@@ -2903,10 +2912,19 @@ async function compressImageForTranslation(
           ...prev,
           [pageUrl]: failure,
         }));
+        logError(
+          "translate",
+          `แปลหน้า ${pageIndex + 1} ไม่สำเร็จ (${classified.code || "ERROR"}): ${failure.message}`,
+          {
+            page: pageIndex + 1,
+            code: classified.code,
+            cropOutcome: lastCropOutcomeRef.current,
+          },
+        );
       }
       if (
         activePageRef.current === pageUrl
-        && !isUserCancelledError(error)
+        && !explicitUserCancel
       ) {
         setTranslationResult("❌ Error: " + (error instanceof Error ? error.message : String(error)));
       }

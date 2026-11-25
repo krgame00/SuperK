@@ -523,7 +523,7 @@ export function WorkspaceCanvasHost({
               Bottom controls intentionally remain floating above PageFilmstrip */}
           <div
             data-page-controls-dock={toolbarPosition}
-            className={`w-full z-40 flex justify-center pointer-events-none px-2 transition-all duration-300 ease-out ${
+            className={`w-full z-[55] flex justify-center pointer-events-none px-2 transition-all duration-300 ease-out ${
               toolbarPosition === "top"
                 ? "relative shrink-0"
                 : `absolute ${
@@ -1112,7 +1112,7 @@ export function WorkspaceCanvasHost({
                 {warpHint && (
                   <div
                     role="status"
-                    className="fixed left-3 top-1/2 -translate-y-1/2 z-40 mt-14 rounded-lg bg-surface border border-border px-3 py-2 text-sm text-foreground shadow-sm"
+                    className="absolute left-16 top-1/2 -translate-y-1/2 z-40 w-max max-w-xs rounded-lg bg-surface border border-border px-3 py-2 text-sm text-foreground shadow-sm"
                   >
                     {warpHint}
                   </div>
@@ -1172,10 +1172,10 @@ export function WorkspaceCanvasHost({
                 onClick={(e) => e.stopPropagation()}
                 aria-label="คุณสมบัติข้อความ"
                 style={{ display: sidePanel === "remnants" ? "none" : undefined }}
-                className={`fixed right-3 z-50 hidden lg:flex flex-col gap-2 overflow-y-auto pr-0.5 transition-all duration-200 ${
+                className={`fixed right-2 sm:right-3 z-50 flex flex-col gap-2 max-w-[calc(100vw-1rem)] sm:max-w-none overflow-y-auto pr-0.5 transition-all duration-200 ${
                   isFocusMode
                     ? "top-3 max-h-[calc(100dvh-1.5rem)]"
-                    : "top-14 max-h-[calc(100dvh-4.5rem)]"
+                    : "top-14 max-h-[calc(100dvh-8.5rem)]"
                 }`}
               >
                 {selectedBubbleBridge && (
@@ -1416,6 +1416,7 @@ export function WorkspaceCanvasHost({
             <OcrAreaTool
               active={activeStudioTool === "ocr"}
               loading={operationBusy}
+              pageKey={currentPage}
               onDetectRegion={async (rect) => {
                 await onDetectOcrRegion?.(rect);
                 setActiveStudioTool("select");

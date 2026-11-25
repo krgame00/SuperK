@@ -24,6 +24,7 @@ const PRESET_OPTIONS = [
   { label: "พอดีหน้าจอ", scale: -1 }, // -1 sentinel for fit
   { label: "50%", scale: 0.5 },
   { label: "100%", scale: 1.0 },
+  { label: "110%", scale: 1.1 },
   { label: "200%", scale: 2.0 },
   { label: "400%", scale: 4.0 },
 ];
@@ -76,7 +77,7 @@ export function PageZoomToolbar({
       <div
         role="toolbar"
         aria-label="เครื่องมือปรับขนาดการแสดงผลต่อเนื่อง"
-        className={`absolute ${avoidBottomChrome ? "bottom-12" : "bottom-4"} right-4 z-20 flex items-center bg-surface/90 backdrop-blur-md border border-border/80 rounded-xl p-1 shadow-lg select-none transition-[bottom,opacity] duration-200 opacity-60 hover:opacity-100 focus-within:opacity-100`}
+        className={`absolute ${avoidBottomChrome ? "bottom-12" : "bottom-4"} right-4 z-40 flex items-center bg-surface/90 backdrop-blur-md border border-border/80 rounded-xl p-1 shadow-lg select-none transition-[bottom,opacity] duration-200 opacity-60 hover:opacity-100 focus-within:opacity-100`}
       >
         <button
           type="button"
@@ -142,7 +143,7 @@ export function PageZoomToolbar({
       ref={menuRef}
       role="toolbar"
       aria-label="เครื่องมือซูมและย่อขยายภาพ"
-      className={`absolute ${avoidBottomChrome ? "bottom-12" : "bottom-3"} right-3 z-20 flex items-center bg-surface/85 backdrop-blur-md border border-border/70 rounded-xl p-1 shadow-lg gap-0.5 select-none opacity-85 hover:opacity-100 focus-within:opacity-100 transition-[bottom,opacity] duration-200`}
+      className={`absolute ${avoidBottomChrome ? "bottom-12" : "bottom-3"} right-3 z-40 flex items-center bg-surface/85 backdrop-blur-md border border-border/70 rounded-xl p-1 shadow-lg gap-0.5 select-none opacity-85 hover:opacity-100 focus-within:opacity-100 transition-[bottom,opacity] duration-200`}
     >
       {/* Zoom Out Button */}
       <button

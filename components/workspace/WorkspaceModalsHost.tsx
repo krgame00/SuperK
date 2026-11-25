@@ -2,6 +2,7 @@
 
 import type { ReactNode, ComponentProps } from "react";
 import { Loader2, Sparkles } from "lucide-react";
+import { useDismissable } from "@/hooks/useDismissable";
 import { MaskEditor } from "@/components/cleaning/MaskEditor";
 import { SettingsModal } from "@/components/workspace/SettingsModal";
 import { FindReplaceDialog } from "@/components/editing/FindReplaceDialog";
@@ -283,6 +284,14 @@ export function WorkspaceModalsHost(props: WorkspaceModalsHostProps): ReactNode 
     onCloseTranslateBookConfirm,
   } = props;
 
+  useDismissable(Boolean(legacyTargetPages && legacyTargetPages.length > 0), onPostponeLegacyTarget);
+  useDismissable(Boolean(reviewIssues), () => onCloseReviewIssues?.());
+  useDismissable(
+    Boolean(unconfirmedReviewPages && (unconfirmedReviewPages.length > 0 || pendingExportAction)),
+    onCancelReview,
+  );
+  useDismissable(Boolean(isTranslateBookConfirmOpen), () => onCloseTranslateBookConfirm?.());
+
   return (
     <>
       {/* 1. Mask Editor */}
@@ -355,10 +364,15 @@ export function WorkspaceModalsHost(props: WorkspaceModalsHostProps): ReactNode 
 
       {/* 5. Legacy Saved-Work Target Confirmation */}
       {legacyTargetPages && legacyTargetPages.length > 0 && (
-        <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+        <div
+          className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+          onClick={onPostponeLegacyTarget}
+        >
           <div
             role="dialog"
+            aria-modal="true"
             aria-label="ยืนยันภาษาปลายทางของงานเก่า"
+            onClick={(e) => e.stopPropagation()}
             className="bg-surface border border-border shadow-2xl rounded-2xl max-w-lg w-full p-5 flex flex-col gap-4"
           >
             <div className="flex items-start gap-3">
@@ -399,10 +413,15 @@ export function WorkspaceModalsHost(props: WorkspaceModalsHostProps): ReactNode 
 
       {/* 6. Actionable Review List */}
       {reviewIssues && (
-        <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+        <div
+          className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+          onClick={onCloseReviewIssues}
+        >
           <div
             role="dialog"
+            aria-modal="true"
             aria-label="รายการตรวจคำแปลที่ต้องดำเนินการ"
+            onClick={(e) => e.stopPropagation()}
             className="bg-surface border border-border shadow-2xl rounded-2xl max-w-xl w-full p-5 flex flex-col gap-4"
           >
             <div className="flex items-center justify-between gap-3">
@@ -543,8 +562,12 @@ export function WorkspaceModalsHost(props: WorkspaceModalsHostProps): ReactNode 
           role="dialog"
           aria-modal="true"
           aria-label="ยืนยันก่อนส่งออก"
+          onClick={onCancelReview}
         >
-          <div className="bg-surface border border-border shadow-2xl rounded-2xl max-w-2xl w-full p-5 flex flex-col gap-4">
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-surface border border-border shadow-2xl rounded-2xl max-w-2xl w-full p-5 flex flex-col gap-4"
+          >
             <div className="flex items-start gap-3">
               <div className="p-2.5 rounded-xl bg-amber-500/15 text-amber-500 text-xl flex-shrink-0">
                 ⚠️
@@ -747,8 +770,12 @@ export function WorkspaceModalsHost(props: WorkspaceModalsHostProps): ReactNode 
           aria-modal="true"
           aria-label="ยืนยันการแปลและจัดหน้าทั้งเล่ม"
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in"
+          onClick={onCloseTranslateBookConfirm}
         >
-          <div className="w-full max-w-md rounded-2xl border border-border bg-surface p-5 shadow-2xl flex flex-col gap-4">
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-2xl border border-border bg-surface p-5 shadow-2xl flex flex-col gap-4"
+          >
             <div className="flex items-center gap-2.5 text-foreground font-semibold text-base">
               <Sparkles className="h-5 w-5 text-amber-400 shrink-0" />
               <span>ยืนยันการแปลและจัดหน้าทั้งเล่ม</span>

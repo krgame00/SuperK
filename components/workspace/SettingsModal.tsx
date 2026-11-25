@@ -872,7 +872,7 @@ export function SettingsModal({
       last.focus();
     } else if (!event.shiftKey && document.activeElement === last) {
       event.preventDefault();
-      last.focus();
+      first.focus();
     }
   };
 
@@ -1660,7 +1660,8 @@ export function SettingsModal({
             {pronounMatrix.length > 0 && (
               <div className="mb-2.5 max-h-40 space-y-1 overflow-y-auto rounded-md border border-surface-hover bg-background/50 p-1.5 text-xs">
                 {pronounMatrix
-                  .filter((entry) => {
+                  .map((entry, originalIndex) => ({ entry, originalIndex }))
+                  .filter(({ entry }) => {
                     if (!pronounFilter.trim()) return true;
                     const query = pronounFilter.trim().toLowerCase();
                     return (
@@ -1671,9 +1672,9 @@ export function SettingsModal({
                       (entry.note && entry.note.toLowerCase().includes(query))
                     );
                   })
-                  .map((entry, idx) => (
+                  .map(({ entry, originalIndex }) => (
                     <div
-                      key={`${entry.speaker}-${entry.listener}-${idx}`}
+                      key={`${entry.speaker}-${entry.listener}-${originalIndex}`}
                       className="flex items-center justify-between rounded bg-surface px-2.5 py-1.5 text-foreground hover:bg-surface-hover/70 transition-colors"
                     >
                       <div className="min-w-0 flex-1 truncate pr-2 text-[11px]">
@@ -1692,7 +1693,7 @@ export function SettingsModal({
                       </div>
                       <button
                         type="button"
-                        onClick={() => handleRemovePronounRelation(idx)}
+                        onClick={() => handleRemovePronounRelation(originalIndex)}
                         className="ml-1 text-muted hover:text-red-400 p-0.5 rounded transition-colors"
                         title="ลบความสัมพันธ์"
                         aria-label={`ลบความสัมพันธ์ ${entry.speaker} ถึง ${entry.listener}`}

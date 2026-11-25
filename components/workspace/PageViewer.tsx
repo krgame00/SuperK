@@ -338,7 +338,12 @@ export function PageViewer({
   const [highlightedRegion, setHighlightedRegion] = useState<{
     id: string;
     rect: PixelRect;
+    pageIndex: number;
   } | null>(null);
+
+  useEffect(() => {
+    setHighlightedRegion(null);
+  }, [currentPage, viewLayout, isFocusMode]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -346,7 +351,7 @@ export function PageViewer({
       const custom = e as CustomEvent<{ id: string; rect: PixelRect }>;
       if (!custom.detail?.rect) return;
       const { id, rect } = custom.detail;
-      setHighlightedRegion({ id, rect });
+      setHighlightedRegion({ id, rect, pageIndex: currentPage });
 
       if (viewLayout === "scroll") {
         const el = document.getElementById(`spage-${currentPage}`);
@@ -873,7 +878,7 @@ export function PageViewer({
                   <MaskLegend regions={currentCleaningResult.regions} />
                 </>
               )}
-              {highlightedRegion && (
+              {highlightedRegion && highlightedRegion.pageIndex === currentPage && (
                 <div
                   data-testid="candidate-highlight-box"
                   className="absolute pointer-events-none rounded-lg border-2 border-amber-400 bg-amber-400/25 ring-4 ring-amber-400/40 animate-pulse z-50 transition-all duration-200"

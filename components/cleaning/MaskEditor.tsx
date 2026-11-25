@@ -227,6 +227,21 @@ export function MaskEditor({
   const workspaceRef = useRef<HTMLDivElement>(null);
   const sourceImageRef = useRef<HTMLImageElement>(null);
   const [comparison, setComparison] = useState<"original" | "cleaned">(cleanUrl ? "cleaned" : "original");
+  const [fastPreviewUrl, setFastPreviewUrl] = useState<string | null>(null);
+  const hasFittedInitialRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      if (fastPreviewUrl) URL.revokeObjectURL(fastPreviewUrl);
+    };
+  }, [fastPreviewUrl]);
+
+  useEffect(() => {
+    setFastPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+  }, [cleanUrl, sourceUrl]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const brushCursorRef = useRef<HTMLDivElement>(null);
   const brushPointRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -545,6 +560,9 @@ export function MaskEditor({
   const coalescedPointsQueueRef = useRef<MaskPoint[]>([]);
   const rafBrushIdRef = useRef<number | null>(null);
   const strokeTrackerRef = useRef(new BrushStrokeTracker());
+  useEffect(() => {
+    strokeTrackerRef.current.reset();
+  }, [regionId]);
 
   const updateBrushCursorDom = (point: { x: number; y: number }, width: number, height: number) => {
     brushPointRef.current = point;
@@ -810,20 +828,20 @@ export function MaskEditor({
           const fullCtx = fullCvs.getContext("2d");
           if (fullCtx) {
             const baseDisplayImg =
-              (comparison === "cleaned" && cleanUrl
-                ? await resolveLoadedImage(cleanUrl, cachedCleanImgRef, true)
+              (comparison === "cleaned" && (fastPreviewUrl ?? cleanUrl)
+                ? await resolveLoadedImage(fastPreviewUrl ?? cleanUrl!, cachedCleanImgRef, true)
                 : null) ?? sourceImg;
             fullCtx.drawImage(baseDisplayImg, 0, 0);
             fullCtx.drawImage(bmp, x0, y0, cropW, cropH);
             const blob = await new Promise<Blob | null>((resolve) =>
               fullCvs.toBlob(resolve, "image/png"),
             );
-            if (blob && sourceImageRef.current) {
-              const prevSrc = sourceImageRef.current.src;
-              if (prevSrc && prevSrc.startsWith("blob:")) {
-                URL.revokeObjectURL(prevSrc);
-              }
-              sourceImageRef.current.src = URL.createObjectURL(blob);
+            if (blob) {
+              const nextPreviewUrl = URL.createObjectURL(blob);
+              setFastPreviewUrl((prev) => {
+                if (prev) URL.revokeObjectURL(prev);
+                return nextPreviewUrl;
+              });
             }
           }
           bmp.close?.();
@@ -1951,7 +1969,18 @@ export function MaskEditor({
           >
             <div className="relative mx-auto w-fit max-w-full shadow-2xl">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img ref={sourceImageRef} onLoad={fitSelectedRegion} src={comparison === "cleaned" && cleanUrl ? cleanUrl : sourceUrl} alt={comparison === "cleaned" && cleanUrl ? "ภาพที่คลีนแล้ว" : "ภาพเดิม"} className="block max-h-[72vh] max-w-full pointer-events-none" />
+              <img
+                ref={sourceImageRef}
+                onLoad={() => {
+                  if (!hasFittedInitialRef.current) {
+                    fitSelectedRegion();
+                    hasFittedInitialRef.current = true;
+                  }
+                }}
+                src={comparison === "cleaned" ? (fastPreviewUrl ?? cleanUrl ?? sourceUrl) : sourceUrl}
+                alt={comparison === "cleaned" && (fastPreviewUrl || cleanUrl) ? "ภาพที่คลีนแล้ว" : "ภาพเดิม"}
+                className="block max-h-[72vh] max-w-full pointer-events-none"
+              />
 
               {/* Interactive Region Bounding Boxes Overlay */}
               {canvasSize.width > 0 && (

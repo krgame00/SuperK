@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactElement } from "react";
+import { useDismissable } from "@/hooks/useDismissable";
 import { BookText, ChevronDown, ChevronUp, Download, Plus, Sparkles, Trash2, Upload, User, X } from "lucide-react";
 import type { CharacterPersona, GlossaryEntry } from "@/lib/translation/glossary";
 
@@ -27,6 +28,8 @@ export function GlossaryModal({
   const [particleTone, setParticleTone] = useState("");
   const [showPersonaFields, setShowPersonaFields] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+
+  useDismissable(isOpen, onClose);
 
   if (!isOpen) return null;
 
@@ -148,8 +151,12 @@ export function GlossaryModal({
       role="dialog"
       aria-modal="true"
       aria-label="คลังคำศัพท์เฉพาะเรื่อง (Glossary)"
+      onClick={onClose}
     >
-      <div className="w-full max-w-2xl bg-surface border border-border rounded-2xl shadow-2xl flex flex-col max-h-[86vh] overflow-hidden">
+      <div
+        className="w-full max-w-2xl bg-surface border border-border rounded-2xl shadow-2xl flex flex-col max-h-[86vh] overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-border bg-background/60">
           <div className="flex items-center gap-2.5">
             <BookText className="w-5 h-5 text-primary" />

@@ -127,12 +127,19 @@ export function CleaningToolbar({
             const isDisabled =
               (item.value === "clean" && !hasResult) ||
               (item.value === "translated" && !hasTranslated);
+            const disabledReason =
+              item.value === "translated" && !hasTranslated
+                ? "ยังไม่มีคำแปลสำหรับหน้านี้"
+                : item.value === "clean" && !hasResult
+                  ? "ยังไม่มีภาพคลีนสำหรับหน้านี้"
+                  : item.label;
             return (
               <button
                 key={item.value}
                 type="button"
                 role="tab"
                 aria-label={item.label}
+                title={disabledReason}
                 aria-selected={isSelected}
                 onClick={() => onLayerChange(item.value)}
                 disabled={isDisabled}

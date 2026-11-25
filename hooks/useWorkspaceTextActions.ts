@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, type SetStateAction } from "react";
+import { useCallback, useRef, type SetStateAction } from "react";
 import type { TranslatedBubble } from "@/lib/translationOverlay";
 import type { WorkspaceExportPage } from "@/hooks/useExportOrchestrator";
 import type { PageCleaningResult } from "@/hooks/useCleaning";
@@ -61,11 +61,17 @@ export function useWorkspaceTextActions({
     currentPageUrl && (hasPageBubbles || hasRenderedTranslation),
   );
 
+  const lastNonOriginalLayerRef = useRef<"clean" | "translated" | "mask">("translated");
+
   const toggleOriginalTranslated = useCallback(() => {
     setWorkspaceLayer((currentLayer) => {
       if (currentLayer === "original") {
+        const preferred = lastNonOriginalLayerRef.current;
+        if (preferred === "translated" && hasCurrentTranslation) return "translated";
+        if (preferred === "mask") return "mask";
         return hasCurrentTranslation ? "translated" : "clean";
       }
+      lastNonOriginalLayerRef.current = currentLayer;
       return "original";
     });
   }, [hasCurrentTranslation, setWorkspaceLayer]);

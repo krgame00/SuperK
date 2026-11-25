@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, type ReactElement } from "react";
+import { useDismissable } from "@/hooks/useDismissable";
 import { FileText, Copy, Check, Download, Sparkles, X } from "lucide-react";
 import type { TranslatedBubble } from "@/lib/translationOverlay";
 
@@ -132,6 +133,8 @@ export function TranscriptModal({
     setTextValue(formatTranscriptText(pagesData, scope, currentPageIndex));
   }, [isOpen, pagesData, scope, currentPageIndex]);
 
+  useDismissable(isOpen, onClose);
+
   if (!isOpen) return null;
 
   const handleCopy = async () => {
@@ -166,8 +169,12 @@ export function TranscriptModal({
       aria-modal="true"
       aria-label="แก้ไขคำแปลแบบสคริปต์ (Batch Transcript Editor)"
       className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/75 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+      onClick={onClose}
     >
-      <div className="bg-surface border border-border rounded-2xl shadow-2xl max-w-3xl w-full flex flex-col max-h-[90vh] overflow-hidden">
+      <div
+        className="bg-surface border border-border rounded-2xl shadow-2xl max-w-3xl w-full flex flex-col max-h-[90vh] overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
         <header className="flex items-center justify-between px-5 py-3.5 border-b border-border bg-background/60">
           <div className="flex items-center gap-2.5">
             <span className="p-2 rounded-xl bg-primary/15 text-primary">
