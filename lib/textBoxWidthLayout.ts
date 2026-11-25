@@ -1,4 +1,4 @@
-import { breakWordIntoHyphenatedLines, canHyphenateWord, splitWordByHyphen } from "./text/hyphenation";
+import { breakWordIntoHyphenatedLines, canHyphenateWord } from "./text/hyphenation";
 
 export interface FixedFontWidthInput {
   text: string;
@@ -292,23 +292,6 @@ function wrapForCandidate(
     current = "";
   };
 
-  const appendToken = (token: string): void => {
-    let remaining = current ? token : token.trimStart();
-    if (!remaining) return;
-
-    if (current && measureText(current + remaining) > candidateWidthAt(lines.length)) {
-      pushLine();
-      remaining = token.trimStart();
-    }
-
-    if (!remaining) return;
-    const wordLimit = current
-      ? candidateWidthAt(lines.length)
-      : Math.max(candidateWidthAt(lines.length), singleWordLimit);
-    if (measureText(remaining) > wordLimit * 1.05) wordOverflow = true;
-    current += remaining;
-  };
-
   const isStructured = isStructuredMangaList(text);
   const bulletContinuationReservePx = isStructured ? Math.round(fontSizePx * 0.9) : 0;
 
@@ -386,7 +369,6 @@ function linesFitTheirChords(
   isOval: boolean,
   locale: string,
   measureText: (value: string) => number,
-  enableHyphenation = false,
   scanlineRatios?: number[],
 ): boolean {
   const hasScanlines = Boolean(scanlineRatios && scanlineRatios.length > 0);
@@ -493,7 +475,6 @@ export function layoutTextAtFixedFont(input: FixedFontWidthInput): FixedFontWidt
       effectiveIsOval,
       locale,
       input.measureText,
-      input.enableHyphenation,
       input.scanlineRatios,
     );
 

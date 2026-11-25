@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { GET, POST, DELETE } from "@/src/app/api/system/logs/route";
 import { clearServerLogs, readRecentServerLogs } from "@/lib/logger/serverLogger";
 

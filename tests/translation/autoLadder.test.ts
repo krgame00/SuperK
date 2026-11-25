@@ -1,7 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useTranslation } from "@/hooks/useTranslation";
-import { DIAGNOSTIC_TAXONOMY } from "@/lib/translation/diagnostics";
 
 vi.mock("@/lib/colorMatching/canvasSampler", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/colorMatching/canvasSampler")>()),
@@ -196,7 +195,6 @@ describe("Phase 4: Auto-Ladder on SAFETY_BLOCKED", () => {
     );
 
     // Mock toDataURL differently for page2 original to trigger the mock above
-    const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
     vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockImplementation(function (this: HTMLCanvasElement) {
       // If height is full height (1600), check if we're on page 2
       if (fetchCalls.some((c) => c.url === "blob:page2") && !fetchCalls.some((c) => c.body?.imageBase64 === "cGFnZTItb3JpZ2luYWw=")) {

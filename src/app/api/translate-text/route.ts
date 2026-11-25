@@ -19,10 +19,7 @@ import {
   buildGlossaryDirectives,
   type FlexibleGlossaryEntry,
 } from "@/lib/translation/glossary";
-import {
-  buildPronounMatrixDirectives,
-  type PronounRelation,
-} from "@/lib/translation/pronounMatrix";
+import { buildPronounMatrixDirectives } from "@/lib/translation/pronounMatrix";
 import { FIXED_IMAGE_MODELS } from "@/lib/translation/imageModelChoices";
 import { sanitizeTranslationPayloadJson } from "@/lib/translation/sanitizer";
 import { getSyncedExtensionSettings } from "@/src/app/api/extension/settings/handler";
@@ -105,7 +102,6 @@ export async function POST(req: Request) {
     }
     if (parsedPreference.engine === "local") {
       return handleLocalTextTranslate({
-        bubbles,
         targetLang,
         promptText,
         preference: parsedPreference,
@@ -221,13 +217,11 @@ export async function POST(req: Request) {
 }
 
 async function handleLocalTextTranslate({
-  bubbles,
   targetLang,
   promptText,
   preference,
   signal,
 }: {
-  bubbles: unknown[];
   targetLang?: string;
   promptText: string;
   preference: { engine: "local"; baseUrl: string; model: string };

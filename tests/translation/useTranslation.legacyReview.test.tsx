@@ -20,7 +20,7 @@ vi.mock("@/lib/translationOverlay", () => ({
             containerOverride: restArgs[6],
           }
         : (firstArg as Record<string, unknown>);
-      const { _bubbles, viewMode, _pageIndex, _setTranslationResult, onComplete, containerOverride } = normalizedCall as {
+      const { onComplete } = normalizedCall as {
         _bubbles?: unknown;
         viewMode?: "single" | "scroll" | "offscreen";
         _pageIndex?: number;
@@ -468,7 +468,7 @@ test("whole-book repair and its Undo/Redo render onto cleaned page background in
             containerOverride: restArgs[6],
           }
         : (firstArg as Record<string, unknown>);
-      const { _bubbles, viewMode, _pageIndex, _setTranslationResult, onComplete, containerOverride } = normalizedCall as {
+      const { viewMode, onComplete, containerOverride } = normalizedCall as {
         _bubbles?: unknown;
         viewMode?: "single" | "scroll" | "offscreen";
         _pageIndex?: number;

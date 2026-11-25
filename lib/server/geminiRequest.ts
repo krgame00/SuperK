@@ -680,7 +680,6 @@ export async function requestGeminiRoutes<T = unknown>(
     onRouteFailure,
     onModelSwitch,
     signal,
-    validateResponse,
     maxValidationHops = 3,
   } = options;
   const startedAt = options.startedAt ?? now();

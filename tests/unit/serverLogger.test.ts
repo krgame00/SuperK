@@ -1,16 +1,12 @@
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
-import fs from "fs";
-import path from "path";
+
 import {
   writeServerLog,
   readRecentServerLogs,
   clearServerLogs,
-  getLogFilePath,
 } from "@/lib/logger/serverLogger";
 
 describe("serverLogger", () => {
-  const logFile = getLogFilePath();
-
   beforeEach(() => {
     clearServerLogs();
   });

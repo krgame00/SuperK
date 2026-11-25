@@ -196,6 +196,9 @@ export function fitTextForBubble(
   fontSizeMultiplier = 1,
   minFontSize = 14,
   locale = "th",
+  // Kept for the positional call contract with bubbleLayoutOptimizer (callers pass
+  // false + scanlineRatios); hyphenation is not wired into this fit path yet.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   enableHyphenation = false,
   scanlineRatios?: number[],
 ): BubbleTextFit {
@@ -435,7 +438,6 @@ export function fitTextInAdaptiveBubble(
   minFontSize = 14,
   maxScale = 3.0,
   locale = "th",
-  enableHyphenation = false,
 ): AdaptiveBubbleLayout {
   let curW = width;
   let curH = height;

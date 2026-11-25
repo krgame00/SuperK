@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { ImageLayerCanvas } from "@/components/editing/ImageLayerCanvas";
 import {
@@ -6,8 +6,6 @@ import {
   readPageImageLayers,
   savePageImageLayers,
   clearAllImageLayers,
-  flushImageLayersToIndexedDB,
-  loadImageLayersFromIndexedDB,
   normalizePageKey,
 } from "@/lib/editing/imageLayerStore";
 import { applyTranslationOverlay } from "@/lib/translationOverlay";

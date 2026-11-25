@@ -705,11 +705,9 @@ export function applyGeminiMaskReviewToSuggestion(
   const rh = rect.height;
 
   // Estimate background luma if originalCrop is available so addBoxes snap to strokes when possible
-  let bgMedian = 240;
   let luma: Float32Array | null = null;
   if (originalCrop && originalCrop.width === rw && originalCrop.height === rh) {
     luma = new Float32Array(rw * rh);
-    const samples: number[] = [];
     for (let i = 0; i < rw * rh; i++) {
       const p = i * 4;
       const yVal =
@@ -717,9 +715,7 @@ export function applyGeminiMaskReviewToSuggestion(
         0.587 * originalCrop.data[p + 1] +
         0.114 * originalCrop.data[p + 2];
       luma[i] = yVal;
-      if (i % 4 === 0) samples.push(yVal);
     }
-    bgMedian = computeMedian(samples);
   }
 
   for (const box of review.addBoxes) {

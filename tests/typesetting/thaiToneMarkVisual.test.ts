@@ -1,7 +1,6 @@
 import { describe, expect, it, beforeEach, vi, afterEach } from "vitest";
 import {
   fitTextToBubbleContour,
-  segmentThaiAwareTokens,
   type BubbleShapeInput,
 } from "@/lib/typeset/BubbleTypesetEngine";
 import { measureTextSelection } from "@/lib/textSelectionBounds";
@@ -183,10 +182,7 @@ describe("Thai Tone-Mark Visual Layout & Typesetting Suite", () => {
       const lineHeight = fontSize * lineHeightRatio; // 26px
 
       // Line 1 has low descenders (เช่น 'ผู้', 'ปู่' - descent ~8px below baseline)
-      const line1Descent = 8;
       // Line 2 has high stacked tone marks (เช่น 'ที่', 'นี้' - ascent ~22px above baseline)
-      const line2Ascent = 22;
-
       const line1Middle = 50;
       const line2Middle = line1Middle + lineHeight;
 

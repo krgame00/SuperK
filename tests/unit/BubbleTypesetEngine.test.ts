@@ -31,7 +31,7 @@ describe("BubbleTypesetEngine", () => {
     };
 
     // Mock measurement function: each char takes ~0.6 * fontSize in width
-    const measureFn = (text: string, fontSize: number, _fontFamily?: string) => text.length * fontSize * 0.6;
+    const measureFn = (text: string, fontSize: number) => text.length * fontSize * 0.6;
 
     const result = fitTextToBubbleContour(
       measureFn,
@@ -48,7 +48,7 @@ describe("BubbleTypesetEngine", () => {
 
     // Each line should not exceed its slice's allowed maxWidth
     for (const line of result.lines) {
-      const lineW = measureFn(line.text, result.fontSize, "Noto Sans Thai");
+      const lineW = measureFn(line.text, result.fontSize);
       expect(lineW).toBeLessThanOrEqual(line.maxWidth + 1.0);
     }
   });

@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyTranslationError,
-  DIAGNOSTIC_TAXONOMY,
-} from "../../lib/translation/diagnostics";
+  } from "../../lib/translation/diagnostics";
 import { parseRetryAfter } from "../../lib/translation/requestError";
 
 describe("Translation Failure Diagnostics Taxonomy", () => {

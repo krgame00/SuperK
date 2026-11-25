@@ -7,7 +7,7 @@ import {
   STANDARD_TRANSLATED_TEXT_SHADOW,
 } from "@/lib/colorMatching/resolveTextStyle";
 import { extractTextColors } from "@/lib/colorMatching/sampleTextColors";
-import { inferTextStyleCategory } from "@/lib/colorMatching/nearbyStyleFallback";
+
 import type { ColorSampleRegion, TextStyleProfile } from "@/lib/colorMatching/types";
 import type { TranslatedBubble } from "@/lib/translationOverlay";
 

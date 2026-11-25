@@ -1,9 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   UndoManager,
-  DEFAULT_MAX_UNDO_STATES,
-  DEFAULT_MAX_RASTER_UNDO_STATES,
-} from "../../lib/undoManager";
+  } from "../../lib/undoManager";
 
 describe("UndoManager Dual-Tier Memory Management", () => {
   let manager: UndoManager;

@@ -1766,7 +1766,7 @@ async function compressImageForTranslation(
     [markPageDirty],
   );
 
-  const buildPreviousPagesContext = useCallback((_pageIndex: number): string | undefined => {
+  const buildPreviousPagesContext = useCallback((): string | undefined => {
     return undefined;
   }, []);
 
@@ -2912,7 +2912,6 @@ async function compressImageForTranslation(
           cropOutcome: lastCropOutcomeRef.current,
           totalTokens: responseMeta?.usageMetadata?.totalTokenCount,
           elapsedMs: responseMeta?.elapsedMs,
-          // eslint-disable-next-line react-hooks/purity
           at: Date.now(),
         },
       }));

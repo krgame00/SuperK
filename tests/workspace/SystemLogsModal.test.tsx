@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { SystemLogsModal } from "@/components/workspace/SystemLogsModal";
 import type { LogEntry } from "@/lib/logger/types";
 

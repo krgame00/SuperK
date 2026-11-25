@@ -3,7 +3,6 @@ import {
   resolveBubbleTextStyle,
   selectAdaptiveReadableStyle,
   strengthenSourceAccentOutline,
-  deriveSourceAccentColor,
   SUBTLE_ARTWORK_SHADOW,
 } from "../../lib/colorMatching/resolveTextStyle";
 import type { TranslatedBubble } from "../../lib/translationOverlay";

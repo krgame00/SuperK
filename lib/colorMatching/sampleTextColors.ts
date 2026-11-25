@@ -408,8 +408,6 @@ export function extractTextColors(
   let darkInkMinY = Infinity;
   let darkInkMaxY = -Infinity;
 
-  let whiteSumX = 0;
-  let whiteSumY = 0;
   let whiteMinX = Infinity;
   let whiteMaxX = -Infinity;
   let whiteMinY = Infinity;
@@ -449,7 +447,6 @@ export function extractTextColors(
   let darkInkInnerCoreCount = 0;
   let chromaticDistSum = 0;
   let whiteDistSum = 0;
-  let darkInkDistSum = 0;
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -539,15 +536,12 @@ export function extractTextColors(
         whiteCount++;
         whiteDistSum += distFromCenter;
         if (isInnerCore) whiteInnerCoreCount++;
-        whiteSumX += x;
-        whiteSumY += y;
         whiteMinX = Math.min(whiteMinX, x);
         whiteMaxX = Math.max(whiteMaxX, x);
         whiteMinY = Math.min(whiteMinY, y);
         whiteMaxY = Math.max(whiteMaxY, y);
       } else if (lum <= 65) {
         darkInkCount++;
-        darkInkDistSum += distFromCenter;
         if (isInnerCore) darkInkInnerCoreCount++;
         darkInkSumX += x;
         darkInkSumY += y;

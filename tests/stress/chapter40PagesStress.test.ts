@@ -204,13 +204,11 @@ describe("40-Page Manga Chapter Stress & Performance Test Suite", () => {
 
       const startTime = performance.now();
 
-      let totalFindings = 0;
       let totalMeasurements = 0;
 
       for (const pageInput of geometryPages) {
         const result = assessPageGeometry(pageInput);
         expect(result.unavailableReason).toBeUndefined();
-        totalFindings += result.findings.length;
         totalMeasurements += result.measurements?.length ?? 0;
       }
 

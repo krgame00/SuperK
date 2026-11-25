@@ -5,9 +5,7 @@ import { resolveCanvasFontFamily } from "@/lib/translationOverlay";
 import {
   BUILTIN_MANGA_FONTS,
   sanitizeCustomFontFamilyName,
-  registerCustomFontFromFile,
   listCustomFonts,
-  removeCustomFont,
   clearAllCustomFontsForTests,
 } from "@/lib/customFonts";
 

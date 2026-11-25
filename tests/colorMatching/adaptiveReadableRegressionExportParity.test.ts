@@ -6,8 +6,8 @@ import {
   recomputeAdaptiveReadableOnLayoutCommit,
 } from "@/lib/colorMatching/resolveTextStyle";
 import { extractTextColors } from "@/lib/colorMatching/sampleTextColors";
-import { applyNearbyStyleFallbacks, inferTextStyleCategory } from "@/lib/colorMatching/nearbyStyleFallback";
-import type { ColorSampleRegion, TextStyleProfile } from "@/lib/colorMatching/types";
+
+import type { ColorSampleRegion } from "@/lib/colorMatching/types";
 import type { TranslatedBubble } from "@/lib/translationOverlay";
 
 function createSolidSample(r: number, g: number, b: number, width = 60, height = 60): ColorSampleRegion {

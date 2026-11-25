@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { extractTextColors } from "@/lib/colorMatching/sampleTextColors";
 import { resolveBubbleTextStyle, preserveManualStyleProfiles } from "@/lib/colorMatching/resolveTextStyle";
 import { applyNearbyStyleFallbacks, inferTextStyleCategory } from "@/lib/colorMatching/nearbyStyleFallback";
-import type { ColorSampleRegion, TextStyleProfile } from "@/lib/colorMatching/types";
+import type { ColorSampleRegion } from "@/lib/colorMatching/types";
 import type { TranslatedBubble } from "@/lib/translationOverlay";
 
 function createSyntheticRegion(

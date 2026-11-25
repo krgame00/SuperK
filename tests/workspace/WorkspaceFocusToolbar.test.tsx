@@ -80,7 +80,7 @@ vi.mock("@/components/cleaning/MaskLegend", () => ({
 
 vi.mock("@/components/cleaning/CleaningToolbar", () => ({
   CleaningToolbar: vi.fn(
-    ({ hasTranslated, layer, onClean, onEditMask, onLayerChange, children }: ComponentProps<typeof CleaningToolbar>) => (
+    ({ hasTranslated, layer, onClean, children }: ComponentProps<typeof CleaningToolbar>) => (
       <section
         aria-label="Cleaning toolbar"
         data-has-translated={String(hasTranslated)}

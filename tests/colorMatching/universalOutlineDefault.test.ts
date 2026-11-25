@@ -5,7 +5,6 @@ import {
 } from "@/lib/colorMatching/sampleTextColors";
 import { resolveBubbleTextStyle } from "@/lib/colorMatching/resolveTextStyle";
 import type { TranslatedBubble, OverlayTextStyle } from "@/lib/translationOverlay";
-import type { TextStyleProfile } from "@/lib/colorMatching/types";
 
 describe("Universal Outline Default & Bidirectional Stroke Detection", () => {
   const globalStyle: OverlayTextStyle = {

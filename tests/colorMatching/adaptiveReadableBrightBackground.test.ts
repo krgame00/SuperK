@@ -4,7 +4,6 @@ import {
   selectAdaptiveReadableStyle,
 } from "@/lib/colorMatching/resolveTextStyle";
 import type { TranslatedBubble } from "@/lib/translationOverlay";
-import type { TextStyleProfile } from "@/lib/colorMatching/types";
 
 describe("Ticket 13: Adaptive Readable on Bright & White Backgrounds", () => {
   it("selects white fill with safe dark outline on bright/white backgrounds for Adaptive Readable fallback", () => {

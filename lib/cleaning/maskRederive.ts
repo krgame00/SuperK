@@ -162,7 +162,6 @@ export function rederiveRegionMaskFromContent(params: {
   for (let i = 0; i < total; i++) {
     const p = i * 4;
     const wasActive = isActive(i);
-    const inZone = zone[i] === 1 || zone[i] === 3;
     if (zone[i] === 2) {
       // Outside paper: nothing to clean here, ever.
       if (wasActive) {

@@ -28,7 +28,7 @@ vi.mock("@/lib/translationOverlay", () => ({
             containerOverride: restArgs[6],
           }
         : (firstArg as Record<string, unknown>);
-      const { _bubbles, viewMode, _pageIndex, _setTranslationResult, onComplete, containerOverride } = normalizedCall as {
+      const { onComplete, containerOverride } = normalizedCall as {
         _bubbles?: unknown;
         viewMode?: "single" | "scroll" | "offscreen";
         _pageIndex?: number;

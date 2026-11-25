@@ -23,8 +23,7 @@ import {
   getRememberedDesktopPath,
   setRememberedDesktopPath,
   openRememberedDesktopDirectory,
-  EXPORT_DESKTOP_PATH_KEY,
-} from "@/lib/export/saveLocation";
+  } from "@/lib/export/saveLocation";
 
 const storageValues = new Map<string, string>();
 const storage = {

@@ -5868,3 +5868,16 @@ Status: **VERIFIED WORKING (Unit tests, TypeScript, ESLint passed; pushed to ori
   - `npx tsc --noEmit`: exited 0.
   - `npx eslint --quiet components/workspace/WorkspaceHeaderHost.tsx lib/ui/zLayers.ts`: exited 0.
   - `npx vitest run tests/workspace/WorkspaceHeaderHost.test.tsx tests/workspace/WorkspaceToolbarDocking.test.tsx`: 14 passed / 0 failed (2 files).
+
+## ESLint unused-vars cleanup (159 → 4 warnings) — 2026-11-25
+
+Status: **VERIFIED WORKING (Applied on top of 173be43, full suite green, pushed to origin/main)**.
+
+- **Scope**: all 154 `@typescript-eslint/no-unused-vars` warnings plus 1 unused eslint-disable directive removed. Repo lint went from 0 errors / 159 warnings to 0 errors / 4 warnings. The 4 remaining warnings are deliberately untouched react-hooks findings (3 exhaustive-deps + 1 incompatible-library) whose dep arrays are tuned behavior.
+- **Production changes (behavior-preserving)**: removed dead accumulators in sampleTextColors (`whiteSumX`/`whiteSumY`/`darkInkDistSum`) and aiMaskInspector (`bgMedian` + its samples buffer); removed dead `appendToken` helper and unused `enableHyphenation` parameter in textBoxWidthLayout / `fitTextInAdaptiveBubble`; removed `shouldUseMonochromeMangaStyle`'s unused `category` parameter (+ 5 call sites in resolveTextStyle); removed redundant destructured `validateResponse` in requestGeminiRoutes; removed `buildPreviousPagesContext`'s unused page-index parameter; removed unused destructured bindings in useWorkspaceController, useWorkspaceTextActions, maskRederive, and the translate-text route.
+- **Intentional keeps (documented suppressions, 2)**: `fitTextForBubble`'s `enableHyphenation` parameter (positional contract with bubbleLayoutOptimizer) and `customFonts`'s `_buffer` destructure (omit-from-metadata pattern), each with an `eslint-disable-next-line` + rationale comment.
+- **Tests**: removed unused imports and trimmed unused destructured bindings across test files.
+- **Verification Evidence**:
+  - ESLint (`npm run lint`): 0 errors / 4 warnings.
+  - TypeScript (`npx tsc --noEmit`): exited 0.
+  - Full vitest suite (`npx vitest run`): 2,452 passed / 1 skipped / 0 failed (296 files passed, 1 skipped).

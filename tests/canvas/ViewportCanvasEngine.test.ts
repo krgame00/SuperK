@@ -2,8 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ViewportCanvasEngine,
   DEFAULT_TILE_HEIGHT,
-  WEBTOON_LONG_STRIP_THRESHOLD,
-} from "../../lib/canvas/ViewportCanvasEngine";
+  } from "../../lib/canvas/ViewportCanvasEngine";
 
 describe("ViewportCanvasEngine", () => {
   it("detects ultra long strip threshold correctly", () => {

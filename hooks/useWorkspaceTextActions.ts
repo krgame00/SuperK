@@ -32,7 +32,6 @@ export function useWorkspaceTextActions({
   activeBubbles,
   bubbleCacheRef,
   translatedImages,
-  translationCacheRevision,
   setWorkspaceLayer,
   glossary,
   setGlossary,

@@ -1,8 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   renderWarpedText,
-  type WarpConfig,
-  type WarpEffectType,
   getNextWarpType,
   getWarpLabel,
 } from "../../lib/tools/TextWarpRenderer";

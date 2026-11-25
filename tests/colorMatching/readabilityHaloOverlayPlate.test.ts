@@ -5,7 +5,6 @@ import {
   STANDARD_TRANSLATED_TEXT_SHADOW,
 } from "@/lib/colorMatching/resolveTextStyle";
 import type { TranslatedBubble } from "@/lib/translationOverlay";
-import type { TextStyleProfile } from "@/lib/colorMatching/types";
 
 describe("Ticket 15: Readability Halo, Overlay Plate & Review Escalation", () => {
   it("uses the uniform shadow instead of a per-region readability halo on severe contrast failure", () => {

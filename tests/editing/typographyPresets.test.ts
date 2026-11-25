@@ -3,8 +3,7 @@ import {
   TYPOGRAPHY_PRESETS,
   getTypographyPreset,
   detectActiveTypographyPreset,
-  type TypographyPresetId,
-} from "@/lib/editing/typographyPresets";
+  } from "@/lib/editing/typographyPresets";
 import type { TextLayer } from "@/lib/editing/commands";
 
 describe("Typography Presets", () => {

@@ -428,6 +428,8 @@ export async function listCustomFonts(): Promise<CustomUploadedFont[]> {
 
   return Array.from(memoryFontStore.values())
     .sort((a, b) => a.createdAt - b.createdAt)
+    // _buffer is destructured only to omit it from the returned metadata.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     .map(({ buffer: _buffer, ...meta }) => meta);
 }
 

@@ -2,7 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import { useTranslation } from "@/hooks/useTranslation";
-import { applyTranslationOverlay } from "@/lib/translationOverlay";
+
 import { deleteAsset } from "@/lib/projectStore";
 
 vi.mock("@/lib/translationOverlay", () => ({
@@ -18,7 +18,7 @@ vi.mock("@/lib/translationOverlay", () => ({
             containerOverride: restArgs[6],
           }
         : (firstArg as Record<string, unknown>);
-      const { _bubbles, viewMode, _pageIndex, _setTranslationResult, onComplete, containerOverride } = normalizedCall as {
+      const { viewMode, onComplete } = normalizedCall as {
         _bubbles?: unknown;
         viewMode?: "single" | "scroll" | "offscreen";
         _pageIndex?: number;

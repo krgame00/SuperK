@@ -37,7 +37,7 @@ export function usesAutoWhiteArtwork(bubble: TranslatedBubble): boolean {
       profile.bwContrastMode) return false;
   const category = inferTextStyleCategory(bubble);
   if (category === "overlay_subtitle") return true;
-  if (shouldUseMonochromeMangaStyle(profile, category)) return false;
+  if (shouldUseMonochromeMangaStyle(profile)) return false;
   return isChromatic(profile.fill) || isChromatic(profile.outline) ||
     isChromatic(profile.sourceAccentColor) ||
     (profile.evidenceState === "admitted" && (profile.fillConfidence ?? 1) >= .80 &&
@@ -49,7 +49,7 @@ export function needsWhiteArtworkPolicyRefresh(bubble: TranslatedBubble): boolea
   const profile = bubble.styleProfile;
   return usesAutomaticShadowPolicy(bubble) || usesAutoWhiteArtwork(bubble) || !!(profile && !bubble.deleted && profile.source !== "manual" &&
     (profile.ownershipMode === "readable" || profile.ownershipMode === "source_faithful") &&
-    shouldUseMonochromeMangaStyle(profile, inferTextStyleCategory(bubble)));
+    shouldUseMonochromeMangaStyle(profile));
 }
 
 function resolveAutoWhiteArtwork(profile: TextStyleProfile, category: TextStyleCategory, minConfidence: number): ResolvedTextStyle {
@@ -97,7 +97,7 @@ export function usesAutoSourceFill(bubble: TranslatedBubble, minConfidence = 0.8
     (!profile.ownershipMode || profile.ownershipMode === "auto") &&
     profile.evidenceState === "admitted" &&
     (profile.fillConfidence ?? 1) >= minConfidence &&
-    !shouldUseMonochromeMangaStyle(profile, inferTextStyleCategory(bubble)) &&
+    !shouldUseMonochromeMangaStyle(profile) &&
     !["background-contamination", "insufficient-evidence", "low-readability"].includes(profile.fallbackReason ?? "");
 }
 
@@ -164,7 +164,6 @@ function cloneStandardShadow(): TextShadowStyle {
 
 export function shouldUseMonochromeMangaStyle(
   profile: TextStyleProfile,
-  _category: TextStyleCategory,
 ): boolean {
   return (
     profile.isMonochromePage === true &&
@@ -708,7 +707,7 @@ function resolveBubbleTextStyleBase(
     profile.bwContrastMode === "auto" ||
     (profile.ownershipMode !== "readable" &&
       profile.ownershipMode !== "source_faithful" &&
-      shouldUseMonochromeMangaStyle(profile, category))
+      shouldUseMonochromeMangaStyle(profile))
   ) {
     const bgLum = profile.backgroundLuminance;
     const validSamples = (profile.backgroundLuminanceSamples ?? []).filter(
@@ -960,7 +959,7 @@ export function resolveBubbleTextStyle(
   if (!usesAutomaticShadowPolicy(bubble)) return style;
   const profile = bubble.styleProfile;
   const category = inferTextStyleCategory(bubble);
-  const monochrome = profile && shouldUseMonochromeMangaStyle(profile, category) &&
+  const monochrome = profile && shouldUseMonochromeMangaStyle(profile) &&
     profile.ownershipMode !== "readable" && category !== "overlay_subtitle" && category !== "sfx";
   const artwork = !monochrome && (category === "overlay_subtitle" || category === "sfx" ||
     (category === "unknown" && !!profile && (isChromatic(profile.fill) || isChromatic(profile.outline) ||

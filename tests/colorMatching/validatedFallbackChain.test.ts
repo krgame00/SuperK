@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { applyNearbyStyleFallbacks } from "@/lib/colorMatching/nearbyStyleFallback";
 import { resolveBubbleTextStyle } from "@/lib/colorMatching/resolveTextStyle";
 import type { TranslatedBubble } from "@/lib/translationOverlay";
-import type { TextStyleProfile } from "@/lib/colorMatching/types";
 
 describe("Ticket 10: Validated Fallback Chain & Nearby Admission", () => {
   it("rejects an anchor candidate that has high confidence but failed evidence admission (evidenceState: rejected)", () => {

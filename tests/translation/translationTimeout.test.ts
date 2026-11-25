@@ -158,9 +158,7 @@ describe("Translation Timeout & Single Deadline Protection (PR-3)", () => {
       { model: "model-3", apiKey: "key-3", keyId: "id-3", keyIndex: 2, keySlot: 3 },
     ];
 
-    let callCount = 0;
     const fetchImpl: typeof fetch = vi.fn(async () => {
-      callCount++;
       // Each request takes 15,000ms and returns 500
       simulatedTime += 15_000;
       return {

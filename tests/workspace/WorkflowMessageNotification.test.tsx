@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, act } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import WorkspacePage from "@/src/app/page";
 import { applyTranslationOverlay, type TranslatedBubble } from "@/lib/translationOverlay";
