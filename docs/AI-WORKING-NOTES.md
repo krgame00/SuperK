@@ -5857,3 +5857,14 @@ Status: **VERIFIED WORKING (Unit tests, TypeScript, ESLint passed; pushed to ori
   - `npx tsc --noEmit`: exited 0.
   - `npx eslint --quiet components/cleaning/RemnantReviewPanel.tsx`: exited 0.
   - `npx vitest run tests/cleaning/RemnantReviewPanel.test.tsx`: 23 passed / 0 failed (1 file).
+
+## WorkspaceHeaderHost Stacking Context Fix (Dropdowns Behind Dock) — 2026-11-25
+
+Status: **VERIFIED WORKING (Unit tests, TypeScript, ESLint passed; pushed to origin/main and rebuilt standalone)**.
+
+- **Root cause (`components/workspace/WorkspaceHeaderHost.tsx`)**: `<header>` used `z-50`, trapping its dropdown menus (`WorkspaceExportMenu`, `WorkspaceMenu`) inside a `z-50` stacking context below `data-page-controls-dock` (`z-[55]`), causing the `ส่งออก` and `เครื่องมือ` menus to render underneath the top dock.
+- **Fix**: Raised `<header>` to `z-[60]` (`Z_LAYERS.menu`) and documented `header 60` in `lib/ui/zLayers.ts`. Mobile menu portal (`z-[60]`/`z-[61]`) still stacks above `<header>` via body portal order.
+- **Verification Evidence**:
+  - `npx tsc --noEmit`: exited 0.
+  - `npx eslint --quiet components/workspace/WorkspaceHeaderHost.tsx lib/ui/zLayers.ts`: exited 0.
+  - `npx vitest run tests/workspace/WorkspaceHeaderHost.test.tsx tests/workspace/WorkspaceToolbarDocking.test.tsx`: 14 passed / 0 failed (2 files).

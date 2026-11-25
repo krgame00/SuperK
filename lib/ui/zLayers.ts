@@ -20,8 +20,9 @@
  *   is never covered).
  * - dock (55): the page-controls dock. Above panels/popovers so its
  *   menus are reachable, below top-level menus.
- * - menu (60): top-level menus rendered at the root (mobile menu
- *   backdrop 60, its panel 61 = menu + 1).
+ * - menu (60): workspace header & top-level menus rendered at the root
+ *   (header 60 so header dropdowns clear dock 55; mobile menu backdrop 60,
+ *   its panel 61 = menu + 1).
  * - modalBackdrop (90) / modal (100): full-screen dialogs. Every modal
  *   uses this tier (Settings, export gates, transcript, logs), so modal
  *   stacking order is decided by DOM order alone.

@@ -245,7 +245,7 @@ export function WorkspaceHeaderHost({
 
   return (
     <header
-      className={`w-full bg-background/95 backdrop-blur-md border-b border-border/80 h-12 flex justify-between items-center px-3 sm:px-4 z-50 fixed top-0 select-none transition-transform duration-300 ${
+      className={`w-full bg-background/95 backdrop-blur-md border-b border-border/80 h-12 flex justify-between items-center px-3 sm:px-4 z-[60] fixed top-0 select-none transition-transform duration-300 ${
         isFocusMode ? "-translate-y-full pointer-events-none" : "translate-y-0"
       }`}
     >
