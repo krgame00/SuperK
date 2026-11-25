@@ -37,3 +37,54 @@ describe("PageFilmstrip Focus Mode", () => {
     expect(nav.className).toContain("pointer-events-none");
   });
 });
+
+describe("PageFilmstrip per-page status badges (P2-3)", () => {
+  const statusProps = {
+    pages: [
+      { url: "/page-1.png", name: "Page 1" },
+      { url: "/page-2.png", name: "Page 2" },
+    ],
+    currentPage: 0,
+    onSelectPage: vi.fn(),
+    onDeletePage: vi.fn(),
+    onReorderPages: vi.fn(),
+    onAddImages: vi.fn(),
+    onClearAll: vi.fn(),
+    isCollapsed: false,
+    onToggleCollapse: vi.fn(),
+  };
+
+  test("shows a translated badge only on pages with a recorded success", () => {
+    render(
+      <PageFilmstrip
+        {...statusProps}
+        pageTranslationSuccesses={{
+          "/page-2.png": {
+            status: "translated",
+            ladderStep: "crop",
+            model: "gemini-3.5-flash-lite",
+            at: 1,
+          },
+        }}
+      />,
+    );
+    expect(screen.getByTestId("page-translated-badge-1")).toBeInTheDocument();
+    expect(screen.queryByTestId("page-translated-badge-0")).not.toBeInTheDocument();
+  });
+
+  test("failure badge takes precedence over the translated badge", () => {
+    render(
+      <PageFilmstrip
+        {...statusProps}
+        pageTranslationSuccesses={{
+          "/page-1.png": { status: "translated", at: 1 },
+        }}
+        pageTranslationFailures={{
+          "/page-1.png": { status: "failed", message: "boom", at: 1 },
+        }}
+      />,
+    );
+    expect(screen.getByTestId("page-failure-badge-0")).toBeInTheDocument();
+    expect(screen.queryByTestId("page-translated-badge-0")).not.toBeInTheDocument();
+  });
+});

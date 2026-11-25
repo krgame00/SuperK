@@ -450,3 +450,40 @@ describe("RemnantReviewPanel", () => {
     });
   });
 });
+
+describe("RemnantReviewPanel translation outcome summary (P2-2)", () => {
+  test("shows the last successful ladder summary when the page has one", () => {
+    render(
+      <RemnantReviewPanel
+        inspection={inspected([candidate()])}
+        regions={[region]}
+        pageTranslationSuccess={{
+          status: "translated",
+          ladderStep: "crop",
+          model: "gemini-3.5-flash-lite",
+          cropOutcome: "crop:recovered",
+          totalTokens: 3533,
+          at: 1,
+        }}
+      />,
+    );
+    const line = screen.getByTestId("remnant-translation-success");
+    expect(line).toHaveTextContent("แปลล่าสุด: crop");
+    expect(line).toHaveTextContent("gemini-3.5-flash-lite");
+    expect(line).toHaveTextContent("3,533 tokens");
+    expect(line).toHaveTextContent("crop:recovered");
+  });
+
+  test("failure box takes precedence over the success summary", () => {
+    render(
+      <RemnantReviewPanel
+        inspection={inspected([candidate()])}
+        regions={[region]}
+        pageTranslationSuccess={{ status: "translated", ladderStep: "full", at: 1 }}
+        pageTranslationFailure={{ status: "failed", message: "boom", at: 2 }}
+      />,
+    );
+    expect(screen.getByTestId("remnant-translation-failure")).toBeInTheDocument();
+    expect(screen.queryByTestId("remnant-translation-success")).not.toBeInTheDocument();
+  });
+});

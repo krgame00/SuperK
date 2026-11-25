@@ -67,8 +67,11 @@ export function normalizeTranslationErrorCode(
     return "safety";
   if (normalized.includes("network") || normalized.includes("fetch"))
     return "network";
-  if (normalized.includes("cancel") || normalized.includes("abort"))
-    return "cancelled";
+  // Only an explicit cancellation maps to "cancelled". A server
+  // REQUEST_ABORTED means the request was interrupted (client
+  // disconnect, network drop, upstream abort). It is not proof the
+  // user pressed cancel in this UI (checklist P0-5).
+  if (normalized.includes("cancel")) return "cancelled";
   if (
     normalized.includes("bad") ||
     normalized.includes("invalid") ||
@@ -234,12 +237,109 @@ export async function readTranslationResponse<T>(
   return data as T;
 }
 
+/**
+ * Explicit abort reasons passed to AbortController.abort() by the
+ * translation flows. Only aborts carrying one of these reasons (or a
+ * TranslationRequestError with category/code "cancelled") count as
+ * intentional. A bare AbortError — a request aborted by the network
+ * stack, a server-side 499, or a stall watchdog — is an unexpected
+ * interruption and must surface as a failure, not a silent cancel
+ * (UI audit checklist P0-5).
+ */
+export const TRANSLATION_ABORT_REASON = {
+  userCancel: "superk:user-cancel",
+  unmount: "superk:unmount",
+  quota: "superk:quota",
+  batchComplete: "superk:batch-complete",
+} as const;
+
+const KNOWN_ABORT_REASONS: ReadonlySet<string> = new Set(
+  Object.values(TRANSLATION_ABORT_REASON),
+);
+
+/** The known abort reason carried by the error itself or by the signal. */
+export function getAbortReason(
+  error: unknown,
+  signal?: AbortSignal | null,
+): string | null {
+  if (typeof error === "string" && KNOWN_ABORT_REASONS.has(error)) {
+    return error;
+  }
+  if (
+    signal?.aborted &&
+    typeof signal.reason === "string" &&
+    KNOWN_ABORT_REASONS.has(signal.reason)
+  ) {
+    return signal.reason;
+  }
+  return null;
+}
+
+/** True only when the user explicitly cancelled this operation. */
+export function isExplicitUserCancelError(
+  error: unknown,
+  signal?: AbortSignal | null,
+): boolean {
+  if (
+    error instanceof TranslationRequestError &&
+    (error.category === "cancelled" || error.code === "cancelled")
+  ) {
+    return true;
+  }
+  return getAbortReason(error, signal) === TRANSLATION_ABORT_REASON.userCancel;
+}
+
+/**
+ * True when an abort was initiated on purpose by this app (user cancel,
+ * unmount cleanup, quota stop, batch teardown) and therefore must not be
+ * recorded as a translation failure. Bare AbortErrors return false.
+ */
+export function isSilentAbortError(
+  error: unknown,
+  signal?: AbortSignal | null,
+): boolean {
+  if (isExplicitUserCancelError(error, signal)) return true;
+  return getAbortReason(error, signal) !== null;
+}
+
+function isAbortErrorShape(error: unknown): boolean {
+  if (typeof error === "string") return KNOWN_ABORT_REASONS.has(error);
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return true;
+  }
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    (error as { name: string }).name === "AbortError"
+  );
+}
+
+/**
+ * True when this error is an interruption of the operation itself (an
+ * abort carrying a known reason), as opposed to a real request failure
+ * that merely happened before the operation was aborted. Batch failure
+ * bookkeeping uses this to tell the page that CAUSED a quota stop (its
+ * TranslationRequestError must be recorded so the cooldown/retry group
+ * works) apart from bystander pages whose in-flight requests were
+ * aborted BY that stop (which must not be recorded).
+ */
+export function isIntentionalAbortInterruption(
+  error: unknown,
+  signal?: AbortSignal | null,
+): boolean {
+  return isAbortErrorShape(error) && getAbortReason(error, signal) !== null;
+}
+
 export function isUserCancelledError(error: unknown): boolean {
   if (!error) return false;
   if (
     error instanceof TranslationRequestError &&
     (error.category === "cancelled" || error.code === "cancelled")
   ) {
+    return true;
+  }
+  if (typeof error === "string" && KNOWN_ABORT_REASONS.has(error)) {
     return true;
   }
   if (error instanceof DOMException && error.name === "AbortError") {

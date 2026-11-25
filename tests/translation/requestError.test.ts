@@ -1,11 +1,16 @@
 import { describe, expect, it, test } from "vitest";
 
 import {
+  getAbortReason,
   getTranslationRetryDelay,
+  isExplicitUserCancelError,
+  isIntentionalAbortInterruption,
+  isSilentAbortError,
   isUserCancelledError,
   normalizeTranslationErrorCode,
   readTranslationResponse,
   shouldAutoRetryTranslation,
+  TRANSLATION_ABORT_REASON,
   TranslationRequestError,
 } from "@/lib/translation/requestError";
 
@@ -210,5 +215,99 @@ describe("isUserCancelledError", () => {
 
   it("returns false for ordinary runtime errors", () => {
     expect(isUserCancelledError(new Error("Network failed"))).toBe(false);
+  });
+
+  it("identifies an explicit abort reason string as user cancelled (loop control)", () => {
+    expect(isUserCancelledError(TRANSLATION_ABORT_REASON.userCancel)).toBe(true);
+  });
+});
+
+describe("abort reason taxonomy (P0-5)", () => {
+  it("does not treat a bare AbortError as a silent abort", () => {
+    const err = new DOMException("The user aborted a request.", "AbortError");
+    expect(isSilentAbortError(err)).toBe(false);
+    expect(isExplicitUserCancelError(err)).toBe(false);
+    expect(getAbortReason(err)).toBeNull();
+  });
+
+  it("does not treat a bare AbortError as silent when the signal aborted without a known reason", () => {
+    const controller = new AbortController();
+    controller.abort();
+    const err = new DOMException("Aborted", "AbortError");
+    expect(isSilentAbortError(err, controller.signal)).toBe(false);
+    expect(isExplicitUserCancelError(err, controller.signal)).toBe(false);
+  });
+
+  it("recognises the user-cancel reason when it is thrown as the error itself", () => {
+    expect(isExplicitUserCancelError(TRANSLATION_ABORT_REASON.userCancel)).toBe(true);
+    expect(isSilentAbortError(TRANSLATION_ABORT_REASON.userCancel)).toBe(true);
+  });
+
+  it("recognises the user-cancel reason carried by the signal", () => {
+    const signal = {
+      aborted: true,
+      reason: TRANSLATION_ABORT_REASON.userCancel,
+    } as AbortSignal;
+    expect(isExplicitUserCancelError(new Error("fetch failed"), signal)).toBe(true);
+    expect(getAbortReason(new Error("fetch failed"), signal)).toBe(
+      TRANSLATION_ABORT_REASON.userCancel,
+    );
+  });
+
+  it("treats unmount, quota, and batch-complete aborts as silent but not user cancels", () => {
+    for (const reason of [
+      TRANSLATION_ABORT_REASON.unmount,
+      TRANSLATION_ABORT_REASON.quota,
+      TRANSLATION_ABORT_REASON.batchComplete,
+    ]) {
+      expect(isSilentAbortError(reason)).toBe(true);
+      expect(isExplicitUserCancelError(reason)).toBe(false);
+    }
+  });
+
+  it("treats TranslationRequestError with cancelled code as an explicit user cancel", () => {
+    const err = new TranslationRequestError("cancelled", 0, "cancelled");
+    expect(isExplicitUserCancelError(err)).toBe(true);
+    expect(isSilentAbortError(err)).toBe(true);
+  });
+
+  it("does not treat a server REQUEST_ABORTED error as a cancel", () => {
+    const err = new TranslationRequestError(
+      "Translation request was aborted",
+      499,
+      "REQUEST_ABORTED",
+    );
+    expect(isSilentAbortError(err)).toBe(false);
+    expect(isExplicitUserCancelError(err)).toBe(false);
+  });
+
+  it("returns no reason for unrelated errors", () => {
+    expect(getAbortReason(new Error("boom"))).toBeNull();
+    expect(isSilentAbortError(new Error("boom"))).toBe(false);
+  });
+
+  it("distinguishes the failure that caused a quota stop from bystander interruptions", () => {
+    const quotaSignal = {
+      aborted: true,
+      reason: TRANSLATION_ABORT_REASON.quota,
+    } as AbortSignal;
+    // The page that hit quota produced a real request error: not an interruption.
+    const quotaError = new TranslationRequestError("quota", 429, "GEMINI_QUOTA");
+    expect(isIntentionalAbortInterruption(quotaError, quotaSignal)).toBe(false);
+    // Bystander pages aborted BY the stop: interruptions, in both shapes.
+    expect(
+      isIntentionalAbortInterruption(TRANSLATION_ABORT_REASON.quota, quotaSignal),
+    ).toBe(true);
+    expect(
+      isIntentionalAbortInterruption(
+        new DOMException("Aborted", "AbortError"),
+        quotaSignal,
+      ),
+    ).toBe(true);
+    // A bare AbortError with no known reason anywhere: not intentional.
+    const bareSignal = { aborted: true, reason: new DOMException("Aborted", "AbortError") } as unknown as AbortSignal;
+    expect(
+      isIntentionalAbortInterruption(new DOMException("Aborted", "AbortError"), bareSignal),
+    ).toBe(false);
   });
 });

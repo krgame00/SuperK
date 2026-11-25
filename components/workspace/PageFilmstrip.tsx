@@ -10,7 +10,10 @@ import {
 } from "react";
 import { Check, ChevronDown, ChevronUp, Trash2, Upload } from "lucide-react";
 import { generateThumbnail } from "@/lib/thumbnail";
-import type { PageTranslationFailure } from "@/hooks/useTranslation";
+import type {
+  PageTranslationFailure,
+  PageTranslationSuccess,
+} from "@/hooks/useTranslation";
 
 export interface WorkspacePageItem {
   url: string;
@@ -29,6 +32,7 @@ export interface PageFilmstripProps {
   onToggleCollapse: () => void;
   isFocusMode?: boolean;
   pageTranslationFailures?: Record<string, PageTranslationFailure>;
+  pageTranslationSuccesses?: Record<string, PageTranslationSuccess>;
 }
 
 export function PageFilmstrip({
@@ -43,6 +47,7 @@ export function PageFilmstrip({
   onToggleCollapse,
   isFocusMode = false,
   pageTranslationFailures,
+  pageTranslationSuccesses,
 }: PageFilmstripProps): ReactElement | null {
   const thumbnailContainerRef = useRef<HTMLDivElement>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -266,6 +271,21 @@ export function PageFilmstrip({
                     <Check className="h-3 w-3 stroke-[3]" />
                   </span>
                 )}
+
+                {/* Translated Badge (per-page status, checklist P2-3). Sits
+                    top-left normally; moves top-right on the selected page
+                    where the selection check already occupies top-left. */}
+                {pageTranslationSuccesses?.[page.url] &&
+                  !pageTranslationFailures?.[page.url] && (
+                    <span
+                      data-testid={`page-translated-badge-${i}`}
+                      className={`absolute top-1 ${isSelected ? "right-1" : "left-1"} flex h-4 w-4 items-center justify-center rounded-full bg-emerald-600 text-white shadow-xs`}
+                      title={`แปลแล้ว (${pageTranslationSuccesses[page.url].ladderStep || "full"}${pageTranslationSuccesses[page.url].model ? ` · ${pageTranslationSuccesses[page.url].model}` : ""})`}
+                      aria-label={`หน้า ${i + 1} แปลแล้ว`}
+                    >
+                      <Check className="h-3 w-3 stroke-[3]" />
+                    </span>
+                  )}
 
                 {/* Translation Failure Badge */}
                 {pageTranslationFailures?.[page.url] && (

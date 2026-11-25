@@ -365,7 +365,7 @@ export function WorkspaceModalsHost(props: WorkspaceModalsHostProps): ReactNode 
       {/* 5. Legacy Saved-Work Target Confirmation */}
       {legacyTargetPages && legacyTargetPages.length > 0 && (
         <div
-          className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150"
           onClick={onPostponeLegacyTarget}
         >
           <div
@@ -414,7 +414,7 @@ export function WorkspaceModalsHost(props: WorkspaceModalsHostProps): ReactNode 
       {/* 6. Actionable Review List */}
       {reviewIssues && (
         <div
-          className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150"
           onClick={onCloseReviewIssues}
         >
           <div
@@ -558,7 +558,7 @@ export function WorkspaceModalsHost(props: WorkspaceModalsHostProps): ReactNode 
       {/* 7. Human Review Confirmation Gate Modal */}
       {unconfirmedReviewPages && (unconfirmedReviewPages.length > 0 || pendingExportAction) && (
         <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150"
           role="dialog"
           aria-modal="true"
           aria-label="ยืนยันก่อนส่งออก"

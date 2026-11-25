@@ -57,6 +57,15 @@ export interface RemnantReviewPanelProps {
     at: number;
     cropOutcome?: string;
   };
+  pageTranslationSuccess?: {
+    status: "translated";
+    model?: string;
+    ladderStep?: string;
+    cropOutcome?: string;
+    totalTokens?: number;
+    elapsedMs?: number;
+    at: number;
+  };
   onRetryTranslation?: () => void;
 }
 
@@ -110,13 +119,15 @@ export function RemnantReviewPanel({
   isPageReviewRequired = false,
   isInspectorOpen = false,
   pageTranslationFailure,
+  pageTranslationSuccess,
   onRetryTranslation,
 }: RemnantReviewPanelProps) {
   const [side, setSide] = useState<"right" | "left">(() => {
     try { return (localStorage.getItem("remnantPanelSide") as "right" | "left") || "right"; } catch { return "right"; }
   });
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const effectiveSide = isInspectorOpen ? "left" : side;
+  const [isBubbleSelected, setIsBubbleSelected] = useState(false);
+  const effectiveSide = isInspectorOpen || isBubbleSelected ? "left" : side;
   useEffect(() => { try { localStorage.setItem("remnantPanelSide", side); } catch {} }, [side]);
   const [busyCandidateId, setBusyCandidateId] = useState<string | null>(null);
   const [bulkCleaningProgress, setBulkCleaningProgress] = useState<{
@@ -126,7 +137,8 @@ export function RemnantReviewPanel({
   const bulkCancelRef = useRef<boolean>(false);
 
   // Auto-collapse when the user selects a text bubble or when the inspector is open:
-  // effectiveSide already docks left whenever isInspectorOpen is true without overwriting user's saved side.
+  // effectiveSide docks left while the inspector is open or a bubble is selected,
+  // without overwriting the user's saved side preference.
   useEffect(() => {
     if (isInspectorOpen) {
       setIsCollapsed(true);
@@ -138,6 +150,10 @@ export function RemnantReviewPanel({
       const custom = e as CustomEvent;
       if (custom.detail) {
         setIsCollapsed(true);
+        setIsBubbleSelected(true);
+      } else {
+        // selectionChrome dispatches detail: null when the selection clears.
+        setIsBubbleSelected(false);
       }
     };
     const handleInspectorToggle = (e: Event) => {
@@ -447,6 +463,29 @@ export function RemnantReviewPanel({
                 >
                   Ladder: {pageTranslationFailure.cropOutcome}
                 </div>
+              )}
+            </div>
+          )}
+          {!pageTranslationFailure && pageTranslationSuccess && (
+            <div
+              data-testid="remnant-translation-success"
+              className="px-2.5 py-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-[11px] text-emerald-300 flex flex-wrap items-center gap-x-1.5 gap-y-0.5"
+            >
+              <span className="font-semibold">
+                ✅ แปลล่าสุด: {pageTranslationSuccess.ladderStep || "full"}
+              </span>
+              {pageTranslationSuccess.model && (
+                <span className="text-muted">· {pageTranslationSuccess.model}</span>
+              )}
+              {typeof pageTranslationSuccess.totalTokens === "number" && (
+                <span className="text-muted">
+                  · {pageTranslationSuccess.totalTokens.toLocaleString()} tokens
+                </span>
+              )}
+              {pageTranslationSuccess.cropOutcome && (
+                <span className="font-mono text-[10px]">
+                  · {pageTranslationSuccess.cropOutcome}
+                </span>
               )}
             </div>
           )}

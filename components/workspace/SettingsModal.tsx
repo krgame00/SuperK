@@ -843,8 +843,14 @@ export function SettingsModal({
     { id: "narration", label: "📖 บรรยาย" },
   ];
 
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape") {
+  // Document-level Escape (checklist P1-4): the dialog's own onKeyDown only
+  // fires for events that bubble through the dialog subtree, so Escape could
+  // appear broken when focus sat in a picker or another nested control.
+  // Layered order: close an open picker first, then the modal.
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleDocumentEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
       event.preventDefault();
       if (fontPickerOpen) {
         setFontPickerOpen(false);
@@ -857,8 +863,12 @@ export function SettingsModal({
         return;
       }
       onClose();
-      return;
-    }
+    };
+    document.addEventListener("keydown", handleDocumentEscape);
+    return () => document.removeEventListener("keydown", handleDocumentEscape);
+  }, [isOpen, fontPickerOpen, modelPickerOpen, onClose]);
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "Tab") return;
 
     const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(

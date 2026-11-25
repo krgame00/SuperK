@@ -3,7 +3,10 @@
 import { type ChangeEvent, type ReactElement } from "react";
 import { PageFilmstrip } from "@/components/workspace/PageFilmstrip";
 import { RemnantReviewPanel } from "@/components/cleaning/RemnantReviewPanel";
-import type { PageTranslationFailure } from "@/hooks/useTranslation";
+import type {
+  PageTranslationFailure,
+  PageTranslationSuccess,
+} from "@/hooks/useTranslation";
 import type { WorkspaceExportPage } from "@/hooks/useExportOrchestrator";
 import type { PageCleaningResult } from "@/hooks/useCleaning";
 import type { PixelRect, CleaningRegion } from "@/lib/cleaning/types";
@@ -53,6 +56,7 @@ export interface WorkspaceBottomStripHostProps {
   isPageReviewRequired?: boolean;
   isInspectorOpen?: boolean;
   pageTranslationFailures?: Record<string, PageTranslationFailure>;
+  pageTranslationSuccesses?: Record<string, PageTranslationSuccess>;
   onTranslateCurrentPage?: () => void;
 }
 
@@ -83,6 +87,7 @@ export function WorkspaceBottomStripHost({
   isPageReviewRequired,
   isInspectorOpen,
   pageTranslationFailures,
+  pageTranslationSuccesses,
   onTranslateCurrentPage,
 }: WorkspaceBottomStripHostProps): ReactElement {
   const activePage = pages[currentPage];
@@ -102,6 +107,7 @@ export function WorkspaceBottomStripHost({
         onToggleCollapse={onToggleCollapse}
         isFocusMode={isFocusMode}
         pageTranslationFailures={pageTranslationFailures}
+        pageTranslationSuccesses={pageTranslationSuccesses}
       />
 
       <RemnantReviewPanel
@@ -119,6 +125,7 @@ export function WorkspaceBottomStripHost({
         inspection={remnantInspection}
         regions={currentCleaningResult?.regions ?? []}
         pageTranslationFailure={activePage?.url ? pageTranslationFailures?.[activePage.url] : undefined}
+        pageTranslationSuccess={activePage?.url ? pageTranslationSuccesses?.[activePage.url] : undefined}
         onRetryTranslation={onTranslateCurrentPage}
         onOpenMask={onOpenMaskCandidate}
         onRestoreOriginal={onRestoreOriginalRemnant}

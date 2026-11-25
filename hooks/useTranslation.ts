@@ -3,9 +3,13 @@ import { outsideProtectedAreas, withinTranslationScope, type TranslationScope } 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   getTranslationRetryDelay,
+  isExplicitUserCancelError,
+  isIntentionalAbortInterruption,
+  isSilentAbortError,
   isUserCancelledError,
   readTranslationResponse,
   shouldAutoRetryTranslation,
+  TRANSLATION_ABORT_REASON,
   TranslationRequestError,
   type TranslationObservabilityMeta,
   DEFAULT_QUOTA_COOLDOWN_MS,
@@ -100,6 +104,16 @@ export interface PageTranslationFailure {
   message: string;
   at: number;
   cropOutcome?: string;
+}
+
+export interface PageTranslationSuccess {
+  status: "translated";
+  model?: string;
+  ladderStep?: string;
+  cropOutcome?: string;
+  totalTokens?: number;
+  elapsedMs?: number;
+  at: number;
 }
 
 export interface BatchPerformanceMetrics {
@@ -626,6 +640,9 @@ export function useTranslation({
   const [cacheRevision, setCacheRevision] = useState(0);
   const [pageTranslationFailures, setPageTranslationFailures] = useState<
     Record<string, PageTranslationFailure>
+  >({});
+  const [pageTranslationSuccesses, setPageTranslationSuccesses] = useState<
+    Record<string, PageTranslationSuccess>
   >({});
 
   const clearPageTranslationFailure = useCallback((pageUrl: string) => {
@@ -2885,18 +2902,32 @@ async function compressImageForTranslation(
         },
       );
 
+      setPageTranslationSuccesses((prev) => ({
+        ...prev,
+        [pageUrl]: {
+          status: "translated",
+          model: responseMeta?.model,
+          ladderStep:
+            responseMeta?.ladderStep || (forceNsfwBypass ? "slice" : "full"),
+          cropOutcome: lastCropOutcomeRef.current,
+          totalTokens: responseMeta?.usageMetadata?.totalTokenCount,
+          elapsedMs: responseMeta?.elapsedMs,
+          // eslint-disable-next-line react-hooks/purity
+          at: Date.now(),
+        },
+      }));
       clearPageTranslationFailure(pageUrl);
     if (!forceNsfwBypass) {
       lastCropOutcomeRef.current = undefined;
     }
       return true;
     } catch (error: unknown) {
-      const explicitUserCancel = signal
-        ? (signal.aborted ||
-            (error instanceof TranslationRequestError &&
-              (error.category === "cancelled" || error.code === "cancelled")))
-        : isUserCancelledError(error);
-      if (!explicitUserCancel) {
+      // Only aborts this app initiated on purpose (user cancel, unmount,
+      // quota stop, batch teardown) stay silent. A bare AbortError from
+      // the request layer is an unexpected interruption: record it as a
+      // page failure so the UI can show what happened (checklist P0-5).
+      const silentAbort = isSilentAbortError(error, signal);
+      if (!silentAbort) {
         const classified = classifyTranslationError(error);
         const failure: PageTranslationFailure = {
           status: "failed",
@@ -2912,6 +2943,12 @@ async function compressImageForTranslation(
           ...prev,
           [pageUrl]: failure,
         }));
+        setPageTranslationSuccesses((prev) => {
+          if (!prev[pageUrl]) return prev;
+          const next = { ...prev };
+          delete next[pageUrl];
+          return next;
+        });
         logError(
           "translate",
           `แปลหน้า ${pageIndex + 1} ไม่สำเร็จ (${classified.code || "ERROR"}): ${failure.message}`,
@@ -2924,7 +2961,7 @@ async function compressImageForTranslation(
       }
       if (
         activePageRef.current === pageUrl
-        && !explicitUserCancel
+        && !silentAbort
       ) {
         setTranslationResult("❌ Error: " + (error instanceof Error ? error.message : String(error)));
       }
@@ -3003,8 +3040,11 @@ async function compressImageForTranslation(
         requestedTarget,
       );
     } catch (error) {
-      if (isUserCancelledError(error)) {
+      if (isExplicitUserCancelError(error, signal)) {
         setTranslationResult("⏹ ยกเลิกการแปลแล้ว");
+        return false;
+      }
+      if (isSilentAbortError(error, signal)) {
         return false;
       }
       const message =
@@ -3380,7 +3420,7 @@ async function compressImageForTranslation(
               err instanceof TranslationRequestError &&
               (err.code === "GEMINI_QUOTA" || err.category === "quota");
             if (isQuotaError) {
-              batchController.abort();
+              batchController.abort(TRANSLATION_ABORT_REASON.quota);
               const cooldownMs = err.retryAfterMs ?? DEFAULT_QUOTA_COOLDOWN_MS;
               const quotaGroupId = `${failureOperationId}:QUOTA_EXHAUSTED`;
               const nextExpiry = Date.now() + cooldownMs;
@@ -3448,7 +3488,8 @@ async function compressImageForTranslation(
 
         if (
           !success
-          && !isUserCancelledError(lastTranslationError)
+          && !isExplicitUserCancelError(lastTranslationError, signal)
+          && !isIntentionalAbortInterruption(lastTranslationError, signal)
           && !cancelTranslateAllRef.current
         ) {
           const errMsg =
@@ -3578,7 +3619,7 @@ async function compressImageForTranslation(
       lastTranslateAllSummaryRef.current = summary;
       return summary as unknown as void;
     } finally {
-      batchController.abort();
+      batchController.abort(TRANSLATION_ABORT_REASON.batchComplete);
       suppressedOverlayPagesRef.current.clear();
       recordBatchMetrics?.(cancelTranslateAllRef.current);
       translationOperationLockRef.current = false;
@@ -3638,7 +3679,10 @@ async function compressImageForTranslation(
           requestedTarget,
         );
       } catch (err: unknown) {
-        if (!isUserCancelledError(err)) {
+        if (
+          !isExplicitUserCancelError(err, translationAbortRef.current?.signal)
+          && !isIntentionalAbortInterruption(err, translationAbortRef.current?.signal)
+        ) {
           const isCleanerErr = isCleaningClientError(err);
           const explicitCleaningCode = isCleanerErr
             ? (err.status === 0 || err.status === 502 || err.status === 503 ||
@@ -3741,14 +3785,14 @@ async function compressImageForTranslation(
   }, [batchFailures, pages, quotaCooldownByGroup, isTranslatingAll, executeConcurrentRetry]);
   const cancelTranslateAll = () => {
     cancelTranslateAllRef.current = true;
-    translationAbortRef.current?.abort();
+    translationAbortRef.current?.abort(TRANSLATION_ABORT_REASON.userCancel);
     setTranslationResult("⏹ กำลังยกเลิก...");
   };
 
   // Unmount: stop in-flight translation and repair work immediately.
   useEffect(() => () => {
-    translationAbortRef.current?.abort();
-    bookRepairAbortRef.current?.abort();
+    translationAbortRef.current?.abort(TRANSLATION_ABORT_REASON.unmount);
+    bookRepairAbortRef.current?.abort(TRANSLATION_ABORT_REASON.unmount);
   }, []);
 
   const invalidatePageTranslation = useCallback((pageUrl: string) => {
@@ -4151,7 +4195,7 @@ async function compressImageForTranslation(
   ]);
 
   const cancelWholeBookRepair = useCallback(() => {
-    bookRepairAbortRef.current?.abort();
+    bookRepairAbortRef.current?.abort(TRANSLATION_ABORT_REASON.userCancel);
   }, []);
 
 
@@ -4504,6 +4548,7 @@ async function compressImageForTranslation(
     translateCrop,
     activeBubbles, setActiveBubbles,
     pageTranslationFailures,
+    pageTranslationSuccesses,
     clearPageTranslationFailure,
     cacheRevision,
     translatedImages,
