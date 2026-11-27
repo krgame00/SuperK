@@ -14,6 +14,7 @@ import {
 } from "@/lib/colorMatching/resolveTextStyle";
 import type { BwContrastMode } from "@/lib/colorMatching/types";
 import { undoManager } from "@/lib/undoManager";
+import { boxesFromBubbles, snapBoxesToImageBalloons } from "@/lib/balloonSnap";
 
 export function bwContrastModeLabel(mode: BwContrastMode): string {
   switch (mode) {
@@ -71,6 +72,65 @@ async function loadPageDimensions(
     return { iw: existingAdj.iw, ih: existingAdj.ih };
   }
   return { iw: 1200, ih: 1800 };
+}
+
+/**
+ * Refines each bubble's detected box against the actual balloon shape in the
+ * page image before organizing. The detection box is often tight or shifted,
+ * which makes organized text land next to the balloon instead of inside it;
+ * snapping measures the white balloon region from pixels instead. Any
+ * failure keeps the detected boxes, so organize still works as before.
+ */
+async function refineBubblesWithBalloonSnap(
+  bubbles: TranslatedBubble[],
+  imageUrl?: string,
+): Promise<TranslatedBubble[]> {
+  if (!imageUrl || typeof document === "undefined") return bubbles;
+  try {
+    const img = new Image();
+    const isJsdom = typeof navigator !== "undefined" && /jsdom/i.test(navigator.userAgent || "");
+    const loaded = await new Promise<HTMLImageElement | null>((resolve) => {
+      const finish = () => {
+        resolve(img.naturalWidth > 0 ? img : null);
+      };
+      img.onload = finish;
+      img.onerror = () => resolve(null);
+      img.src = imageUrl;
+      if (img.complete || isJsdom) {
+        finish();
+        return;
+      }
+      setTimeout(() => resolve(null), 300);
+    });
+    if (!loaded) return bubbles;
+    const canvas = document.createElement("canvas");
+    canvas.width = loaded.naturalWidth;
+    canvas.height = loaded.naturalHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return bubbles;
+    ctx.drawImage(loaded, 0, 0);
+    const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    canvas.width = 0;
+    canvas.height = 0;
+    const snapped = snapBoxesToImageBalloons(
+      { data: pixels.data, width: pixels.width, height: pixels.height },
+      boxesFromBubbles(bubbles),
+    );
+    let refinedCount = 0;
+    const refined = bubbles.map((b, i) => {
+      const next = snapped[i];
+      if (!next) return b;
+      refinedCount++;
+      return { ...b, box: next };
+    });
+    if (refinedCount > 0) {
+      console.info(`[BalloonSnap] refined ${refinedCount}/${bubbles.length} boxes from page pixels`);
+    }
+    return refined;
+  } catch (err) {
+    console.warn("Balloon snap skipped; keeping detected boxes:", err);
+    return bubbles;
+  }
 }
 
 export interface UseBubbleOrganizeOrchestratorOptions {
@@ -182,7 +242,13 @@ export function useBubbleOrganizeOrchestrator({
         getPageTargetLanguage?.(effectiveCurrentPageUrl) ?? targetLang ?? "th";
       const isXLarge = mode === "xlarge";
       const isOriginalMode = mode === "original";
-      const result = autoOrganizePageBubbles(currentBubbles, iw, ih, {
+      const cleanUrl = currentCleaningResult?.cleanUrl
+        ?? cleaningResultsByPage?.get?.(effectiveCurrentPageUrl)?.cleanUrl;
+      const snappedBubbles = await refineBubblesWithBalloonSnap(
+        currentBubbles,
+        cleanUrl ?? effectiveCurrentPageUrl,
+      );
+      const result = autoOrganizePageBubbles(snappedBubbles, iw, ih, {
         fontFamily: textStyleRef.current?.fontFamily,
         fontSizeMultiplier: textStyleRef.current?.fontSizeMultiplier || 1.0,
         locale: targetLangCode === "en" ? "en" : "th",
@@ -278,6 +344,7 @@ export function useBubbleOrganizeOrchestrator({
       currentPage,
       refreshPageTranslation,
       currentCleaningResult,
+      cleaningResultsByPage,
       pagesRef,
       currentPageRef,
       notifyTranslationResult,
@@ -327,10 +394,14 @@ export function useBubbleOrganizeOrchestrator({
             effectiveCurrentPageUrl,
             cleanUrl,
           );
+          const snappedBubbles = await refineBubblesWithBalloonSnap(
+            currentBubbles,
+            cleanUrl ?? pageUrl,
+          );
 
           const targetLangCode =
             getPageTargetLanguage?.(pageUrl) ?? targetLang ?? "th";
-          const result = autoOrganizePageBubbles(currentBubbles, iw, ih, {
+          const result = autoOrganizePageBubbles(snappedBubbles, iw, ih, {
             fontFamily: textStyleRef.current?.fontFamily,
             fontSizeMultiplier: textStyleRef.current?.fontSizeMultiplier || 1.0,
             locale: targetLangCode === "en" ? "en" : "th",
