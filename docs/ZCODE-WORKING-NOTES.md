@@ -5,6 +5,7 @@
 
 อัปเดตอัตโนมัติจากฐานข้อมูล ZCode ทุกครั้งที่ AI ตอบจบรอบ (ใหม่→เก่า, สูงสุด 120 รายการ) — แชตไหนหายจาก UI ให้ยก session id ในรายการนี้ให้ AI เพื่อกู้คืนเนื้อหาเต็มจากฐานข้อมูล
 
+- 28 พ.ย. 00:32 · `d1a85620` · "บีบอัดขนาดไฟล์วิดีโอ VALORANT" · ✅ · ↳ "https://youtu.be/eSEgL5c8Z2o ตั้นแบบครับที่ผมอยากได้"
 - 23 พ.ย. 01:42 · `d71f1811` · "ไปแก้ต่อหน่อยครับ แต่ห้ามดูภาพเดิม" · ✅ · ↳ "ครบยัง"
 - 17 พ.ย. 22:31 · `2b8116b8` · "ทำต่อหน่อย" · ⚠️ · ↳ "ระบบตรวจ ai locel มันยังจับได้ไม่หมด และยังมีรอยจุดๆๆๆ เราพอจะแก้ได้ไหม [$pstack-poteto-mode](C:\\Users\\PC\\.zcode\\skills\\pstack-poteto-…"
 - 15 พ.ย. 01:40 · `2b7e562b` · "ทำให้ระบบตรวจดีขึ้นอีกได้ไหมครับ ยังจับได้ไม่ครบ" · ⚠️
@@ -33,6 +34,17 @@
 กติกา: จบ session ไหนให้เพิ่ม entry ใหม่ **ด้านบนสุด** ของรายการ โดยระบุสิ่งที่ทำ หลักฐาน/ผลตรวจ สถานะ commit และลิงก์เอกสารละเอียดถ้ามี
 
 ---
+
+## แก้จัดระเบียบไม่ตรงบับเบิ้ลต้นฉบับ — balloon snap จากพิกเซลภาพ (poteto-mode, systematic debugging) — 2026-11-28
+
+### Status: **push แล้ว** commit `4a6d817` (CI รอยืนยันตอนจด) — ต้นเหตุคือ organize ยึดกล่องจากโมเดล (b.box) ล้วน ซึ่งกระชับ/เลื่อนไม่ตรงลูกโป่งจริง ทำให้ทุกโหมด (รวม ตามตำแหน่งต้นฉบับ) วางข้อความคลาดลูกโป่ง ผู้ใช้เลือกแนวทาง "สแนปเข้าลูกโป่งจริงจากภาพ"
+
+- **หลักฐานการวินิจฉัย:** อ่านโค้ดยืนยันทั้ง fitBubbleTextWithinBounds (bx=geom.x ในโหมด original, bx=cx-w/2 ใน readable) และเรนเดอร์ (translationOverlay:484) ยึดพิกัดเดียวกันจาก b.box → ภาพที่เห็นเหลื่อม = กล่องตรวจจับเพี้ยนเอง; วัดภาพหน้าจอผู้ใช้เชิงตัวเลข (RapidOCR หากล่องข้อความ + blob detection หาลูกโป่งขาว) พบ offset ไม่ยูนิฟอร์ม (+7..+128px) ปฏิเสธสมมติฐาน shift ระบบทั้งภาพ
+- **ทางแก้ lib/balloonSnap.ts (บริสุทธิ์ พิสูจน์ด้วย synthetic buffer):** ต่อกล่อง หา seed ขาว 9 จุด → flood fill เฉพาะบริเวณค้นหา (ขยาย 1.2x) หยุดที่ขอบลูกโป่ง → เกจ 4 ชั้น คือ seed ขาว <2 จุด = null, fill แตะขอบเขตค้นหา >5% = รั่ว null, โตเกิน 2.65x ต่อมิติ / 7x ต่อพื้นที่ = null, output = union(ภูมิภาค, กล่องเดิม) หดไม่ได้ — กล่อง null ใช้กล่องเดิม (graceful)
+- **boxesFromBubbles:** ข้าม SFX (sfx/is_sfx/isSfx), isInvalidBox, deleted, กล่อง [0,0,1000,1000]
+- **wire hooks/useBubbleOrganizeOrchestrator.ts:** refineBubblesWithBalloonSnap โหลดภาพ clean (cleanUrl fallback pageUrl) วาด canvas getImageData แล้วสแนปก่อน autoOrganizePageBubbles ทั้ง flow หน้าเดียวและทุกหน้า — jsdom ต้องมี setTimeout resolve(null) guard ไม่งั้นเทสต์ค้าง (เจอเองตอนเทสต์ hook ล้ม 4 เคส, baseline stash ยืนยันเป็นฝั่งผม)
+- **พิสูจน์:** เทสต์ balloonSnap 8/8 / hook orchestrator 5/5 / workspace 235 เขียว / ครอบคลุม 180 ไฟล์ 1677 เคส / เต็มชุด **2461 ผ่าน 0 ล้ม** / tsc 0 / eslint 0 / madge gate overlay เขียว
+- **เรื่อง parallel session:** พบงานยังไม่ commit 27 ไฟล์ใน tree จาก session 26-27 พ.ย. (dedup translation + UI collision fixes, โน้ต AI-WORKING-NOTES ยืนยัน VERIFIED WORKING พร้อมหลักฐาน, remote เดินเป็น 7faaa1a) — commit นี้สเตจเฉพาะ 3 ไฟล์ของงานนี้ งาน session เก่ายังทิ้งไว้ใน tree ให้ผู้ใช้ตัดสินใจ
 
 ## แผนแยก bubbleInteraction — Phase 6 ลบ shim จบ 7 เฟส (poteto-mode, refactoring playbook) — 2026-11-23
 
